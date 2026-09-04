@@ -16,6 +16,7 @@
     "deserialises",
     "dialog",
     "frontmatter",
+    "gitdir",
     "Herdr",
     "idempotency",
     "kanban",

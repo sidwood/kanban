@@ -11,11 +11,12 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 
-use kanban_app::{Core, EventSink, TimelineQueryHandler};
+use kanban_app::{Core, EventSink, GitObservation, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
-    SqliteEvidenceStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteRulingStore,
+    SqliteEvidenceStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteProjectStore,
+    SqliteRulingStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -26,6 +27,19 @@ use timeline::StorageTimelineStore;
 /// five-figure bound covers every retry that could still arrive
 /// while keeping the table small enough to ignore.
 const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound is not zero");
+
+/// The service's git observation: a target is a Git repository when
+/// its path holds a `.git` entry, a directory for a normal clone or a
+/// file for a linked worktree. Registration refuses everything else,
+/// keeping non-Git Projects out (DR-PH-08).
+#[derive(Debug, Default)]
+pub struct LocalRepositories;
+
+impl GitObservation for LocalRepositories {
+    fn is_repository(&self, repository: &str) -> bool {
+        Path::new(repository).join(".git").exists()
+    }
+}
 
 /// The running core process: its open database and its serving
 /// socket.
@@ -66,6 +80,7 @@ fn assemble_core(
     events: Arc<dyn EventSink>,
 ) -> Result<(Arc<Database>, Core), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
+    let project_store = Arc::new(SqliteProjectStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -80,7 +95,8 @@ fn assemble_core(
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
-    core.register_initiatives(initiative_store)?;
+    core.register_initiatives(initiative_store.clone())?;
+    core.register_projects(project_store, Arc::new(LocalRepositories), initiative_store)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
     core.register_deferrals(deferral_store)?;
@@ -156,10 +172,19 @@ mod tests {
 
     use std::sync::Arc;
 
-    use kanban_app::{NoopEventSink, assert_registered_matches_exposed_catalogue};
+    use kanban_app::{GitObservation, NoopEventSink, assert_registered_matches_exposed_catalogue};
 
-    use super::{ServiceError, assemble_core, prepare_database, serve};
+    use super::{LocalRepositories, ServiceError, assemble_core, prepare_database, serve};
     use crate::test_client::{Client, boot};
+
+    /// A scratch directory standing in for a Git repository the
+    /// service's own observation accepts.
+    fn scratch_repository(dir: &TempDir, name: &str) -> String {
+        let repository = dir.path().join(name);
+        std::fs::create_dir_all(repository.join(".git"))
+            .expect("the scratch repository is created");
+        repository.to_str().expect("the path is UTF-8").to_owned()
+    }
 
     fn mode_of(path: &Path) -> u32 {
         std::fs::metadata(path)
@@ -391,6 +416,148 @@ mod tests {
         );
 
         rebooted.shutdown();
+    }
+
+    #[test]
+    fn the_project_registration_lifecycle_serves_over_the_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = scratch_repository(&dir, "kanban");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let registered = client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-core" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository,
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
+        assert_eq!(registered["code"], json!("CORE"));
+        assert_eq!(registered["version"], json!(1));
+        assert_eq!(
+            registered["counters"],
+            json!({ "plan": 0, "spec": 0, "ticket": 0 })
+        );
+
+        // The same session name is refused for another Project, and a
+        // target that is not a Git repository never registers.
+        let duplicate_session = client.command_error(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository,
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
+        assert_eq!(duplicate_session["code"], json!("invalid_request"));
+        assert!(
+            duplicate_session["message"]
+                .as_str()
+                .expect("the message is text")
+                .contains("kanban-main"),
+            "the refusal names the session: {duplicate_session}"
+        );
+        let non_git = client.command_error(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-plain" },
+                "code": "PLAIN",
+                "name": "Plain directory",
+                "repository": dir.path().join("not-a-repository"),
+                "seed_workspace": "/workspaces/plain.seed",
+                "default_branch": "main",
+                "herdr_session": "plain-main",
+            }),
+        );
+        assert_eq!(non_git["code"], json!("invalid_request"));
+
+        // Archiving is terminal and preserves the code, the counters,
+        // and the record itself.
+        let archived = client.command(
+            "project.archive",
+            json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-core" },
+                "project_id": 1,
+            }),
+        );
+        assert_eq!(archived["archived"], json!(true));
+        assert_eq!(archived["code"], json!("CORE"));
+        let listed = client.query("project.list");
+        assert_eq!(
+            listed,
+            json!({
+                "projects": [
+                    {
+                        "id": 1,
+                        "code": "CORE",
+                        "name": "Control plane",
+                        "repository": repository,
+                        "seed_workspace": "/workspaces/kanban.seed",
+                        "default_branch": "main",
+                        "herdr_session": "kanban-main",
+                        "initiative_id": null,
+                        "archived": true,
+                        "counters": { "plan": 0, "spec": 0, "ticket": 0 },
+                        "version": 2,
+                    }
+                ]
+            }),
+            "archiving preserves every recorded fact over the wire"
+        );
+
+        // The recorded facts are durable: a fresh core over the same
+        // database still lists the archived Project.
+        core.shutdown();
+        let rebooted = boot(&dir);
+        let mut second = Client::connect(rebooted.socket_path());
+        assert_eq!(
+            second.query("project.list"),
+            listed,
+            "every recorded fact survives a restart"
+        );
+
+        rebooted.shutdown();
+    }
+
+    #[test]
+    fn local_repositories_observes_the_git_entry() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let observation = LocalRepositories;
+
+        let clone = dir.path().join("clone");
+        std::fs::create_dir_all(clone.join(".git")).expect("the clone is created");
+        assert!(observation.is_repository(clone.to_str().expect("the path is UTF-8")));
+
+        let worktree = dir.path().join("worktree");
+        std::fs::create_dir_all(&worktree).expect("the worktree is created");
+        std::fs::write(worktree.join(".git"), "gitdir: ../clone/.git/worktrees/w")
+            .expect("the worktree pointer is written");
+        assert!(observation.is_repository(worktree.to_str().expect("the path is UTF-8")));
+
+        let plain = dir.path().join("plain");
+        std::fs::create_dir_all(&plain).expect("the plain directory is created");
+        assert!(
+            !observation.is_repository(plain.to_str().expect("the path is UTF-8")),
+            "a directory without .git is not a repository"
+        );
+        assert!(
+            !observation.is_repository(
+                dir.path()
+                    .join("missing")
+                    .to_str()
+                    .expect("the path is UTF-8")
+            ),
+            "a missing path is not a repository"
+        );
     }
 
     /// KAN-T10-AC3: every evidence command leaves the per-Project

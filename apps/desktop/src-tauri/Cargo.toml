@@ -5,6 +5,7 @@ description = "Thin Tauri shell hosting the Kanban desktop application"
 edition = "2024"
 rust-version = "1.85.0"
 publish = false
+default-run = "kanban-desktop"
 
 # The shell is deliberately outside the root Cargo workspace: the
 # core is eight crates under crates/, and the shell is replaceable

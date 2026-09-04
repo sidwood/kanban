@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub mod commands;
 pub mod core_link;
+mod shell_handlers;
 
 use commands::{forward_command, forward_query};
 
@@ -276,6 +277,26 @@ async fn evidence_list(
     .await
 }
 
+shell_handlers::shell_handler_catalogue! {
+    health_get,
+    initiative_create,
+    initiative_rename,
+    initiative_archive,
+    initiative_list,
+    timeline_query,
+    comment_create,
+    comment_edit,
+    comment_revisions,
+    ruling_record,
+    ruling_supersede,
+    ruling_list,
+    deferral_record,
+    deferral_supersede,
+    deferral_list,
+    evidence_attach,
+    evidence_list,
+}
+
 /// Build the window, start the core on demand, and supervise the
 /// connection for as long as this shell process lives.
 pub fn run() -> tauri::Result<()> {
@@ -293,25 +314,7 @@ pub fn run() -> tauri::Result<()> {
                 Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            health_get,
-            initiative_create,
-            initiative_rename,
-            initiative_archive,
-            initiative_list,
-            timeline_query,
-            comment_create,
-            comment_edit,
-            comment_revisions,
-            ruling_record,
-            ruling_supersede,
-            ruling_list,
-            deferral_record,
-            deferral_supersede,
-            deferral_list,
-            evidence_attach,
-            evidence_list,
-        ])
+        .invoke_handler(catalogue_invoke_handler())
         .run(tauri::generate_context!())
 }
 

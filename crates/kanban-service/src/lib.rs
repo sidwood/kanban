@@ -11,7 +11,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 
-use kanban_app::{Core, TimelineQueryHandler};
+use kanban_app::{Core, EventSink, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
@@ -47,15 +47,24 @@ impl CoreProcess {
     }
 }
 
-/// Open (creating if needed) the database inside `data_dir`, bring
-/// its schema up to date, and serve the application core on
-/// `core.sock` inside the same directory.
-pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
+/// Open the durable database and apply every known migration before
+/// any socket becomes reachable.
+fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
     std::fs::create_dir_all(data_dir).map_err(|source| ServiceError::DataDir { source })?;
     let mut database = Database::open(&data_dir.join(database_file_name()))?;
     // Forward-only from the first boot; the verified-backup hook
     // arrives with KAN-T60.
     database.migrate(&AllowAllMigrations)?;
+    Ok(database)
+}
+
+/// Wire the production application core around a prepared database
+/// and the event sink owned by its transport.
+fn assemble_core(
+    data_dir: &Path,
+    database: Database,
+    events: Arc<dyn EventSink>,
+) -> Result<(Arc<Database>, Core), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
@@ -70,9 +79,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     ));
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
-    let server = SocketServer::bind(data_dir)?;
-    let broker = server.broker();
-    let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, broker)?;
+    let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
     core.register_initiatives(initiative_store)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
@@ -82,6 +89,17 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),
     )?;
+    Ok((database, core))
+}
+
+/// Open (creating if needed) the database inside `data_dir`, bring
+/// its schema up to date, and serve the application core on
+/// `core.sock` inside the same directory.
+pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
+    let database = prepare_database(data_dir)?;
+    let server = SocketServer::bind(data_dir)?;
+    let broker = server.broker();
+    let (database, core) = assemble_core(data_dir, database, broker)?;
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess { database, server })
 }
@@ -136,7 +154,11 @@ mod tests {
     use serde_json::{Value, json};
     use tempfile::TempDir;
 
-    use super::{ServiceError, serve};
+    use std::sync::Arc;
+
+    use kanban_app::{NoopEventSink, assert_registered_matches_exposed_catalogue};
+
+    use super::{ServiceError, assemble_core, prepare_database, serve};
     use crate::test_client::{Client, boot};
 
     fn mode_of(path: &Path) -> u32 {
@@ -145,6 +167,16 @@ mod tests {
             .permissions()
             .mode()
             & 0o777
+    }
+
+    #[test]
+    fn registered_catalogue_matches_the_exposed_catalogue() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let database = prepare_database(dir.path()).expect("the production database prepares");
+        let (_, core) = assemble_core(dir.path(), database, Arc::new(NoopEventSink))
+            .expect("the production core wires");
+
+        assert_registered_matches_exposed_catalogue(&core.registered_operations());
     }
 
     #[test]

@@ -14,7 +14,10 @@ pub mod mutation;
 pub mod rulings;
 pub mod timeline;
 
-pub use catalog::{OperationDescriptor, OperationKind, exposed_operations};
+pub use catalog::{
+    EXPOSED_MCP_TOOL_NAMES, EXPOSED_OPERATION_COUNT, OperationDescriptor, OperationKind,
+    assert_registered_matches_exposed_catalogue, exposed_operations,
+};
 pub use comment::CommentStore;
 pub use deferrals::DeferralStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};

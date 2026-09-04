@@ -25,6 +25,7 @@ pub fn generate(output_root: &Path) -> io::Result<()> {
         )?;
         schema_index.insert(name, schema);
     }
+    prune_orphaned_schemas(&schemas_dir, &schema_index)?;
 
     fs::write(src_root.join("types.ts"), render_types(&schema_index)?)?;
     fs::write(src_root.join("client.ts"), render_client(&schema_index)?)?;
@@ -33,6 +34,30 @@ pub fn generate(output_root: &Path) -> io::Result<()> {
         render_mcp_tools(&schema_index)?,
     )?;
     fs::write(src_root.join("index.ts"), render_index()?)?;
+
+    Ok(())
+}
+
+fn prune_orphaned_schemas(
+    schemas_dir: &Path,
+    schema_index: &BTreeMap<&'static str, schemars::schema::RootSchema>,
+) -> io::Result<()> {
+    let active_names = schema_index
+        .keys()
+        .map(|name| format!("{name}.json"))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for entry in fs::read_dir(schemas_dir)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+
+        if file_name.ends_with(".json") && !active_names.contains(file_name) {
+            fs::remove_file(entry.path())?;
+        }
+    }
 
     Ok(())
 }
@@ -406,6 +431,28 @@ mod tests {
             operation_count,
             exposed_operations().len(),
             "generated client must not expose extra operations"
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn generation_removes_orphaned_schema_files() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "kanban-contracts-gen-orphans-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_root);
+        generate(&temp_root).expect("initial generation succeeds");
+
+        let orphan_path = temp_root.join("src/schemas/OrphanedSchema.json");
+        fs::write(&orphan_path, "{}\n").expect("orphan schema is written");
+        assert!(orphan_path.is_file(), "orphan schema must exist before regeneration");
+
+        generate(&temp_root).expect("regeneration succeeds");
+        assert!(
+            !orphan_path.exists(),
+            "orphaned schema files must be removed during regeneration"
         );
 
         let _ = fs::remove_dir_all(temp_root);

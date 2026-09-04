@@ -6,6 +6,7 @@
   "ignorePaths": ["pnpm-lock.yaml"],
   "words": [
     "autosquash",
+    "clippy",
     "codegen",
     "frontmatter",
     "Herdr",
@@ -17,6 +18,7 @@
     "pipefail",
     "Pocock",
     "rereview",
+    "rustup",
     "shadcn",
     "SQLite",
     "stdio",

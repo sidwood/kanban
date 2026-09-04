@@ -1,6 +1,7 @@
 //! Opening the single authoritative SQLite database in WAL mode.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
@@ -8,11 +9,17 @@ use crate::error::StorageError;
 use crate::migrations::{self, MigrationReport, PreMigrationHook};
 use crate::paths;
 
+/// The shareable handle to the one connection the core owns.
+/// rusqlite connections are `Send` but not `Sync`; the mutex is
+/// what lets storage-backed command handlers serve across transport
+/// threads through the same connection.
+pub(crate) type ConnectionHandle = Arc<Mutex<Connection>>;
+
 /// An open handle on the single authoritative SQLite database
 /// (ADR-0002). The Core owns the only connections; nothing else,
 /// including the WebView, ever opens the file directly.
 pub struct Database {
-    conn: Connection,
+    conn: ConnectionHandle,
 }
 
 impl Database {
@@ -48,7 +55,9 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         // The append-only triggers must fire for REPLACE's implicit delete.
         conn.pragma_update(None, "recursive_triggers", "ON")?;
-        let database = Self { conn };
+        let database = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
         let mode = database.journal_mode()?;
         if mode != "wal" {
             return Err(StorageError::WalRefused { mode });
@@ -56,11 +65,16 @@ impl Database {
         Ok(database)
     }
 
+    /// The shareable handle to the underlying connection, for
+    /// storage-backed ports serving the application core.
+    pub(crate) fn connection_handle(&self) -> ConnectionHandle {
+        self.conn.clone()
+    }
+
     /// Reports the database journal mode; health surfaces use this.
     pub fn journal_mode(&self) -> Result<String, StorageError> {
-        Ok(self
-            .conn
-            .query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
+        let conn = self.lock();
+        Ok(conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
     }
 
     /// Applies pending forward-only migrations, first offering the
@@ -69,7 +83,8 @@ impl Database {
         &mut self,
         hook: &dyn PreMigrationHook,
     ) -> Result<MigrationReport, StorageError> {
-        migrations::run(&mut self.conn, hook)
+        let mut conn = self.lock();
+        migrations::run(&mut conn, hook)
     }
 
     /// Appends to the audit trail. The only write it supports.
@@ -78,7 +93,7 @@ impl Database {
         kind: &str,
         detail: &serde_json::Value,
     ) -> Result<(), StorageError> {
-        crate::audit::insert_event(&self.conn, kind, detail)
+        crate::audit::insert_event(&self.lock(), kind, detail)
     }
 
     /// Appends to the activity timeline. The only write it supports.
@@ -87,13 +102,20 @@ impl Database {
         kind: &str,
         detail: &serde_json::Value,
     ) -> Result<(), StorageError> {
-        crate::timeline::insert_event(&self.conn, kind, detail)
+        crate::timeline::insert_event(&self.lock(), kind, detail)
+    }
+
+    /// Lock the connection; every internal writer goes through here.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// The raw connection, for tests that must fabricate state.
     #[cfg(test)]
-    pub(crate) fn connection(&self) -> &Connection {
-        &self.conn
+    pub(crate) fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.lock()
     }
 }
 

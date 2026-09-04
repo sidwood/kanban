@@ -47,7 +47,7 @@ mod append_only {
             .connection()
             .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
             .expect("the audit trail is readable");
-        assert_eq!(rows, 2, "the migration event plus the probe");
+        assert_eq!(rows, 3, "the migration events plus the probe");
     }
 
     #[test]

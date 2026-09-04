@@ -4,6 +4,7 @@
 pub mod audit;
 pub mod db;
 pub mod error;
+pub mod initiatives;
 pub mod migrations;
 pub mod paths;
 pub mod timeline;
@@ -13,6 +14,7 @@ mod test_support;
 
 pub use db::Database;
 pub use error::StorageError;
+pub use initiatives::SqliteInitiativeStore;
 pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,
 };

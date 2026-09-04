@@ -51,11 +51,18 @@ pub struct MigrationReport {
 
 /// Every known migration, embedded at build time in strictly
 /// increasing version order.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial schema",
-    sql: include_str!("../migrations/0001_initial_schema.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial schema",
+        sql: include_str!("../migrations/0001_initial_schema.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "initiatives",
+        sql: include_str!("../migrations/0002_initiatives.sql"),
+    },
+];
 
 /// Applies every pending migration, newest last, and refuses any
 /// history this build does not recognise.
@@ -185,14 +192,19 @@ mod tests {
     }
 
     #[test]
-    fn migrate_applies_the_initial_schema_from_empty() {
+    fn migrate_applies_every_known_migration_from_empty() {
         let (_dir, mut database) = scratch_database();
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("the initial migration applies");
+            .expect("the migrations apply");
 
-        assert_eq!(report, MigrationReport { applied: vec![1] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![1, 2]
+            }
+        );
         assert_eq!(
             database
                 .connection()
@@ -202,7 +214,7 @@ mod tests {
                 .expect("the bookkeeping row is readable"),
             (1, "initial schema".to_string())
         );
-        for table in ["audit_events", "timeline_events"] {
+        for table in ["audit_events", "timeline_events", "initiatives"] {
             let present: i64 = database
                 .connection()
                 .query_row(
@@ -239,10 +251,10 @@ mod tests {
         let (_dir, mut database) = scratch_database();
         database
             .migrate(&AllowAllMigrations)
-            .expect("the initial migration applies");
+            .expect("the migrations apply");
 
-        let mut statement = database
-            .connection()
+        let conn = database.connection();
+        let mut statement = conn
             .prepare("SELECT id, kind, detail FROM audit_events ORDER BY id")
             .expect("the audit trail is readable");
         let events: Vec<(i64, String, String)> = statement
@@ -250,11 +262,16 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 1, "one event per applied migration");
+        assert_eq!(events.len(), 2, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
+        assert_eq!(events[1].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 1, "name": "initial schema" })
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[1].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 2, "name": "initiatives" })
         );
     }
 
@@ -289,10 +306,16 @@ mod tests {
 
         assert_eq!(
             hook.calls.into_inner(),
-            vec![vec![PendingMigration {
-                version: 1,
-                name: "initial schema",
-            }]]
+            vec![vec![
+                PendingMigration {
+                    version: 1,
+                    name: "initial schema",
+                },
+                PendingMigration {
+                    version: 2,
+                    name: "initiatives",
+                },
+            ]]
         );
     }
 

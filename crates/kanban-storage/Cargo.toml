@@ -7,6 +7,9 @@ publish.workspace = true
 
 [dependencies]
 dirs = "6.0.0"
+kanban-app = { path = "../kanban-app" }
+kanban-domain = { path = "../kanban-domain" }
+kanban-dto = { workspace = true }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"

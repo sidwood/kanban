@@ -262,27 +262,14 @@ fn record_of(comment: &Comment) -> CommentRecord {
         id: comment.id().value(),
         project_id: comment.project_id().to_owned(),
         target: TimelineEntityRef {
-            kind: dto_entity_kind(comment.target().kind()),
+            // The target passed the vocabulary check on the way
+            // in; anything else is corruption.
+            kind: TimelineEntityKind::parse(comment.target().kind())
+                .expect("a stored Comment target names a known entity kind"),
             id: comment.target().id().to_owned(),
         },
         text: comment.current_text().as_str().to_owned(),
         version: comment.version(),
-    }
-}
-
-fn dto_entity_kind(kind: &str) -> TimelineEntityKind {
-    match kind {
-        "initiative" => TimelineEntityKind::Initiative,
-        "project" => TimelineEntityKind::Project,
-        "plan" => TimelineEntityKind::Plan,
-        "spec" => TimelineEntityKind::Spec,
-        "ticket" => TimelineEntityKind::Ticket,
-        "run" => TimelineEntityKind::Run,
-        "review" => TimelineEntityKind::Review,
-        "finding" => TimelineEntityKind::Finding,
-        "evidence" => TimelineEntityKind::Evidence,
-        "comment" => TimelineEntityKind::Comment,
-        other => panic!("unknown stored entity kind `{other}`"),
     }
 }
 

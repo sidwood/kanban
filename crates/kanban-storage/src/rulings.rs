@@ -2,7 +2,7 @@
 
 use kanban_app::{RulingStore, TimelineAppend};
 use kanban_domain::{Ruling, RulingDraft, RulingEntityRef, RulingId, RulingSummary};
-use kanban_dto::{ApiError, RulingListQuery, TimelineEntityKind};
+use kanban_dto::{ApiError, RulingListQuery};
 use rusqlite::params;
 use serde_json::Value;
 
@@ -88,7 +88,7 @@ impl RulingStore for SqliteRulingStore {
         let mut bindings: Vec<String> = vec![query.project_id.clone()];
         if let Some(entity) = &query.entity {
             sql.push_str(" AND entity_kind = ? AND entity_id = ?");
-            bindings.push(entity_kind_wire(entity.kind));
+            bindings.push(entity.kind.as_str().to_owned());
             bindings.push(entity.id.clone());
         }
         sql.push_str(" ORDER BY recorded_at ASC, id ASC");
@@ -111,13 +111,6 @@ fn entity_parts(entity: &Option<RulingEntityRef>) -> (Option<String>, Option<Str
     entity.as_ref().map_or((None, None), |value| {
         (Some(value.kind.clone()), Some(value.id.clone()))
     })
-}
-
-fn entity_kind_wire(kind: TimelineEntityKind) -> String {
-    serde_json::to_string(&kind)
-        .expect("entity kind encodes")
-        .trim_matches('"')
-        .to_owned()
 }
 
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Ruling> {

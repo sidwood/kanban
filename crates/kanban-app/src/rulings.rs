@@ -142,10 +142,7 @@ fn load(store: &dyn RulingStore, project_id: &str, ruling_id: u64) -> Result<Rul
 
 fn dto_entity(entity: &TimelineEntityRef) -> RulingEntityRef {
     RulingEntityRef {
-        kind: serde_json::to_string(&entity.kind)
-            .expect("entity kind encodes")
-            .trim_matches('"')
-            .to_owned(),
+        kind: entity.kind.as_str().to_owned(),
         id: entity.id.clone(),
     }
 }
@@ -159,7 +156,10 @@ fn encode_record(ruling: &Ruling) -> RulingRecord {
         id: ruling.id().value(),
         project_id: ruling.project_id().to_owned(),
         entity: ruling.entity().map(|entity| TimelineEntityRef {
-            kind: serde_json::from_value(json!(entity.kind)).expect("entity kind decodes"),
+            // Stored entity kinds passed the vocabulary check on the
+            // way in; anything else is corruption.
+            kind: kanban_dto::TimelineEntityKind::parse(&entity.kind)
+                .expect("a stored Ruling entity names a known entity kind"),
             id: entity.id.clone(),
         }),
         summary: ruling.summary().as_str().to_owned(),

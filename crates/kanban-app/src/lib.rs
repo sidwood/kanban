@@ -24,10 +24,7 @@ pub use mutation::{
     CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
 pub use rulings::RulingStore;
-pub use timeline::{
-    TimelineError, TimelineQueryHandler, TimelineRecorder, TimelineStore, entity_kind_wire,
-    event_kind_wire,
-};
+pub use timeline::{TimelineError, TimelineQueryHandler, TimelineRecorder, TimelineStore};
 
 #[cfg(test)]
 mod tests {

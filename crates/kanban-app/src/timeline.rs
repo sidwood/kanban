@@ -1,6 +1,5 @@
 //! The timeline port, recorder, and query handler (KAN-S2).
 
-use kanban_domain::TimelineEventKind as DomainEventKind;
 use kanban_dto::{
     ApiError, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse,
@@ -85,11 +84,10 @@ impl<S: TimelineStore> TimelineRecorder<S> {
         entity: Option<TimelineEntityRef>,
         detail: Value,
     ) -> Result<(), TimelineError> {
-        DomainEventKind::parse(kind).ok_or_else(|| {
+        let kind = TimelineEventKind::parse(kind).ok_or_else(|| {
             TimelineError::Invalid(format!("unknown timeline event kind `{kind}`"))
         })?;
-        let dto_kind = wire_event_kind(kind)?;
-        self.store.append(project_id, dto_kind, entity, detail)
+        self.store.append(project_id, kind, entity, detail)
     }
 }
 
@@ -121,41 +119,23 @@ fn map_timeline_error(error: TimelineError) -> ApiError {
     }
 }
 
-fn wire_event_kind(kind: &str) -> Result<TimelineEventKind, TimelineError> {
-    match kind {
-        "transition" => Ok(TimelineEventKind::Transition),
-        "run" => Ok(TimelineEventKind::Run),
-        "telemetry" => Ok(TimelineEventKind::Telemetry),
-        "review" => Ok(TimelineEventKind::Review),
-        "finding" => Ok(TimelineEventKind::Finding),
-        "evidence" => Ok(TimelineEventKind::Evidence),
-        "comment" => Ok(TimelineEventKind::Comment),
-        "deferral" => Ok(TimelineEventKind::Deferral),
-        "ruling" => Ok(TimelineEventKind::Ruling),
-        other => Err(TimelineError::Invalid(format!(
-            "unknown timeline event kind `{other}`"
-        ))),
+#[cfg(test)]
+mod vocabulary {
+    use kanban_dto::TimelineEntityKind;
+
+    #[test]
+    fn the_domain_and_the_wire_name_the_same_entity_kinds() {
+        let wire: Vec<&str> = TimelineEntityKind::ALL
+            .iter()
+            .map(TimelineEntityKind::as_str)
+            .collect();
+
+        assert_eq!(
+            wire,
+            kanban_domain::ENTITY_KINDS.to_vec(),
+            "domain rules and payload definitions must refuse the same entity kinds"
+        );
     }
-}
-
-fn wire_entity_kind(kind: kanban_dto::TimelineEntityKind) -> String {
-    serde_json::to_string(&kind)
-        .expect("entity kind encodes")
-        .trim_matches('"')
-        .to_owned()
-}
-
-/// Serialises a DTO event kind to its wire representation.
-pub fn event_kind_wire(kind: TimelineEventKind) -> String {
-    serde_json::to_string(&kind)
-        .expect("event kind encodes")
-        .trim_matches('"')
-        .to_owned()
-}
-
-/// Serialises a DTO entity kind to its wire representation.
-pub fn entity_kind_wire(kind: kanban_dto::TimelineEntityKind) -> String {
-    wire_entity_kind(kind)
 }
 
 #[cfg(test)]
@@ -172,7 +152,6 @@ mod timeline_query {
     use crate::dispatch::{Core, QueryHandler};
     use crate::events::NoopEventSink;
     use crate::mutation::MemoryIdempotencyStore;
-    use kanban_domain::EVENT_KINDS;
 
     #[derive(Default)]
     struct MemoryTimelineStore {
@@ -254,11 +233,11 @@ mod timeline_query {
         let recorder = TimelineRecorder::new(&store);
         let entity = ticket_entity();
 
-        for (index, kind) in EVENT_KINDS.iter().enumerate() {
+        for (index, kind) in TimelineEventKind::ALL.iter().enumerate() {
             recorder
                 .record(
                     "kan",
-                    kind,
+                    kind.as_str(),
                     Some(entity.clone()),
                     json!({ "sequence": index }),
                 )
@@ -274,13 +253,10 @@ mod timeline_query {
                 until: None,
             })
             .expect("query succeeds");
-        assert_eq!(events.len(), EVENT_KINDS.len());
-        let kinds: Vec<_> = events
-            .iter()
-            .map(|event| super::event_kind_wire(event.kind))
-            .collect();
-        for kind in EVENT_KINDS {
-            assert!(kinds.contains(&kind.to_string()), "missing kind `{kind}`");
+        assert_eq!(events.len(), TimelineEventKind::ALL.len());
+        let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
+        for kind in TimelineEventKind::ALL {
+            assert!(kinds.contains(kind), "missing kind `{}`", kind.as_str());
         }
     }
 

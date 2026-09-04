@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kanban_app::{TimelineError, TimelineStore, entity_kind_wire, event_kind_wire};
+use kanban_app::{TimelineError, TimelineStore};
 use kanban_dto::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
 };
@@ -38,8 +38,8 @@ impl TimelineStore for StorageTimelineStore {
     ) -> Result<(), TimelineError> {
         let append = TimelineAppend {
             project_id: project_id.to_owned(),
-            kind: event_kind_wire(kind),
-            entity_kind: entity.as_ref().map(|value| entity_kind_wire(value.kind)),
+            kind: kind.as_str().to_owned(),
+            entity_kind: entity.as_ref().map(|value| value.kind.as_str().to_owned()),
             entity_id: entity.map(|value| value.id),
             detail,
         };
@@ -54,12 +54,12 @@ impl TimelineStore for StorageTimelineStore {
             entity_kind: query
                 .entity
                 .as_ref()
-                .map(|entity| entity_kind_wire(entity.kind)),
+                .map(|entity| entity.kind.as_str().to_owned()),
             entity_id: query.entity.as_ref().map(|entity| entity.id.clone()),
             kinds: query
                 .kinds
                 .as_ref()
-                .map(|kinds| kinds.iter().copied().map(event_kind_wire).collect())
+                .map(|kinds| kinds.iter().map(|kind| kind.as_str().to_owned()).collect())
                 .unwrap_or_default(),
             since: query.since.clone(),
             until: query.until.clone(),
@@ -97,36 +97,13 @@ fn row_to_record(row: TimelineRow) -> Result<TimelineEventRecord, TimelineError>
 }
 
 fn dto_event_kind(kind: &str) -> Result<TimelineEventKind, TimelineError> {
-    match kind {
-        "transition" => Ok(TimelineEventKind::Transition),
-        "run" => Ok(TimelineEventKind::Run),
-        "telemetry" => Ok(TimelineEventKind::Telemetry),
-        "review" => Ok(TimelineEventKind::Review),
-        "finding" => Ok(TimelineEventKind::Finding),
-        "evidence" => Ok(TimelineEventKind::Evidence),
-        "comment" => Ok(TimelineEventKind::Comment),
-        "deferral" => Ok(TimelineEventKind::Deferral),
-        "ruling" => Ok(TimelineEventKind::Ruling),
-        other => Err(TimelineError::Storage(format!(
-            "unknown stored timeline event kind `{other}`"
-        ))),
-    }
+    TimelineEventKind::parse(kind).ok_or_else(|| {
+        TimelineError::Storage(format!("unknown stored timeline event kind `{kind}`"))
+    })
 }
 
 fn dto_entity_kind(kind: &str) -> Result<TimelineEntityKind, TimelineError> {
-    match kind {
-        "initiative" => Ok(TimelineEntityKind::Initiative),
-        "project" => Ok(TimelineEntityKind::Project),
-        "plan" => Ok(TimelineEntityKind::Plan),
-        "spec" => Ok(TimelineEntityKind::Spec),
-        "ticket" => Ok(TimelineEntityKind::Ticket),
-        "run" => Ok(TimelineEntityKind::Run),
-        "review" => Ok(TimelineEntityKind::Review),
-        "finding" => Ok(TimelineEntityKind::Finding),
-        "evidence" => Ok(TimelineEntityKind::Evidence),
-        "comment" => Ok(TimelineEntityKind::Comment),
-        other => Err(TimelineError::Storage(format!(
-            "unknown stored timeline entity kind `{other}`"
-        ))),
-    }
+    TimelineEntityKind::parse(kind).ok_or_else(|| {
+        TimelineError::Storage(format!("unknown stored timeline entity kind `{kind}`"))
+    })
 }

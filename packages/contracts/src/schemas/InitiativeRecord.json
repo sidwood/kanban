@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The Initiative record as every client sees it.",
+  "properties": {
+    "archived": {
+      "description": "Whether the Initiative is archived. Archived Initiatives stay listed; no fact is ever removed.",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "The immutable, storage-assigned identity.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "name": {
+      "description": "The trimmed name.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The aggregate version, for optimistic mutation checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "archived",
+    "id",
+    "name",
+    "version"
+  ],
+  "title": "InitiativeRecord",
+  "type": "object"
+}

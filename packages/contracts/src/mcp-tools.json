@@ -28,5 +28,319 @@
       "title": "HealthResponse",
       "type": "object"
     }
+  },
+  {
+    "description": "Create an Initiative folder with a validated name.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `initiative.create` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The intended name; blank names are refused.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "name"
+      ],
+      "title": "InitiativeCreateRequest",
+      "type": "object"
+    },
+    "name": "initiative_create",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Initiative record as every client sees it.",
+      "properties": {
+        "archived": {
+          "description": "Whether the Initiative is archived. Archived Initiatives stay listed; no fact is ever removed.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The trimmed name.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archived",
+        "id",
+        "name",
+        "version"
+      ],
+      "title": "InitiativeRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Rename an active Initiative.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `initiative.rename` command.",
+      "properties": {
+        "initiative_id": {
+          "description": "The Initiative being renamed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The intended name; blank names are refused.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "initiative_id",
+        "mutation",
+        "name"
+      ],
+      "title": "InitiativeRenameRequest",
+      "type": "object"
+    },
+    "name": "initiative_rename",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Initiative record as every client sees it.",
+      "properties": {
+        "archived": {
+          "description": "Whether the Initiative is archived. Archived Initiatives stay listed; no fact is ever removed.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The trimmed name.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archived",
+        "id",
+        "name",
+        "version"
+      ],
+      "title": "InitiativeRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Archive an Initiative. Archiving is terminal and preserves every recorded fact.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `initiative.archive` command.",
+      "properties": {
+        "initiative_id": {
+          "description": "The Initiative being archived.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "initiative_id",
+        "mutation"
+      ],
+      "title": "InitiativeArchiveRequest",
+      "type": "object"
+    },
+    "name": "initiative_archive",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Initiative record as every client sees it.",
+      "properties": {
+        "archived": {
+          "description": "Whether the Initiative is archived. Archived Initiatives stay listed; no fact is ever removed.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The trimmed name.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archived",
+        "id",
+        "name",
+        "version"
+      ],
+      "title": "InitiativeRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Initiative, archived ones included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `initiative.list` query.",
+      "title": "InitiativeListQuery",
+      "type": "object"
+    },
+    "name": "initiative_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "InitiativeRecord": {
+          "additionalProperties": false,
+          "description": "The Initiative record as every client sees it.",
+          "properties": {
+            "archived": {
+              "description": "Whether the Initiative is archived. Archived Initiatives stay listed; no fact is ever removed.",
+              "type": "boolean"
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "description": "The trimmed name.",
+              "type": "string"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "archived",
+            "id",
+            "name",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `initiative.list` query.",
+      "properties": {
+        "initiatives": {
+          "description": "Every Initiative, archived included, newest last.",
+          "items": {
+            "$ref": "#/definitions/InitiativeRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "initiatives"
+      ],
+      "title": "InitiativeListResponse",
+      "type": "object"
+    }
   }
 ]

@@ -24,6 +24,29 @@ export type HealthResponse = {
   connected: boolean;
   service_version: string;
 };
+export type InitiativeArchiveRequest = {
+  initiative_id: number;
+  mutation: MutationContext;
+};
+export type InitiativeCreateRequest = {
+  mutation: MutationContext;
+  name: string;
+};
+export type InitiativeListQuery = Record<string, never>;
+export type InitiativeListResponse = {
+  initiatives: InitiativeRecord[];
+};
+export type InitiativeRecord = {
+  archived: boolean;
+  id: number;
+  name: string;
+  version: number;
+};
+export type InitiativeRenameRequest = {
+  initiative_id: number;
+  mutation: MutationContext;
+  name: string;
+};
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;

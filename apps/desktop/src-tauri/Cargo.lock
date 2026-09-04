@@ -1618,6 +1618,7 @@ dependencies = [
 name = "kanban-app"
 version = "0.1.0"
 dependencies = [
+ "kanban-domain",
  "kanban-dto",
  "schemars 0.8.22",
  "serde",
@@ -1639,6 +1640,10 @@ dependencies = [
  "tauri-build",
  "tempfile",
 ]
+
+[[package]]
+name = "kanban-domain"
+version = "0.1.0"
 
 [[package]]
 name = "kanban-dto"

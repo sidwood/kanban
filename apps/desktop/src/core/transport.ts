@@ -27,6 +27,10 @@ export type ShellConnectionState = 'connected' | 'disconnected'
 // catalog or typecheck fails.
 const COMMAND_FOR_OPERATION = {
   'health.get': 'health_get',
+  'initiative.archive': 'initiative_archive',
+  'initiative.create': 'initiative_create',
+  'initiative.list': 'initiative_list',
+  'initiative.rename': 'initiative_rename',
 } as const satisfies Record<KanbanOperationName, string>
 
 // The transport the generated client runs on, plus the shell's

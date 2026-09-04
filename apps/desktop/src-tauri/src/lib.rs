@@ -11,9 +11,12 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kanban_dto::{ApiError, HealthResponse};
-use serde::Serialize;
-use serde_json::json;
+use kanban_dto::{
+    ApiError, HealthResponse, InitiativeArchiveRequest, InitiativeCreateRequest,
+    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, MutationContext,
+};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub mod core_link;
@@ -50,25 +53,115 @@ pub enum ConnectionState {
     Disconnected,
 }
 
-/// The one query the catalog exposes today, served through the
-/// generated contract's DTOs.
+/// Run one operation on the shell's link, from a blocking task so
+/// the link's mutex never blocks the async runtime, and decode the
+/// answer into its contract type. The typed commands below are the
+/// only wrappers the WebView may call.
+fn over_link<T, F>(shell: &Arc<Shell>, subject: &str, call: F) -> Result<T, ApiError>
+where
+    T: DeserializeOwned,
+    F: FnOnce(&CoreLink) -> Result<Value, ApiError>,
+{
+    let guard = shell
+        .link
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let link = guard.as_ref().ok_or_else(|| {
+        ApiError::internal("the core connection is not up; retry once it connects")
+    })?;
+    let payload = call(link)?;
+    serde_json::from_value(payload).map_err(|_| {
+        ApiError::internal(&format!("the {subject} answer did not match its contract"))
+    })
+}
+
+/// Encode a typed request into its JSON payload.
+fn encode<T: Serialize>(request: T) -> Result<Value, ApiError> {
+    serde_json::to_value(request)
+        .map_err(|_| ApiError::internal("the typed request could not be encoded"))
+}
+
 #[tauri::command]
 async fn health_get(shell: State<'_, Arc<Shell>>) -> Result<HealthResponse, ApiError> {
     let shell = shell.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let guard = shell
-            .link
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let link = guard.as_ref().ok_or_else(|| {
-            ApiError::internal("the core connection is not up; retry once it connects")
-        })?;
-        let payload = link.query("health.get", &json!({}))?;
-        serde_json::from_value(payload)
-            .map_err(|_| ApiError::internal("the health answer did not match its contract"))
+        over_link(&shell, "health", |link| {
+            link.query("health.get", &json!({}))
+        })
     })
     .await
     .map_err(|_| ApiError::internal("the health task did not finish"))?
+}
+
+#[tauri::command]
+async fn initiative_create(
+    shell: State<'_, Arc<Shell>>,
+    mutation: MutationContext,
+    name: String,
+) -> Result<InitiativeRecord, ApiError> {
+    let payload = encode(InitiativeCreateRequest { mutation, name })?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "created Initiative", |link| {
+            link.command("initiative.create", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the create task did not finish"))?
+}
+
+#[tauri::command]
+async fn initiative_rename(
+    shell: State<'_, Arc<Shell>>,
+    mutation: MutationContext,
+    initiative_id: u64,
+    name: String,
+) -> Result<InitiativeRecord, ApiError> {
+    let payload = encode(InitiativeRenameRequest {
+        mutation,
+        initiative_id,
+        name,
+    })?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "renamed Initiative", |link| {
+            link.command("initiative.rename", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the rename task did not finish"))?
+}
+
+#[tauri::command]
+async fn initiative_archive(
+    shell: State<'_, Arc<Shell>>,
+    mutation: MutationContext,
+    initiative_id: u64,
+) -> Result<InitiativeRecord, ApiError> {
+    let payload = encode(InitiativeArchiveRequest {
+        mutation,
+        initiative_id,
+    })?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "archived Initiative", |link| {
+            link.command("initiative.archive", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the archive task did not finish"))?
+}
+
+#[tauri::command]
+async fn initiative_list(shell: State<'_, Arc<Shell>>) -> Result<InitiativeListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "initiative list", |link| {
+            link.query("initiative.list", &json!({}))
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the list task did not finish"))?
 }
 
 /// Build the window, start the core on demand, and supervise the
@@ -88,7 +181,13 @@ pub fn run() -> tauri::Result<()> {
                 Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
             }
         })
-        .invoke_handler(tauri::generate_handler![health_get])
+        .invoke_handler(tauri::generate_handler![
+            health_get,
+            initiative_create,
+            initiative_rename,
+            initiative_archive,
+            initiative_list
+        ])
         .run(tauri::generate_context!())
 }
 

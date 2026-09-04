@@ -5,13 +5,14 @@ import type {
   TimelineEntityKind,
   TimelineEntityRef,
   TimelineEventKind,
+  TimelineScope,
 } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
 import { datetimeLocalToUtcIso } from './timeline-datetime'
 
 export interface TimelineEventView {
   id: number
-  project_id: string
+  scope: TimelineScope
   kind: TimelineEventKind
   entity?: TimelineEntityRef | null
   recorded_at: string
@@ -28,7 +29,7 @@ export interface TimelineFilters {
 
 export const useTimelineStore = defineStore('timeline', {
   state: () => ({
-    projectId: '' as string,
+    scope: null as TimelineScope | null,
     filters: {
       entityKind: null,
       entityId: '',
@@ -41,12 +42,12 @@ export const useTimelineStore = defineStore('timeline', {
     error: null as string | null,
   }),
   actions: {
-    async load(transport: ShellTransport, projectId: string): Promise<void> {
-      this.projectId = projectId
+    async load(transport: ShellTransport, scope: TimelineScope): Promise<void> {
+      this.scope = scope
       await this.refresh(transport)
     },
     async refresh(transport: ShellTransport): Promise<void> {
-      if (!this.projectId) {
+      if (this.scope === null) {
         return
       }
       this.loading = true
@@ -54,7 +55,7 @@ export const useTimelineStore = defineStore('timeline', {
       try {
         const client = new KanbanClient(transport)
         const response = await client.queryTimelineQuery({
-          project_id: this.projectId,
+          scope: this.scope,
           entity: this.entityFilter(),
           kinds: this.filters.kinds.length > 0 ? this.filters.kinds : undefined,
           since: datetimeLocalToUtcIso(this.filters.since),
@@ -62,7 +63,7 @@ export const useTimelineStore = defineStore('timeline', {
         })
         this.events = response.events.map((event) => ({
           id: event.id,
-          project_id: event.project_id,
+          scope: event.scope,
           kind: event.kind,
           entity: event.entity,
           recorded_at: event.recorded_at,

@@ -145,8 +145,9 @@ fn internal(error: rusqlite::Error) -> ApiError {
 mod tests {
     use std::num::NonZeroU32;
 
-    use kanban_app::{IdempotencyStore, InitiativeStore, RecordedOutcome, TimelineAppend};
-    use kanban_domain::InitiativeName;
+    use kanban_app::{IdempotencyStore, InitiativeStore, RecordedOutcome, TimelineEnvelope};
+    use kanban_domain::{InitiativeId, InitiativeName};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::{Value, json};
     use tempfile::TempDir;
 
@@ -196,9 +197,15 @@ mod tests {
         store
             .create(
                 &InitiativeName::new(name).expect("the name validates"),
-                TimelineAppend {
-                    kind: "initiative.created",
-                    facts: json!({ "name": name }),
+                &|id: InitiativeId| {
+                    TimelineEnvelope::global(
+                        TimelineEventKind::Transition,
+                        Some(TimelineEntityRef {
+                            kind: TimelineEntityKind::Initiative,
+                            id: id.value().to_string(),
+                        }),
+                        json!({ "action": "created", "id": id.value(), "name": name }),
+                    )
                 },
             )
             .expect("the create writes");

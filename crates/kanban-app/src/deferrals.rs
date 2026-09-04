@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::EventSink;
-use crate::initiative::TimelineAppend;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::timeline::TimelineFacts;
 
 /// The storage port deferral commands call through.
 pub trait DeferralStore: Send + Sync {
     /// Insert one immutable deferral and its timeline append.
-    fn insert(&self, draft: &DeferralDraft, append: TimelineAppend) -> Result<Deferral, ApiError>;
+    fn insert(&self, draft: &DeferralDraft, facts: TimelineFacts) -> Result<Deferral, ApiError>;
     /// Load one deferral, if it exists in the project.
     fn find(&self, project_id: &str, id: DeferralId) -> Result<Option<Deferral>, ApiError>;
     /// List every deferral for a project, superseded originals included.
@@ -71,8 +71,8 @@ impl CommandHandler for RecordDeferral {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let deferral = self.store.insert(
             &draft,
-            TimelineAppend {
-                kind: "deferral",
+            TimelineFacts {
+                kind: kanban_dto::TimelineEventKind::Deferral,
                 facts: json!({
                     "finding_id": draft.finding_id,
                     "reason": draft.reason.as_str(),
@@ -111,8 +111,8 @@ impl CommandHandler for SupersedeDeferral {
         let draft = original.supersede(reason);
         let deferral = self.store.insert(
             &draft,
-            TimelineAppend {
-                kind: "deferral",
+            TimelineFacts {
+                kind: kanban_dto::TimelineEventKind::Deferral,
                 facts: json!({
                     "finding_id": draft.finding_id,
                     "reason": draft.reason.as_str(),
@@ -173,7 +173,7 @@ mod tests {
     use kanban_dto::{ApiError, DeferralListQuery, ErrorCode};
     use serde_json::json;
 
-    use super::{DeferralStore, ListDeferrals, RecordDeferral, SupersedeDeferral, TimelineAppend};
+    use super::{DeferralStore, ListDeferrals, RecordDeferral, SupersedeDeferral, TimelineFacts};
     use crate::dispatch::QueryHandler;
     use crate::events::NoopEventSink;
     use crate::mutation::{CommandHandler, ParsedCommand};
@@ -205,7 +205,7 @@ mod tests {
         fn insert(
             &self,
             draft: &DeferralDraft,
-            _append: TimelineAppend,
+            _facts: TimelineFacts,
         ) -> Result<Deferral, ApiError> {
             Ok(self.insert_draft(draft.clone()))
         }

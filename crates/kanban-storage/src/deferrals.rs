@@ -2,14 +2,14 @@
 
 use std::fmt;
 
-use kanban_app::{DeferralStore, TimelineAppend};
+use kanban_app::{DeferralStore, TimelineEnvelope, TimelineFacts};
 use kanban_domain::{Deferral, DeferralDraft, DeferralId, DeferralReason};
-use kanban_dto::{ApiError, DeferralListQuery};
+use kanban_dto::{ApiError, DeferralListQuery, TimelineEntityKind, TimelineEntityRef};
 use rusqlite::params;
 use serde_json::Value;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
-use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
+use crate::timeline::insert_event;
 
 /// The deferral port over the authoritative database.
 pub struct SqliteDeferralStore {
@@ -30,7 +30,7 @@ impl SqliteDeferralStore {
 }
 
 impl DeferralStore for SqliteDeferralStore {
-    fn insert(&self, draft: &DeferralDraft, append: TimelineAppend) -> Result<Deferral, ApiError> {
+    fn insert(&self, draft: &DeferralDraft, facts: TimelineFacts) -> Result<Deferral, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         span.execute(
@@ -57,7 +57,7 @@ impl DeferralStore for SqliteDeferralStore {
             draft.supersedes,
             recorded_at(&span, id)?,
         );
-        append_timeline(&span, &deferral, &append)?;
+        append_timeline(&span, &deferral, &facts)?;
         span.commit().map_err(internal)?;
         Ok(deferral)
     }
@@ -153,9 +153,9 @@ impl std::error::Error for CorruptReason {}
 fn append_timeline(
     conn: &rusqlite::Connection,
     deferral: &Deferral,
-    append: &TimelineAppend,
+    facts: &TimelineFacts,
 ) -> Result<(), ApiError> {
-    let mut detail = append.facts.clone();
+    let mut detail = facts.facts.clone();
     let object = detail
         .as_object_mut()
         .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?;
@@ -167,22 +167,21 @@ fn append_timeline(
     if let Some(supersedes) = deferral.supersedes() {
         object.insert("supersedes_id".to_owned(), Value::from(supersedes.value()));
     }
-    insert_event(
-        conn,
-        &StorageTimelineAppend {
-            project_id: deferral.project_id().to_owned(),
-            kind: append.kind.to_owned(),
-            entity_kind: Some("finding".to_owned()),
-            entity_id: Some(deferral.finding_id().to_owned()),
-            detail,
-        },
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))
+    let envelope = TimelineEnvelope::project(
+        deferral.project_id(),
+        facts.kind,
+        Some(TimelineEntityRef {
+            kind: TimelineEntityKind::Finding,
+            id: deferral.finding_id().to_owned(),
+        }),
+        detail,
+    )?;
+    insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-    use kanban_app::{DeferralStore, TimelineAppend};
+    use kanban_app::{DeferralStore, TimelineFacts};
     use kanban_domain::{DeferralId, DeferralReason};
     use kanban_dto::DeferralListQuery;
     use serde_json::json;
@@ -201,8 +200,11 @@ mod tests {
         (dir, database, store)
     }
 
-    fn append(kind: &'static str, facts: serde_json::Value) -> TimelineAppend {
-        TimelineAppend { kind, facts }
+    fn append(facts: serde_json::Value) -> TimelineFacts {
+        TimelineFacts {
+            kind: kanban_dto::TimelineEventKind::Deferral,
+            facts,
+        }
     }
 
     fn draft(
@@ -225,7 +227,7 @@ mod tests {
         let deferral = store
             .insert(
                 &draft("kan", "finding-1", "Cosmetic only", None),
-                append("deferral", json!({ "reason": "Cosmetic only" })),
+                append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
 
@@ -245,7 +247,7 @@ mod tests {
         store
             .insert(
                 &draft("kan", "finding-1", "Cosmetic only", None),
-                append("deferral", json!({ "reason": "Cosmetic only" })),
+                append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
 
@@ -266,7 +268,7 @@ mod tests {
         store
             .insert(
                 &draft("kan", "finding-1", "Cosmetic only", None),
-                append("deferral", json!({ "reason": "Cosmetic only" })),
+                append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
 
@@ -285,19 +287,16 @@ mod tests {
         let original = store
             .insert(
                 &draft("kan", "finding-1", "Cosmetic only", None),
-                append("deferral", json!({ "reason": "Cosmetic only" })),
+                append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the original lands");
         store
             .insert(
                 &draft("kan", "finding-1", "Accepted risk", Some(original.id())),
-                append(
-                    "deferral",
-                    json!({
-                        "reason": "Accepted risk",
-                        "supersedes_id": original.id().value(),
-                    }),
-                ),
+                append(json!({
+                    "reason": "Accepted risk",
+                    "supersedes_id": original.id().value(),
+                })),
             )
             .expect("the superseding record lands");
 

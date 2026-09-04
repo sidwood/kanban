@@ -146,16 +146,19 @@ export type TimelineEventRecord = {
   entity?: TimelineEntityRef | null;
   id: number;
   kind: TimelineEventKind;
-  project_id: string;
   recorded_at: string;
+  scope: TimelineScope;
 };
 export type TimelineQuery = {
   entity?: TimelineEntityRef | null;
   kinds?: TimelineEventKind[] | null;
-  project_id: string;
+  scope: TimelineScope;
   since?: string | null;
   until?: string | null;
 };
 export type TimelineQueryResponse = {
   events: TimelineEventRecord[];
+};
+export type TimelineScope = 'global' | {
+  project: string;
 };

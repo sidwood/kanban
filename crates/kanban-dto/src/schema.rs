@@ -22,7 +22,7 @@ use crate::ruling::{
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
-    TimelineQueryResponse,
+    TimelineQueryResponse, TimelineScope,
 };
 
 /// Every DTO schema exported to `packages/contracts`.
@@ -83,5 +83,6 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TimelineEventRecord", schema_for!(TimelineEventRecord)),
         ("TimelineQuery", schema_for!(TimelineQuery)),
         ("TimelineQueryResponse", schema_for!(TimelineQueryResponse)),
+        ("TimelineScope", schema_for!(TimelineScope)),
     ]
 }

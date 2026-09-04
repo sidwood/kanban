@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use crate::error::StorageError;
 use crate::migrations::{self, MigrationReport, PreMigrationHook};
 use crate::paths;
-use crate::timeline::{TimelineAppend, TimelineFilter, TimelineRow};
+use crate::timeline::{TimelineFilter, TimelineRow};
 
 /// The shareable handle to the one connection the core owns.
 /// rusqlite connections are `Send` but not `Sync`; the lock is what
@@ -175,7 +175,10 @@ impl Database {
     }
 
     /// Appends to the activity timeline. The only write it supports.
-    pub fn append_timeline_event(&self, event: &TimelineAppend) -> Result<(), StorageError> {
+    pub fn append_timeline_event(
+        &self,
+        event: &kanban_app::TimelineEnvelope,
+    ) -> Result<(), StorageError> {
         crate::timeline::insert_event(&self.lock(), event)
     }
 

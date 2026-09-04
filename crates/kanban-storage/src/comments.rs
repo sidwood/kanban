@@ -2,16 +2,17 @@
 //! `comments`, immutable revisions in `comment_revisions`, and the
 //! timeline append landing in the same transaction as every change.
 
-use kanban_app::CommentStore;
+use kanban_app::{CommentStore, TimelineEnvelope};
 use kanban_domain::{Comment, CommentId, CommentRevision, CommentTarget, CommentText};
 use kanban_dto::{
     ApiError, CommentRecord, CommentRevisionRecord, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
 };
 use rusqlite::params;
 use serde_json::json;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
-use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
+use crate::timeline::insert_event;
 
 /// The Comment port over the authoritative database.
 pub struct SqliteCommentStore {
@@ -239,22 +240,24 @@ fn append_timeline(
     revision: u64,
     recorded_at: &str,
 ) -> Result<(), ApiError> {
-    insert_event(
-        conn,
-        &StorageTimelineAppend {
-            project_id: project_id.to_owned(),
-            kind: "comment".to_owned(),
-            entity_kind: Some(target.kind().to_owned()),
-            entity_id: Some(target.id().to_owned()),
-            detail: json!({
-                "comment_id": id.value(),
-                "text": text.as_str(),
-                "revision": revision,
-                "recorded_at": recorded_at,
-            }),
-        },
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))
+    let envelope = TimelineEnvelope::project(
+        project_id,
+        TimelineEventKind::Comment,
+        Some(TimelineEntityRef {
+            // The target passed the vocabulary check on the way in;
+            // anything else is corruption.
+            kind: TimelineEntityKind::parse(target.kind())
+                .ok_or_else(|| ApiError::internal("a stored Comment target is corrupt"))?,
+            id: target.id().to_owned(),
+        }),
+        json!({
+            "comment_id": id.value(),
+            "text": text.as_str(),
+            "revision": revision,
+            "recorded_at": recorded_at,
+        }),
+    )?;
+    insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 fn record_of(comment: &Comment) -> CommentRecord {

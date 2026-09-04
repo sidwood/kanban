@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Where a timeline row belongs. Entities that sit above every Project — Initiatives, for one — are recorded globally; everything inside a Project is recorded against that Project's identity.",
+  "oneOf": [
+    {
+      "description": "Above every Project.",
+      "enum": [
+        "global"
+      ],
+      "type": "string"
+    },
+    {
+      "additionalProperties": false,
+      "description": "One Project's own timeline, named by its identity.",
+      "properties": {
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "TimelineScope"
+}

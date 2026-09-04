@@ -1,15 +1,14 @@
 //! The SQLite implementation of the Initiative storage port: rows
-//! in `initiatives`, and the timeline append landing in the same
-//! transaction as every change.
+//! in `initiatives`, and the application's timeline envelope landing
+//! unchanged in the same transaction as every change.
 
-use kanban_app::{InitiativeStore, TimelineAppend};
+use kanban_app::{InitiativeStore, TimelineEnvelope};
 use kanban_domain::{Initiative, InitiativeId, InitiativeName, InitiativeState};
 use kanban_dto::ApiError;
 use rusqlite::params;
-use serde_json::Value;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
-use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
+use crate::timeline::insert_event;
 
 /// The Initiative port over the authoritative database.
 pub struct SqliteInitiativeStore {
@@ -34,7 +33,7 @@ impl InitiativeStore for SqliteInitiativeStore {
     fn create(
         &self,
         name: &InitiativeName,
-        append: TimelineAppend,
+        envelope: &dyn Fn(InitiativeId) -> TimelineEnvelope,
     ) -> Result<Initiative, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
@@ -48,7 +47,7 @@ impl InitiativeStore for SqliteInitiativeStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Initiative identity overflowed"))?,
         );
-        append_timeline(&span, id, &append)?;
+        append_timeline(&span, &envelope(id))?;
         span.commit().map_err(internal)?;
         Ok(Initiative::new(id, name.clone()))
     }
@@ -67,7 +66,7 @@ impl InitiativeStore for SqliteInitiativeStore {
         }
     }
 
-    fn save(&self, initiative: &Initiative, append: TimelineAppend) -> Result<(), ApiError> {
+    fn save(&self, initiative: &Initiative, envelope: TimelineEnvelope) -> Result<(), ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let archived = initiative.is_archived();
@@ -96,7 +95,7 @@ impl InitiativeStore for SqliteInitiativeStore {
                 initiative.id()
             )));
         }
-        append_timeline(&span, initiative.id(), &append)?;
+        append_timeline(&span, &envelope)?;
         span.commit().map_err(internal)?;
         Ok(())
     }
@@ -157,36 +156,20 @@ impl std::fmt::Display for CorruptName {
 
 impl std::error::Error for CorruptName {}
 
-/// Append the change's timeline entry, with the Initiative's
-/// identity in the facts, in the same write as the row.
+/// Insert the application's envelope, unchanged, on the same
+/// transaction as the row it records.
 fn append_timeline(
     conn: &rusqlite::Connection,
-    id: InitiativeId,
-    append: &TimelineAppend,
+    envelope: &TimelineEnvelope,
 ) -> Result<(), ApiError> {
-    let mut detail = append.facts.clone();
-    detail
-        .as_object_mut()
-        .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?
-        .insert("id".to_owned(), Value::from(id.value()));
-    insert_event(
-        conn,
-        &StorageTimelineAppend {
-            project_id: String::new(),
-            kind: append.kind.to_owned(),
-            entity_kind: Some("initiative".to_owned()),
-            entity_id: Some(id.value().to_string()),
-            detail,
-        },
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))
+    insert_event(conn, envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-    use kanban_app::{InitiativeStore, TimelineAppend};
+    use kanban_app::{InitiativeStore, TimelineEnvelope};
     use kanban_domain::{Initiative, InitiativeId, InitiativeName};
-    use kanban_dto::ErrorCode;
+    use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::json;
 
     use super::SqliteInitiativeStore;
@@ -203,8 +186,26 @@ mod tests {
         (dir, database, store)
     }
 
-    fn append(kind: &'static str, facts: serde_json::Value) -> TimelineAppend {
-        TimelineAppend { kind, facts }
+    /// The envelope the application layer builds for one Initiative
+    /// transition, as the store receives it.
+    fn transition(id: InitiativeId, action: &str, facts: serde_json::Value) -> TimelineEnvelope {
+        let mut detail = facts;
+        let object = detail.as_object_mut().expect("the facts are an object");
+        object.insert("action".to_owned(), serde_json::Value::from(action));
+        object.insert("id".to_owned(), serde_json::Value::from(id.value()));
+        TimelineEnvelope::global(
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Initiative,
+                id: id.value().to_string(),
+            }),
+            detail,
+        )
+    }
+
+    /// The envelope builder a create hands the store.
+    fn created(name: &'static str) -> impl Fn(InitiativeId) -> TimelineEnvelope {
+        move |id| transition(id, "created", json!({ "name": name }))
     }
 
     fn stored_rows(database: &Database) -> Vec<(i64, String, i64, i64)> {
@@ -221,16 +222,18 @@ mod tests {
             .expect("the rows decode")
     }
 
-    fn timeline_rows(database: &Database) -> Vec<(String, serde_json::Value)> {
+    fn timeline_rows(database: &Database) -> Vec<(String, String, String, serde_json::Value)> {
         let conn = database.connection();
         let mut statement = conn
-            .prepare("SELECT kind, detail FROM timeline_events ORDER BY id")
+            .prepare("SELECT scope, project_id, kind, detail FROM timeline_events ORDER BY id")
             .expect("the timeline is readable");
         statement
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    serde_json::from_str(&row.get::<_, String>(1)?)
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    serde_json::from_str(&row.get::<_, String>(3)?)
                         .expect("the stored detail is JSON"),
                 ))
             })
@@ -246,7 +249,7 @@ mod tests {
         let initiative = store
             .create(
                 &InitiativeName::new("Reliability").expect("the name validates"),
-                append("initiative.created", json!({ "name": "Reliability" })),
+                &created("Reliability"),
             )
             .expect("the create lands");
 
@@ -258,9 +261,12 @@ mod tests {
         assert_eq!(
             timeline_rows(&database),
             vec![(
-                "initiative.created".to_owned(),
-                json!({ "name": "Reliability", "id": 1 })
-            )]
+                "global".to_owned(),
+                String::new(),
+                "transition".to_owned(),
+                json!({ "name": "Reliability", "action": "created", "id": 1 }),
+            )],
+            "the envelope reaches the row unchanged"
         );
     }
 
@@ -270,7 +276,7 @@ mod tests {
         store
             .create(
                 &InitiativeName::new("Alpha").expect("the name validates"),
-                append("initiative.created", json!({ "name": "Alpha" })),
+                &created("Alpha"),
             )
             .expect("the create lands");
 
@@ -294,7 +300,7 @@ mod tests {
         let mut initiative = store
             .create(
                 &InitiativeName::new("Alpha").expect("the name validates"),
-                append("initiative.created", json!({ "name": "Alpha" })),
+                &created("Alpha"),
             )
             .expect("the create lands");
         initiative
@@ -304,8 +310,9 @@ mod tests {
         store
             .save(
                 &initiative,
-                append(
-                    "initiative.renamed",
+                transition(
+                    initiative.id(),
+                    "renamed",
                     json!({ "from": "Alpha", "to": "Beta" }),
                 ),
             )
@@ -318,8 +325,10 @@ mod tests {
                 .cloned()
                 .expect("the rename appended"),
             (
-                "initiative.renamed".to_owned(),
-                json!({ "from": "Alpha", "to": "Beta", "id": 1 })
+                "global".to_owned(),
+                String::new(),
+                "transition".to_owned(),
+                json!({ "from": "Alpha", "to": "Beta", "action": "renamed", "id": 1 }),
             )
         );
     }
@@ -330,13 +339,16 @@ mod tests {
         let mut initiative = store
             .create(
                 &InitiativeName::new("Alpha").expect("the name validates"),
-                append("initiative.created", json!({ "name": "Alpha" })),
+                &created("Alpha"),
             )
             .expect("the create lands");
         initiative.archive().expect("active archives");
 
         store
-            .save(&initiative, append("initiative.archived", json!({})))
+            .save(
+                &initiative,
+                transition(initiative.id(), "archived", json!({})),
+            )
             .expect("the save lands");
 
         assert_eq!(stored_rows(&database), vec![(1, "Alpha".to_owned(), 1, 2)]);
@@ -364,7 +376,7 @@ mod tests {
         );
 
         let error = store
-            .save(&ghost, append("initiative.renamed", json!({})))
+            .save(&ghost, transition(ghost.id(), "renamed", json!({})))
             .expect_err("the unknown Initiative is refused");
 
         assert_eq!(error.code, ErrorCode::NotFound);
@@ -377,7 +389,7 @@ mod tests {
             store
                 .create(
                     &InitiativeName::new(name).expect("the name validates"),
-                    append("initiative.created", json!({ "name": name })),
+                    &move |id| transition(id, "created", json!({ "name": name })),
                 )
                 .expect("the create lands");
         }
@@ -387,7 +399,7 @@ mod tests {
             .expect("the Initiative exists");
         first.archive().expect("active archives");
         store
-            .save(&first, append("initiative.archived", json!({})))
+            .save(&first, transition(first.id(), "archived", json!({})))
             .expect("the save lands");
 
         let listed = store.list().expect("the list serves");
@@ -415,7 +427,7 @@ mod tests {
         store
             .create(
                 &InitiativeName::new("Alpha").expect("the name validates"),
-                append("initiative.created", json!({ "name": "Alpha" })),
+                &created("Alpha"),
             )
             .expect("the create lands");
 
@@ -446,7 +458,7 @@ mod tests {
             boxed
                 .create(
                     &InitiativeName::new("Threaded").expect("the name validates"),
-                    append("initiative.created", json!({ "name": "Threaded" })),
+                    &created("Threaded"),
                 )
                 .map(|initiative| initiative.name().to_owned())
         })

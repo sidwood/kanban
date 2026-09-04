@@ -1,22 +1,23 @@
-//! SQLite-backed implementation of the timeline port.
+//! SQLite-backed implementation of the timeline query port.
+//!
+//! Rows are written by the entity stores inside their own
+//! transactions; this adapter reads them back and refuses any row
+//! that no longer decodes into the payload vocabulary.
 
 use std::sync::Arc;
 
 use kanban_app::{TimelineError, TimelineStore};
 use kanban_dto::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
+    TimelineScope,
 };
-use kanban_storage::{Database, TimelineAppend, TimelineFilter, TimelineRow};
-use serde_json::Value;
+use kanban_storage::{Database, TimelineFilter, TimelineRow};
 
-/// The storage adapter the core uses for timeline queries and
-/// appends.
+/// The storage adapter the core uses for timeline queries.
 ///
 /// It shares the database handle rather than wrapping it: the
 /// database already serialises its own connection, and a second lock
-/// here would let a query hold this one while waiting for the
-/// connection a mutation span holds, which is a deadlock as soon as
-/// a command appends through this port.
+/// here would duplicate ownership of the authoritative connection.
 pub struct StorageTimelineStore {
     database: Arc<Database>,
 }
@@ -29,28 +30,9 @@ impl StorageTimelineStore {
 }
 
 impl TimelineStore for StorageTimelineStore {
-    fn append(
-        &self,
-        project_id: &str,
-        kind: TimelineEventKind,
-        entity: Option<TimelineEntityRef>,
-        detail: Value,
-    ) -> Result<(), TimelineError> {
-        let append = TimelineAppend {
-            project_id: project_id.to_owned(),
-            kind: kind.as_str().to_owned(),
-            entity_kind: entity.as_ref().map(|value| value.kind.as_str().to_owned()),
-            entity_id: entity.map(|value| value.id),
-            detail,
-        };
-        self.database
-            .append_timeline_event(&append)
-            .map_err(|error| TimelineError::Storage(error.to_string()))
-    }
-
     fn query(&self, query: &TimelineQuery) -> Result<Vec<TimelineEventRecord>, TimelineError> {
         let filter = TimelineFilter {
-            project_id: query.project_id.clone(),
+            scope: query.scope.clone(),
             entity_kind: query
                 .entity
                 .as_ref()
@@ -73,6 +55,7 @@ impl TimelineStore for StorageTimelineStore {
 }
 
 fn row_to_record(row: TimelineRow) -> Result<TimelineEventRecord, TimelineError> {
+    let scope = row_scope(&row.scope, row.project_id)?;
     let kind = dto_event_kind(&row.kind)?;
     let entity = match (row.entity_kind, row.entity_id) {
         (Some(kind), Some(id)) => Some(TimelineEntityRef {
@@ -88,12 +71,28 @@ fn row_to_record(row: TimelineRow) -> Result<TimelineEventRecord, TimelineError>
     };
     Ok(TimelineEventRecord {
         id: row.id,
-        project_id: row.project_id,
+        scope,
         kind,
         entity,
         recorded_at: row.recorded_at,
         detail: row.detail,
     })
+}
+
+fn row_scope(scope: &str, project_id: String) -> Result<TimelineScope, TimelineError> {
+    match scope {
+        "global" if project_id.is_empty() => Ok(TimelineScope::Global),
+        "global" => Err(TimelineError::Storage(format!(
+            "a global timeline row named the Project `{project_id}`"
+        ))),
+        "project" if project_id.is_empty() => Err(TimelineError::Storage(
+            "a Project timeline row named no Project".to_owned(),
+        )),
+        "project" => Ok(TimelineScope::Project(project_id)),
+        other => Err(TimelineError::Storage(format!(
+            "unknown stored timeline scope `{other}`"
+        ))),
+    }
 }
 
 fn dto_event_kind(kind: &str) -> Result<TimelineEventKind, TimelineError> {

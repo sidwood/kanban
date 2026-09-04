@@ -106,6 +106,29 @@ impl TimelineEntityKind {
     }
 }
 
+/// Where a timeline row belongs. Entities that sit above every
+/// Project — Initiatives, for one — are recorded globally; everything
+/// inside a Project is recorded against that Project's identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineScope {
+    /// Above every Project.
+    Global,
+    /// One Project's own timeline, named by its identity.
+    Project(String),
+}
+
+impl TimelineScope {
+    /// The Project identity this scope names, or `None` when the
+    /// scope is global.
+    pub fn project_id(&self) -> Option<&str> {
+        match self {
+            Self::Global => None,
+            Self::Project(project_id) => Some(project_id),
+        }
+    }
+}
+
 /// A timeline-visible entity reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -119,7 +142,7 @@ pub struct TimelineEntityRef {
 #[serde(deny_unknown_fields)]
 pub struct TimelineEventRecord {
     pub id: u64,
-    pub project_id: String,
+    pub scope: TimelineScope,
     pub kind: TimelineEventKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<TimelineEntityRef>,
@@ -131,7 +154,7 @@ pub struct TimelineEventRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TimelineQuery {
-    pub project_id: String,
+    pub scope: TimelineScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<TimelineEntityRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,7 +174,7 @@ pub struct TimelineQueryResponse {
 
 #[cfg(test)]
 mod vocabulary {
-    use super::{TimelineEntityKind, TimelineEventKind};
+    use super::{TimelineEntityKind, TimelineEventKind, TimelineScope};
 
     #[test]
     fn event_kinds_round_trip_through_their_wire_names() {
@@ -207,6 +230,33 @@ mod vocabulary {
                 "the wire name and the serialised name must agree"
             );
         }
+    }
+
+    #[test]
+    fn the_global_scope_names_no_project() {
+        let scope = TimelineScope::Global;
+
+        assert_eq!(scope.project_id(), None);
+        assert_eq!(
+            serde_json::to_value(&scope).expect("the scope encodes"),
+            serde_json::json!("global")
+        );
+    }
+
+    #[test]
+    fn a_project_scope_carries_its_identity() {
+        let scope = TimelineScope::Project("kan".to_owned());
+
+        assert_eq!(scope.project_id(), Some("kan"));
+        assert_eq!(
+            serde_json::to_value(&scope).expect("the scope encodes"),
+            serde_json::json!({ "project": "kan" })
+        );
+        assert_eq!(
+            serde_json::from_value::<TimelineScope>(serde_json::json!({ "project": "kan" }))
+                .expect("the scope decodes"),
+            scope
+        );
     }
 
     #[test]

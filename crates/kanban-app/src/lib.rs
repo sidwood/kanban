@@ -17,14 +17,16 @@ pub use comment::CommentStore;
 pub use deferrals::DeferralStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
-pub use initiative::{InitiativeStore, TimelineAppend};
+pub use initiative::InitiativeStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{
     CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
 pub use rulings::RulingStore;
-pub use timeline::{TimelineError, TimelineQueryHandler, TimelineRecorder, TimelineStore};
+pub use timeline::{
+    TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
+};
 
 #[cfg(test)]
 mod tests {

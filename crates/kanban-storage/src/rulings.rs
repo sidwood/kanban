@@ -1,13 +1,13 @@
 //! The SQLite implementation of the ruling storage port.
 
-use kanban_app::{RulingStore, TimelineAppend};
+use kanban_app::{RulingStore, TimelineEnvelope, TimelineFacts};
 use kanban_domain::{Ruling, RulingDraft, RulingEntityRef, RulingId, RulingSummary};
-use kanban_dto::{ApiError, RulingListQuery};
+use kanban_dto::{ApiError, RulingListQuery, TimelineEntityKind, TimelineEntityRef};
 use rusqlite::params;
 use serde_json::Value;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
-use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
+use crate::timeline::insert_event;
 
 /// The ruling port over the authoritative database.
 pub struct SqliteRulingStore {
@@ -28,7 +28,7 @@ impl SqliteRulingStore {
 }
 
 impl RulingStore for SqliteRulingStore {
-    fn insert(&self, draft: &RulingDraft, append: TimelineAppend) -> Result<Ruling, ApiError> {
+    fn insert(&self, draft: &RulingDraft, facts: TimelineFacts) -> Result<Ruling, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let (entity_kind, entity_id) = entity_parts(&draft.entity);
@@ -57,7 +57,7 @@ impl RulingStore for SqliteRulingStore {
             draft.supersedes,
             recorded_at(&span, id)?,
         );
-        append_timeline(&span, &ruling, &append)?;
+        append_timeline(&span, &ruling, &facts)?;
         span.commit().map_err(internal)?;
         Ok(ruling)
     }
@@ -105,6 +105,21 @@ impl RulingStore for SqliteRulingStore {
         }
         Ok(rulings)
     }
+}
+
+/// The Ruling's entity as the timeline names it. Stored kinds passed
+/// the vocabulary check on the way in; anything else is corruption.
+fn ruling_entity(ruling: &Ruling) -> Result<Option<TimelineEntityRef>, ApiError> {
+    ruling
+        .entity()
+        .map(|entity| {
+            Ok(TimelineEntityRef {
+                kind: TimelineEntityKind::parse(&entity.kind)
+                    .ok_or_else(|| ApiError::internal("a stored Ruling entity is corrupt"))?,
+                id: entity.id.clone(),
+            })
+        })
+        .transpose()
 }
 
 fn entity_parts(entity: &Option<RulingEntityRef>) -> (Option<String>, Option<String>) {
@@ -172,9 +187,9 @@ impl std::error::Error for CorruptSummary {}
 fn append_timeline(
     conn: &rusqlite::Connection,
     ruling: &Ruling,
-    append: &TimelineAppend,
+    facts: &TimelineFacts,
 ) -> Result<(), ApiError> {
-    let mut detail = append.facts.clone();
+    let mut detail = facts.facts.clone();
     let object = detail
         .as_object_mut()
         .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?;
@@ -182,23 +197,18 @@ fn append_timeline(
     if let Some(supersedes) = ruling.supersedes() {
         object.insert("supersedes_id".to_owned(), Value::from(supersedes.value()));
     }
-    let (entity_kind, entity_id) = entity_parts(&ruling.entity().cloned());
-    insert_event(
-        conn,
-        &StorageTimelineAppend {
-            project_id: ruling.project_id().to_owned(),
-            kind: append.kind.to_owned(),
-            entity_kind,
-            entity_id,
-            detail,
-        },
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))
+    let envelope = TimelineEnvelope::project(
+        ruling.project_id(),
+        facts.kind,
+        ruling_entity(ruling)?,
+        detail,
+    )?;
+    insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-    use kanban_app::{RulingStore, TimelineAppend};
+    use kanban_app::{RulingStore, TimelineFacts};
     use kanban_domain::{RulingEntityRef, RulingId, RulingSummary};
     use kanban_dto::RulingListQuery;
     use serde_json::json;
@@ -217,8 +227,11 @@ mod tests {
         (dir, database, store)
     }
 
-    fn append(kind: &'static str, facts: serde_json::Value) -> TimelineAppend {
-        TimelineAppend { kind, facts }
+    fn append(facts: serde_json::Value) -> TimelineFacts {
+        TimelineFacts {
+            kind: kanban_dto::TimelineEventKind::Ruling,
+            facts,
+        }
     }
 
     fn draft(
@@ -249,7 +262,7 @@ mod tests {
                     }),
                     None,
                 ),
-                append("ruling", json!({ "summary": "Allow landing" })),
+                append(json!({ "summary": "Allow landing" })),
             )
             .expect("the insert lands");
 
@@ -275,7 +288,7 @@ mod tests {
         store
             .insert(
                 &draft("kan", "Hold", None, None),
-                append("ruling", json!({ "summary": "Hold" })),
+                append(json!({ "summary": "Hold" })),
             )
             .expect("the insert lands");
 
@@ -296,7 +309,7 @@ mod tests {
         store
             .insert(
                 &draft("kan", "Hold", None, None),
-                append("ruling", json!({ "summary": "Hold" })),
+                append(json!({ "summary": "Hold" })),
             )
             .expect("the insert lands");
 
@@ -315,16 +328,13 @@ mod tests {
         let original = store
             .insert(
                 &draft("kan", "Hold", None, None),
-                append("ruling", json!({ "summary": "Hold" })),
+                append(json!({ "summary": "Hold" })),
             )
             .expect("the original lands");
         store
             .insert(
                 &draft("kan", "Proceed", None, Some(original.id())),
-                append(
-                    "ruling",
-                    json!({ "summary": "Proceed", "supersedes_id": original.id().value() }),
-                ),
+                append(json!({ "summary": "Proceed", "supersedes_id": original.id().value() })),
             )
             .expect("the superseding record lands");
 

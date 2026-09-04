@@ -8,37 +8,53 @@ use std::sync::Arc;
 use kanban_domain::{Initiative, InitiativeId, InitiativeName};
 use kanban_dto::{
     ApiError, InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
+    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, TimelineEntityKind,
+    TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::EventSink;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
-
-/// One durable timeline append bound to a mutation: the kind plus
-/// the human facts of the change. The store adds the Initiative's
-/// identity, so the append and the row land together.
-#[derive(Debug, Clone)]
-pub struct TimelineAppend {
-    /// The event kind, e.g. `initiative.created`.
-    pub kind: &'static str,
-    /// The change's facts, e.g. the from/to names of a rename.
-    pub facts: Value,
-}
+use crate::timeline::TimelineEnvelope;
 
 /// The storage port Initiative commands call through. Implementations
-/// append the timeline entry inside the same write as the row.
+/// insert the timeline envelope unchanged inside the same write as
+/// the row.
 pub trait InitiativeStore: Send + Sync {
-    /// Insert a fresh Initiative; storage assigns its identity.
-    fn create(&self, name: &InitiativeName, append: TimelineAppend)
-    -> Result<Initiative, ApiError>;
+    /// Insert a fresh Initiative. Storage assigns its identity and
+    /// asks `envelope` for the timeline row that identity belongs in.
+    fn create(
+        &self,
+        name: &InitiativeName,
+        envelope: &dyn Fn(InitiativeId) -> TimelineEnvelope,
+    ) -> Result<Initiative, ApiError>;
     /// Load one Initiative, if it exists.
     fn find(&self, id: InitiativeId) -> Result<Option<Initiative>, ApiError>;
-    /// Persist an applied transition and its timeline append.
-    fn save(&self, initiative: &Initiative, append: TimelineAppend) -> Result<(), ApiError>;
+    /// Persist an applied transition and its timeline envelope.
+    fn save(&self, initiative: &Initiative, envelope: TimelineEnvelope) -> Result<(), ApiError>;
     /// Every Initiative in id order, archived included.
     fn list(&self) -> Result<Vec<Initiative>, ApiError>;
+}
+
+/// The timeline row for one Initiative transition. Initiatives sit
+/// above every Project, so their history is global; `action` names
+/// which transition it was inside the closed `transition` kind.
+fn transition(id: InitiativeId, action: &str, facts: Value) -> TimelineEnvelope {
+    let mut detail = facts;
+    let object = detail
+        .as_object_mut()
+        .expect("Initiative transition facts are a JSON object");
+    object.insert("action".to_owned(), Value::from(action));
+    object.insert("id".to_owned(), Value::from(id.value()));
+    TimelineEnvelope::global(
+        TimelineEventKind::Transition,
+        Some(TimelineEntityRef {
+            kind: TimelineEntityKind::Initiative,
+            id: id.value().to_string(),
+        }),
+        detail,
+    )
 }
 
 impl Core {
@@ -90,13 +106,9 @@ impl CommandHandler for CreateInitiative {
         let request: InitiativeCreateRequest = parse_payload(&command.payload)?;
         let name = InitiativeName::new(&request.name)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
-        let initiative = self.store.create(
-            &name,
-            TimelineAppend {
-                kind: "initiative.created",
-                facts: json!({ "name": name.as_str() }),
-            },
-        )?;
+        let initiative = self.store.create(&name, &|id| {
+            transition(id, "created", json!({ "name": name.as_str() }))
+        })?;
         announce(events, "initiative.created", &initiative);
         encode_record(&initiative)
     }
@@ -130,10 +142,11 @@ impl CommandHandler for RenameInitiative {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store.save(
             &initiative,
-            TimelineAppend {
-                kind: "initiative.renamed",
-                facts: json!({ "from": previous, "to": initiative.name() }),
-            },
+            transition(
+                initiative.id(),
+                "renamed",
+                json!({ "from": previous, "to": initiative.name() }),
+            ),
         )?;
         announce(events, "initiative.renamed", &initiative);
         encode_record(&initiative)
@@ -165,10 +178,7 @@ impl CommandHandler for ArchiveInitiative {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store.save(
             &initiative,
-            TimelineAppend {
-                kind: "initiative.archived",
-                facts: json!({}),
-            },
+            transition(initiative.id(), "archived", json!({})),
         )?;
         announce(events, "initiative.archived", &initiative);
         encode_record(&initiative)
@@ -233,14 +243,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{Initiative, InitiativeId, InitiativeName};
-    use kanban_dto::{ApiError, ErrorCode};
+    use kanban_dto::{
+        ApiError, ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+        TimelineScope,
+    };
     use serde_json::{Value, json};
 
-    use super::{InitiativeStore, TimelineAppend};
+    use super::InitiativeStore;
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
     use crate::mutation::MemoryIdempotencyStore;
+    use crate::timeline::TimelineEnvelope;
 
     /// An in-memory store: rows by id, plus every timeline append
     /// it was asked to land, for assertions.
@@ -253,12 +267,12 @@ mod tests {
     struct MemoryState {
         initiatives: Vec<Initiative>,
         next_id: u64,
-        timeline: Vec<(String, Value)>,
+        timeline: Vec<TimelineEnvelope>,
     }
 
     impl MemoryInitiativeStore {
-        /// The stored rows and timeline appends, for assertions.
-        fn snapshot(&self) -> (Vec<Initiative>, Vec<(String, Value)>) {
+        /// The stored rows and timeline envelopes, for assertions.
+        fn snapshot(&self) -> (Vec<Initiative>, Vec<TimelineEnvelope>) {
             let state = self.state.lock().expect("the memory store lock is sound");
             (state.initiatives.clone(), state.timeline.clone())
         }
@@ -268,16 +282,14 @@ mod tests {
         fn create(
             &self,
             name: &InitiativeName,
-            append: TimelineAppend,
+            envelope: &dyn Fn(InitiativeId) -> TimelineEnvelope,
         ) -> Result<Initiative, ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             state.next_id += 1;
             let id = InitiativeId::new(state.next_id);
             let initiative = Initiative::new(id, name.clone());
             state.initiatives.push(initiative.clone());
-            state
-                .timeline
-                .push((append.kind.to_owned(), with_id(&append.facts, id)));
+            state.timeline.push(envelope(id));
             Ok(initiative)
         }
 
@@ -286,15 +298,17 @@ mod tests {
             Ok(state.initiatives.iter().find(|row| row.id() == id).cloned())
         }
 
-        fn save(&self, initiative: &Initiative, append: TimelineAppend) -> Result<(), ApiError> {
+        fn save(
+            &self,
+            initiative: &Initiative,
+            envelope: TimelineEnvelope,
+        ) -> Result<(), ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             let id = initiative.id();
             if let Some(row) = state.initiatives.iter_mut().find(|row| row.id() == id) {
                 *row = initiative.clone();
             }
-            state
-                .timeline
-                .push((append.kind.to_owned(), with_id(&append.facts, id)));
+            state.timeline.push(envelope);
             Ok(())
         }
 
@@ -302,17 +316,6 @@ mod tests {
             let state = self.state.lock().expect("the memory store lock is sound");
             Ok(state.initiatives.clone())
         }
-    }
-
-    /// The facts plus the Initiative's identity, as durable stores
-    /// record them.
-    fn with_id(facts: &Value, id: InitiativeId) -> Value {
-        let mut detail = facts.clone();
-        detail
-            .as_object_mut()
-            .expect("the facts are a JSON object")
-            .insert("id".to_owned(), json!(id.value()));
-        detail
     }
 
     #[derive(Debug, Default)]
@@ -591,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn every_initiative_change_appends_its_timeline_event() {
+    fn every_initiative_change_records_a_global_transition() {
         let store = Arc::new(MemoryInitiativeStore::default());
         let core = initiative_core(store.clone(), Arc::new(crate::events::NoopEventSink));
         core.command("initiative.create", &create("Alpha", "key-1", 0))
@@ -602,20 +605,41 @@ mod tests {
             .expect("the archive applies");
 
         let (_, timeline) = store.snapshot();
+        let entity = TimelineEntityRef {
+            kind: TimelineEntityKind::Initiative,
+            id: "1".to_owned(),
+        };
         assert_eq!(
-            timeline,
+            timeline
+                .iter()
+                .map(|envelope| (
+                    envelope.scope().clone(),
+                    envelope.kind(),
+                    envelope.entity().cloned(),
+                    envelope.detail().clone(),
+                ))
+                .collect::<Vec<_>>(),
             vec![
                 (
-                    "initiative.created".to_owned(),
-                    json!({ "name": "Alpha", "id": 1 })
+                    TimelineScope::Global,
+                    TimelineEventKind::Transition,
+                    Some(entity.clone()),
+                    json!({ "name": "Alpha", "action": "created", "id": 1 }),
                 ),
                 (
-                    "initiative.renamed".to_owned(),
-                    json!({ "from": "Alpha", "to": "Beta", "id": 1 })
+                    TimelineScope::Global,
+                    TimelineEventKind::Transition,
+                    Some(entity.clone()),
+                    json!({ "from": "Alpha", "to": "Beta", "action": "renamed", "id": 1 }),
                 ),
-                ("initiative.archived".to_owned(), json!({ "id": 1 })),
+                (
+                    TimelineScope::Global,
+                    TimelineEventKind::Transition,
+                    Some(entity),
+                    json!({ "action": "archived", "id": 1 }),
+                ),
             ],
-            "each change lands exactly one append with its facts"
+            "Initiatives sit above every Project, and the action names the transition"
         );
     }
 

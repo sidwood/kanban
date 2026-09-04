@@ -39,7 +39,7 @@ describe('timeline surface', () => {
       events: [
         {
           id: 1,
-          project_id: 'kan',
+          scope: { project: 'kan' },
           kind: 'transition',
           entity: { kind: 'ticket', id: 'kan-t9' },
           recorded_at: '2026-09-04T12:00:01Z',
@@ -50,7 +50,7 @@ describe('timeline surface', () => {
 
     const wrapper = mount(TimelineSurface, {
       props: {
-        projectId: 'kan',
+        scope: { project: 'kan' },
         entityKind: 'ticket',
         entityId: 'kan-t9',
       },
@@ -79,7 +79,7 @@ describe('timeline surface', () => {
     }
 
     const wrapper = mount(TimelineSurface, {
-      props: { projectId: 'kan' },
+      props: { scope: { project: 'kan' } },
       global: {
         provide: {
           [kanbanTransportKey as symbol]: transport,
@@ -99,7 +99,7 @@ describe('timeline surface', () => {
     await flushPromises()
 
     expect(query).toHaveBeenCalledWith('timeline.query', {
-      project_id: 'kan',
+      scope: { project: 'kan' },
       entity: { kind: 'ticket', id: 'kan-t9' },
       kinds: ['transition'],
       since: '2026-09-04T00:00:00.000Z',

@@ -34,7 +34,7 @@ pub use ruling::{
 pub use schema::schema_definitions;
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
-    TimelineQueryResponse,
+    TimelineQueryResponse, TimelineScope,
 };
 
 #[cfg(test)]
@@ -117,6 +117,7 @@ mod tests {
                 "TimelineEventRecord",
                 "TimelineQuery",
                 "TimelineQueryResponse",
+                "TimelineScope",
             ]
         );
     }

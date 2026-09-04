@@ -1,12 +1,12 @@
 <script setup lang="ts">
 // Embedded activity timeline with entity, kind, and time filters.
 import { computed, inject, onMounted, watch } from 'vue'
-import type { TimelineEntityKind, TimelineEventKind } from '@kanban/contracts'
+import type { TimelineEntityKind, TimelineEventKind, TimelineScope } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import { useTimelineStore } from '../stores/timeline'
 
 const props = defineProps<{
-  projectId: string
+  scope: TimelineScope
   entityKind?: TimelineEntityKind | null
   entityId?: string
 }>()
@@ -38,6 +38,16 @@ const entityKinds: TimelineEntityKind[] = [
   'evidence',
   'comment',
 ]
+
+// The scope is a value, not an identity: reload when what it names
+// changes, not when the caller hands over an equal object.
+const scopeKey = computed(() =>
+  props.scope === 'global' ? 'global' : `project:${props.scope.project}`,
+)
+
+const scopeLabel = computed(() =>
+  props.scope === 'global' ? 'Everything above Projects' : `Project ${props.scope.project}`,
+)
 
 const selectedKinds = computed({
   get: () => timeline.filters.kinds,
@@ -79,18 +89,15 @@ onMounted(() => {
     timeline.setEntityFilter(props.entityKind, props.entityId ?? '')
   }
   if (transport) {
-    void timeline.load(transport, props.projectId)
+    void timeline.load(transport, props.scope)
   }
 })
 
-watch(
-  () => props.projectId,
-  (projectId) => {
-    if (transport) {
-      void timeline.load(transport, projectId)
-    }
-  },
-)
+watch(scopeKey, () => {
+  if (transport) {
+    void timeline.load(transport, props.scope)
+  }
+})
 </script>
 
 <template>
@@ -103,7 +110,7 @@ watch(
         Activity timeline
       </h2>
       <p class="text-sm text-slate-500">
-        Project {{ projectId }}
+        {{ scopeLabel }}
       </p>
     </header>
 

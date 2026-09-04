@@ -27,4 +27,4 @@ pub use migrations::{
 };
 pub use paths::{database_path, managed_data_dir};
 pub use rulings::SqliteRulingStore;
-pub use timeline::{TimelineAppend, TimelineFilter, TimelineRow};
+pub use timeline::{TimelineFilter, TimelineRow};

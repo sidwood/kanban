@@ -13,13 +13,13 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::EventSink;
-use crate::initiative::TimelineAppend;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::timeline::TimelineFacts;
 
 /// The storage port ruling commands call through.
 pub trait RulingStore: Send + Sync {
     /// Insert one immutable ruling and its timeline append.
-    fn insert(&self, draft: &RulingDraft, append: TimelineAppend) -> Result<Ruling, ApiError>;
+    fn insert(&self, draft: &RulingDraft, facts: TimelineFacts) -> Result<Ruling, ApiError>;
     /// Load one ruling, if it exists in the project.
     fn find(&self, project_id: &str, id: RulingId) -> Result<Option<Ruling>, ApiError>;
     /// List every ruling for a project, superseded originals included.
@@ -72,8 +72,8 @@ impl CommandHandler for RecordRuling {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let ruling = self.store.insert(
             &draft,
-            TimelineAppend {
-                kind: "ruling",
+            TimelineFacts {
+                kind: kanban_dto::TimelineEventKind::Ruling,
                 facts: json!({ "summary": ruling_summary(&draft) }),
             },
         )?;
@@ -105,8 +105,8 @@ impl CommandHandler for SupersedeRuling {
         let draft = original.supersede(summary);
         let ruling = self.store.insert(
             &draft,
-            TimelineAppend {
-                kind: "ruling",
+            TimelineFacts {
+                kind: kanban_dto::TimelineEventKind::Ruling,
                 facts: json!({
                     "summary": ruling_summary(&draft),
                     "supersedes_id": original.id().value(),
@@ -179,7 +179,7 @@ mod tests {
     use kanban_dto::{ApiError, ErrorCode, RulingListQuery};
     use serde_json::json;
 
-    use super::{ListRulings, RecordRuling, RulingStore, SupersedeRuling, TimelineAppend};
+    use super::{ListRulings, RecordRuling, RulingStore, SupersedeRuling, TimelineFacts};
     use crate::dispatch::QueryHandler;
     use crate::events::NoopEventSink;
     use crate::mutation::{CommandHandler, ParsedCommand};
@@ -211,7 +211,7 @@ mod tests {
     }
 
     impl RulingStore for MemoryRulingStore {
-        fn insert(&self, draft: &RulingDraft, _append: TimelineAppend) -> Result<Ruling, ApiError> {
+        fn insert(&self, draft: &RulingDraft, _facts: TimelineFacts) -> Result<Ruling, ApiError> {
             Ok(self.insert_draft(draft.clone()))
         }
 

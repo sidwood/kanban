@@ -83,6 +83,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "idempotency outcomes",
         sql: include_str!("../migrations/0006_idempotency.sql"),
     },
+    Migration {
+        version: 7,
+        name: "timeline scope",
+        sql: include_str!("../migrations/0007_timeline_scope.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -121,6 +126,17 @@ pub(crate) fn run(
         report.applied.push(migration.version);
     }
     Ok(report)
+}
+
+/// Applies every migration up to and including `version`, for tests
+/// that must fabricate the state an older schema left behind.
+#[cfg(test)]
+pub(crate) fn apply_through(conn: &Connection, version: i64) -> Result<(), StorageError> {
+    ensure_bookkeeping(conn)?;
+    for migration in MIGRATIONS.iter().filter(|entry| entry.version <= version) {
+        apply_one(conn, migration)?;
+    }
+    Ok(())
 }
 
 /// Creates the runner's own bookkeeping table. It records state,
@@ -222,7 +238,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6]
+                applied: vec![1, 2, 3, 4, 5, 6, 7]
             }
         );
         assert_eq!(
@@ -242,7 +258,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -300,7 +316,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 6, "one event per applied migration");
+        assert_eq!(events.len(), 7, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -330,6 +346,11 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[5].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 6, "name": "idempotency outcomes" })
+        );
+        assert_eq!(events[6].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[6].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 7, "name": "timeline scope" })
         );
     }
 
@@ -388,6 +409,10 @@ mod tests {
                 PendingMigration {
                     version: 6,
                     name: "idempotency outcomes",
+                },
+                PendingMigration {
+                    version: 7,
+                    name: "timeline scope",
                 },
             ]]
         );

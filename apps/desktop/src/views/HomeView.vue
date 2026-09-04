@@ -2,12 +2,16 @@
 // The boot surface: everything the operator sees before the board
 // views land, bound to connection state from the generated client.
 import { computed, inject, onMounted } from 'vue'
+import type { TimelineScope } from '@kanban/contracts'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useConnectionStore } from '../stores/connection'
 
 const transport = inject(kanbanTransportKey)
 const connection = useConnectionStore()
+
+// A stable value, so the surface reloads only when the scope changes.
+const timelineScope: TimelineScope = { project: 'kan' }
 
 onMounted(() => {
   if (transport) {
@@ -59,7 +63,7 @@ const eventStream = computed(() =>
     </RouterLink>
     <TimelineSurface
       v-if="connection.phase === 'connected'"
-      project-id="kan"
+      :scope="timelineScope"
       entity-kind="ticket"
       entity-id="kan-t9"
       class="mt-6"

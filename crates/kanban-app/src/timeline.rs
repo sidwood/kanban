@@ -1,26 +1,105 @@
-//! The timeline port, recorder, and query handler (KAN-S2).
+//! The typed timeline envelope, the query port, and the query
+//! handler (KAN-S2).
 
 use kanban_dto::{
     ApiError, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
-    TimelineQueryResponse,
+    TimelineQueryResponse, TimelineScope,
 };
 use serde_json::Value;
 
 use crate::dispatch::QueryHandler;
 use crate::mutation::parse_payload;
 
-/// The storage port for the append-only per-Project timeline.
-pub trait TimelineStore: Send + Sync {
-    /// Append one typed event to a Project timeline.
-    fn append(
-        &self,
+/// One durable timeline row as the application layer states it:
+/// where it belongs, which closed event kind it is, the entity it
+/// is about, and the structured facts. Storage inserts it into the
+/// entity's own transaction unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimelineEnvelope {
+    scope: TimelineScope,
+    kind: TimelineEventKind,
+    entity: Option<TimelineEntityRef>,
+    detail: Value,
+}
+
+impl TimelineEnvelope {
+    /// An event about an entity that sits above every Project.
+    pub fn global(
+        kind: TimelineEventKind,
+        entity: Option<TimelineEntityRef>,
+        detail: Value,
+    ) -> Self {
+        Self {
+            scope: TimelineScope::Global,
+            kind,
+            entity,
+            detail,
+        }
+    }
+
+    /// An event inside one Project, which must name that Project.
+    pub fn project(
         project_id: &str,
         kind: TimelineEventKind,
         entity: Option<TimelineEntityRef>,
         detail: Value,
-    ) -> Result<(), TimelineError>;
+    ) -> Result<Self, ApiError> {
+        let scope = TimelineScope::Project(project_id.to_owned());
+        require_named_project(&scope)?;
+        Ok(Self {
+            scope,
+            kind,
+            entity,
+            detail,
+        })
+    }
 
-    /// Query events for one Project with optional filters.
+    /// Where the row belongs.
+    pub fn scope(&self) -> &TimelineScope {
+        &self.scope
+    }
+
+    /// The closed event kind.
+    pub fn kind(&self) -> TimelineEventKind {
+        self.kind
+    }
+
+    /// The entity the event is about, when it has one.
+    pub fn entity(&self) -> Option<&TimelineEntityRef> {
+        self.entity.as_ref()
+    }
+
+    /// The structured facts of the change.
+    pub fn detail(&self) -> &Value {
+        &self.detail
+    }
+}
+
+/// The facts of one change that only becomes an envelope once
+/// storage has minted the entity's identity.
+#[derive(Debug, Clone)]
+pub struct TimelineFacts {
+    /// The closed event kind.
+    pub kind: TimelineEventKind,
+    /// The change's facts, e.g. a Ruling's summary.
+    pub facts: Value,
+}
+
+/// A Project scope that names no Project addresses no timeline.
+fn require_named_project(scope: &TimelineScope) -> Result<(), ApiError> {
+    match scope {
+        TimelineScope::Project(project_id) if project_id.is_empty() => Err(
+            ApiError::invalid_request("a Project timeline scope must name a Project"),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// The storage port for reading the append-only timeline. Rows are
+/// written through the entity stores, inside the transaction that
+/// changes the entity, so this port never appends.
+pub trait TimelineStore: Send + Sync {
+    /// Query events in one scope with optional filters.
     fn query(&self, query: &TimelineQuery) -> Result<Vec<TimelineEventRecord>, TimelineError>;
 }
 
@@ -34,60 +113,14 @@ pub enum TimelineError {
 }
 
 impl<S: TimelineStore + ?Sized> TimelineStore for &S {
-    fn append(
-        &self,
-        project_id: &str,
-        kind: TimelineEventKind,
-        entity: Option<TimelineEntityRef>,
-        detail: Value,
-    ) -> Result<(), TimelineError> {
-        (*self).append(project_id, kind, entity, detail)
-    }
-
     fn query(&self, query: &TimelineQuery) -> Result<Vec<TimelineEventRecord>, TimelineError> {
         (*self).query(query)
     }
 }
 
 impl<T: TimelineStore + ?Sized> TimelineStore for std::sync::Arc<T> {
-    fn append(
-        &self,
-        project_id: &str,
-        kind: TimelineEventKind,
-        entity: Option<TimelineEntityRef>,
-        detail: Value,
-    ) -> Result<(), TimelineError> {
-        self.as_ref().append(project_id, kind, entity, detail)
-    }
-
     fn query(&self, query: &TimelineQuery) -> Result<Vec<TimelineEventRecord>, TimelineError> {
         self.as_ref().query(query)
-    }
-}
-
-/// Records domain transitions on the per-Project timeline.
-pub struct TimelineRecorder<S: TimelineStore> {
-    store: S,
-}
-
-impl<S: TimelineStore> TimelineRecorder<S> {
-    /// Wraps `store` as the application's timeline writer.
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-
-    /// Append one typed domain event after validating the kind.
-    pub fn record(
-        &self,
-        project_id: &str,
-        kind: &str,
-        entity: Option<TimelineEntityRef>,
-        detail: Value,
-    ) -> Result<(), TimelineError> {
-        let kind = TimelineEventKind::parse(kind).ok_or_else(|| {
-            TimelineError::Invalid(format!("unknown timeline event kind `{kind}`"))
-        })?;
-        self.store.append(project_id, kind, entity, detail)
     }
 }
 
@@ -106,6 +139,7 @@ impl<S: TimelineStore> TimelineQueryHandler<S> {
 impl<S: TimelineStore + 'static> QueryHandler for TimelineQueryHandler<S> {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query = parse_payload::<TimelineQuery>(payload)?;
+        require_named_project(&query.scope)?;
         let events = self.store.query(&query).map_err(map_timeline_error)?;
         let response = TimelineQueryResponse { events };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
@@ -116,6 +150,57 @@ fn map_timeline_error(error: TimelineError) -> ApiError {
     match error {
         TimelineError::Invalid(reason) => ApiError::invalid_request(&reason),
         TimelineError::Storage(reason) => ApiError::internal(&reason),
+    }
+}
+
+#[cfg(test)]
+mod envelope {
+    use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use serde_json::json;
+
+    use super::TimelineEnvelope;
+    use kanban_dto::TimelineScope;
+
+    fn initiative_entity() -> TimelineEntityRef {
+        TimelineEntityRef {
+            kind: TimelineEntityKind::Initiative,
+            id: "1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_global_envelope_records_above_every_project() {
+        let envelope = TimelineEnvelope::global(
+            TimelineEventKind::Transition,
+            Some(initiative_entity()),
+            json!({ "action": "created" }),
+        );
+
+        assert_eq!(envelope.scope(), &TimelineScope::Global);
+        assert_eq!(envelope.kind(), TimelineEventKind::Transition);
+        assert_eq!(envelope.entity(), Some(&initiative_entity()));
+        assert_eq!(envelope.detail(), &json!({ "action": "created" }));
+    }
+
+    #[test]
+    fn a_project_envelope_carries_its_project_identity() {
+        let envelope = TimelineEnvelope::project(
+            "kan",
+            TimelineEventKind::Comment,
+            None,
+            json!({ "text": "noted" }),
+        )
+        .expect("a named Project is accepted");
+
+        assert_eq!(envelope.scope(), &TimelineScope::Project("kan".to_owned()));
+    }
+
+    #[test]
+    fn a_project_envelope_refuses_an_empty_project_identity() {
+        let error = TimelineEnvelope::project("", TimelineEventKind::Comment, None, json!({}))
+            .expect_err("a Project scope must name a Project");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
     }
 }
 
@@ -144,41 +229,38 @@ mod timeline_query {
 
     use kanban_dto::{
         TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord,
-        TimelineQuery,
+        TimelineQuery, TimelineScope,
     };
     use serde_json::{Value, json};
 
-    use super::{TimelineQueryHandler, TimelineRecorder, TimelineStore};
+    use super::{TimelineEnvelope, TimelineQueryHandler, TimelineStore};
     use crate::dispatch::{Core, QueryHandler};
     use crate::events::NoopEventSink;
     use crate::mutation::MemoryIdempotencyStore;
 
+    /// The rows one scope already holds. Production rows are written
+    /// by the entity stores, so this fixture seeds them directly.
     #[derive(Default)]
     struct MemoryTimelineStore {
         events: Mutex<Vec<TimelineEventRecord>>,
     }
 
-    impl TimelineStore for MemoryTimelineStore {
-        fn append(
-            &self,
-            project_id: &str,
-            kind: TimelineEventKind,
-            entity: Option<TimelineEntityRef>,
-            detail: Value,
-        ) -> Result<(), super::TimelineError> {
+    impl MemoryTimelineStore {
+        fn seed(&self, envelope: TimelineEnvelope) {
             let mut events = self.events.lock().expect("timeline lock is sound");
             let id = events.len() as u64 + 1;
             events.push(TimelineEventRecord {
                 id,
-                project_id: project_id.to_owned(),
-                kind,
-                entity,
+                scope: envelope.scope().clone(),
+                kind: envelope.kind(),
+                entity: envelope.entity().cloned(),
                 recorded_at: format!("2026-09-04T12:00:{id:02}Z"),
-                detail,
+                detail: envelope.detail().clone(),
             });
-            Ok(())
         }
+    }
 
+    impl TimelineStore for MemoryTimelineStore {
         fn query(
             &self,
             query: &TimelineQuery,
@@ -186,7 +268,7 @@ mod timeline_query {
             let events = self.events.lock().expect("timeline lock is sound");
             Ok(events
                 .iter()
-                .filter(|event| event.project_id == query.project_id)
+                .filter(|event| event.scope == query.scope)
                 .filter(|event| {
                     query
                         .entity
@@ -227,69 +309,37 @@ mod timeline_query {
         }
     }
 
-    #[test]
-    fn domain_transitions_append_every_required_event_kind() {
-        let store = MemoryTimelineStore::default();
-        let recorder = TimelineRecorder::new(&store);
-        let entity = ticket_entity();
-
-        for (index, kind) in TimelineEventKind::ALL.iter().enumerate() {
-            recorder
-                .record(
-                    "kan",
-                    kind.as_str(),
-                    Some(entity.clone()),
-                    json!({ "sequence": index }),
-                )
-                .expect("append succeeds");
-        }
-
-        let events = store
-            .query(&TimelineQuery {
-                project_id: "kan".to_owned(),
-                entity: None,
-                kinds: None,
-                since: None,
-                until: None,
-            })
-            .expect("query succeeds");
-        assert_eq!(events.len(), TimelineEventKind::ALL.len());
-        let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
-        for kind in TimelineEventKind::ALL {
-            assert!(kinds.contains(kind), "missing kind `{}`", kind.as_str());
-        }
+    fn project_event(
+        kind: TimelineEventKind,
+        entity: TimelineEntityRef,
+        detail: Value,
+    ) -> TimelineEnvelope {
+        TimelineEnvelope::project("kan", kind, Some(entity), detail)
+            .expect("a named Project is accepted")
     }
 
     #[test]
     fn timeline_query_filters_by_entity_kind_and_time() {
         let store = std::sync::Arc::new(MemoryTimelineStore::default());
-        let recorder = TimelineRecorder::new(store.clone());
-        let entity = ticket_entity();
-        recorder
-            .record(
-                "kan",
-                "transition",
-                Some(entity.clone()),
-                json!({ "to": "in_progress" }),
-            )
-            .expect("first event lands");
-        recorder
-            .record(
-                "kan",
-                "comment",
-                Some(TimelineEntityRef {
-                    kind: TimelineEntityKind::Ticket,
-                    id: "kan-t10".to_owned(),
-                }),
-                json!({ "text": "elsewhere" }),
-            )
-            .expect("second event lands");
+        store.seed(project_event(
+            TimelineEventKind::Transition,
+            ticket_entity(),
+            json!({ "to": "in_progress" }),
+        ));
+        store.seed(project_event(
+            TimelineEventKind::Comment,
+            TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: "kan-t10".to_owned(),
+            },
+            json!({ "text": "elsewhere" }),
+        ));
 
         let handler = TimelineQueryHandler::new(store);
         let response = handler
             .handle(&json!({
-                "project_id": "kan",
-                "entity": entity,
+                "scope": { "project": "kan" },
+                "entity": ticket_entity(),
                 "kinds": ["transition"],
                 "since": "2026-09-04T12:00:00Z",
                 "until": "2026-09-04T12:00:02Z",
@@ -301,9 +351,9 @@ mod timeline_query {
             json!({
                 "events": [{
                     "id": 1,
-                    "project_id": "kan",
+                    "scope": { "project": "kan" },
                     "kind": "transition",
-                    "entity": entity,
+                    "entity": ticket_entity(),
                     "recorded_at": "2026-09-04T12:00:01Z",
                     "detail": { "to": "in_progress" },
                 }]
@@ -312,12 +362,62 @@ mod timeline_query {
     }
 
     #[test]
+    fn the_global_scope_serves_events_above_every_project() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        store.seed(TimelineEnvelope::global(
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Initiative,
+                id: "1".to_owned(),
+            }),
+            json!({ "action": "created", "id": 1 }),
+        ));
+        store.seed(project_event(
+            TimelineEventKind::Transition,
+            ticket_entity(),
+            json!({ "to": "in_progress" }),
+        ));
+
+        let handler = TimelineQueryHandler::new(store);
+        let response = handler
+            .handle(&json!({ "scope": "global" }))
+            .expect("the global scope serves");
+
+        assert_eq!(
+            response,
+            json!({
+                "events": [{
+                    "id": 1,
+                    "scope": "global",
+                    "kind": "transition",
+                    "entity": { "kind": "initiative", "id": "1" },
+                    "recorded_at": "2026-09-04T12:00:01Z",
+                    "detail": { "action": "created", "id": 1 },
+                }]
+            }),
+            "Initiative history is reachable and no Project row leaks in"
+        );
+    }
+
+    #[test]
+    fn timeline_query_refuses_a_project_scope_without_an_identity() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        let handler = TimelineQueryHandler::new(store);
+
+        let error = handler
+            .handle(&json!({ "scope": { "project": "" } }))
+            .expect_err("a Project scope must name a Project");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+    }
+
+    #[test]
     fn timeline_query_rejects_unknown_fields() {
         let store = std::sync::Arc::new(MemoryTimelineStore::default());
         let handler = TimelineQueryHandler::new(store);
 
         let error = handler
-            .handle(&json!({ "project_id": "kan", "surprise": true }))
+            .handle(&json!({ "scope": "global", "surprise": true }))
             .expect_err("unknown fields are rejected");
 
         assert_eq!(error.code, kanban_dto::ErrorCode::UnknownField);
@@ -340,10 +440,38 @@ mod timeline_query {
         let response = core
             .query(
                 "timeline.query",
-                &json!({ "project_id": "kan", "kinds": ["transition"] }),
+                &json!({ "scope": { "project": "kan" }, "kinds": ["transition"] }),
             )
             .expect("the core serves timeline queries");
 
         assert_eq!(response, json!({ "events": [] }));
+    }
+
+    #[test]
+    fn every_event_kind_can_be_carried_by_an_envelope() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        for (index, kind) in TimelineEventKind::ALL.iter().enumerate() {
+            store.seed(project_event(
+                *kind,
+                ticket_entity(),
+                json!({ "sequence": index }),
+            ));
+        }
+
+        let events = store
+            .query(&TimelineQuery {
+                scope: TimelineScope::Project("kan".to_owned()),
+                entity: None,
+                kinds: None,
+                since: None,
+                until: None,
+            })
+            .expect("query succeeds");
+
+        assert_eq!(
+            events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+            TimelineEventKind::ALL.to_vec(),
+            "the closed vocabulary reaches the timeline whole"
+        );
     }
 }

@@ -1,6 +1,7 @@
 //! SQLite implementation of the storage ports: connections,
 //! forward-only migrations, and the append-only audit tables.
 
+pub mod audit;
 pub mod db;
 pub mod error;
 pub mod migrations;

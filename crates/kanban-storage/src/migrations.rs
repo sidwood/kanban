@@ -131,6 +131,11 @@ fn apply_one(conn: &mut Connection, migration: &Migration) -> Result<(), Storage
             name: migration.name,
             source,
         })?;
+    crate::audit::insert_event(
+        &transaction,
+        "migration.applied",
+        &serde_json::json!({ "version": migration.version, "name": migration.name }),
+    )?;
     transaction.execute(
         "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
         rusqlite::params![migration.version, migration.name],
@@ -226,6 +231,30 @@ mod tests {
             MigrationReport {
                 applied: Vec::new()
             }
+        );
+    }
+
+    #[test]
+    fn applied_migrations_are_recorded_as_audit_events() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the initial migration applies");
+
+        let mut statement = database
+            .connection()
+            .prepare("SELECT id, kind, detail FROM audit_events ORDER BY id")
+            .expect("the audit trail is readable");
+        let events: Vec<(i64, String, String)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("the audit query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the audit rows decode");
+        assert_eq!(events.len(), 1, "one event per applied migration");
+        assert_eq!(events[0].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 1, "name": "initial schema" })
         );
     }
 

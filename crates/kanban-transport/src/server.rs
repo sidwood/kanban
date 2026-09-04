@@ -72,7 +72,7 @@ impl SocketServer {
             path: socket_path.clone(),
             source,
         })?;
-        apply_mode(&socket_path, OWNER_ONLY_SOCKET)?;
+        apply_mode(&socket_path, OWNER_ONLY_SOCKET, Surface::Socket)?;
         Ok(Self {
             listener,
             socket_path,
@@ -176,29 +176,36 @@ fn prepare_socket_directory(directory: &Path) -> Result<(), TransportError> {
         path: directory.to_owned(),
         source,
     })?;
-    apply_mode(directory, OWNER_ONLY_DIRECTORY)
+    apply_mode(directory, OWNER_ONLY_DIRECTORY, Surface::Directory)
 }
 
-/// Set `path`'s permission bits to `mode`.
-fn apply_mode(path: &Path, mode: u32) -> Result<(), TransportError> {
-    let permissions = std::fs::metadata(path)
-        .map_err(|source| TransportError::Directory {
+/// The surface being tightened to owner-only, deciding which
+/// failure variant [`apply_mode`] reports.
+#[derive(Debug, Clone, Copy)]
+enum Surface {
+    /// The socket directory; failures report Directory.
+    Directory,
+    /// The socket file; failures report Secure.
+    Socket,
+}
+
+/// Set `path`'s permission bits to `mode`. Failures report the
+/// variant for `surface`, not one guessed from the mode value.
+fn apply_mode(path: &Path, mode: u32, surface: Surface) -> Result<(), TransportError> {
+    let refused = |source| match surface {
+        Surface::Directory => TransportError::Directory {
             path: path.to_owned(),
             source,
-        })?
-        .permissions();
+        },
+        Surface::Socket => TransportError::Secure {
+            path: path.to_owned(),
+            source,
+        },
+    };
+    let permissions = std::fs::metadata(path).map_err(refused)?.permissions();
     let mut permissions = permissions;
     permissions.set_mode(mode);
-    std::fs::set_permissions(path, permissions).map_err(|source| match mode {
-        OWNER_ONLY_DIRECTORY => TransportError::Directory {
-            path: path.to_owned(),
-            source,
-        },
-        _ => TransportError::Secure {
-            path: path.to_owned(),
-            source,
-        },
-    })
+    std::fs::set_permissions(path, permissions).map_err(refused)
 }
 
 /// Decide what to do about an existing socket path: refuse a live
@@ -714,6 +721,24 @@ mod tests {
             .permissions()
             .mode()
             & 0o777
+    }
+
+    #[test]
+    fn apply_mode_reports_the_callers_surface() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let missing = dir.path().join("no-such-path");
+
+        let secured = super::apply_mode(&missing, 0o600, super::Surface::Socket);
+        assert!(
+            matches!(secured, Err(TransportError::Secure { .. })),
+            "a socket-surface failure reports Secure, got {secured:?}"
+        );
+
+        let prepared = super::apply_mode(&missing, 0o700, super::Surface::Directory);
+        assert!(
+            matches!(prepared, Err(TransportError::Directory { .. })),
+            "a directory-surface failure reports Directory, got {prepared:?}"
+        );
     }
 
     #[test]

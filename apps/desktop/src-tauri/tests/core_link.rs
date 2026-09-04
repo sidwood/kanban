@@ -1,7 +1,12 @@
-//! The shell's socket client against a real in-process core.
+//! The shell's socket client against a real in-process core, and its
+//! channel lifecycle against a stub core that controls when bytes
+//! arrive.
 
-use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -9,9 +14,9 @@ use kanban_app::{
     CommandHandler, Core, EventSink, MemoryIdempotencyStore, OperationDescriptor, OperationKind,
     ParsedCommand, parse_payload,
 };
-use kanban_desktop_lib::core_link::{CoreLink, forward_events};
+use kanban_desktop_lib::core_link::{CoreLink, REQUEST_TIMEOUT, forward_events};
 use kanban_dto::{ApiError, ErrorCode, EventEnvelope, MutationContext};
-use kanban_transport::SocketServer;
+use kanban_transport::{ResponseFrame, SocketServer};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -249,4 +254,195 @@ fn a_closed_socket_ends_the_forwarder_cleanly() {
         .join()
         .expect("the forwarder thread finishes")
         .expect("shutdown ends the stream without an error");
+}
+
+/// What one stub connection answers, and when.
+enum Reply {
+    /// A well-formed answer, but only once the link's read timeout
+    /// has already expired.
+    Late(Value),
+    /// A well-formed answer, at once.
+    Prompt(Value),
+    /// A line that is not a frame.
+    Malformed,
+    /// A frame only a subscribed connection may carry.
+    Unexpected,
+    /// No answer at all: the connection closes.
+    EarlyClose,
+}
+
+/// A stub core on a real socket, answering each accepted connection
+/// from a fixed script. The real core cannot be asked to answer late
+/// or badly, and this fixture exists only to control when bytes
+/// arrive; it holds no domain behaviour.
+struct StubCore {
+    socket_path: PathBuf,
+    accepted: Arc<AtomicUsize>,
+    delivered: Receiver<()>,
+}
+
+impl StubCore {
+    /// Serve `script`: one reply per accepted connection, in order.
+    /// The stub stops accepting once the script is spent.
+    fn serve(dir: &TempDir, script: Vec<Reply>) -> Self {
+        let socket_path = dir.path().join("core.sock");
+        let listener = UnixListener::bind(&socket_path).expect("the stub core binds");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counted = accepted.clone();
+        let (sent, delivered) = channel();
+        std::thread::spawn(move || {
+            for reply in script {
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
+                counted.fetch_add(1, Ordering::SeqCst);
+                // One thread per connection: a late answer must not
+                // hold up the reconnection that follows it.
+                let sent = sent.clone();
+                std::thread::spawn(move || answer(stream, reply, &sent));
+            }
+        });
+        Self {
+            socket_path,
+            accepted,
+            delivered,
+        }
+    }
+
+    fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    /// How many connections the stub has accepted.
+    fn connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Block until the next scripted reply has been delivered, so a
+    /// late answer is provably on the wire before the next request.
+    fn await_delivery(&self) {
+        self.delivered
+            .recv_timeout(REQUEST_TIMEOUT * 4)
+            .expect("the stub core delivered its reply");
+    }
+}
+
+/// Read this connection's one request line, then reply as scripted.
+fn answer(stream: UnixStream, reply: Reply, delivered: &Sender<()>) {
+    let mut writer = stream.try_clone().expect("the stub core clones its stream");
+    let mut reader = BufReader::new(stream);
+    let mut request = String::new();
+    if reader.read_line(&mut request).unwrap_or(0) == 0 {
+        return;
+    }
+    let line = match reply {
+        Reply::Late(payload) => {
+            std::thread::sleep(REQUEST_TIMEOUT + Duration::from_millis(500));
+            Some(frame(payload))
+        }
+        Reply::Prompt(payload) => Some(frame(payload)),
+        Reply::Malformed => Some("this is not a frame".to_owned()),
+        Reply::Unexpected => Some(
+            serde_json::to_string(&ResponseFrame::Event {
+                event: EventEnvelope {
+                    sequence: 1,
+                    event_type: "counter.bumped".to_owned(),
+                    payload: json!({ "to": 1 }),
+                },
+            })
+            .expect("the event frame encodes"),
+        ),
+        Reply::EarlyClose => None,
+    };
+    let Some(line) = line else {
+        return;
+    };
+    // A late answer may land on a socket the link has already closed;
+    // refusing that write is the fix working.
+    let _ = writeln!(writer, "{line}").and_then(|_| writer.flush());
+    let _ = delivered.send(());
+    // A real core keeps the connection open after answering, so the
+    // stub does too: a link that kept this channel would find the
+    // answer above waiting, ready to be read as the next request's.
+    let mut ignored = String::new();
+    let _ = reader.read_line(&mut ignored);
+}
+
+/// Encode one well-formed response frame.
+fn frame(payload: Value) -> String {
+    serde_json::to_string(&ResponseFrame::Response { payload }).expect("the response frame encodes")
+}
+
+/// Drive one request against a stub whose first connection answers
+/// badly and whose second answers well, and prove the second request
+/// reconnected and read only its own answer.
+fn reconnects_after(first: Reply) {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let stub = StubCore::serve(&dir, vec![first, Reply::Prompt(json!({ "value": 2 }))]);
+    let link = CoreLink::connect(stub.socket_path()).expect("the link connects");
+
+    let refused = link.query("health.get", &json!({}));
+    assert!(
+        refused.is_err(),
+        "an uncertain answer fails the request, got {refused:?}"
+    );
+
+    let answered = link
+        .query("health.get", &json!({}))
+        .expect("the next request is answered");
+    assert_eq!(
+        answered,
+        json!({ "value": 2 }),
+        "the next request reads only its own answer"
+    );
+    assert_eq!(stub.connections(), 2, "the link reconnected exactly once");
+}
+
+#[test]
+fn core_link_timeout_reconnect_never_delivers_a_late_answer() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let stub = StubCore::serve(
+        &dir,
+        vec![
+            Reply::Late(json!({ "value": 1 })),
+            Reply::Prompt(json!({ "value": 2 })),
+        ],
+    );
+    let link = CoreLink::connect(stub.socket_path()).expect("the link connects");
+
+    let timed_out = link.query("health.get", &json!({}));
+    assert!(
+        timed_out.is_err(),
+        "an answer past the read timeout fails the request, got {timed_out:?}"
+    );
+
+    // Only now is the first answer on the wire: a channel the link
+    // kept would have it queued and ready to be read as the next
+    // request's answer.
+    stub.await_delivery();
+
+    let answered = link
+        .query("health.get", &json!({}))
+        .expect("the next request is answered");
+    assert_eq!(
+        answered,
+        json!({ "value": 2 }),
+        "the next request reads only its own answer"
+    );
+    assert_eq!(stub.connections(), 2, "the link reconnected exactly once");
+}
+
+#[test]
+fn core_link_reconnects_after_a_malformed_answer() {
+    reconnects_after(Reply::Malformed);
+}
+
+#[test]
+fn core_link_reconnects_after_an_unexpected_frame() {
+    reconnects_after(Reply::Unexpected);
+}
+
+#[test]
+fn core_link_reconnects_after_an_early_close() {
+    reconnects_after(Reply::EarlyClose);
 }

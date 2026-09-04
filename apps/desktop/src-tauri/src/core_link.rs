@@ -14,14 +14,17 @@ use serde_json::Value;
 
 /// How long one request may wait for the core's answer before the
 /// shell reports the core as unresponsive.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One guarded connection for queries and commands. Requests are
 /// serialised through the mutex so a frame and its answer always
-/// belong together.
+/// belong together, and the channel is held only while the boundary
+/// between the two is certain: an answer that timed out, arrived
+/// truncated, or could not be decoded may still be queued on that
+/// socket, so the channel goes and the next request dials a new one.
 pub struct CoreLink {
     socket_path: PathBuf,
-    channel: Mutex<Channel>,
+    channel: Mutex<Option<Channel>>,
 }
 
 struct Channel {
@@ -32,13 +35,10 @@ struct Channel {
 impl CoreLink {
     /// Connect to the core's socket. The core must be serving.
     pub fn connect(socket_path: &Path) -> std::io::Result<Self> {
-        let stream = UnixStream::connect(socket_path)?;
-        stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
-        let writer = stream.try_clone()?;
-        let reader = BufReader::new(stream);
+        let channel = dial(socket_path)?;
         Ok(Self {
             socket_path: socket_path.to_owned(),
-            channel: Mutex::new(Channel { reader, writer }),
+            channel: Mutex::new(Some(channel)),
         })
     }
 
@@ -57,6 +57,12 @@ impl CoreLink {
         self.request(FrameKind::Command, operation, payload)
     }
 
+    /// Send one frame and read its answer. Taking the channel out of
+    /// its slot is the invalidation: it is put back only when the
+    /// answer proves where this operation ended, so every other way
+    /// out drops the connection before the error reaches the caller.
+    /// The operation itself is never retried — a mutation whose
+    /// outcome is unknown must stay unknown.
     fn request(
         &self,
         kind: FrameKind,
@@ -70,32 +76,72 @@ impl CoreLink {
         };
         let line = serde_json::to_string(&frame)
             .map_err(|_| ApiError::internal("the request frame could not be encoded"))?;
-        let mut channel = self
+        let mut slot = self
             .channel
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        writeln!(channel.writer, "{line}")
-            .and_then(|_| channel.writer.flush())
-            .map_err(|_| ApiError::internal("the core connection is not writable"))?;
-        let mut line = String::new();
-        channel
-            .reader
-            .read_line(&mut line)
-            .map_err(|_| ApiError::internal("the core connection is not readable"))?;
-        let frame: ResponseFrame = serde_json::from_str(line.trim_end())
-            .map_err(|_| ApiError::internal("the core's answer could not be decoded"))?;
-        match frame {
-            ResponseFrame::Response { payload } => Ok(payload),
-            ResponseFrame::Error { error } => Err(error),
+        let mut channel = match slot.take() {
+            Some(channel) => channel,
+            // The previous operation left an uncertain boundary
+            // behind; this one gets a connection of its own, dialled
+            // once.
+            None => dial(&self.socket_path)
+                .map_err(|_| ApiError::internal("the core connection could not be reopened"))?,
+        };
+        match channel.exchange(&line) {
+            Ok(ResponseFrame::Response { payload }) => {
+                *slot = Some(channel);
+                Ok(payload)
+            }
+            // A refusal is still this operation's answer, so the
+            // connection is sound and stays.
+            Ok(ResponseFrame::Error { error }) => {
+                *slot = Some(channel);
+                Err(error)
+            }
             // Only a subscribed connection carries these; a request
-            // connection that sees one is talking to the wrong stream.
-            ResponseFrame::Event { .. }
-            | ResponseFrame::Subscribed {}
-            | ResponseFrame::Evicted {} => Err(ApiError::internal(
+            // connection that sees one is talking to the wrong stream
+            // and cannot say which answer comes next.
+            Ok(
+                ResponseFrame::Event { .. }
+                | ResponseFrame::Subscribed {}
+                | ResponseFrame::Evicted {},
+            ) => Err(ApiError::internal(
                 "the core's event stream leaked onto a request connection",
             )),
+            Err(failure) => Err(failure),
         }
     }
+}
+
+impl Channel {
+    /// Write one request line and read the one answer that follows.
+    fn exchange(&mut self, line: &str) -> Result<ResponseFrame, ApiError> {
+        writeln!(self.writer, "{line}")
+            .and_then(|_| self.writer.flush())
+            .map_err(|_| ApiError::internal("the core connection is not writable"))?;
+        let mut answer = String::new();
+        let read = self
+            .reader
+            .read_line(&mut answer)
+            .map_err(|_| ApiError::internal("the core connection is not readable"))?;
+        if read == 0 {
+            return Err(ApiError::internal(
+                "the core closed the connection before answering",
+            ));
+        }
+        serde_json::from_str(answer.trim_end())
+            .map_err(|_| ApiError::internal("the core's answer could not be decoded"))
+    }
+}
+
+/// Open one request connection, bounded by the read timeout.
+fn dial(socket_path: &Path) -> std::io::Result<Channel> {
+    let stream = UnixStream::connect(socket_path)?;
+    stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
+    let writer = stream.try_clone()?;
+    let reader = BufReader::new(stream);
+    Ok(Channel { reader, writer })
 }
 
 /// Read the ordered event stream from a dedicated connection,

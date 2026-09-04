@@ -14,4 +14,3 @@ Requires Rust, Node.js, pnpm, and `just` on `PATH`.
 - `just check` — fmt, clippy, Rust tests, web lint, typecheck, tests.
 - `just build` — debug builds of the core and the desktop app.
 - `just dev` — run the core and the desktop app.
-

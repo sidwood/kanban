@@ -51,3 +51,27 @@ export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
 };
+export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment';
+export type TimelineEntityRef = {
+  id: string;
+  kind: TimelineEntityKind;
+};
+export type TimelineEventKind = 'transition' | 'run' | 'telemetry' | 'review' | 'finding' | 'evidence' | 'comment' | 'deferral' | 'ruling';
+export type TimelineEventRecord = {
+  detail: JsonValue;
+  entity?: TimelineEntityRef | null;
+  id: number;
+  kind: TimelineEventKind;
+  project_id: string;
+  recorded_at: string;
+};
+export type TimelineQuery = {
+  entity?: TimelineEntityRef | null;
+  kinds?: TimelineEventKind[] | null;
+  project_id: string;
+  since?: string | null;
+  until?: string | null;
+};
+export type TimelineQueryResponse = {
+  events: TimelineEventRecord[];
+};

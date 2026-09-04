@@ -120,6 +120,15 @@ fn render_schema_object_type(
     }
 
     if let Some(subschemas) = &object.subschemas {
+        if let Some(any_of) = &subschemas.any_of {
+            let variants = any_of
+                .iter()
+                .map(|schema| render_schema_type(schema, root, depth))
+                .collect::<Vec<_>>();
+            if !variants.is_empty() {
+                return variants.join(" | ");
+            }
+        }
         if let Some(one_of) = &subschemas.one_of {
             let variants = one_of
                 .iter()

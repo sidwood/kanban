@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Entity kinds that may appear on the activity timeline.",
+  "enum": [
+    "initiative",
+    "project",
+    "plan",
+    "spec",
+    "ticket",
+    "run",
+    "review",
+    "finding",
+    "evidence",
+    "comment"
+  ],
+  "title": "TimelineEntityKind",
+  "type": "string"
+}

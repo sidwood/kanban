@@ -8,7 +8,9 @@ import tseslint from 'typescript-eslint'
 const vue = Array.from(pluginVue.configs['flat/recommended'])
 
 export default tseslint.config(
-  { ignores: ['dist/'] },
+  // src-tauri holds Rust and Tauri's build artifacts, neither of
+  // which belongs to the web lint.
+  { ignores: ['dist/', 'src-tauri/'] },
   tseslint.configs.recommended,
   ...vue,
   {

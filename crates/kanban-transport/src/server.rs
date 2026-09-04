@@ -265,6 +265,27 @@ fn spawn_connection(
         .push(ConnectionEntry { id, stream, reader });
 }
 
+/// One connection's live event subscription: the broker-side id,
+/// the flag that retires the writer without announcing anything, and
+/// the writer's handle.
+struct ActiveSubscription {
+    id: u64,
+    end_quietly: Arc<AtomicBool>,
+    writer: std::thread::JoinHandle<()>,
+}
+
+/// End one connection's subscription: tell its writer to stop
+/// writing, detach it from the broker, and wait for the writer to
+/// finish, so no line of this subscription can appear after the
+/// call returns.
+fn end_subscription(active: ActiveSubscription, broker: &EventBroker) {
+    // Draining without writing: the connection itself asked for
+    // this end, so there is nothing to announce to the client.
+    active.end_quietly.store(true, Ordering::Release);
+    broker.unsubscribe(active.id);
+    let _ = active.writer.join();
+}
+
 /// Serve request lines from one client until it disconnects or the
 /// server shuts down.
 fn serve_connection(
@@ -274,7 +295,7 @@ fn serve_connection(
     broker: &Arc<EventBroker>,
 ) {
     let mut reader = BufReader::new(read_half);
-    let mut subscription: Option<u64> = None;
+    let mut subscription: Option<ActiveSubscription> = None;
     let mut line = String::new();
     loop {
         line.clear();
@@ -304,12 +325,23 @@ fn serve_connection(
 
         match request.kind {
             FrameKind::Subscribe => {
+                // Retire any previous subscription and wait for its
+                // writer to finish before starting the replacement:
+                // two writers on one connection could interleave
+                // their lines.
                 if let Some(previous) = subscription.take() {
-                    broker.unsubscribe(previous);
+                    end_subscription(previous, broker);
                 }
                 let (id, events) = broker.subscribe();
-                spawn_event_writer(events, shared_write.clone());
-                subscription = Some(id);
+                let end_quietly = Arc::new(AtomicBool::new(false));
+                let writer =
+                    spawn_event_writer(events, shared_write.clone(), Arc::clone(&end_quietly))
+                        .expect("spawning an event writer succeeds");
+                subscription = Some(ActiveSubscription {
+                    id,
+                    end_quietly,
+                    writer,
+                });
                 if write_frame(&shared_write, &ResponseFrame::Subscribed {}).is_err() {
                     break;
                 }
@@ -349,8 +381,8 @@ fn serve_connection(
             }
         }
     }
-    if let Some(id) = subscription {
-        broker.unsubscribe(id);
+    if let Some(active) = subscription.take() {
+        end_subscription(active, broker);
     }
 }
 
@@ -370,12 +402,21 @@ fn write_frame(
 }
 
 /// Drain one subscriber's event lines onto its connection until the
-/// subscription ends.
-fn spawn_event_writer(events: Receiver<String>, shared_write: Arc<Mutex<UnixStream>>) {
+/// subscription ends. When [`ActiveSubscription::end_quietly`] is
+/// raised the writer drains its queue without writing, because the
+/// connection itself ended the subscription.
+fn spawn_event_writer(
+    events: Receiver<String>,
+    shared_write: Arc<Mutex<UnixStream>>,
+    end_quietly: Arc<AtomicBool>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name("kanban-transport-writer".to_owned())
         .spawn(move || {
             while let Ok(line) = events.recv() {
+                if end_quietly.load(Ordering::Acquire) {
+                    continue;
+                }
                 let mut stream = shared_write
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -383,11 +424,10 @@ fn spawn_event_writer(events: Receiver<String>, shared_write: Arc<Mutex<UnixStre
                     .and_then(|_| stream.flush())
                     .is_err()
                 {
-                    break;
+                    return;
                 }
             }
         })
-        .expect("spawning an event writer succeeds");
 }
 
 #[cfg(test)]
@@ -411,20 +451,37 @@ mod tests {
     };
     use kanban_dto::{ApiError, ErrorCode, EventEnvelope, MutationContext};
 
-    const TEST_CATALOG: &[OperationDescriptor] = &[OperationDescriptor {
-        name: "counter.bump",
-        kind: OperationKind::Command,
-        request_schema: "MutationContext",
-        response_schema: "HealthResponse",
-        mcp_tool_name: "counter_bump",
-        description: "Test fixture: bump a versioned counter.",
-    }];
+    const TEST_CATALOG: &[OperationDescriptor] = &[
+        OperationDescriptor {
+            name: "counter.bump",
+            kind: OperationKind::Command,
+            request_schema: "MutationContext",
+            response_schema: "HealthResponse",
+            mcp_tool_name: "counter_bump",
+            description: "Test fixture: bump a versioned counter.",
+        },
+        OperationDescriptor {
+            name: "counter.pad",
+            kind: OperationKind::Command,
+            request_schema: "MutationContext",
+            response_schema: "HealthResponse",
+            mcp_tool_name: "counter_pad",
+            description: "Test fixture: emit one padded event.",
+        },
+    ];
 
     #[derive(Debug, serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct BumpRequest {
         mutation: MutationContext,
         step: i64,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PadRequest {
+        mutation: MutationContext,
+        bytes: usize,
     }
 
     /// The same one-aggregate fixture the app tests use, wired to
@@ -464,6 +521,39 @@ mod tests {
         }
     }
 
+    /// Emits one event padded to `bytes`, for tests that need event
+    /// lines no socket buffer can hold.
+    #[derive(Debug, Default)]
+    struct Pad;
+
+    impl CommandHandler for Pad {
+        fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+            parse_payload::<PadRequest>(payload)?;
+            ParsedCommand::lift("counter", payload)
+        }
+
+        fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+            Ok(0)
+        }
+
+        fn apply(
+            &self,
+            command: &ParsedCommand,
+            events: &dyn EventSink,
+        ) -> Result<Value, ApiError> {
+            let request: PadRequest = parse_payload(&command.payload)?;
+            debug_assert_eq!(
+                request.mutation.optimistic_version, command.optimistic_version,
+                "the typed DTO and the lift agree on the mutation context"
+            );
+            events.emit(
+                "counter.padded",
+                json!({ "pad": "x".repeat(request.bytes) }),
+            );
+            Ok(json!({ "bytes": request.bytes }))
+        }
+    }
+
     /// A served core with a test command, plus its socket path.
     fn served(dir: &Path) -> ServerHandle {
         let server = SocketServer::bind(dir).expect("the server binds");
@@ -475,6 +565,8 @@ mod tests {
         );
         core.register_command("counter.bump", Arc::new(Counter::default()))
             .expect("the test command registers");
+        core.register_command("counter.pad", Arc::new(Pad))
+            .expect("the test command registers");
         server.serve(Arc::new(core))
     }
 
@@ -482,6 +574,13 @@ mod tests {
         json!({
             "mutation": { "optimistic_version": version, "idempotency_key": key },
             "step": step,
+        })
+    }
+
+    fn pad(bytes: usize, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+            "bytes": bytes,
         })
     }
 
@@ -545,6 +644,15 @@ mod tests {
             self.send(&RequestFrame {
                 kind: FrameKind::Command,
                 operation: Some("counter.bump".to_owned()),
+                payload: Some(payload),
+            });
+            self.recv()
+        }
+
+        fn pad(&mut self, payload: Value) -> ResponseFrame {
+            self.send(&RequestFrame {
+                kind: FrameKind::Command,
+                operation: Some("counter.pad".to_owned()),
                 payload: Some(payload),
             });
             self.recv()
@@ -680,6 +788,62 @@ mod tests {
         caller.command(bump(1, "key-2", 1));
 
         assert_eq!(first.events(2), second.events(2));
+
+        handle.shutdown();
+    }
+
+    #[test]
+    fn resubscription_retires_the_old_writer_first() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let handle = served(dir.path());
+
+        let mut subscriber = TestClient::connect(handle.socket_path());
+        subscriber.subscribe();
+
+        // Six padded events, each far larger than any socket buffer,
+        // stall the first writer mid-line with the rest queued behind
+        // it: only the in-flight line can reach the wire before the
+        // resubscription retires the writer.
+        let mut caller = TestClient::connect(handle.socket_path());
+        for i in 1..=6 {
+            caller.pad(pad(2 * 1024 * 1024, &format!("big-{i}")));
+        }
+
+        // Resubscribe while the first writer is stalled.
+        subscriber.send(&RequestFrame {
+            kind: FrameKind::Subscribe,
+            operation: None,
+            payload: None,
+        });
+
+        // Drain until the resubscription is acknowledged; the only
+        // event ahead of the acknowledgement is the one the old
+        // writer already had in flight. The queued remainder of the
+        // retired subscription is dropped, not delivered.
+        let mut before_ack = Vec::new();
+        loop {
+            match subscriber.recv() {
+                ResponseFrame::Subscribed {} => break,
+                ResponseFrame::Event { event } => before_ack.push(event.sequence),
+                other => panic!("unexpected frame {other:?}"),
+            }
+        }
+        assert_eq!(
+            before_ack,
+            vec![1],
+            "only the in-flight event precedes the acknowledgement"
+        );
+
+        // The replacement subscription delivers from its own start.
+        let response = caller.command(bump(1, "after", 0));
+        assert!(
+            matches!(response, ResponseFrame::Response { .. }),
+            "the bump succeeds, got {response:?}"
+        );
+        match subscriber.recv() {
+            ResponseFrame::Event { event } => assert_eq!(event.sequence, 7),
+            other => panic!("the new subscription delivers, got {other:?}"),
+        }
 
         handle.shutdown();
     }

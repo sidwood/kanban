@@ -19,6 +19,7 @@
     "pipefail",
     "Pocock",
     "rereview",
+    "resubscription",
     "rsplit",
     "rusqlite",
     "rustup",

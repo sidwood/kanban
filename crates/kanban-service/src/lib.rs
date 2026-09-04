@@ -4,18 +4,25 @@
 
 pub mod timeline;
 
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use kanban_app::{Core, MemoryIdempotencyStore, TimelineQueryHandler};
+use kanban_app::{Core, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
-    AllowAllMigrations, Database, SqliteCommentStore, SqliteDeferralStore, SqliteInitiativeStore,
-    SqliteRulingStore,
+    AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
+    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteRulingStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use timeline::StorageTimelineStore;
+
+/// How many replay outcomes the core keeps. A retry follows its
+/// original within seconds and the Operator drives one window, so a
+/// five-figure bound covers every retry that could still arrive
+/// while keeping the table small enough to ignore.
+const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound is not zero");
 
 /// The running core process: its open database and its serving
 /// socket.
@@ -50,15 +57,15 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
+    let idempotency_store = Arc::new(SqliteIdempotencyStore::new(
+        &database,
+        RetentionPolicy::keep_most_recent(RETAINED_OUTCOMES),
+    ));
     let database = Arc::new(Mutex::new(database));
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let mut core = Core::with_health(
-        env!("CARGO_PKG_VERSION"),
-        Arc::new(MemoryIdempotencyStore::new()),
-        broker,
-    )?;
+    let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, broker)?;
     core.register_initiatives(initiative_store)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
@@ -155,7 +162,21 @@ mod tests {
             self.request("command", operation, payload)
         }
 
+        /// The error a refused command reports.
+        fn command_error(&mut self, operation: &str, payload: Value) -> Value {
+            let frame = self.frame("command", operation, payload);
+            assert_eq!(frame["kind"], "error", "the command is refused: {frame}");
+            frame["error"].clone()
+        }
+
         fn request(&mut self, kind: &str, operation: &str, payload: Value) -> Value {
+            let frame = self.frame(kind, operation, payload);
+            assert_eq!(frame["kind"], "response", "the {kind} succeeds: {frame}");
+            frame["payload"].clone()
+        }
+
+        /// The whole frame the core answered with.
+        fn frame(&mut self, kind: &str, operation: &str, payload: Value) -> Value {
             writeln!(
                 self.stream,
                 "{}",
@@ -166,9 +187,7 @@ mod tests {
             let mut line = String::new();
             let read = self.reader.read_line(&mut line).expect("the client reads");
             assert!(read > 0, "the core answers the request");
-            let frame: Value = serde_json::from_str(line.trim_end()).expect("a frame decodes");
-            assert_eq!(frame["kind"], "response", "the {kind} succeeds: {frame}");
-            frame["payload"].clone()
+            serde_json::from_str(line.trim_end()).expect("a frame decodes")
         }
     }
 
@@ -247,6 +266,53 @@ mod tests {
         );
 
         core.shutdown();
+    }
+
+    #[test]
+    fn restart_replay_returns_the_recorded_response_without_reapplying() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let request = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": "restart-1" },
+            "name": "Reliability",
+        });
+
+        let core = boot(&dir);
+        let created =
+            Client::connect(core.socket_path()).command("initiative.create", request.clone());
+        core.shutdown();
+
+        let rebooted = boot(&dir);
+        let mut client = Client::connect(rebooted.socket_path());
+        let replayed = client.command("initiative.create", request.clone());
+
+        assert_eq!(
+            replayed, created,
+            "a retry after a restart replays the original response"
+        );
+        assert_eq!(
+            client.query("initiative.list"),
+            json!({
+                "initiatives": [
+                    { "id": 1, "name": "Reliability", "archived": false, "version": 1 }
+                ]
+            }),
+            "the replay must not have applied the mutation a second time"
+        );
+
+        let refused = client.command_error(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "restart-1" },
+                "name": "Recovery",
+            }),
+        );
+        assert_eq!(
+            refused["code"],
+            json!("duplicate_idempotency_key"),
+            "the spent key refuses a different request across the restart"
+        );
+
+        rebooted.shutdown();
     }
 
     #[test]

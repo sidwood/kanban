@@ -15,6 +15,7 @@ describe('generated client', () => {
       'initiative.rename',
       'initiative.archive',
       'initiative.list',
+      'timeline.query',
     ])
   })
 

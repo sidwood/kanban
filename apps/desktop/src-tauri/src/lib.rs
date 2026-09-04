@@ -415,10 +415,11 @@ pub fn ensure_core_running(socket_path: &Path) -> Result<Option<Child>, String> 
     ))
 }
 
-/// Where the core binary is: an explicit override first, the copy
-/// packaged beside the shell second, the workspace build `just dev`
-/// produces third.
-fn locate_core_binary() -> Result<PathBuf, String> {
+/// Where the core binary is: in debug and test builds an explicit
+/// override first; in every configuration the copy packaged beside
+/// the shell second; the workspace build `just dev` produces third.
+pub fn locate_core_binary() -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
     if let Some(override_path) = std::env::var_os("KANBAN_CORE_BIN") {
         return Ok(PathBuf::from(override_path));
     }
@@ -435,31 +436,18 @@ fn locate_core_binary() -> Result<PathBuf, String> {
     if dev.is_file() {
         return Ok(dev);
     }
-    Err(
-        "no kanban-service binary found; set KANBAN_CORE_BIN or build it with `cargo build -p kanban-service`"
-            .to_owned(),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    /// Env-var tests share one lock: std::env::set_var races
-    /// otherwise.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn an_override_names_the_core_binary() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        // Safety: the lock above serialises every env-writing test.
-        unsafe { std::env::set_var("KANBAN_CORE_BIN", "/explicit/kanban-service") };
-        let located = super::locate_core_binary().expect("the override resolves");
-        assert_eq!(
-            located,
-            std::path::PathBuf::from("/explicit/kanban-service")
-        );
-        // Safety: still under the lock.
-        unsafe { std::env::remove_var("KANBAN_CORE_BIN") };
+    #[cfg(debug_assertions)]
+    {
+        Err(
+            "no kanban-service binary found; set KANBAN_CORE_BIN or build it with `cargo build -p kanban-service`"
+                .to_owned(),
+        )
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        Err(
+            "no kanban-service binary found; build it with `cargo build -p kanban-service`"
+                .to_owned(),
+        )
     }
 }

@@ -1,4 +1,4 @@
--- 0006 timeline scope
+-- 0007 timeline scope
 --
 -- Every timeline row states the scope it belongs to: `global` for
 -- entities that sit above every Project, `project` for everything

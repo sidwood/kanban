@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::comment::CommentRecord;
 use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
+use crate::project::ProjectRecord;
 
 /// The closed set of live event names the desktop may consume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -18,6 +19,10 @@ pub enum LiveEventName {
     InitiativeRenamed,
     #[serde(rename = "initiative.archived")]
     InitiativeArchived,
+    #[serde(rename = "project.registered")]
+    ProjectRegistered,
+    #[serde(rename = "project.archived")]
+    ProjectArchived,
     #[serde(rename = "comment.created")]
     CommentCreated,
     #[serde(rename = "comment.edited")]
@@ -43,6 +48,8 @@ impl LiveEventName {
             Self::InitiativeCreated => "initiative.created",
             Self::InitiativeRenamed => "initiative.renamed",
             Self::InitiativeArchived => "initiative.archived",
+            Self::ProjectRegistered => "project.registered",
+            Self::ProjectArchived => "project.archived",
             Self::CommentCreated => "comment.created",
             Self::CommentEdited => "comment.edited",
             Self::RulingRecorded => "ruling.recorded",
@@ -60,6 +67,8 @@ impl LiveEventName {
             "initiative.created" => Ok(Self::InitiativeCreated),
             "initiative.renamed" => Ok(Self::InitiativeRenamed),
             "initiative.archived" => Ok(Self::InitiativeArchived),
+            "project.registered" => Ok(Self::ProjectRegistered),
+            "project.archived" => Ok(Self::ProjectArchived),
             "comment.created" => Ok(Self::CommentCreated),
             "comment.edited" => Ok(Self::CommentEdited),
             "ruling.recorded" => Ok(Self::RulingRecorded),
@@ -112,6 +121,14 @@ pub enum LiveEvent {
         sequence: u64,
         payload: InitiativeRecord,
     },
+    ProjectRegistered {
+        sequence: u64,
+        payload: ProjectRecord,
+    },
+    ProjectArchived {
+        sequence: u64,
+        payload: ProjectRecord,
+    },
     CommentCreated {
         sequence: u64,
         payload: CommentRecord,
@@ -153,6 +170,8 @@ impl LiveEvent {
             Self::InitiativeCreated { .. } => LiveEventName::InitiativeCreated,
             Self::InitiativeRenamed { .. } => LiveEventName::InitiativeRenamed,
             Self::InitiativeArchived { .. } => LiveEventName::InitiativeArchived,
+            Self::ProjectRegistered { .. } => LiveEventName::ProjectRegistered,
+            Self::ProjectArchived { .. } => LiveEventName::ProjectArchived,
             Self::CommentCreated { .. } => LiveEventName::CommentCreated,
             Self::CommentEdited { .. } => LiveEventName::CommentEdited,
             Self::RulingRecorded { .. } => LiveEventName::RulingRecorded,
@@ -170,6 +189,8 @@ impl LiveEvent {
             Self::InitiativeCreated { sequence, .. }
             | Self::InitiativeRenamed { sequence, .. }
             | Self::InitiativeArchived { sequence, .. }
+            | Self::ProjectRegistered { sequence, .. }
+            | Self::ProjectArchived { sequence, .. }
             | Self::CommentCreated { sequence, .. }
             | Self::CommentEdited { sequence, .. }
             | Self::RulingRecorded { sequence, .. }
@@ -239,6 +260,14 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::InitiativeArchived => LiveEvent::InitiativeArchived {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProjectRegistered => LiveEvent::ProjectRegistered {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProjectArchived => LiveEvent::ProjectArchived {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -362,6 +391,57 @@ mod tests {
                     version: 1,
                 },
             }
+        );
+    }
+
+    #[test]
+    fn catalogued_project_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 4,
+            event_type: "project.registered".to_owned(),
+            payload: json!({
+                "id": 1,
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": "/repositories/kanban",
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+                "initiative_id": null,
+                "archived": false,
+                "counters": { "plan": 0, "spec": 0, "ticket": 0 },
+                "version": 1,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::ProjectRegistered {
+                sequence: 4,
+                payload: ProjectRecord {
+                    id: 1,
+                    code: "CORE".to_owned(),
+                    name: "Control plane".to_owned(),
+                    repository: "/repositories/kanban".to_owned(),
+                    seed_workspace: "/workspaces/kanban.seed".to_owned(),
+                    default_branch: "main".to_owned(),
+                    herdr_session: "kanban-main".to_owned(),
+                    initiative_id: None,
+                    archived: false,
+                    counters: crate::project::ProjectCounters {
+                        plan: 0,
+                        spec: 0,
+                        ticket: 0,
+                    },
+                    version: 1,
+                },
+            }
+        );
+        assert_eq!(
+            LiveEventName::parse("project.archived"),
+            Ok(LiveEventName::ProjectArchived),
+            "both Project events are catalogued"
         );
     }
 

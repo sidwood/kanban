@@ -23,6 +23,10 @@ use crate::initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 use crate::mutation::MutationContext;
+use crate::project::{
+    ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
+    ProjectRegisterRequest,
+};
 use crate::ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
@@ -75,6 +79,15 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(InitiativeRenameRequest),
         ),
         ("MutationContext", schema_for!(MutationContext)),
+        ("ProjectArchiveRequest", schema_for!(ProjectArchiveRequest)),
+        ("ProjectCounters", schema_for!(ProjectCounters)),
+        ("ProjectListQuery", schema_for!(ProjectListQuery)),
+        ("ProjectListResponse", schema_for!(ProjectListResponse)),
+        ("ProjectRecord", schema_for!(ProjectRecord)),
+        (
+            "ProjectRegisterRequest",
+            schema_for!(ProjectRegisterRequest),
+        ),
         ("DeferralListQuery", schema_for!(DeferralListQuery)),
         ("DeferralListResponse", schema_for!(DeferralListResponse)),
         ("DeferralRecord", schema_for!(DeferralRecord)),

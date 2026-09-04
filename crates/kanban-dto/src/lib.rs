@@ -9,6 +9,7 @@ pub mod evidence;
 pub mod health;
 pub mod initiative;
 pub mod mutation;
+pub mod project;
 pub mod ruling;
 pub mod schema;
 pub mod timeline;
@@ -37,6 +38,10 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use mutation::MutationContext;
+pub use project::{
+    ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
+    ProjectRegisterRequest,
+};
 pub use ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
@@ -118,6 +123,12 @@ mod tests {
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
                 "MutationContext",
+                "ProjectArchiveRequest",
+                "ProjectCounters",
+                "ProjectListQuery",
+                "ProjectListResponse",
+                "ProjectRecord",
+                "ProjectRegisterRequest",
                 "DeferralListQuery",
                 "DeferralListResponse",
                 "DeferralRecord",

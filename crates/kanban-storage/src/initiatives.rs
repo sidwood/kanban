@@ -8,7 +8,7 @@ use kanban_dto::ApiError;
 use rusqlite::params;
 use serde_json::Value;
 
-use crate::db::{ConnectionHandle, Database};
+use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
 
 /// The Initiative port over the authoritative database.
@@ -25,10 +25,8 @@ impl SqliteInitiativeStore {
     }
 
     /// Lock the shared connection.
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> parking_lot::ReentrantMutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 
@@ -38,26 +36,20 @@ impl InitiativeStore for SqliteInitiativeStore {
         name: &InitiativeName,
         append: TimelineAppend,
     ) -> Result<Initiative, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
-        transaction
-            .execute(
-                "INSERT INTO initiatives (name, archived, version) VALUES (?1, 0, 1)",
-                params![name.as_str()],
-            )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        span.execute(
+            "INSERT INTO initiatives (name, archived, version) VALUES (?1, 0, 1)",
+            params![name.as_str()],
+        )
+        .map_err(internal)?;
         let id = InitiativeId::new(
-            transaction
-                .last_insert_rowid()
+            span.last_insert_rowid()
                 .try_into()
                 .map_err(|_| ApiError::internal("the Initiative identity overflowed"))?,
         );
-        append_timeline(&transaction, id, &append)?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        append_timeline(&span, id, &append)?;
+        span.commit().map_err(internal)?;
         Ok(Initiative::new(id, name.clone()))
     }
 
@@ -76,12 +68,10 @@ impl InitiativeStore for SqliteInitiativeStore {
     }
 
     fn save(&self, initiative: &Initiative, append: TimelineAppend) -> Result<(), ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
         let archived = initiative.is_archived();
-        let changed = transaction
+        let changed = span
             .execute(
                 "UPDATE initiatives
                  SET name = ?2,
@@ -99,17 +89,15 @@ impl InitiativeStore for SqliteInitiativeStore {
                     initiative.version() as i64
                 ],
             )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            .map_err(internal)?;
         if changed != 1 {
             return Err(ApiError::not_found(&format!(
                 "initiative {}",
                 initiative.id()
             )));
         }
-        append_timeline(&transaction, initiative.id(), &append)?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        append_timeline(&span, initiative.id(), &append)?;
+        span.commit().map_err(internal)?;
         Ok(())
     }
 
@@ -152,6 +140,11 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Initiative> {
     ))
 }
 
+/// Report a SQLite failure the caller cannot act on.
+fn internal(error: rusqlite::Error) -> ApiError {
+    ApiError::internal(&error.to_string())
+}
+
 /// A stored name failed domain validation.
 #[derive(Debug)]
 struct CorruptName;
@@ -165,9 +158,9 @@ impl std::fmt::Display for CorruptName {
 impl std::error::Error for CorruptName {}
 
 /// Append the change's timeline entry, with the Initiative's
-/// identity in the facts, on the same transaction as the row.
+/// identity in the facts, in the same write as the row.
 fn append_timeline(
-    transaction: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     id: InitiativeId,
     append: &TimelineAppend,
 ) -> Result<(), ApiError> {
@@ -177,7 +170,7 @@ fn append_timeline(
         .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?
         .insert("id".to_owned(), Value::from(id.value()));
     insert_event(
-        transaction,
+        conn,
         &StorageTimelineAppend {
             project_id: String::new(),
             kind: append.kind.to_owned(),

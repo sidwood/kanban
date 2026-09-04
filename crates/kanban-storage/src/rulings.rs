@@ -6,7 +6,7 @@ use kanban_dto::{ApiError, RulingListQuery, TimelineEntityKind};
 use rusqlite::params;
 use serde_json::Value;
 
-use crate::db::{ConnectionHandle, Database};
+use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
 
 /// The ruling port over the authoritative database.
@@ -22,36 +22,30 @@ impl SqliteRulingStore {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> parking_lot::ReentrantMutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 
 impl RulingStore for SqliteRulingStore {
     fn insert(&self, draft: &RulingDraft, append: TimelineAppend) -> Result<Ruling, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
         let (entity_kind, entity_id) = entity_parts(&draft.entity);
-        transaction
-            .execute(
-                "INSERT INTO rulings (project_id, entity_kind, entity_id, summary, supersedes_id)
+        span.execute(
+            "INSERT INTO rulings (project_id, entity_kind, entity_id, summary, supersedes_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    draft.project_id,
-                    entity_kind,
-                    entity_id,
-                    draft.summary.as_str(),
-                    draft.supersedes.map(|id| id.value() as i64),
-                ],
-            )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            params![
+                draft.project_id,
+                entity_kind,
+                entity_id,
+                draft.summary.as_str(),
+                draft.supersedes.map(|id| id.value() as i64),
+            ],
+        )
+        .map_err(internal)?;
         let id = RulingId::new(
-            transaction
-                .last_insert_rowid()
+            span.last_insert_rowid()
                 .try_into()
                 .map_err(|_| ApiError::internal("the ruling identity overflowed"))?,
         );
@@ -61,12 +55,10 @@ impl RulingStore for SqliteRulingStore {
             draft.entity.clone(),
             draft.summary.clone(),
             draft.supersedes,
-            recorded_at(&transaction, id)?,
+            recorded_at(&span, id)?,
         );
-        append_timeline(&transaction, &ruling, &append)?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        append_timeline(&span, &ruling, &append)?;
+        span.commit().map_err(internal)?;
         Ok(ruling)
     }
 
@@ -159,14 +151,18 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Ruling> {
     ))
 }
 
-fn recorded_at(transaction: &rusqlite::Transaction<'_>, id: RulingId) -> Result<String, ApiError> {
-    transaction
-        .query_row(
-            "SELECT recorded_at FROM rulings WHERE id = ?1",
-            params![id.value() as i64],
-            |row| row.get(0),
-        )
-        .map_err(|error| ApiError::internal(&error.to_string()))
+fn recorded_at(conn: &rusqlite::Connection, id: RulingId) -> Result<String, ApiError> {
+    conn.query_row(
+        "SELECT recorded_at FROM rulings WHERE id = ?1",
+        params![id.value() as i64],
+        |row| row.get(0),
+    )
+    .map_err(internal)
+}
+
+/// Report a SQLite failure the caller cannot act on.
+fn internal(error: rusqlite::Error) -> ApiError {
+    ApiError::internal(&error.to_string())
 }
 
 #[derive(Debug)]
@@ -181,7 +177,7 @@ impl std::fmt::Display for CorruptSummary {
 impl std::error::Error for CorruptSummary {}
 
 fn append_timeline(
-    transaction: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     ruling: &Ruling,
     append: &TimelineAppend,
 ) -> Result<(), ApiError> {
@@ -195,7 +191,7 @@ fn append_timeline(
     }
     let (entity_kind, entity_id) = entity_parts(&ruling.entity().cloned());
     insert_event(
-        transaction,
+        conn,
         &StorageTimelineAppend {
             project_id: ruling.project_id().to_owned(),
             kind: append.kind.to_owned(),

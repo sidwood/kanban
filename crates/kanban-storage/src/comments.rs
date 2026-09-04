@@ -10,7 +10,7 @@ use kanban_dto::{
 use rusqlite::params;
 use serde_json::json;
 
-use crate::db::{ConnectionHandle, Database};
+use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
 
 /// The Comment port over the authoritative database.
@@ -27,10 +27,8 @@ impl SqliteCommentStore {
     }
 
     /// Lock the shared connection.
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> parking_lot::ReentrantMutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 
@@ -41,36 +39,22 @@ impl CommentStore for SqliteCommentStore {
         target: &CommentTarget,
         text: &CommentText,
     ) -> Result<Comment, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
-        transaction
-            .execute(
-                "INSERT INTO comments (project_id, entity_kind, entity_id, version)
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        span.execute(
+            "INSERT INTO comments (project_id, entity_kind, entity_id, version)
                  VALUES (?1, ?2, ?3, 1)",
-                params![project_id, target.kind(), target.id()],
-            )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            params![project_id, target.kind(), target.id()],
+        )
+        .map_err(internal)?;
         let id = CommentId::new(
-            transaction
-                .last_insert_rowid()
+            span.last_insert_rowid()
                 .try_into()
                 .map_err(|_| ApiError::internal("the Comment identity overflowed"))?,
         );
-        let revision_stamp = append_revision(&transaction, id, 1, text)?;
-        append_timeline(
-            &transaction,
-            project_id,
-            target,
-            id,
-            text,
-            1,
-            &revision_stamp,
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let revision_stamp = append_revision(&span, id, 1, text)?;
+        append_timeline(&span, project_id, target, id, text, 1, &revision_stamp)?;
+        span.commit().map_err(internal)?;
         Ok(Comment::create(
             id,
             project_id,
@@ -111,11 +95,9 @@ impl CommentStore for SqliteCommentStore {
             .revisions()
             .last()
             .expect("a Comment always has at least one revision");
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let changed = transaction
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        let changed = span
             .execute(
                 "UPDATE comments SET version = ?2 WHERE id = ?1 AND version = ?3",
                 params![
@@ -124,14 +106,13 @@ impl CommentStore for SqliteCommentStore {
                     (comment.version() - 1) as i64,
                 ],
             )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            .map_err(internal)?;
         if changed != 1 {
             return Err(ApiError::not_found(&format!("comment {}", comment.id())));
         }
-        let revision_stamp =
-            append_revision(&transaction, comment.id(), latest.number(), latest.text())?;
+        let revision_stamp = append_revision(&span, comment.id(), latest.number(), latest.text())?;
         append_timeline(
-            &transaction,
+            &span,
             comment.project_id(),
             comment.target(),
             comment.id(),
@@ -139,9 +120,7 @@ impl CommentStore for SqliteCommentStore {
             latest.number(),
             &revision_stamp,
         )?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        span.commit().map_err(internal)?;
         Ok(())
     }
 
@@ -176,6 +155,11 @@ impl CommentStore for SqliteCommentStore {
         }
         Ok((record_of(&comment), revisions))
     }
+}
+
+/// Report a SQLite failure the caller cannot act on.
+fn internal(error: rusqlite::Error) -> ApiError {
+    ApiError::internal(&error.to_string())
 }
 
 fn decode_target(entity_kind: &str, entity_id: &str) -> Result<CommentTarget, ApiError> {
@@ -224,31 +208,30 @@ impl std::fmt::Display for CorruptText {
 impl std::error::Error for CorruptText {}
 
 fn append_revision(
-    transaction: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     id: CommentId,
     revision: u64,
     text: &CommentText,
 ) -> Result<String, ApiError> {
-    transaction
-        .execute(
-            "INSERT INTO comment_revisions (comment_id, revision, text)
+    conn.execute(
+        "INSERT INTO comment_revisions (comment_id, revision, text)
              VALUES (?1, ?2, ?3)",
-            params![id.value() as i64, revision as i64, text.as_str()],
-        )
-        .map_err(|error| ApiError::internal(&error.to_string()))?;
-    let recorded_at: String = transaction
+        params![id.value() as i64, revision as i64, text.as_str()],
+    )
+    .map_err(internal)?;
+    let recorded_at: String = conn
         .query_row(
             "SELECT recorded_at FROM comment_revisions
              WHERE comment_id = ?1 AND revision = ?2",
             params![id.value() as i64, revision as i64],
             |row| row.get(0),
         )
-        .map_err(|error| ApiError::internal(&error.to_string()))?;
+        .map_err(internal)?;
     Ok(recorded_at)
 }
 
 fn append_timeline(
-    transaction: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     project_id: &str,
     target: &CommentTarget,
     id: CommentId,
@@ -257,7 +240,7 @@ fn append_timeline(
     recorded_at: &str,
 ) -> Result<(), ApiError> {
     insert_event(
-        transaction,
+        conn,
         &StorageTimelineAppend {
             project_id: project_id.to_owned(),
             kind: "comment".to_owned(),

@@ -8,7 +8,7 @@ use kanban_dto::{ApiError, DeferralListQuery};
 use rusqlite::params;
 use serde_json::Value;
 
-use crate::db::{ConnectionHandle, Database};
+use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
 
 /// The deferral port over the authoritative database.
@@ -24,34 +24,28 @@ impl SqliteDeferralStore {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> parking_lot::ReentrantMutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 
 impl DeferralStore for SqliteDeferralStore {
     fn insert(&self, draft: &DeferralDraft, append: TimelineAppend) -> Result<Deferral, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
-        transaction
-            .execute(
-                "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        span.execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
                  VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    draft.project_id,
-                    draft.finding_id,
-                    draft.reason.as_str(),
-                    draft.supersedes.map(|id| id.value() as i64),
-                ],
-            )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            params![
+                draft.project_id,
+                draft.finding_id,
+                draft.reason.as_str(),
+                draft.supersedes.map(|id| id.value() as i64),
+            ],
+        )
+        .map_err(internal)?;
         let id = DeferralId::new(
-            transaction
-                .last_insert_rowid()
+            span.last_insert_rowid()
                 .try_into()
                 .map_err(|_| ApiError::internal("the deferral identity overflowed"))?,
         );
@@ -61,12 +55,10 @@ impl DeferralStore for SqliteDeferralStore {
             draft.finding_id.clone(),
             draft.reason.clone(),
             draft.supersedes,
-            recorded_at(&transaction, id)?,
+            recorded_at(&span, id)?,
         );
-        append_timeline(&transaction, &deferral, &append)?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        append_timeline(&span, &deferral, &append)?;
+        span.commit().map_err(internal)?;
         Ok(deferral)
     }
 
@@ -133,17 +125,18 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Deferral> {
     ))
 }
 
-fn recorded_at(
-    transaction: &rusqlite::Transaction<'_>,
-    id: DeferralId,
-) -> Result<String, ApiError> {
-    transaction
-        .query_row(
-            "SELECT recorded_at FROM deferrals WHERE id = ?1",
-            params![id.value() as i64],
-            |row| row.get(0),
-        )
-        .map_err(|error| ApiError::internal(&error.to_string()))
+fn recorded_at(conn: &rusqlite::Connection, id: DeferralId) -> Result<String, ApiError> {
+    conn.query_row(
+        "SELECT recorded_at FROM deferrals WHERE id = ?1",
+        params![id.value() as i64],
+        |row| row.get(0),
+    )
+    .map_err(internal)
+}
+
+/// Report a SQLite failure the caller cannot act on.
+fn internal(error: rusqlite::Error) -> ApiError {
+    ApiError::internal(&error.to_string())
 }
 
 #[derive(Debug)]
@@ -158,7 +151,7 @@ impl std::fmt::Display for CorruptReason {
 impl std::error::Error for CorruptReason {}
 
 fn append_timeline(
-    transaction: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     deferral: &Deferral,
     append: &TimelineAppend,
 ) -> Result<(), ApiError> {
@@ -175,7 +168,7 @@ fn append_timeline(
         object.insert("supersedes_id".to_owned(), Value::from(supersedes.value()));
     }
     insert_event(
-        transaction,
+        conn,
         &StorageTimelineAppend {
             project_id: deferral.project_id().to_owned(),
             kind: append.kind.to_owned(),

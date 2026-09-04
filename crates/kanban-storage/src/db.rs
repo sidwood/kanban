@@ -1,8 +1,9 @@
 //! Opening the single authoritative SQLite database in WAL mode.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
 use rusqlite::Connection;
 
 use crate::error::StorageError;
@@ -11,10 +12,79 @@ use crate::paths;
 use crate::timeline::{TimelineAppend, TimelineFilter, TimelineRow};
 
 /// The shareable handle to the one connection the core owns.
-/// rusqlite connections are `Send` but not `Sync`; the mutex is
-/// what lets storage-backed command handlers serve across transport
+/// rusqlite connections are `Send` but not `Sync`; the lock is what
+/// lets storage-backed command handlers serve across transport
 /// threads through the same connection.
-pub(crate) type ConnectionHandle = Arc<Mutex<Connection>>;
+///
+/// The lock is re-entrant because a mutation must hold the
+/// connection from its first row to the commit that records its
+/// replay outcome, while the handlers running inside that span
+/// write through their own handles on the same connection. A plain
+/// mutex would deadlock on that second acquisition; releasing it
+/// between writes would let another thread read rows the span may
+/// still discard.
+pub(crate) type ConnectionHandle = Arc<ReentrantMutex<Connection>>;
+
+/// Open an atomic write, nesting inside any write already open.
+const OPEN_SPAN: &str = "SAVEPOINT kanban_write_span";
+
+/// Land the innermost open write. Releasing the outermost one is
+/// what commits the transaction SQLite started under it.
+const LAND_SPAN: &str = "RELEASE kanban_write_span";
+
+/// Discard the innermost open write. Rolling back to a savepoint
+/// leaves it open, so the release must follow: an abandoned
+/// savepoint would hold the transaction open against every later
+/// writer on this connection.
+const DISCARD_SPAN: &str = "ROLLBACK TO kanban_write_span; RELEASE kanban_write_span";
+
+/// One atomic write on the shared connection. The outermost span is
+/// the transaction SQLite commits; spans opened inside it are
+/// savepoints, so an aggregate's rows, its timeline appends, and the
+/// replay outcome recorded against them land together or not at all.
+/// A span dropped without [`WriteSpan::commit`] discards everything
+/// written inside it, including the spans it held.
+pub(crate) struct WriteSpan<'a> {
+    conn: &'a Connection,
+    committed: bool,
+}
+
+impl<'a> WriteSpan<'a> {
+    /// Open a span on `conn`.
+    pub(crate) fn begin(conn: &'a Connection) -> Result<Self, rusqlite::Error> {
+        conn.execute_batch(OPEN_SPAN)?;
+        Ok(Self {
+            conn,
+            committed: false,
+        })
+    }
+
+    /// Land everything written inside the span.
+    pub(crate) fn commit(mut self) -> Result<(), rusqlite::Error> {
+        self.conn.execute_batch(LAND_SPAN)?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl std::ops::Deref for WriteSpan<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.conn
+    }
+}
+
+impl Drop for WriteSpan<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            // Nothing useful remains to be done with a failure here:
+            // the caller is already unwinding an error, and the next
+            // writer on this connection reports the open span itself.
+            let _ = self.conn.execute_batch(DISCARD_SPAN);
+        }
+    }
+}
 
 /// An open handle on the single authoritative SQLite database
 /// (ADR-0002). The Core owns the only connections; nothing else,
@@ -57,7 +127,7 @@ impl Database {
         // The append-only triggers must fire for REPLACE's implicit delete.
         conn.pragma_update(None, "recursive_triggers", "ON")?;
         let database = Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(ReentrantMutex::new(conn)),
         };
         let mode = database.journal_mode()?;
         if mode != "wal" {
@@ -84,8 +154,8 @@ impl Database {
         &mut self,
         hook: &dyn PreMigrationHook,
     ) -> Result<MigrationReport, StorageError> {
-        let mut conn = self.lock();
-        migrations::run(&mut conn, hook)
+        let conn = self.lock();
+        migrations::run(&conn, hook)
     }
 
     /// Appends to the audit trail. The only write it supports.
@@ -111,21 +181,20 @@ impl Database {
     }
 
     /// Lock the connection; every internal writer goes through here.
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> ReentrantMutexGuard<'_, Connection> {
+        self.conn.lock()
     }
 
     /// The raw connection, for tests that must fabricate state.
     #[cfg(test)]
-    pub(crate) fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn connection(&self) -> ReentrantMutexGuard<'_, Connection> {
         self.lock()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
     use tempfile::TempDir;
 
     use super::Database;
@@ -183,6 +252,101 @@ mod tests {
             reopened.journal_mode().expect("journal mode is readable"),
             "wal"
         );
+    }
+
+    #[test]
+    fn a_write_span_lands_every_write_made_inside_it() {
+        let (_dir, mut database) = crate::test_support::scratch_database();
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+        let store_handle = database.connection_handle();
+
+        {
+            let conn = database.connection();
+            let span = super::WriteSpan::begin(&conn).expect("the span opens");
+            insert_initiative(&span, "Outer");
+            // A second handle, as every store holds one, writes
+            // inside the span the first handle opened.
+            let nested_conn = store_handle.lock();
+            let nested = super::WriteSpan::begin(&nested_conn).expect("the nested span opens");
+            insert_initiative(&nested, "Nested");
+            nested.commit().expect("the nested span lands");
+            span.commit().expect("the holding span lands");
+        }
+
+        assert_eq!(
+            initiative_names(&database),
+            vec!["Outer".to_owned(), "Nested".to_owned()]
+        );
+    }
+
+    #[test]
+    fn dropping_a_write_span_discards_the_writes_nested_inside_it() {
+        let (_dir, mut database) = crate::test_support::scratch_database();
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+        let store_handle = database.connection_handle();
+
+        {
+            let conn = database.connection();
+            let span = super::WriteSpan::begin(&conn).expect("the span opens");
+            insert_initiative(&span, "Outer");
+            let nested_conn = store_handle.lock();
+            let nested = super::WriteSpan::begin(&nested_conn).expect("the nested span opens");
+            insert_initiative(&nested, "Nested");
+            nested.commit().expect("the nested span lands");
+            drop(span);
+        }
+
+        assert!(
+            initiative_names(&database).is_empty(),
+            "a nested write cannot outlive the span that holds it"
+        );
+    }
+
+    #[test]
+    fn the_connection_is_writable_again_after_a_span_is_discarded() {
+        let (_dir, mut database) = crate::test_support::scratch_database();
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+
+        {
+            let conn = database.connection();
+            drop(super::WriteSpan::begin(&conn).expect("the span opens"));
+        }
+        {
+            let conn = database.connection();
+            let span = super::WriteSpan::begin(&conn).expect("the next span opens");
+            insert_initiative(&span, "After");
+            span.commit().expect("the next span lands");
+        }
+
+        assert_eq!(initiative_names(&database), vec!["After".to_owned()]);
+    }
+
+    /// Write one Initiative row through `conn`.
+    fn insert_initiative(conn: &Connection, name: &str) {
+        conn.execute(
+            "INSERT INTO initiatives (name, archived, version) VALUES (?1, 0, 1)",
+            [name],
+        )
+        .expect("the row inserts");
+    }
+
+    /// Every stored Initiative name, in insertion order.
+    fn initiative_names(database: &Database) -> Vec<String> {
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare("SELECT name FROM initiatives ORDER BY id")
+            .expect("the initiatives table is readable");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("the query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the names decode")
     }
 
     #[test]

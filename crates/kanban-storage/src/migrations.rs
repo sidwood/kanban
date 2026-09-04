@@ -2,6 +2,7 @@
 
 use rusqlite::Connection;
 
+use crate::db::WriteSpan;
 use crate::error::StorageError;
 
 /// One embedded, forward-only SQL migration. Versions are strictly
@@ -82,7 +83,7 @@ const MIGRATIONS: &[Migration] = &[
 /// Applies every pending migration, newest last, and refuses any
 /// history this build does not recognise.
 pub(crate) fn run(
-    conn: &mut Connection,
+    conn: &Connection,
     hook: &dyn PreMigrationHook,
 ) -> Result<MigrationReport, StorageError> {
     ensure_bookkeeping(conn)?;
@@ -141,28 +142,27 @@ fn applied_versions(conn: &Connection) -> Result<Vec<i64>, StorageError> {
     Ok(versions)
 }
 
-/// Applies one migration and records it in the same transaction:
-/// either the schema change and its bookkeeping land together or
-/// neither does.
-fn apply_one(conn: &mut Connection, migration: &Migration) -> Result<(), StorageError> {
-    let transaction = conn.transaction()?;
-    transaction
-        .execute_batch(migration.sql)
+/// Applies one migration and records it in the same write: either
+/// the schema change and its bookkeeping land together or neither
+/// does.
+fn apply_one(conn: &Connection, migration: &Migration) -> Result<(), StorageError> {
+    let span = WriteSpan::begin(conn)?;
+    span.execute_batch(migration.sql)
         .map_err(|source| StorageError::Migration {
             version: migration.version,
             name: migration.name,
             source,
         })?;
     crate::audit::insert_event(
-        &transaction,
+        &span,
         "migration.applied",
         &serde_json::json!({ "version": migration.version, "name": migration.name }),
     )?;
-    transaction.execute(
+    span.execute(
         "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
         rusqlite::params![migration.version, migration.name],
     )?;
-    transaction.commit()?;
+    span.commit()?;
     Ok(())
 }
 

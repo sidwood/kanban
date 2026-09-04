@@ -7,6 +7,7 @@ pub mod health;
 pub mod initiative;
 pub mod mutation;
 pub mod schema;
+pub mod timeline;
 
 pub use error::{ApiError, ErrorCode};
 pub use event::EventEnvelope;
@@ -17,6 +18,10 @@ pub use initiative::{
 };
 pub use mutation::MutationContext;
 pub use schema::schema_definitions;
+pub use timeline::{
+    TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
+    TimelineQueryResponse,
+};
 
 #[cfg(test)]
 mod tests {
@@ -76,6 +81,12 @@ mod tests {
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
                 "MutationContext",
+                "TimelineEntityKind",
+                "TimelineEntityRef",
+                "TimelineEventKind",
+                "TimelineEventRecord",
+                "TimelineQuery",
+                "TimelineQueryResponse",
             ]
         );
     }

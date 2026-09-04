@@ -9,6 +9,10 @@ use crate::initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 use crate::mutation::MutationContext;
+use crate::timeline::{
+    TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
+    TimelineQueryResponse,
+};
 
 /// Every DTO schema exported to `packages/contracts`.
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
@@ -37,5 +41,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(InitiativeRenameRequest),
         ),
         ("MutationContext", schema_for!(MutationContext)),
+        ("TimelineEntityKind", schema_for!(TimelineEntityKind)),
+        ("TimelineEntityRef", schema_for!(TimelineEntityRef)),
+        ("TimelineEventKind", schema_for!(TimelineEventKind)),
+        ("TimelineEventRecord", schema_for!(TimelineEventRecord)),
+        ("TimelineQuery", schema_for!(TimelineQuery)),
+        ("TimelineQueryResponse", schema_for!(TimelineQueryResponse)),
     ]
 }

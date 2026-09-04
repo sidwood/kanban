@@ -8,6 +8,7 @@ use rusqlite::Connection;
 use crate::error::StorageError;
 use crate::migrations::{self, MigrationReport, PreMigrationHook};
 use crate::paths;
+use crate::timeline::{TimelineAppend, TimelineFilter, TimelineRow};
 
 /// The shareable handle to the one connection the core owns.
 /// rusqlite connections are `Send` but not `Sync`; the mutex is
@@ -97,12 +98,16 @@ impl Database {
     }
 
     /// Appends to the activity timeline. The only write it supports.
-    pub fn append_timeline_event(
+    pub fn append_timeline_event(&self, event: &TimelineAppend) -> Result<(), StorageError> {
+        crate::timeline::insert_event(&self.conn, event)
+    }
+
+    /// Reads timeline rows for `filter`, oldest first.
+    pub fn query_timeline(
         &self,
-        kind: &str,
-        detail: &serde_json::Value,
-    ) -> Result<(), StorageError> {
-        crate::timeline::insert_event(&self.lock(), kind, detail)
+        filter: &TimelineFilter,
+    ) -> Result<Vec<TimelineRow>, StorageError> {
+        crate::timeline::query_events(&self.conn, filter)
     }
 
     /// Lock the connection; every internal writer goes through here.

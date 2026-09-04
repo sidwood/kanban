@@ -62,6 +62,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "initiatives",
         sql: include_str!("../migrations/0002_initiatives.sql"),
     },
+    Migration {
+        version: 3,
+        name: "timeline envelope",
+        sql: include_str!("../migrations/0003_timeline_envelope.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -202,7 +207,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2]
+                applied: vec![1, 2, 3]
             }
         );
         assert_eq!(
@@ -214,6 +219,15 @@ mod tests {
                 .expect("the bookkeeping row is readable"),
             (1, "initial schema".to_string())
         );
+        let versions: Vec<i64> = database
+            .connection()
+            .prepare("SELECT version FROM schema_migrations ORDER BY version")
+            .expect("bookkeeping is readable")
+            .query_map([], |row| row.get(0))
+            .expect("the query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("versions decode");
+        assert_eq!(versions, vec![1, 2, 3]);
         for table in ["audit_events", "timeline_events", "initiatives"] {
             let present: i64 = database
                 .connection()
@@ -262,16 +276,21 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 2, "one event per applied migration");
+        assert_eq!(events.len(), 3, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
-        assert_eq!(events[1].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 1, "name": "initial schema" })
         );
+        assert_eq!(events[1].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[1].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 2, "name": "initiatives" })
+        );
+        assert_eq!(events[2].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[2].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 3, "name": "timeline envelope" })
         );
     }
 
@@ -314,6 +333,10 @@ mod tests {
                 PendingMigration {
                     version: 2,
                     name: "initiatives",
+                },
+                PendingMigration {
+                    version: 3,
+                    name: "timeline envelope",
                 },
             ]]
         );

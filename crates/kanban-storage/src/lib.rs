@@ -19,3 +19,4 @@ pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,
 };
 pub use paths::{database_path, managed_data_dir};
+pub use timeline::{TimelineAppend, TimelineFilter, TimelineRow};

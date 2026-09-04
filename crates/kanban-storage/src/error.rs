@@ -57,6 +57,12 @@ pub enum StorageError {
     /// A SQLite statement failed outside a named operation.
     #[error("a SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// A timeline write or query carried invalid inputs.
+    #[error("invalid timeline input: {reason}")]
+    InvalidTimeline {
+        /// Why the input was rejected.
+        reason: String,
+    },
 }
 
 #[cfg(test)]

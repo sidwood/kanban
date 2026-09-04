@@ -94,7 +94,6 @@ async fn health_get(shell: State<'_, Arc<Shell>>) -> Result<HealthResponse, ApiE
     .map_err(|_| ApiError::internal("the health task did not finish"))?
 }
 
-
 #[tauri::command]
 async fn initiative_create(
     shell: State<'_, Arc<Shell>>,
@@ -179,7 +178,9 @@ async fn timeline_query(
     let payload = encode(request)?;
     let shell = shell.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "timeline", |link| link.query("timeline.query", &payload))
+        over_link(&shell, "timeline", |link| {
+            link.query("timeline.query", &payload)
+        })
     })
     .await
     .map_err(|_| ApiError::internal("the timeline task did not finish"))?

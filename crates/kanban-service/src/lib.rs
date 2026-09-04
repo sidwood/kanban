@@ -43,6 +43,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     // Forward-only from the first boot; the verified-backup hook
     // arrives with KAN-T60.
     database.migrate(&AllowAllMigrations)?;
+    let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let database = Arc::new(Mutex::new(database));
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
@@ -52,7 +53,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         Arc::new(MemoryIdempotencyStore::new()),
         broker,
     )?;
-    core.register_initiatives(Arc::new(SqliteInitiativeStore::new(&database)))?;
+    core.register_initiatives(initiative_store)?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),

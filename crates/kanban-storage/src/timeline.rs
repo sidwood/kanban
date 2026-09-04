@@ -44,11 +44,6 @@ pub struct TimelineFilter {
 
 /// Appends one timeline event. There is no update or delete path.
 pub(crate) fn insert_event(conn: &Connection, event: &TimelineAppend) -> Result<(), StorageError> {
-    if event.project_id.is_empty() {
-        return Err(StorageError::InvalidTimeline {
-            reason: "project_id is required".to_owned(),
-        });
-    }
     conn.execute(
         "INSERT INTO timeline_events (project_id, kind, entity_kind, entity_id, detail)
          VALUES (?1, ?2, ?3, ?4, ?5)",

@@ -99,7 +99,7 @@ impl Database {
 
     /// Appends to the activity timeline. The only write it supports.
     pub fn append_timeline_event(&self, event: &TimelineAppend) -> Result<(), StorageError> {
-        crate::timeline::insert_event(&self.conn, event)
+        crate::timeline::insert_event(&self.lock(), event)
     }
 
     /// Reads timeline rows for `filter`, oldest first.
@@ -107,7 +107,7 @@ impl Database {
         &self,
         filter: &TimelineFilter,
     ) -> Result<Vec<TimelineRow>, StorageError> {
-        crate::timeline::query_events(&self.conn, filter)
+        crate::timeline::query_events(&self.lock(), filter)
     }
 
     /// Lock the connection; every internal writer goes through here.

@@ -9,6 +9,7 @@ use rusqlite::params;
 use serde_json::Value;
 
 use crate::db::{ConnectionHandle, Database};
+use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
 
 /// The Initiative port over the authoritative database.
 pub struct SqliteInitiativeStore {
@@ -175,8 +176,17 @@ fn append_timeline(
         .as_object_mut()
         .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?
         .insert("id".to_owned(), Value::from(id.value()));
-    crate::timeline::insert_event(transaction, append.kind, &detail)
-        .map_err(|error| ApiError::internal(&error.to_string()))
+    insert_event(
+        transaction,
+        &StorageTimelineAppend {
+            project_id: String::new(),
+            kind: append.kind.to_owned(),
+            entity_kind: Some("initiative".to_owned()),
+            entity_id: Some(id.value().to_string()),
+            detail,
+        },
+    )
+    .map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 #[cfg(test)]

@@ -342,5 +342,212 @@
       "title": "InitiativeListResponse",
       "type": "object"
     }
+  },
+  {
+    "description": "Query the per-Project append-only activity timeline.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "TimelineEventKind": {
+          "description": "The closed vocabulary of timeline event kinds (DR-AE-01).",
+          "enum": [
+            "transition",
+            "run",
+            "telemetry",
+            "review",
+            "finding",
+            "evidence",
+            "comment",
+            "deferral",
+            "ruling"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "Filters for the per-Project timeline query surface.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kinds": {
+          "items": {
+            "$ref": "#/definitions/TimelineEventKind"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "until": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "TimelineQuery",
+      "type": "object"
+    },
+    "name": "timeline_query",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "TimelineEventKind": {
+          "description": "The closed vocabulary of timeline event kinds (DR-AE-01).",
+          "enum": [
+            "transition",
+            "run",
+            "telemetry",
+            "review",
+            "finding",
+            "evidence",
+            "comment",
+            "deferral",
+            "ruling"
+          ],
+          "type": "string"
+        },
+        "TimelineEventRecord": {
+          "additionalProperties": false,
+          "description": "One append-only timeline row as returned by queries.",
+          "properties": {
+            "detail": true,
+            "entity": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TimelineEntityRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEventKind"
+            },
+            "project_id": {
+              "type": "string"
+            },
+            "recorded_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "detail",
+            "id",
+            "kind",
+            "project_id",
+            "recorded_at"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The timeline query answer.",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/definitions/TimelineEventRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "title": "TimelineQueryResponse",
+      "type": "object"
+    }
   }
 ]

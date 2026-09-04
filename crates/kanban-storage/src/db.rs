@@ -25,36 +25,27 @@ use crate::timeline::{TimelineAppend, TimelineFilter, TimelineRow};
 /// still discard.
 pub(crate) type ConnectionHandle = Arc<ReentrantMutex<Connection>>;
 
-/// Open an atomic write, nesting inside any write already open.
-const OPEN_SPAN: &str = "SAVEPOINT kanban_write_span";
-
-/// Land the innermost open write. Releasing the outermost one is
-/// what commits the transaction SQLite started under it.
-const LAND_SPAN: &str = "RELEASE kanban_write_span";
-
-/// Discard the innermost open write. Rolling back to a savepoint
-/// leaves it open, so the release must follow: an abandoned
-/// savepoint would hold the transaction open against every later
-/// writer on this connection.
-const DISCARD_SPAN: &str = "ROLLBACK TO kanban_write_span; RELEASE kanban_write_span";
-
 /// Open an atomic write on `conn`, nesting inside any write already
-/// open on it.
+/// open on it. Spans nest strictly last in, first out, so one
+/// savepoint name serves every depth.
 pub(crate) fn open_span(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(OPEN_SPAN)
+    conn.execute_batch("SAVEPOINT kanban_write_span")
 }
 
-/// Land the innermost open write on `conn`.
+/// Land the innermost open write on `conn`. Releasing the outermost
+/// span is what commits the transaction SQLite started under it.
 pub(crate) fn land_span(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(LAND_SPAN)
+    conn.execute_batch("RELEASE kanban_write_span")
 }
 
-/// Discard the innermost open write on `conn`. Nothing useful
-/// remains to be done with a failure here: the caller is already
-/// unwinding an error, and the next writer on this connection
-/// reports the open span itself.
+/// Discard the innermost open write on `conn`. Rolling back to a
+/// savepoint leaves it open, so the release must follow: an
+/// abandoned savepoint would hold the transaction open against every
+/// later writer. Nothing useful remains to be done with a failure
+/// here, because the caller is already unwinding an error and the
+/// next writer reports the open span itself.
 pub(crate) fn discard_span(conn: &Connection) {
-    let _ = conn.execute_batch(DISCARD_SPAN);
+    let _ = conn.execute_batch("ROLLBACK TO kanban_write_span; RELEASE kanban_write_span");
 }
 
 /// One atomic write on the shared connection. The outermost span is

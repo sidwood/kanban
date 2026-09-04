@@ -70,6 +70,7 @@ impl InitiativeStore for SqliteInitiativeStore {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let archived = initiative.is_archived();
+        let preceding_version = initiative.version() - 1;
         let changed = span
             .execute(
                 "UPDATE initiatives
@@ -80,20 +81,33 @@ impl InitiativeStore for SqliteInitiativeStore {
                          WHEN ?3 = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                          ELSE archived_at
                      END
-                 WHERE id = ?1",
+                 WHERE id = ?1 AND version = ?5",
                 params![
                     initiative.id().value() as i64,
                     initiative.name(),
                     archived,
-                    initiative.version() as i64
+                    initiative.version() as i64,
+                    preceding_version as i64,
                 ],
             )
             .map_err(internal)?;
         if changed != 1 {
-            return Err(ApiError::not_found(&format!(
-                "initiative {}",
-                initiative.id()
-            )));
+            let current = span.query_row(
+                "SELECT version FROM initiatives WHERE id = ?1",
+                params![initiative.id().value() as i64],
+                |row| row.get::<_, i64>(0),
+            );
+            return match current {
+                Ok(current) => Err(ApiError::stale_version(
+                    preceding_version,
+                    current.unsigned_abs(),
+                )),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Err(ApiError::not_found(&format!(
+                    "initiative {}",
+                    initiative.id()
+                ))),
+                Err(error) => Err(ApiError::internal(&error.to_string())),
+            };
         }
         append_timeline(&span, &envelope)?;
         span.commit().map_err(internal)?;
@@ -470,5 +484,171 @@ mod tests {
             "Threaded",
             "the port is Send + Sync over one connection"
         );
+    }
+
+    /// Version-guard behaviour for Initiative persistence (KAN-T76).
+    mod initiative_version {
+        use std::sync::Arc;
+
+        use super::{created, store, stored_rows, timeline_rows, transition};
+        use kanban_app::InitiativeStore;
+        use kanban_domain::InitiativeName;
+        use kanban_dto::ErrorCode;
+        use serde_json::json;
+
+        #[test]
+        fn saving_updates_by_identity_and_the_preceding_version() {
+            let (_dir, database, store) = store();
+            let mut initiative = store
+                .create(
+                    &InitiativeName::new("Alpha").expect("the name validates"),
+                    &created("Alpha"),
+                )
+                .expect("the create lands");
+            initiative
+                .rename(InitiativeName::new("Beta").expect("the name validates"))
+                .expect("active renames");
+
+            store
+                .save(
+                    &initiative,
+                    transition(
+                        initiative.id(),
+                        "renamed",
+                        json!({ "from": "Alpha", "to": "Beta" }),
+                    ),
+                )
+                .expect("the guarded save lands");
+
+            assert_eq!(
+                stored_rows(&database),
+                vec![(1, "Beta".to_owned(), 0, 2)],
+                "the row must carry the new facts at version two"
+            );
+        }
+
+        #[test]
+        fn a_stale_storage_write_returns_stale_version_without_a_timeline_row() {
+            let (_dir, database, store) = store();
+            let initiative = store
+                .create(
+                    &InitiativeName::new("Alpha").expect("the name validates"),
+                    &created("Alpha"),
+                )
+                .expect("the create lands");
+            let mut stale = initiative.clone();
+            stale
+                .rename(InitiativeName::new("Beta").expect("the name validates"))
+                .expect("active renames");
+            let mut current = initiative;
+            current
+                .rename(InitiativeName::new("Gamma").expect("the name validates"))
+                .expect("active renames");
+            store
+                .save(
+                    &current,
+                    transition(
+                        current.id(),
+                        "renamed",
+                        json!({ "from": "Alpha", "to": "Gamma" }),
+                    ),
+                )
+                .expect("the first save lands");
+
+            let timeline_before = timeline_rows(&database).len();
+
+            let error = store
+                .save(
+                    &stale,
+                    transition(
+                        stale.id(),
+                        "renamed",
+                        json!({ "from": "Alpha", "to": "Beta" }),
+                    ),
+                )
+                .expect_err("the stale save is refused");
+
+            assert_eq!(error.code, ErrorCode::StaleVersion);
+            assert_eq!(error.current_version, Some(2));
+            assert_eq!(
+                timeline_rows(&database).len(),
+                timeline_before,
+                "a stale save must not append a timeline row"
+            );
+            assert_eq!(
+                stored_rows(&database),
+                vec![(1, "Gamma".to_owned(), 0, 2)],
+                "the winning write must remain authoritative"
+            );
+        }
+
+        #[test]
+        fn racing_two_copies_commits_exactly_one_transition() {
+            let (_dir, database, store) = store();
+            let store = Arc::new(store);
+            let initiative = store
+                .create(
+                    &InitiativeName::new("Alpha").expect("the name validates"),
+                    &created("Alpha"),
+                )
+                .expect("the create lands");
+
+            let mut copy_a = initiative.clone();
+            let mut copy_b = initiative;
+            copy_a
+                .rename(InitiativeName::new("Alpha-wins").expect("the name validates"))
+                .expect("active renames");
+            copy_b
+                .rename(InitiativeName::new("Beta-wins").expect("the name validates"))
+                .expect("active renames");
+
+            let store_a = store.clone();
+            let store_b = store.clone();
+            let handle_a = std::thread::spawn(move || {
+                let id = copy_a.id();
+                store_a.save(
+                    &copy_a,
+                    transition(
+                        id,
+                        "renamed",
+                        json!({ "from": "Alpha", "to": "Alpha-wins" }),
+                    ),
+                )
+            });
+            let handle_b = std::thread::spawn(move || {
+                let id = copy_b.id();
+                store_b.save(
+                    &copy_b,
+                    transition(id, "renamed", json!({ "from": "Alpha", "to": "Beta-wins" })),
+                )
+            });
+
+            let result_a = handle_a.join().expect("the first thread finishes");
+            let result_b = handle_b.join().expect("the second thread finishes");
+            let outcomes = [result_a, result_b];
+            let successes = outcomes.iter().filter(|result| result.is_ok()).count();
+            let failures: Vec<_> = outcomes
+                .into_iter()
+                .filter_map(|result| result.err())
+                .collect();
+
+            assert_eq!(successes, 1, "exactly one transition may commit");
+            assert_eq!(failures.len(), 1, "the loser must be refused");
+            assert_eq!(failures[0].code, ErrorCode::StaleVersion);
+            assert_eq!(
+                timeline_rows(&database).len(),
+                2,
+                "only the create and one rename may append"
+            );
+            let (_, name, _, version) = stored_rows(&database)
+                .into_iter()
+                .next()
+                .expect("the Initiative survives");
+            assert_eq!(version, 2);
+            assert!(
+                name == "Alpha-wins" || name == "Beta-wins",
+                "the committed name must come from the winning save, got {name}"
+            );
+        }
     }
 }

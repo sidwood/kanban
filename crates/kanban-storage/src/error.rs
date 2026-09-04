@@ -31,6 +31,29 @@ pub enum StorageError {
         /// The journal mode SQLite reported instead.
         mode: String,
     },
+    /// The pre-migration hook refused to let the run proceed.
+    #[error("the pre-migration hook refused: {reason}")]
+    HookRefused {
+        /// Why the hook refused.
+        reason: String,
+    },
+    /// The database holds applied migrations this build does not
+    /// recognise as the start of its own list.
+    #[error("applied migration history {applied:?} does not extend this build's known migrations")]
+    HistoryMismatch {
+        /// The applied versions, ascending, at the failure.
+        applied: Vec<i64>,
+    },
+    /// A migration's SQL failed.
+    #[error("migration {version} ({name}) failed: {source}")]
+    Migration {
+        /// The failing migration version.
+        version: i64,
+        /// The failing migration name.
+        name: &'static str,
+        /// The underlying SQLite failure.
+        source: rusqlite::Error,
+    },
     /// A SQLite statement failed outside a named operation.
     #[error("a SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),

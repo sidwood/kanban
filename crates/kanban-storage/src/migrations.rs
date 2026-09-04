@@ -1,0 +1,302 @@
+//! Forward-only migrations from an empty schema.
+
+use rusqlite::Connection;
+
+use crate::error::StorageError;
+
+/// One embedded, forward-only SQL migration. Versions are strictly
+/// increasing and no migration is ever reverted or rewritten.
+pub struct Migration {
+    /// The migration version; also the file prefix.
+    pub version: i64,
+    /// The human name, matching the file stem.
+    pub name: &'static str,
+    /// The SQL applied inside one transaction.
+    sql: &'static str,
+}
+
+/// A migration that is about to be applied, as seen by the
+/// pre-migration hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingMigration {
+    /// The migration version.
+    pub version: i64,
+    /// The human name.
+    pub name: &'static str,
+}
+
+/// The seam a later slice uses to gate schema change; KAN-T60
+/// makes it refuse to proceed without a verified backup.
+pub trait PreMigrationHook {
+    /// Runs once before any pending migration is applied. Returning
+    /// an error aborts the run and leaves the schema untouched.
+    fn before_migrate(&self, pending: &[PendingMigration]) -> Result<(), StorageError>;
+}
+
+/// The hook used until the verified-backup gate exists (KAN-T60).
+pub struct AllowAllMigrations;
+
+impl PreMigrationHook for AllowAllMigrations {
+    fn before_migrate(&self, _pending: &[PendingMigration]) -> Result<(), StorageError> {
+        Ok(())
+    }
+}
+
+/// What a migration run did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct MigrationReport {
+    /// Versions applied by this run, in order.
+    pub applied: Vec<i64>,
+}
+
+/// Every known migration, embedded at build time in strictly
+/// increasing version order.
+const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "initial schema",
+    sql: include_str!("../migrations/0001_initial_schema.sql"),
+}];
+
+/// Applies every pending migration, newest last, and refuses any
+/// history this build does not recognise.
+pub(crate) fn run(
+    conn: &mut Connection,
+    hook: &dyn PreMigrationHook,
+) -> Result<MigrationReport, StorageError> {
+    ensure_bookkeeping(conn)?;
+    let applied = applied_versions(conn)?;
+    let known = MIGRATIONS
+        .iter()
+        .zip(&applied)
+        .all(|(migration, version)| migration.version == *version);
+    if !known || applied.len() > MIGRATIONS.len() {
+        return Err(StorageError::HistoryMismatch { applied });
+    }
+
+    let pending = &MIGRATIONS[applied.len()..];
+    if pending.is_empty() {
+        return Ok(MigrationReport::default());
+    }
+
+    let visible: Vec<PendingMigration> = pending
+        .iter()
+        .map(|migration| PendingMigration {
+            version: migration.version,
+            name: migration.name,
+        })
+        .collect();
+    hook.before_migrate(&visible)?;
+
+    let mut report = MigrationReport::default();
+    for migration in pending {
+        apply_one(conn, migration)?;
+        report.applied.push(migration.version);
+    }
+    Ok(report)
+}
+
+/// Creates the runner's own bookkeeping table. It records state,
+/// not domain history, so it exists outside the migration files.
+fn ensure_bookkeeping(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+             version    INTEGER PRIMARY KEY,
+             name       TEXT NOT NULL,
+             applied_at TEXT NOT NULL
+                 DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         )",
+        [],
+    )?;
+    Ok(())
+}
+
+/// The applied versions, ascending.
+fn applied_versions(conn: &Connection) -> Result<Vec<i64>, StorageError> {
+    let mut statement = conn.prepare("SELECT version FROM schema_migrations ORDER BY version")?;
+    let versions = statement
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(versions)
+}
+
+/// Applies one migration and records it in the same transaction:
+/// either the schema change and its bookkeeping land together or
+/// neither does.
+fn apply_one(conn: &mut Connection, migration: &Migration) -> Result<(), StorageError> {
+    let transaction = conn.transaction()?;
+    transaction
+        .execute_batch(migration.sql)
+        .map_err(|source| StorageError::Migration {
+            version: migration.version,
+            name: migration.name,
+            source,
+        })?;
+    transaction.execute(
+        "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+        rusqlite::params![migration.version, migration.name],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use crate::error::StorageError;
+    use crate::migrations::{
+        AllowAllMigrations, MIGRATIONS, MigrationReport, PendingMigration, PreMigrationHook,
+    };
+    use crate::test_support::scratch_database;
+
+    /// Records every call so tests can observe hook invocations.
+    struct RecordingHook {
+        calls: RefCell<Vec<Vec<PendingMigration>>>,
+    }
+
+    impl PreMigrationHook for RecordingHook {
+        fn before_migrate(&self, pending: &[PendingMigration]) -> Result<(), StorageError> {
+            self.calls.borrow_mut().push(pending.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Refuses to proceed, standing in for the verified-backup gate.
+    struct RefusingHook;
+
+    impl PreMigrationHook for RefusingHook {
+        fn before_migrate(&self, _pending: &[PendingMigration]) -> Result<(), StorageError> {
+            Err(StorageError::HookRefused {
+                reason: "no verified backup".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn known_migrations_are_strictly_increasing() {
+        for pair in MIGRATIONS.windows(2) {
+            assert!(pair[0].version < pair[1].version);
+        }
+    }
+
+    #[test]
+    fn migrate_applies_the_initial_schema_from_empty() {
+        let (_dir, mut database) = scratch_database();
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the initial migration applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![1] });
+        assert_eq!(
+            database
+                .connection()
+                .query_row("SELECT version, name FROM schema_migrations", [], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })
+                .expect("the bookkeeping row is readable"),
+            (1, "initial schema".to_string())
+        );
+        for table in ["audit_events", "timeline_events"] {
+            let present: i64 = database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("sqlite_master is readable");
+            assert_eq!(present, 1, "{table} should exist");
+        }
+    }
+
+    #[test]
+    fn migrate_again_applies_nothing() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the first run applies");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the second run succeeds");
+
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn migrate_refuses_an_unrecognised_history() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the initial run applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (42, 'future')",
+                [],
+            )
+            .expect("the fabricated history lands");
+
+        assert!(matches!(
+            database.migrate(&AllowAllMigrations),
+            Err(StorageError::HistoryMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn pre_migration_hook_observes_pending_migrations() {
+        let (_dir, mut database) = scratch_database();
+        let hook = RecordingHook {
+            calls: RefCell::new(Vec::new()),
+        };
+
+        database.migrate(&hook).expect("the run applies");
+
+        assert_eq!(
+            hook.calls.into_inner(),
+            vec![vec![PendingMigration {
+                version: 1,
+                name: "initial schema",
+            }]]
+        );
+    }
+
+    #[test]
+    fn pre_migration_hook_refusal_leaves_the_schema_untouched() {
+        let (_dir, mut database) = scratch_database();
+
+        let outcome = database.migrate(&RefusingHook);
+
+        assert!(matches!(outcome, Err(StorageError::HookRefused { .. })));
+        let table_present: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'timeline_events'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(table_present, 0, "no migration SQL may have run");
+    }
+
+    #[test]
+    fn pre_migration_hook_is_skipped_when_nothing_is_pending() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the first run applies");
+        let hook = RecordingHook {
+            calls: RefCell::new(Vec::new()),
+        };
+
+        database.migrate(&hook).expect("the second run succeeds");
+
+        assert!(hook.calls.into_inner().is_empty());
+    }
+}

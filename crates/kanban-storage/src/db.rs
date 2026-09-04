@@ -5,6 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::error::StorageError;
+use crate::migrations::{self, MigrationReport, PreMigrationHook};
 use crate::paths;
 
 /// An open handle on the single authoritative SQLite database
@@ -58,6 +59,21 @@ impl Database {
         Ok(self
             .conn
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
+    }
+
+    /// Applies pending forward-only migrations, first offering the
+    /// hook the chance to refuse (the KAN-T60 backup seam).
+    pub fn migrate(
+        &mut self,
+        hook: &dyn PreMigrationHook,
+    ) -> Result<MigrationReport, StorageError> {
+        migrations::run(&mut self.conn, hook)
+    }
+
+    /// The raw connection, for tests that must fabricate state.
+    #[cfg(test)]
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.conn
     }
 }
 

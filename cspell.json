@@ -29,6 +29,7 @@
     "shadcn",
     "SQLite",
     "stdio",
+    "strftime",
     "stripspace",
     "tempfile",
     "Tauri",

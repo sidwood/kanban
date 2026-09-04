@@ -1,6 +1,5 @@
 //! Shared test fixtures: every storage test runs against a real
-//! SQLite file in a scratch directory (docs/architecture/
-//! verification.md).
+//! SQLite file in a scratch directory.
 
 use tempfile::TempDir;
 

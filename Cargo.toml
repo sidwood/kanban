@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kanban-domain",
+    "crates/kanban-dto",
+    "crates/kanban-app",
+    "crates/kanban-storage",
+    "crates/kanban-transport",
+    "crates/kanban-herdr",
+    "crates/kanban-mcp",
+    "crates/kanban-service",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false

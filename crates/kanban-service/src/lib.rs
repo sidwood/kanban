@@ -316,6 +316,38 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_command_leaves_the_core_writable() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let refused = client.command_error(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "blank" },
+                "name": "   ",
+            }),
+        );
+        assert_eq!(refused["code"], json!("invalid_request"));
+
+        let created = client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "after-refusal" },
+                "name": "Reliability",
+            }),
+        );
+
+        assert_eq!(
+            created,
+            json!({ "id": 1, "name": "Reliability", "archived": false, "version": 1 }),
+            "the discarded span released the write it never landed"
+        );
+
+        core.shutdown();
+    }
+
+    #[test]
     fn the_initiative_lifecycle_serves_over_the_socket() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let core = boot(&dir);

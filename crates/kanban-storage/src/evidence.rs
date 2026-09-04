@@ -3,7 +3,9 @@
 //! same transaction as every change.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kanban_app::{EvidenceFilter, EvidenceStore, TimelineAppend};
@@ -200,6 +202,14 @@ pub fn content_hash(content: &[u8]) -> String {
 }
 
 /// Write managed attachment bytes before the metadata row lands.
+///
+/// Blobs are content-addressed, so a file already under the hash name
+/// with matching bytes is this attachment and is kept. Mismatching
+/// bytes are a torn or corrupt blob, never a second payload, and are
+/// replaced. The bytes go to a sibling temporary file that is synced
+/// and renamed onto the hash name, so an interrupted write leaves the
+/// previous file or the complete new one under the authentic name and
+/// never a torn blob that would block reattachment.
 fn write_attachment(
     attachments_dir: &Path,
     hash: &ContentHash,
@@ -207,15 +217,38 @@ fn write_attachment(
 ) -> Result<(), ApiError> {
     fs::create_dir_all(attachments_dir).map_err(|error| ApiError::internal(&error.to_string()))?;
     let path = attachment_path(attachments_dir, hash);
-    if path.exists() {
-        let existing = fs::read(&path).map_err(|error| ApiError::internal(&error.to_string()))?;
-        if content_hash(&existing) == hash.as_str() {
-            return Ok(());
-        }
-        return Err(ApiError::internal("attachment path collision"));
+    let authentic = fs::read(&path)
+        .ok()
+        .is_some_and(|existing| content_hash(&existing) == hash.as_str());
+    if authentic {
+        return Ok(());
     }
-    fs::write(&path, content).map_err(|error| ApiError::internal(&error.to_string()))?;
-    Ok(())
+    let staging = staging_path(attachments_dir, hash);
+    let staged = fs::File::create(&staging).and_then(|mut file| {
+        file.write_all(content)?;
+        file.sync_all()?;
+        fs::rename(&staging, &path)
+    });
+    staged.map_err(|error| {
+        // Best effort: a stale staging file is harmless, and the
+        // original failure is the one worth reporting.
+        let _ = fs::remove_file(&staging);
+        ApiError::internal(&error.to_string())
+    })
+}
+
+/// The sibling path an in-flight attachment write goes to. It sits in
+/// the attachments directory so the final rename stays on one file
+/// system, and it is unique per process and call so two attaches of
+/// one payload never share a staging file.
+fn staging_path(attachments_dir: &Path, hash: &ContentHash) -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    attachments_dir.join(format!(
+        "{}.{}-{sequence}.staging",
+        hash.as_str(),
+        std::process::id()
+    ))
 }
 
 fn attachment_path(attachments_dir: &Path, hash: &ContentHash) -> PathBuf {
@@ -351,7 +384,7 @@ impl std::error::Error for CorruptEvidence {}
 mod evidence_storage {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use kanban_app::{EvidenceFilter, EvidenceStore, TimelineAppend};
-    use kanban_domain::{CommitIdentity, EvidenceKind, RelativePath};
+    use kanban_domain::{CommitIdentity, ContentHash, EvidenceKind, RelativePath};
     use serde_json::json;
 
     use super::{SqliteEvidenceStore, attachment_path, content_hash};
@@ -488,6 +521,49 @@ mod evidence_storage {
             .read_managed_file(item.content_hash().expect("hash present"))
             .expect_err("the mismatch is refused");
         assert!(error.message.contains("hash mismatch"));
+    }
+
+    /// A hash-named file whose bytes do not match its name is a torn
+    /// or corrupt blob, not a second payload: reattaching the authentic
+    /// bytes must heal it rather than fail forever on a collision.
+    #[test]
+    fn a_torn_attachment_is_replaced_when_the_authentic_bytes_reattach() {
+        let (dir, _database, store) = store();
+        let attachments = dir.path().join("attachments");
+        let content = b"proof bytes";
+        let hash = ContentHash::new(&content_hash(content)).expect("the digest validates");
+        std::fs::create_dir_all(&attachments).expect("the attachments dir exists");
+        std::fs::write(attachment_path(&attachments, &hash), &content[..4])
+            .expect("the torn blob is planted");
+
+        let item = store
+            .attach_managed_file(
+                "kan-p1",
+                "ticket",
+                "kan-t10",
+                &STANDARD.encode(content),
+                append("evidence", json!({ "action": "attached" })),
+            )
+            .expect("reattaching the authentic bytes heals the torn blob");
+
+        assert_eq!(item.content_hash().expect("hash present"), &hash);
+        assert_eq!(
+            std::fs::read(attachment_path(&attachments, &hash)).expect("bytes exist"),
+            content
+        );
+        assert_eq!(
+            store.read_managed_file(&hash).expect("the read verifies"),
+            content
+        );
+        let entries: Vec<_> = std::fs::read_dir(&attachments)
+            .expect("the attachments dir lists")
+            .map(|entry| entry.expect("the entry reads").file_name())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![std::ffi::OsString::from(hash.as_str())],
+            "the write leaves no temporary file behind"
+        );
     }
 
     #[test]

@@ -1,13 +1,13 @@
 // The embedded timeline surface's query state and filters.
 import { defineStore } from 'pinia'
+import { KanbanClient } from '@kanban/contracts'
 import type {
   TimelineEntityKind,
   TimelineEntityRef,
   TimelineEventKind,
-  TimelineQuery,
-  TimelineQueryResponse,
 } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
+import { datetimeLocalToUtcIso } from './timeline-datetime'
 
 export interface TimelineEventView {
   id: number
@@ -52,17 +52,14 @@ export const useTimelineStore = defineStore('timeline', {
       this.loading = true
       this.error = null
       try {
-        const request: TimelineQuery = {
+        const client = new KanbanClient(transport)
+        const response = await client.queryTimelineQuery({
           project_id: this.projectId,
           entity: this.entityFilter(),
           kinds: this.filters.kinds.length > 0 ? this.filters.kinds : undefined,
-          since: this.filters.since || undefined,
-          until: this.filters.until || undefined,
-        }
-        const response = (await transport.query(
-          'timeline.query',
-          request,
-        )) as TimelineQueryResponse
+          since: datetimeLocalToUtcIso(this.filters.since),
+          until: datetimeLocalToUtcIso(this.filters.until),
+        })
         this.events = response.events.map((event) => ({
           id: event.id,
           project_id: event.project_id,

@@ -5,6 +5,7 @@ import type { KanbanTransport, TimelineQueryResponse } from '@kanban/contracts'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { useTimelineStore } from '../stores/timeline'
 import { kanbanTransportKey } from '../core/transport'
+import { datetimeLocalToUtcIso } from '../stores/timeline-datetime'
 
 function transportWithTimeline(
   response: TimelineQueryResponse,
@@ -97,8 +98,8 @@ describe('timeline surface', () => {
       project_id: 'kan',
       entity: { kind: 'ticket', id: 'kan-t9' },
       kinds: ['transition'],
-      since: '2026-09-04T00:00',
-      until: '2026-09-04T23:59',
+      since: datetimeLocalToUtcIso('2026-09-04T00:00'),
+      until: datetimeLocalToUtcIso('2026-09-04T23:59'),
     })
   })
 })

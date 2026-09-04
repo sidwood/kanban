@@ -7,6 +7,7 @@ import type {
   TimelineEventKind,
   TimelineScope,
 } from '@kanban/contracts'
+import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import { datetimeLocalToUtcIso } from './timeline-datetime'
 
@@ -70,7 +71,7 @@ export const useTimelineStore = defineStore('timeline', {
           detail: event.detail,
         }))
       } catch (failure) {
-        this.error = failure instanceof Error ? failure.message : String(failure)
+        this.error = asApiError(failure).message
         this.events = []
       } finally {
         this.loading = false

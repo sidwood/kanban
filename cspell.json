@@ -10,6 +10,7 @@
     "clippy",
     "codegen",
     "conn",
+    "deserialises",
     "dialog",
     "frontmatter",
     "Herdr",

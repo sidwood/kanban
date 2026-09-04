@@ -4,12 +4,17 @@
 pub mod error;
 pub mod event;
 pub mod health;
+pub mod initiative;
 pub mod mutation;
 pub mod schema;
 
 pub use error::{ApiError, ErrorCode};
 pub use event::EventEnvelope;
 pub use health::{HealthQuery, HealthResponse};
+pub use initiative::{
+    InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
+    InitiativeRecord, InitiativeRenameRequest,
+};
 pub use mutation::MutationContext;
 pub use schema::schema_definitions;
 
@@ -64,6 +69,12 @@ mod tests {
                 "EventEnvelope",
                 "HealthQuery",
                 "HealthResponse",
+                "InitiativeArchiveRequest",
+                "InitiativeCreateRequest",
+                "InitiativeListQuery",
+                "InitiativeListResponse",
+                "InitiativeRecord",
+                "InitiativeRenameRequest",
                 "MutationContext",
             ]
         );

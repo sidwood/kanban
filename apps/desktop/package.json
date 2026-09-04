@@ -4,19 +4,24 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "dev": "tauri dev",
+    "dev:web": "pnpm --filter @kanban/contracts run build && vite",
+    "build": "tauri build --debug --no-bundle",
+    "build:web": "pnpm --filter @kanban/contracts run build && vue-tsc --noEmit && vite build",
     "lint": "eslint .",
-    "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "pnpm --filter @kanban/contracts run build && vue-tsc --noEmit",
+    "test": "pnpm --filter @kanban/contracts run build && vitest run"
   },
   "dependencies": {
+    "@kanban/contracts": "workspace:*",
+    "@tauri-apps/api": "^2.9.0",
     "pinia": "^4.0.3",
     "vue": "^3.5.42",
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.9.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "eslint": "^10.9.1",

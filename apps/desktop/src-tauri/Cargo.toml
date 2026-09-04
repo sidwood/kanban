@@ -1,0 +1,37 @@
+[package]
+name = "kanban-desktop"
+version = "0.1.0"
+description = "Thin Tauri shell hosting the Kanban desktop application"
+edition = "2024"
+rust-version = "1.85.0"
+publish = false
+
+# The shell is deliberately outside the root Cargo workspace: the
+# core is eight crates under crates/, and the shell is replaceable
+# Tauri plumbing (ADR-0001, docs/architecture/repository.md).
+[workspace]
+
+[lib]
+name = "kanban_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Test support: a fake core binary the on-demand start tests spawn.
+[[bin]]
+name = "fake-core"
+path = "src/bin/fake_core.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+kanban-dto = { path = "../../../crates/kanban-dto" }
+kanban-service = { path = "../../../crates/kanban-service" }
+kanban-storage = { path = "../../../crates/kanban-storage" }
+kanban-transport = { path = "../../../crates/kanban-transport" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tauri = { version = "2", features = [] }
+
+[dev-dependencies]
+kanban-app = { path = "../../../crates/kanban-app" }
+tempfile = "3.27.0"

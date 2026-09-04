@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The WebView may listen to the shell's typed, ordered events; it has no database, network, shell, filesystem, or secret capability (DR-SS-09).",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

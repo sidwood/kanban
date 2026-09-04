@@ -12,16 +12,6 @@ bootstrap: need-rust need-web
     pnpm install
     cargo fetch
 
-# fmt, clippy, Rust tests, web lint, typecheck, tests, and contract drift.
-check: need-rust need-web
-    cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo test --workspace
-    just verify-contracts
-    pnpm -r run lint
-    pnpm -r run typecheck
-    pnpm -r run test
-
 # Regenerate contracts and fail when committed artifacts drift.
 verify-contracts: need-rust
     cargo run --quiet -p kanban-app --bin kanban-contracts-gen
@@ -43,15 +33,40 @@ build: need-rust need-web
     cargo build --workspace
     pnpm -r run build
 
-# Run the core and the desktop app for development.
+# fmt, clippy, Rust tests, web lint, typecheck, tests, and contract drift.
+check: need-rust need-web
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    just check-shell
+    just verify-contracts
+    pnpm -r run lint
+    pnpm -r run typecheck
+    pnpm -r run test
+
+# The Tauri shell workspace: fmt, clippy, and tests for the crate in
+# apps/desktop/src-tauri, which is deliberately outside the root
+# Cargo workspace.
+check-shell: need-rust need-web
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm --filter desktop run build:web
+    cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+    cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+    cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+# Run the core and the desktop app for development. The shell starts
+# the core on demand; quitting the window leaves it running.
 dev: need-rust need-web
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run -p kanban-service &
-    core_pid=$!
-    cleanup() { kill "$core_pid" 2>/dev/null || true; }
-    trap cleanup EXIT INT TERM
+    cargo build -p kanban-service
     pnpm --filter desktop dev
+
+# Development helper: stop a core a dev session left running. The
+# product's own stop path with warnings lands in KAN-T63.
+stop-core:
+    pkill -x kanban-service || true
 
 # Fail loudly when the Rust toolchain or its components are missing.
 [private]

@@ -6,6 +6,7 @@ pub mod db;
 pub mod error;
 pub mod migrations;
 pub mod paths;
+pub mod timeline;
 
 #[cfg(test)]
 mod test_support;

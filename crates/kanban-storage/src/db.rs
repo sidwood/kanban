@@ -70,6 +70,24 @@ impl Database {
         migrations::run(&mut self.conn, hook)
     }
 
+    /// Appends to the audit trail. The only write it supports.
+    pub fn append_audit_event(
+        &self,
+        kind: &str,
+        detail: &serde_json::Value,
+    ) -> Result<(), StorageError> {
+        crate::audit::insert_event(&self.conn, kind, detail)
+    }
+
+    /// Appends to the activity timeline. The only write it supports.
+    pub fn append_timeline_event(
+        &self,
+        kind: &str,
+        detail: &serde_json::Value,
+    ) -> Result<(), StorageError> {
+        crate::timeline::insert_event(&self.conn, kind, detail)
+    }
+
     /// The raw connection, for tests that must fabricate state.
     #[cfg(test)]
     pub(crate) fn connection(&self) -> &Connection {

@@ -1,21 +1,22 @@
-//! The append-only audit trail.
+//! The append-only activity timeline.
 //!
-//! `audit_events` accepts inserts and nothing else (ADR-0002,
-//! DR-SS-04). This module is the only writer.
+//! `timeline_events` accepts inserts and nothing else (ADR-0002).
+//! This module is the only writer; KAN-S2 builds the queries and
+//! surfaces above it.
 
 use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::error::StorageError;
 
-/// Appends one audit event. There is no update or delete path.
+/// Appends one timeline event. There is no update or delete path.
 pub(crate) fn insert_event(
     conn: &Connection,
     kind: &str,
     detail: &Value,
 ) -> Result<(), StorageError> {
     conn.execute(
-        "INSERT INTO audit_events (kind, detail) VALUES (?1, ?2)",
+        "INSERT INTO timeline_events (kind, detail) VALUES (?1, ?2)",
         rusqlite::params![kind, detail.to_string()],
     )?;
     Ok(())
@@ -34,7 +35,7 @@ mod append_only {
             .migrate(&AllowAllMigrations)
             .expect("the initial migration applies");
         database
-            .append_audit_event("probe.kind", &json!({ "probe": true }))
+            .append_timeline_event("probe.kind", &json!({ "probe": true }))
             .expect("the append path inserts");
         database
     }
@@ -45,18 +46,18 @@ mod append_only {
 
         let rows: i64 = database
             .connection()
-            .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
-            .expect("the audit trail is readable");
-        assert_eq!(rows, 2, "the migration event plus the probe");
+            .query_row("SELECT COUNT(*) FROM timeline_events", [], |row| row.get(0))
+            .expect("the timeline is readable");
+        assert_eq!(rows, 1, "timeline events are not auto-written");
     }
 
     #[test]
-    fn updating_audit_events_fails() {
+    fn updating_timeline_events_fails() {
         let database = seeded_database();
 
         let outcome = database
             .connection()
-            .execute("UPDATE audit_events SET kind = 'tampered'", []);
+            .execute("UPDATE timeline_events SET kind = 'tampered'", []);
 
         let error = outcome.expect_err("the schema must refuse updates");
         assert!(
@@ -66,12 +67,12 @@ mod append_only {
     }
 
     #[test]
-    fn deleting_audit_events_fails() {
+    fn deleting_timeline_events_fails() {
         let database = seeded_database();
 
         let outcome = database
             .connection()
-            .execute("DELETE FROM audit_events", []);
+            .execute("DELETE FROM timeline_events", []);
 
         let error = outcome.expect_err("the schema must refuse deletes");
         assert!(

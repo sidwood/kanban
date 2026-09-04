@@ -1,11 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { KanbanTransport, TimelineQueryResponse } from '@kanban/contracts'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { useTimelineStore } from '../stores/timeline'
 import { kanbanTransportKey } from '../core/transport'
-import { datetimeLocalToUtcIso } from '../stores/timeline-datetime'
 
 function transportWithTimeline(
   response: TimelineQueryResponse,
@@ -28,6 +27,11 @@ function transportWithTimeline(
 describe('timeline surface', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    vi.stubEnv('TZ', 'UTC')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('renders events from the generated timeline query', async () => {
@@ -98,8 +102,8 @@ describe('timeline surface', () => {
       project_id: 'kan',
       entity: { kind: 'ticket', id: 'kan-t9' },
       kinds: ['transition'],
-      since: datetimeLocalToUtcIso('2026-09-04T00:00'),
-      until: datetimeLocalToUtcIso('2026-09-04T23:59'),
+      since: '2026-09-04T00:00:00.000Z',
+      until: '2026-09-04T23:59:59.999Z',
     })
   })
 })

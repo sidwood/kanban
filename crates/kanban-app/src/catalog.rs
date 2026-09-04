@@ -59,5 +59,13 @@ pub fn exposed_operations() -> &'static [OperationDescriptor] {
             mcp_tool_name: "initiative_list",
             description: "List every Initiative, archived ones included.",
         },
+        OperationDescriptor {
+            name: "timeline.query",
+            kind: OperationKind::Query,
+            request_schema: "TimelineQuery",
+            response_schema: "TimelineQueryResponse",
+            mcp_tool_name: "timeline_query",
+            description: "Query the per-Project append-only activity timeline.",
+        },
     ]
 }

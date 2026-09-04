@@ -7,6 +7,7 @@ pub mod dispatch;
 pub mod events;
 pub mod initiative;
 pub mod mutation;
+pub mod timeline;
 
 pub use catalog::{OperationDescriptor, OperationKind, exposed_operations};
 pub use dispatch::{Core, QueryHandler, RegistrationError};
@@ -15,6 +16,10 @@ pub use initiative::{InitiativeStore, TimelineAppend};
 pub use mutation::{
     CommandHandler, IdempotencyStore, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome,
     parse_payload,
+};
+pub use timeline::{
+    TimelineError, TimelineQueryHandler, TimelineRecorder, TimelineStore, entity_kind_wire,
+    event_kind_wire,
 };
 
 #[cfg(test)]

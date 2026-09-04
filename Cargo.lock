@@ -199,6 +199,7 @@ name = "kanban-service"
 version = "0.1.0"
 dependencies = [
  "kanban-app",
+ "kanban-dto",
  "kanban-storage",
  "kanban-transport",
  "serde_json",

@@ -73,8 +73,7 @@ impl Core {
         }
     }
 
-    /// A core serving the exposed catalog; today that is the health
-    /// query.
+    /// A core serving the exposed catalog; health is always wired.
     pub fn with_health(
         service_version: &str,
         idempotency: Arc<dyn IdempotencyStore>,

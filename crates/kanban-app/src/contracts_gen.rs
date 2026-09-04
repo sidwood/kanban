@@ -59,7 +59,6 @@ fn render_types(
     for name in schema_index.keys() {
         let schema = &schema_index[name];
         output.push_str(&render_type_definition(name, schema));
-        output.push('\n');
     }
 
     Ok(output)
@@ -255,7 +254,8 @@ fn render_client(
     output.push_str("export class KanbanClient {\n");
     output.push_str("  constructor(private readonly transport: KanbanTransport) {}\n\n");
 
-    for operation in exposed_operations() {
+    let operations = exposed_operations();
+    for (index, operation) in operations.iter().enumerate() {
         let method_name = operation_method_name(operation.name, operation.kind);
         let request_type = operation.request_schema;
         let response_type = operation.response_schema;
@@ -270,13 +270,18 @@ fn render_client(
         };
 
         output.push_str(&format!(
-            "  {method_name}({request_parameter}): Promise<{response_type}> {{\n    return this.transport.{transport_method}('{operation_name}', request);\n  }}\n\n",
+            "  {method_name}({request_parameter}): Promise<{response_type}> {{\n    return this.transport.{transport_method}('{operation_name}', request);\n  }}",
             method_name = method_name,
             request_parameter = request_parameter,
             response_type = response_type,
             transport_method = transport_method,
             operation_name = operation.name,
         ));
+        if index + 1 < operations.len() {
+            output.push_str("\n\n");
+        } else {
+            output.push('\n');
+        }
     }
 
     output.push_str("}\n");
@@ -402,6 +407,29 @@ mod tests {
             exposed_operations().len(),
             "generated client must not expose extra operations"
         );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn generated_typescript_has_no_trailing_blank_lines() {
+        let temp_root =
+            std::env::temp_dir().join(format!("kanban-contracts-gen-eof-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_root);
+        generate(&temp_root).expect("generation succeeds");
+
+        for file_name in ["src/types.ts", "src/client.ts"] {
+            let source =
+                fs::read_to_string(temp_root.join(file_name)).expect("generated file exists");
+            assert!(
+                source.ends_with('\n'),
+                "{file_name} must end with a single newline"
+            );
+            assert!(
+                !source.ends_with("\n\n"),
+                "{file_name} must not end with a blank line"
+            );
+        }
 
         let _ = fs::remove_dir_all(temp_root);
     }

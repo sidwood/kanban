@@ -19,5 +19,4 @@ export class KanbanClient {
   queryHealthGet(request: HealthQuery = {}): Promise<HealthResponse> {
     return this.transport.query('health.get', request);
   }
-
 }

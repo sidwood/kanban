@@ -25,6 +25,12 @@ check: need-rust need-web
 # Regenerate contracts and fail when committed artifacts drift.
 verify-contracts: need-rust
     cargo run --quiet -p kanban-app --bin kanban-contracts-gen
+    git diff --check -- \
+      packages/contracts/src/index.ts \
+      packages/contracts/src/client.ts \
+      packages/contracts/src/types.ts \
+      packages/contracts/src/mcp-tools.json \
+      packages/contracts/src/schemas
     git diff --exit-code -- \
       packages/contracts/src/index.ts \
       packages/contracts/src/client.ts \

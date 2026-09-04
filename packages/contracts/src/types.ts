@@ -12,24 +12,18 @@ export type ApiError = {
   code: ErrorCode;
   message: string;
 };
-
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'internal';
-
 export type EventEnvelope = {
   event_type: string;
   payload: JsonValue;
   sequence: number;
 };
-
 export type HealthQuery = Record<string, never>;
-
 export type HealthResponse = {
   connected: boolean;
   service_version: string;
 };
-
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
 };
-

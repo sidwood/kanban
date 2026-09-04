@@ -5,6 +5,7 @@ pub mod comment;
 pub mod deferral;
 pub mod error;
 pub mod event;
+pub mod evidence;
 pub mod health;
 pub mod initiative;
 pub mod mutation;
@@ -22,6 +23,10 @@ pub use deferral::{
 };
 pub use error::{ApiError, ErrorCode};
 pub use event::EventEnvelope;
+pub use evidence::{
+    EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
+    EvidenceRecord,
+};
 pub use health::{HealthQuery, HealthResponse};
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
@@ -92,6 +97,11 @@ mod tests {
                 "CommentRevisionsResponse",
                 "ErrorCode",
                 "EventEnvelope",
+                "EvidenceAttachRequest",
+                "EvidenceKindDto",
+                "EvidenceListRequest",
+                "EvidenceListResponse",
+                "EvidenceRecord",
                 "HealthQuery",
                 "HealthResponse",
                 "InitiativeArchiveRequest",

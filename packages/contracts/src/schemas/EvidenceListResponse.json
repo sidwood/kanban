@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "EvidenceKindDto": {
+      "description": "Whether an evidence item is a managed file or repository reference.",
+      "enum": [
+        "managed_file",
+        "repository"
+      ],
+      "type": "string"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "description": "One evidence record as every client sees it.",
+      "properties": {
+        "commit_identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "entity_kind": {
+          "type": "string"
+        },
+        "evidence_kind": {
+          "$ref": "#/definitions/EvidenceKindDto"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "relative_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "entity_id",
+        "entity_kind",
+        "evidence_kind",
+        "id",
+        "project_id"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `evidence.list` command.",
+  "properties": {
+    "evidence": {
+      "items": {
+        "$ref": "#/definitions/EvidenceRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "evidence"
+  ],
+  "title": "EvidenceListResponse",
+  "type": "object"
+}

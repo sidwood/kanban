@@ -25,6 +25,8 @@ describe('generated client', () => {
       'deferral.record',
       'deferral.supersede',
       'deferral.list',
+      'evidence.attach',
+      'evidence.list',
     ])
   })
 

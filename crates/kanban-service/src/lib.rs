@@ -15,7 +15,7 @@ use kanban_app::{Core, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
-    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteRulingStore,
+    SqliteEvidenceStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteRulingStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -64,6 +64,10 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         &database,
         RetentionPolicy::keep_most_recent(RETAINED_OUTCOMES),
     ));
+    let evidence_store = Arc::new(SqliteEvidenceStore::new(
+        &database,
+        data_dir.join("attachments"),
+    ));
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
@@ -73,6 +77,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
     core.register_deferrals(deferral_store)?;
+    core.register_evidence(evidence_store)?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),

@@ -21,6 +21,11 @@ pub const fn database_file_name() -> &'static str {
     "kanban.sqlite"
 }
 
+/// The attachments directory inside managed application data.
+pub fn attachments_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
+    managed_root.join("attachments")
+}
+
 /// The path of the single authoritative SQLite database.
 pub fn database_path() -> Result<PathBuf, StorageError> {
     Ok(managed_data_dir()?.join(database_file_name()))

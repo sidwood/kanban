@@ -7,6 +7,7 @@ pub mod contracts_gen;
 pub mod deferrals;
 pub mod dispatch;
 pub mod events;
+pub mod evidence;
 pub mod initiative;
 pub mod mutation;
 pub mod rulings;
@@ -17,6 +18,7 @@ pub use comment::CommentStore;
 pub use deferrals::DeferralStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
+pub use evidence::{EvidenceFilter, EvidenceStore};
 pub use initiative::InitiativeStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use mutation::MemoryIdempotencyStore;

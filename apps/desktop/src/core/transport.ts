@@ -41,6 +41,8 @@ const COMMAND_FOR_OPERATION = {
   'deferral.record': 'deferral_record',
   'deferral.supersede': 'deferral_supersede',
   'deferral.list': 'deferral_list',
+  'evidence.attach': 'evidence_attach',
+  'evidence.list': 'evidence_list',
 } as const satisfies Record<KanbanOperationName, string>
 
 function shellInvokePayload<Request>(
@@ -56,6 +58,9 @@ function shellInvokePayload<Request>(
     case 'deferral.record':
     case 'deferral.supersede':
     case 'deferral.list':
+      return { request: request as Record<string, unknown> }
+    case 'evidence.attach':
+    case 'evidence.list':
       return { request: request as Record<string, unknown> }
     default:
       return request as Record<string, unknown>

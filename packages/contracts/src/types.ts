@@ -76,6 +76,36 @@ export type EventEnvelope = {
   payload: JsonValue;
   sequence: number;
 };
+export type EvidenceAttachRequest = {
+  commit_identity?: string | null;
+  content_base64?: string | null;
+  entity_id: string;
+  entity_kind: string;
+  evidence_kind: EvidenceKindDto;
+  mutation: MutationContext;
+  project_id: string;
+  relative_path?: string | null;
+};
+export type EvidenceKindDto = 'managed_file' | 'repository';
+export type EvidenceListRequest = {
+  entity_id?: string | null;
+  entity_kind?: string | null;
+  mutation: MutationContext;
+  project_id: string;
+};
+export type EvidenceListResponse = {
+  evidence: EvidenceRecord[];
+};
+export type EvidenceRecord = {
+  commit_identity?: string | null;
+  content_hash?: string | null;
+  entity_id: string;
+  entity_kind: string;
+  evidence_kind: EvidenceKindDto;
+  id: number;
+  project_id: string;
+  relative_path?: string | null;
+};
 export type HealthQuery = Record<string, never>;
 export type HealthResponse = {
   connected: boolean;

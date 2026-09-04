@@ -11,6 +11,10 @@ use crate::deferral::{
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::event::EventEnvelope;
+use crate::evidence::{
+    EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
+    EvidenceRecord,
+};
 use crate::health::{HealthQuery, HealthResponse};
 use crate::initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
@@ -40,6 +44,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("ErrorCode", schema_for!(ErrorCode)),
         ("EventEnvelope", schema_for!(EventEnvelope)),
+        ("EvidenceAttachRequest", schema_for!(EvidenceAttachRequest)),
+        ("EvidenceKindDto", schema_for!(EvidenceKindDto)),
+        ("EvidenceListRequest", schema_for!(EvidenceListRequest)),
+        ("EvidenceListResponse", schema_for!(EvidenceListResponse)),
+        ("EvidenceRecord", schema_for!(EvidenceRecord)),
         ("HealthQuery", schema_for!(HealthQuery)),
         ("HealthResponse", schema_for!(HealthResponse)),
         (

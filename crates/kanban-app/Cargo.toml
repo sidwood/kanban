@@ -17,6 +17,8 @@ kanban-dto = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = "0.22.1"
+sha2 = "0.10.9"
 
 [[bin]]
 name = "kanban-contracts-gen"

@@ -14,7 +14,8 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, HealthResponse, InitiativeArchiveRequest,
+    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
+    EvidenceListResponse, EvidenceRecord, HealthResponse, InitiativeArchiveRequest,
     InitiativeCreateRequest, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
     MutationContext, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
     RulingSupersedeRequest, TimelineEntityRef, TimelineQuery, TimelineQueryResponse,
@@ -347,6 +348,38 @@ async fn deferral_list(
     .map_err(|_| ApiError::internal("the deferral list task did not finish"))?
 }
 
+#[tauri::command]
+async fn evidence_attach(
+    shell: State<'_, Arc<Shell>>,
+    request: EvidenceAttachRequest,
+) -> Result<EvidenceRecord, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "attached evidence", |link| {
+            link.command("evidence.attach", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the attach task did not finish"))?
+}
+
+#[tauri::command]
+async fn evidence_list(
+    shell: State<'_, Arc<Shell>>,
+    request: EvidenceListRequest,
+) -> Result<EvidenceListResponse, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "evidence list", |link| {
+            link.command("evidence.list", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the list task did not finish"))?
+}
+
 /// Build the window, start the core on demand, and supervise the
 /// connection for as long as this shell process lives.
 pub fn run() -> tauri::Result<()> {
@@ -380,6 +413,8 @@ pub fn run() -> tauri::Result<()> {
             deferral_record,
             deferral_supersede,
             deferral_list,
+            evidence_attach,
+            evidence_list,
         ])
         .run(tauri::generate_context!())
 }

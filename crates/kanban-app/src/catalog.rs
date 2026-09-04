@@ -139,5 +139,21 @@ pub fn exposed_operations() -> &'static [OperationDescriptor] {
             mcp_tool_name: "deferral_list",
             description: "List every deferral for a project, superseded originals included.",
         },
+        OperationDescriptor {
+            name: "evidence.attach",
+            kind: OperationKind::Command,
+            request_schema: "EvidenceAttachRequest",
+            response_schema: "EvidenceRecord",
+            mcp_tool_name: "evidence_attach",
+            description: "Attach managed-file or repository evidence to an entity.",
+        },
+        OperationDescriptor {
+            name: "evidence.list",
+            kind: OperationKind::Command,
+            request_schema: "EvidenceListRequest",
+            response_schema: "EvidenceListResponse",
+            mcp_tool_name: "evidence_list",
+            description: "List evidence for a Project and append a timeline event.",
+        },
     ]
 }

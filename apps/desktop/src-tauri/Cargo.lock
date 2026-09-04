@@ -1618,11 +1618,13 @@ dependencies = [
 name = "kanban-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "kanban-domain",
  "kanban-dto",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1670,6 +1672,7 @@ dependencies = [
 name = "kanban-storage"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "kanban-app",
  "kanban-domain",
@@ -1677,6 +1680,7 @@ dependencies = [
  "parking_lot",
  "rusqlite",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
 ]
 

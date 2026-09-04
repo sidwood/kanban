@@ -360,4 +360,64 @@ mod tests {
 
         rebooted.shutdown();
     }
+
+    /// KAN-T10-AC3: every evidence command leaves the per-Project
+    /// timeline readable. A list row once carried half an entity
+    /// reference, which the timeline decoder refuses, so one
+    /// `evidence.list` used to make the whole Project query fail.
+    #[test]
+    fn evidence_commands_keep_the_project_timeline_readable() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let attached = client.command(
+            "evidence.attach",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-attach" },
+                "project_id": "kan-p1",
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+                "evidence_kind": "managed_file",
+                "content_base64": "cHJvb2YgYnl0ZXM=",
+            }),
+        );
+        assert_eq!(attached["id"], json!(1));
+        client.command(
+            "evidence.list",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-ticket" },
+                "project_id": "kan-p1",
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+            }),
+        );
+        client.command(
+            "evidence.list",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-project" },
+                "project_id": "kan-p1",
+            }),
+        );
+
+        let timeline = client.query_with("timeline.query", json!({ "project_id": "kan-p1" }));
+        let events = timeline["events"]
+            .as_array()
+            .expect("the timeline query answers with events");
+        let entities: Vec<Value> = events
+            .iter()
+            .map(|event| event.get("entity").cloned().unwrap_or(Value::Null))
+            .collect();
+        assert_eq!(
+            entities,
+            vec![
+                json!({ "kind": "evidence", "id": "1" }),
+                json!({ "kind": "ticket", "id": "kan-t10" }),
+                Value::Null,
+            ],
+            "attach references the item, a filtered list references the filter, a Project-wide list references nothing"
+        );
+
+        core.shutdown();
+    }
 }

@@ -13,6 +13,7 @@ use kanban_domain::{
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::db::{ConnectionHandle, Database};
@@ -105,12 +106,16 @@ impl EvidenceStore for SqliteEvidenceStore {
             .transaction()
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let items = query_rows(&transaction, filter)?;
+        let entity = filter
+            .entity_kind
+            .as_deref()
+            .zip(filter.entity_id.as_deref());
         append_timeline(
             &transaction,
             &filter.project_id,
-            entity_kind_wire(&append),
-            entity_id_wire(&append),
-            &append,
+            append.kind,
+            entity,
+            append.facts,
         )?;
         transaction
             .commit()
@@ -166,21 +171,20 @@ impl SqliteEvidenceStore {
         );
         let item = EvidenceItem::restore(id, shape)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let mut timeline_facts = append.facts.clone();
-        timeline_facts
+        let mut detail = append.facts;
+        let facts = detail
             .as_object_mut()
-            .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?
-            .insert("id".to_owned(), serde_json::Value::from(id.value()));
-        let timeline_append = TimelineAppend {
-            kind: append.kind,
-            facts: timeline_facts,
-        };
+            .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?;
+        facts.insert("id".to_owned(), Value::from(id.value()));
+        facts.insert("entity_kind".to_owned(), Value::from(item.entity_kind()));
+        facts.insert("entity_id".to_owned(), Value::from(item.entity_id()));
+        let evidence_id = id.value().to_string();
         append_timeline(
             &transaction,
             item.project_id(),
-            item.entity_kind(),
-            item.entity_id(),
-            &timeline_append,
+            append.kind,
+            Some(("evidence", evidence_id.as_str())),
+            detail,
         )?;
         transaction
             .commit()
@@ -307,55 +311,29 @@ fn evidence_kind_wire(kind: EvidenceKind) -> &'static str {
     }
 }
 
+/// Append one evidence event to the Project timeline. `entity` is the
+/// envelope's `(entity_kind, entity_id)` pair and lands whole or not
+/// at all: the timeline decoder refuses a row carrying only one of
+/// the two columns, and one such row makes the entire Project query
+/// fail.
 fn append_timeline(
     transaction: &rusqlite::Transaction<'_>,
     project_id: &str,
-    entity_kind: &str,
-    entity_id: &str,
-    append: &TimelineAppend,
+    kind: &str,
+    entity: Option<(&str, &str)>,
+    detail: Value,
 ) -> Result<(), ApiError> {
-    let mut detail = append.facts.clone();
-    detail
-        .as_object_mut()
-        .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?
-        .insert(
-            "entity_kind".to_owned(),
-            serde_json::Value::from(entity_kind),
-        );
-    detail
-        .as_object_mut()
-        .expect("the facts remain an object")
-        .insert("entity_id".to_owned(), serde_json::Value::from(entity_id));
     insert_event(
         transaction,
         &StorageTimelineAppend {
             project_id: project_id.to_owned(),
-            kind: append.kind.to_owned(),
-            entity_kind: Some("evidence".to_owned()),
-            entity_id: detail
-                .get("id")
-                .and_then(|value| value.as_u64())
-                .map(|id| id.to_string()),
+            kind: kind.to_owned(),
+            entity_kind: entity.map(|(kind, _)| kind.to_owned()),
+            entity_id: entity.map(|(_, id)| id.to_owned()),
             detail,
         },
     )
     .map_err(|error| ApiError::internal(&error.to_string()))
-}
-
-fn entity_kind_wire(append: &TimelineAppend) -> &str {
-    append
-        .facts
-        .get("entity_kind")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-}
-
-fn entity_id_wire(append: &TimelineAppend) -> &str {
-    append
-        .facts
-        .get("entity_id")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
 }
 
 #[derive(Debug)]
@@ -380,6 +358,7 @@ mod evidence_storage {
     use crate::db::Database;
     use crate::migrations::AllowAllMigrations;
     use crate::test_support::scratch_database;
+    use crate::timeline::{TimelineFilter, TimelineRow};
 
     fn store() -> (tempfile::TempDir, Database, SqliteEvidenceStore) {
         let (dir, mut database) = scratch_database();
@@ -394,22 +373,23 @@ mod evidence_storage {
         TimelineAppend { kind, facts }
     }
 
-    fn timeline_rows(database: &Database) -> Vec<(String, serde_json::Value)> {
-        let conn = database.connection();
-        let mut statement = conn
-            .prepare("SELECT kind, detail FROM timeline_events ORDER BY id")
-            .expect("the timeline is readable");
-        statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    serde_json::from_str(&row.get::<_, String>(1)?)
-                        .expect("the stored detail is JSON"),
-                ))
+    /// The Project timeline as the query surface reads it, so every
+    /// test sees the envelope columns and not only the detail.
+    fn timeline_rows(database: &Database) -> Vec<TimelineRow> {
+        database
+            .query_timeline(&TimelineFilter {
+                project_id: "kan-p1".to_owned(),
+                ..TimelineFilter::default()
             })
-            .expect("the timeline query runs")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("the timeline rows decode")
+            .expect("the timeline is readable")
+    }
+
+    fn last_event(database: &Database) -> TimelineRow {
+        timeline_rows(database).pop().expect("timeline appended")
+    }
+
+    fn envelope(row: &TimelineRow) -> (Option<&str>, Option<&str>) {
+        (row.entity_kind.as_deref(), row.entity_id.as_deref())
     }
 
     #[test]
@@ -442,22 +422,24 @@ mod evidence_storage {
             item.content_hash().unwrap(),
         );
         assert_eq!(std::fs::read(path).expect("bytes exist"), content);
+        let event = last_event(&database);
+        assert_eq!(event.kind, "evidence");
         assert_eq!(
-            timeline_rows(&database)
-                .last()
-                .cloned()
-                .expect("timeline appended"),
-            (
-                "evidence".to_owned(),
-                json!({
-                    "action": "attached",
-                    "evidence_kind": "managed_file",
-                    "content_hash": hash,
-                    "entity_kind": "ticket",
-                    "entity_id": "kan-t10",
-                    "id": item.id().value(),
-                })
-            )
+            event.detail,
+            json!({
+                "action": "attached",
+                "evidence_kind": "managed_file",
+                "content_hash": hash,
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+                "id": item.id().value(),
+            })
+        );
+        let evidence_id = item.id().value().to_string();
+        assert_eq!(
+            envelope(&event),
+            (Some("evidence"), Some(evidence_id.as_str())),
+            "the attach event references the new evidence item"
         );
     }
 
@@ -545,23 +527,19 @@ mod evidence_storage {
             !dir.path().join("attachments").join("docs").exists(),
             "repository evidence must never copy content"
         );
+        let event = last_event(&database);
+        assert_eq!(event.kind, "evidence");
         assert_eq!(
-            timeline_rows(&database)
-                .last()
-                .cloned()
-                .expect("timeline appended"),
-            (
-                "evidence".to_owned(),
-                json!({
-                    "action": "attached",
-                    "evidence_kind": "repository",
-                    "relative_path": "docs/spec.md",
-                    "commit_identity": "deadbeef",
-                    "entity_kind": "ticket",
-                    "entity_id": "kan-t10",
-                    "id": item.id().value(),
-                })
-            )
+            event.detail,
+            json!({
+                "action": "attached",
+                "evidence_kind": "repository",
+                "relative_path": "docs/spec.md",
+                "commit_identity": "deadbeef",
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+                "id": item.id().value(),
+            })
         );
     }
 
@@ -598,19 +576,88 @@ mod evidence_storage {
             .expect("the list serves");
 
         assert_eq!(listed.len(), 1);
+        let event = last_event(&database);
+        assert_eq!(event.kind, "evidence");
         assert_eq!(
-            timeline_rows(&database)
-                .last()
-                .cloned()
-                .expect("timeline appended"),
-            (
-                "evidence".to_owned(),
-                json!({
-                    "action": "listed",
-                    "entity_kind": "ticket",
-                    "entity_id": "kan-t10",
-                })
+            event.detail,
+            json!({
+                "action": "listed",
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+            })
+        );
+        assert_eq!(
+            envelope(&event),
+            (Some("ticket"), Some("kan-t10")),
+            "a list filtered to one entity references that entity"
+        );
+    }
+
+    #[test]
+    fn listing_a_whole_project_appends_an_unreferenced_timeline_event() {
+        let (_dir, database, store) = store();
+
+        store
+            .list(
+                &EvidenceFilter {
+                    project_id: "kan-p1".to_owned(),
+                    entity_kind: None,
+                    entity_id: None,
+                },
+                append(
+                    "evidence",
+                    json!({
+                        "action": "listed",
+                        "entity_kind": null,
+                        "entity_id": null,
+                    }),
+                ),
             )
+            .expect("the list serves");
+
+        let event = last_event(&database);
+        assert_eq!(event.kind, "evidence");
+        assert_eq!(
+            event.detail,
+            json!({
+                "action": "listed",
+                "entity_kind": null,
+                "entity_id": null,
+            })
+        );
+        assert_eq!(
+            envelope(&event),
+            (None, None),
+            "a Project-wide list leaves both envelope columns empty"
+        );
+    }
+
+    #[test]
+    fn listing_by_entity_kind_alone_leaves_the_envelope_unreferenced() {
+        let (_dir, database, store) = store();
+
+        store
+            .list(
+                &EvidenceFilter {
+                    project_id: "kan-p1".to_owned(),
+                    entity_kind: Some("ticket".to_owned()),
+                    entity_id: None,
+                },
+                append(
+                    "evidence",
+                    json!({
+                        "action": "listed",
+                        "entity_kind": "ticket",
+                        "entity_id": null,
+                    }),
+                ),
+            )
+            .expect("the list serves");
+
+        assert_eq!(
+            envelope(&last_event(&database)),
+            (None, None),
+            "half a reference is never written: the decoder refuses it"
         );
     }
 

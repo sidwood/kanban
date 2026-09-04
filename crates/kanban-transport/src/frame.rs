@@ -28,15 +28,26 @@ pub struct RequestFrame {
     pub payload: Option<Value>,
 }
 
-/// One line back to a client: a response, a failure, an event, or
-/// the acknowledgement that a subscription is live.
+/// One line back to a client: a response, a failure, an event, the
+/// acknowledgement that a subscription is live, or the notice that
+/// the broker dropped a subscription.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResponseFrame {
-    Response { payload: Value },
-    Error { error: ApiError },
-    Event { event: EventEnvelope },
+    Response {
+        payload: Value,
+    },
+    Error {
+        error: ApiError,
+    },
+    Event {
+        event: EventEnvelope,
+    },
     Subscribed {},
+    /// The broker dropped this connection's subscription because the
+    /// subscriber stopped reading; the client must subscribe again
+    /// to resume the event stream.
+    Evicted {},
 }
 
 #[cfg(test)]
@@ -160,5 +171,11 @@ mod tests {
         let encoded =
             serde_json::to_string(&ResponseFrame::Subscribed {}).expect("the frame encodes");
         assert_eq!(encoded, r#"{"kind":"subscribed"}"#);
+    }
+
+    #[test]
+    fn an_eviction_notice_is_a_bare_kind() {
+        let encoded = serde_json::to_string(&ResponseFrame::Evicted {}).expect("the frame encodes");
+        assert_eq!(encoded, r#"{"kind":"evicted"}"#);
     }
 }

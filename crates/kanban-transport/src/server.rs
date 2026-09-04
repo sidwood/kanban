@@ -404,7 +404,9 @@ fn write_frame(
 /// Drain one subscriber's event lines onto its connection until the
 /// subscription ends. When [`ActiveSubscription::end_quietly`] is
 /// raised the writer drains its queue without writing, because the
-/// connection itself ended the subscription.
+/// connection itself ended the subscription; any other end is the
+/// broker evicting a subscriber that stopped reading, and is
+/// announced so the client can subscribe again.
 fn spawn_event_writer(
     events: Receiver<String>,
     shared_write: Arc<Mutex<UnixStream>>,
@@ -426,6 +428,11 @@ fn spawn_event_writer(
                 {
                     return;
                 }
+            }
+            // The queue disconnected: the subscription was evicted,
+            // unless the connection ended it quietly above.
+            if !end_quietly.load(Ordering::Acquire) {
+                let _ = write_frame(&shared_write, &ResponseFrame::Evicted {});
             }
         })
 }
@@ -842,6 +849,55 @@ mod tests {
         );
         match subscriber.recv() {
             ResponseFrame::Event { event } => assert_eq!(event.sequence, 7),
+            other => panic!("the new subscription delivers, got {other:?}"),
+        }
+
+        handle.shutdown();
+    }
+
+    #[test]
+    fn an_evicted_subscriber_is_told_and_can_resubscribe() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let handle = served(dir.path());
+
+        let mut subscriber = TestClient::connect(handle.socket_path());
+        subscriber.subscribe();
+
+        // This subscriber never reads while a second client buries
+        // it: once its queue and the socket buffer fill, the broker
+        // evicts it.
+        let mut caller = TestClient::connect(handle.socket_path());
+        for i in 1..=2_000 {
+            caller.pad(pad(0, &format!("flood-{i}")));
+        }
+
+        // Draining eventually reaches the eviction notice; the
+        // events that never fitted the queue are simply gone.
+        let mut delivered = 0;
+        loop {
+            match subscriber.recv() {
+                ResponseFrame::Event { .. } => delivered += 1,
+                ResponseFrame::Evicted {} => break,
+                other => panic!("unexpected frame {other:?}"),
+            }
+        }
+        assert!(
+            delivered < 2_000,
+            "the evicted subscriber missed the tail of the flood"
+        );
+
+        // The connection itself stays alive and answers commands.
+        let response = subscriber.command(bump(1, "after-eviction", 0));
+        assert!(
+            matches!(response, ResponseFrame::Response { .. }),
+            "the connection outlives its subscription, got {response:?}"
+        );
+
+        // Resubscribing resumes the stream from that point.
+        subscriber.subscribe();
+        caller.pad(pad(0, "resumed"));
+        match subscriber.recv() {
+            ResponseFrame::Event { event } => assert_eq!(event.sequence, 2_002),
             other => panic!("the new subscription delivers, got {other:?}"),
         }
 

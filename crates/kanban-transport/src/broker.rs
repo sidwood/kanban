@@ -82,8 +82,9 @@ impl EventSink for EventBroker {
         let line = serde_json::to_string(&envelope).expect("an event frame encodes");
 
         // A full queue means the subscriber stopped reading; drop it
-        // instead of stalling every command that emits. try_send, not
-        // send: send would block the core on the stalled reader.
+        // instead of stalling every command that emits, and let its
+        // writer announce the eviction. try_send, not send: send
+        // would block the core on the stalled reader.
         inner
             .subscribers
             .retain(|subscriber| subscriber.tx.try_send(line.clone()).is_ok());

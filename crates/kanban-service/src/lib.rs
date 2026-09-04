@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use kanban_app::{Core, MemoryIdempotencyStore};
 use kanban_storage::paths::database_file_name;
-use kanban_storage::{AllowAllMigrations, Database};
+use kanban_storage::{AllowAllMigrations, Database, SqliteInitiativeStore};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 /// The running core process: its open database and its serving
@@ -41,11 +41,12 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     database.migrate(&AllowAllMigrations)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let core = Core::with_health(
+    let mut core = Core::with_health(
         env!("CARGO_PKG_VERSION"),
         Arc::new(MemoryIdempotencyStore::new()),
         broker,
     )?;
+    core.register_initiatives(Arc::new(SqliteInitiativeStore::new(&database)))?;
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess { database, server })
 }
@@ -127,18 +128,26 @@ mod tests {
         }
 
         fn query(&mut self, operation: &str) -> Value {
+            self.request("query", operation, json!({}))
+        }
+
+        fn command(&mut self, operation: &str, payload: Value) -> Value {
+            self.request("command", operation, payload)
+        }
+
+        fn request(&mut self, kind: &str, operation: &str, payload: Value) -> Value {
             writeln!(
                 self.stream,
                 "{}",
-                json!({ "kind": "query", "operation": operation, "payload": {} })
+                json!({ "kind": kind, "operation": operation, "payload": payload })
             )
             .expect("the client writes");
             self.stream.flush().expect("the client flushes");
             let mut line = String::new();
             let read = self.reader.read_line(&mut line).expect("the client reads");
-            assert!(read > 0, "the core answers the query");
+            assert!(read > 0, "the core answers the request");
             let frame: Value = serde_json::from_str(line.trim_end()).expect("a frame decodes");
-            assert_eq!(frame["kind"], "response", "the query succeeds: {frame}");
+            assert_eq!(frame["kind"], "response", "the {kind} succeeds: {frame}");
             frame["payload"].clone()
         }
     }
@@ -218,5 +227,71 @@ mod tests {
         );
 
         core.shutdown();
+    }
+
+    #[test]
+    fn the_initiative_lifecycle_serves_over_the_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let created = client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "boot-create" },
+                "name": "Reliability",
+            }),
+        );
+        assert_eq!(created["name"], json!("Reliability"));
+        assert_eq!(created["version"], json!(1));
+
+        let renamed = client.command(
+            "initiative.rename",
+            json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "boot-rename" },
+                "initiative_id": 1,
+                "name": "Reliability and Recovery",
+            }),
+        );
+        assert_eq!(renamed["name"], json!("Reliability and Recovery"));
+        assert_eq!(renamed["version"], json!(2));
+
+        let archived = client.command(
+            "initiative.archive",
+            json!({
+                "mutation": { "optimistic_version": 2, "idempotency_key": "boot-archive" },
+                "initiative_id": 1,
+            }),
+        );
+        assert_eq!(archived["archived"], json!(true));
+
+        let listed = client.query("initiative.list");
+        assert_eq!(
+            listed,
+            json!({
+                "initiatives": [
+                    {
+                        "id": 1,
+                        "name": "Reliability and Recovery",
+                        "archived": true,
+                        "version": 3,
+                    }
+                ]
+            }),
+            "archiving preserves every recorded fact over the wire"
+        );
+
+        // The recorded facts are durable: a fresh core over the same
+        // database still lists the archived Initiative.
+        core.shutdown();
+        let rebooted = boot(&dir);
+        let mut second = Client::connect(rebooted.socket_path());
+        assert_eq!(
+            second.query("initiative.list"),
+            listed,
+            "every recorded fact survives a restart"
+        );
+
+        rebooted.shutdown();
     }
 }

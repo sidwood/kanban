@@ -9,7 +9,13 @@ import {
 
 describe('generated client', () => {
   it('lists only application-layer operations', () => {
-    expect(KANBAN_CLIENT_OPERATIONS).toStrictEqual(['health.get'])
+    expect(KANBAN_CLIENT_OPERATIONS).toStrictEqual([
+      'health.get',
+      'initiative.create',
+      'initiative.rename',
+      'initiative.archive',
+      'initiative.list',
+    ])
   })
 
   it('routes queries through the transport boundary', async () => {

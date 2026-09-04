@@ -196,6 +196,14 @@ version = "0.1.0"
 [[package]]
 name = "kanban-service"
 version = "0.1.0"
+dependencies = [
+ "kanban-app",
+ "kanban-storage",
+ "kanban-transport",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "kanban-storage"

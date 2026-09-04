@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Prove the repository's own safety gates bite rather than trusting that
 # they are configured: a fresh clone must reject a malformed commit
-# message and a staged spelling violation after `just bootstrap` alone.
+# message and a staged spelling violation after `just bootstrap` alone,
+# and contract verification must refuse a generated artifact nobody
+# committed.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -102,4 +104,23 @@ prove_clean_clone_enforces_hooks() {
     "a staged spelling violation"
 }
 
+prove_contract_verification_rejects_untracked() {
+  just verify-contracts >"$work/contracts.log" 2>&1 \
+    || fail "verify-contracts rejected the committed generated set:"$'\n'"$(cat "$work/contracts.log")"
+
+  # Adding a DTO makes generation write a schema no one has staged yet.
+  # Dropping a committed schema from a copy of the index reproduces that
+  # state without touching the real index or the working tree.
+  local victim index
+  victim="$(git ls-files -- packages/contracts/src/schemas | sed -n '1p')"
+  [[ -n "$victim" ]] || fail "no committed contract schema to probe"
+  index="$work/index"
+  cp "$(git rev-parse --absolute-git-dir)/index" "$index"
+  GIT_INDEX_FILE="$index" git rm --cached --quiet -- "$victim"
+  expect_failure "untracked contract artifacts" \
+    "verify-contracts with an untracked generated schema" \
+    env GIT_INDEX_FILE="$index" just verify-contracts
+}
+
 prove_clean_clone_enforces_hooks
+prove_contract_verification_rejects_untracked

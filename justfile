@@ -12,21 +12,32 @@ bootstrap: enable-hooks need-rust need-web
     pnpm install
     cargo fetch
 
-# Regenerate contracts and fail when committed artifacts drift.
+# Regenerate contracts and fail when committed artifacts drift. A
+# generated file that nobody staged is drift too, so it is refused
+# rather than left invisible to git diff.
 verify-contracts: need-rust
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo run --quiet -p kanban-app --bin kanban-contracts-gen
-    git diff --check -- \
-      packages/contracts/src/index.ts \
-      packages/contracts/src/client.ts \
-      packages/contracts/src/types.ts \
-      packages/contracts/src/mcp-tools.json \
+    generated=(
+      packages/contracts/src/index.ts
+      packages/contracts/src/client.ts
+      packages/contracts/src/types.ts
+      packages/contracts/src/mcp-tools.json
       packages/contracts/src/schemas
-    git diff --exit-code -- \
-      packages/contracts/src/index.ts \
-      packages/contracts/src/client.ts \
-      packages/contracts/src/types.ts \
-      packages/contracts/src/mcp-tools.json \
-      packages/contracts/src/schemas
+    )
+    git diff --check -- "${generated[@]}"
+    git diff --exit-code -- "${generated[@]}"
+    untracked="$(git ls-files --others --exclude-standard -- "${generated[@]}")"
+    if [[ -n "$untracked" ]]; then
+      echo "kanban: generation left untracked contract artifacts:" >&2
+      echo "$untracked" | sed 's/^/    /' >&2
+      echo "" >&2
+      echo "Stage them with the change that introduced them." >&2
+      echo "" >&2
+      echo "Agents: commit the generated files; do not delete them to pass." >&2
+      exit 1
+    fi
 
 # Debug builds of the core and the desktop app.
 build: need-rust need-web

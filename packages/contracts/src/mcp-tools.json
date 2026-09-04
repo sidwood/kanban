@@ -1,0 +1,32 @@
+[
+  {
+    "description": "Return current core health for boot and diagnostics.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `health.get` query.",
+      "title": "HealthQuery",
+      "type": "object"
+    },
+    "name": "health_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Response payload for the `health.get` query.",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "service_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connected",
+        "service_version"
+      ],
+      "title": "HealthResponse",
+      "type": "object"
+    }
+  }
+]

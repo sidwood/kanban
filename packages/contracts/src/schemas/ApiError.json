@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ErrorCode": {
+      "description": "Stable error codes shared by commands, queries, and events.",
+      "enum": [
+        "unknown_field",
+        "stale_version",
+        "duplicate_idempotency_key",
+        "not_found",
+        "internal"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "A transport-visible failure returned to every client.",
+  "properties": {
+    "code": {
+      "$ref": "#/definitions/ErrorCode"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ApiError",
+  "type": "object"
+}

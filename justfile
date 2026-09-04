@@ -1,9 +1,5 @@
 # Kanban whole-repository commands. Cargo owns Rust, pnpm owns the
 # frontend, and just coordinates both.
-#
-# Deferred command surface: `verify-contracts` lands with the
-# contract generator, and `planning-check` with the planning
-# consistency checker; neither exists yet to wire here.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -16,8 +12,7 @@ bootstrap: need-rust need-web
     pnpm install
     cargo fetch
 
-# fmt, clippy, Rust tests, and the lint, typecheck, and tests of
-# every web package that defines them.
+# fmt, clippy, Rust tests, web lint, typecheck, tests, and contract drift.
 check: need-rust need-web
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
@@ -25,6 +20,17 @@ check: need-rust need-web
     pnpm -r run lint
     pnpm -r run typecheck
     pnpm -r run test
+    just verify-contracts
+
+# Regenerate contracts and fail when committed artifacts drift.
+verify-contracts: need-rust
+    cargo run --quiet -p kanban-app --bin kanban-contracts-gen
+    git diff --exit-code -- \
+      packages/contracts/src/index.ts \
+      packages/contracts/src/client.ts \
+      packages/contracts/src/types.ts \
+      packages/contracts/src/mcp-tools.json \
+      packages/contracts/src/schemas
 
 # Debug builds of the core and the desktop app.
 build: need-rust need-web

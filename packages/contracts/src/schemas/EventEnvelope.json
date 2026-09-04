@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Ordered event frame streamed to every transport subscriber.",
+  "properties": {
+    "event_type": {
+      "type": "string"
+    },
+    "payload": true,
+    "sequence": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "event_type",
+    "payload",
+    "sequence"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

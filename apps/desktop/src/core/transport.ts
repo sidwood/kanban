@@ -45,28 +45,6 @@ const COMMAND_FOR_OPERATION = {
   'evidence.list': 'evidence_list',
 } as const satisfies Record<KanbanOperationName, string>
 
-function shellInvokePayload<Request>(
-  name: KanbanOperationName,
-  request: Request,
-): Record<string, unknown> {
-  switch (name) {
-    case 'timeline.query':
-    case 'comment.revisions':
-    case 'ruling.record':
-    case 'ruling.supersede':
-    case 'ruling.list':
-    case 'deferral.record':
-    case 'deferral.supersede':
-    case 'deferral.list':
-      return { request: request as Record<string, unknown> }
-    case 'evidence.attach':
-    case 'evidence.list':
-      return { request: request as Record<string, unknown> }
-    default:
-      return request as Record<string, unknown>
-  }
-}
-
 // The transport the generated client runs on, plus the shell's
 // connection announcements.
 export interface ShellTransport extends KanbanTransport {
@@ -78,13 +56,13 @@ export const tauriTransport: ShellTransport = {
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], shellInvokePayload(name, request))
+    return invoke<Response>(COMMAND_FOR_OPERATION[name], { request })
   },
   async command<Request, Response>(
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], shellInvokePayload(name, request))
+    return invoke<Response>(COMMAND_FOR_OPERATION[name], { request })
   },
   subscribe(handler: (event: EventEnvelope) => void): () => void {
     return listenTo(CORE_EVENT, (payload) => handler(payload as EventEnvelope))

@@ -15,18 +15,18 @@ use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
-    EvidenceListResponse, EvidenceRecord, HealthResponse, InitiativeArchiveRequest,
-    InitiativeCreateRequest, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    MutationContext, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityRef, TimelineQuery, TimelineQueryResponse,
+    EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
+    InitiativeRenameRequest, RulingListQuery, RulingListResponse, RulingRecord,
+    RulingRecordRequest, RulingSupersedeRequest, TimelineQuery, TimelineQueryResponse,
 };
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+pub mod commands;
 pub mod core_link;
 
-use core_link::CoreLink;
+use commands::{forward_command, forward_query};
 
 /// The shell emits the core's ordered events under this name.
 pub const CORE_EVENT: &str = "core://event";
@@ -44,8 +44,8 @@ const CORE_START_POLL: Duration = Duration::from_millis(100);
 
 /// The shell's connection to the core, when it has one.
 #[derive(Default)]
-struct Shell {
-    link: Mutex<Option<CoreLink>>,
+pub struct Shell {
+    pub(crate) link: Mutex<Option<core_link::CoreLink>>,
 }
 
 /// The connection the shell announces to the WebView.
@@ -62,194 +62,122 @@ pub enum ConnectionState {
 /// the link's mutex never blocks the async runtime, and decode the
 /// answer into its contract type. The typed commands below are the
 /// only wrappers the WebView may call.
-fn over_link<T, F>(shell: &Arc<Shell>, subject: &str, call: F) -> Result<T, ApiError>
+async fn run_blocking<T, F>(shell: Arc<Shell>, subject: &str, run: F) -> Result<T, ApiError>
 where
-    T: DeserializeOwned,
-    F: FnOnce(&CoreLink) -> Result<Value, ApiError>,
+    T: serde::de::DeserializeOwned + Send + 'static,
+    F: FnOnce(&Arc<Shell>) -> Result<T, ApiError> + Send + 'static,
 {
-    let guard = shell
-        .link
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let link = guard.as_ref().ok_or_else(|| {
-        ApiError::internal("the core connection is not up; retry once it connects")
-    })?;
-    let payload = call(link)?;
-    serde_json::from_value(payload).map_err(|_| {
-        ApiError::internal(&format!("the {subject} answer did not match its contract"))
-    })
-}
-
-/// Encode a typed request into its JSON payload.
-fn encode<T: Serialize>(request: T) -> Result<Value, ApiError> {
-    serde_json::to_value(request)
-        .map_err(|_| ApiError::internal("the typed request could not be encoded"))
+    tauri::async_runtime::spawn_blocking(move || run(&shell))
+        .await
+        .map_err(|_| ApiError::internal(&format!("the {subject} task did not finish")))?
 }
 
 #[tauri::command]
-async fn health_get(shell: State<'_, Arc<Shell>>) -> Result<HealthResponse, ApiError> {
+async fn health_get(
+    shell: State<'_, Arc<Shell>>,
+    request: HealthQuery,
+) -> Result<HealthResponse, ApiError> {
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "health", |link| {
-            link.query("health.get", &json!({}))
-        })
+    run_blocking(shell, "health", |shell| {
+        forward_query(shell, "health.get", "health", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the health task did not finish"))?
 }
 
 #[tauri::command]
 async fn initiative_create(
     shell: State<'_, Arc<Shell>>,
-    mutation: MutationContext,
-    name: String,
+    request: InitiativeCreateRequest,
 ) -> Result<InitiativeRecord, ApiError> {
-    let payload = encode(InitiativeCreateRequest { mutation, name })?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "created Initiative", |link| {
-            link.command("initiative.create", &payload)
-        })
+    run_blocking(shell, "create", |shell| {
+        forward_command(shell, "initiative.create", "created Initiative", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the create task did not finish"))?
-}
-
-// The generated contract sends snake_case argument names, while the
-// command macro defaults to camelCase lookup; multi-word arguments
-// need the explicit rename to cross the IPC boundary.
-#[tauri::command(rename_all = "snake_case")]
-async fn initiative_rename(
-    shell: State<'_, Arc<Shell>>,
-    mutation: MutationContext,
-    initiative_id: u64,
-    name: String,
-) -> Result<InitiativeRecord, ApiError> {
-    let payload = encode(InitiativeRenameRequest {
-        mutation,
-        initiative_id,
-        name,
-    })?;
-    let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "renamed Initiative", |link| {
-            link.command("initiative.rename", &payload)
-        })
-    })
-    .await
-    .map_err(|_| ApiError::internal("the rename task did not finish"))?
-}
-
-#[tauri::command(rename_all = "snake_case")]
-async fn initiative_archive(
-    shell: State<'_, Arc<Shell>>,
-    mutation: MutationContext,
-    initiative_id: u64,
-) -> Result<InitiativeRecord, ApiError> {
-    let payload = encode(InitiativeArchiveRequest {
-        mutation,
-        initiative_id,
-    })?;
-    let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "archived Initiative", |link| {
-            link.command("initiative.archive", &payload)
-        })
-    })
-    .await
-    .map_err(|_| ApiError::internal("the archive task did not finish"))?
 }
 
 #[tauri::command]
-async fn initiative_list(shell: State<'_, Arc<Shell>>) -> Result<InitiativeListResponse, ApiError> {
+async fn initiative_rename(
+    shell: State<'_, Arc<Shell>>,
+    request: InitiativeRenameRequest,
+) -> Result<InitiativeRecord, ApiError> {
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "initiative list", |link| {
-            link.query("initiative.list", &json!({}))
-        })
+    run_blocking(shell, "rename", |shell| {
+        forward_command(shell, "initiative.rename", "renamed Initiative", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the list task did not finish"))?
 }
 
-/// The per-Project timeline query, served through the generated
-/// contract's DTOs.
+#[tauri::command]
+async fn initiative_archive(
+    shell: State<'_, Arc<Shell>>,
+    request: InitiativeArchiveRequest,
+) -> Result<InitiativeRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "archive", |shell| {
+        forward_command(shell, "initiative.archive", "archived Initiative", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn initiative_list(
+    shell: State<'_, Arc<Shell>>,
+    request: InitiativeListQuery,
+) -> Result<InitiativeListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "initiative list", |shell| {
+        forward_query(shell, "initiative.list", "initiative list", request)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: TimelineQuery,
 ) -> Result<TimelineQueryResponse, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "timeline", |link| {
-            link.query("timeline.query", &payload)
-        })
+    run_blocking(shell, "timeline", |shell| {
+        forward_query(shell, "timeline.query", "timeline", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the timeline task did not finish"))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command]
 async fn comment_create(
     shell: State<'_, Arc<Shell>>,
-    mutation: MutationContext,
-    project_id: String,
-    target: TimelineEntityRef,
-    text: String,
+    request: CommentCreateRequest,
 ) -> Result<CommentRecord, ApiError> {
-    let payload = encode(CommentCreateRequest {
-        mutation,
-        project_id,
-        target,
-        text,
-    })?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "created Comment", |link| {
-            link.command("comment.create", &payload)
-        })
+    run_blocking(shell, "comment create", |shell| {
+        forward_command(shell, "comment.create", "created Comment", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the comment create task did not finish"))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command]
 async fn comment_edit(
     shell: State<'_, Arc<Shell>>,
-    mutation: MutationContext,
-    comment_id: u64,
-    text: String,
+    request: CommentEditRequest,
 ) -> Result<CommentRecord, ApiError> {
-    let payload = encode(CommentEditRequest {
-        mutation,
-        comment_id,
-        text,
-    })?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "edited Comment", |link| {
-            link.command("comment.edit", &payload)
-        })
+    run_blocking(shell, "comment edit", |shell| {
+        forward_command(shell, "comment.edit", "edited Comment", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the comment edit task did not finish"))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command]
 async fn comment_revisions(
     shell: State<'_, Arc<Shell>>,
     request: CommentRevisionsQuery,
 ) -> Result<CommentRevisionsResponse, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "comment revisions", |link| {
-            link.query("comment.revisions", &payload)
-        })
+    run_blocking(shell, "comment revisions", |shell| {
+        forward_query(shell, "comment.revisions", "comment revisions", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the comment revisions task did not finish"))?
 }
 
 #[tauri::command]
@@ -257,15 +185,11 @@ async fn ruling_record(
     shell: State<'_, Arc<Shell>>,
     request: RulingRecordRequest,
 ) -> Result<RulingRecord, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "recorded ruling", |link| {
-            link.command("ruling.record", &payload)
-        })
+    run_blocking(shell, "ruling record", |shell| {
+        forward_command(shell, "ruling.record", "recorded ruling", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the ruling record task did not finish"))?
 }
 
 #[tauri::command]
@@ -273,15 +197,11 @@ async fn ruling_supersede(
     shell: State<'_, Arc<Shell>>,
     request: RulingSupersedeRequest,
 ) -> Result<RulingRecord, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "superseded ruling", |link| {
-            link.command("ruling.supersede", &payload)
-        })
+    run_blocking(shell, "ruling supersede", |shell| {
+        forward_command(shell, "ruling.supersede", "superseded ruling", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the ruling supersede task did not finish"))?
 }
 
 #[tauri::command]
@@ -289,15 +209,11 @@ async fn ruling_list(
     shell: State<'_, Arc<Shell>>,
     request: RulingListQuery,
 ) -> Result<RulingListResponse, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "ruling list", |link| {
-            link.query("ruling.list", &payload)
-        })
+    run_blocking(shell, "ruling list", |shell| {
+        forward_query(shell, "ruling.list", "ruling list", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the ruling list task did not finish"))?
 }
 
 #[tauri::command]
@@ -305,15 +221,11 @@ async fn deferral_record(
     shell: State<'_, Arc<Shell>>,
     request: DeferralRecordRequest,
 ) -> Result<DeferralRecord, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "recorded deferral", |link| {
-            link.command("deferral.record", &payload)
-        })
+    run_blocking(shell, "deferral record", |shell| {
+        forward_command(shell, "deferral.record", "recorded deferral", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the deferral record task did not finish"))?
 }
 
 #[tauri::command]
@@ -321,15 +233,11 @@ async fn deferral_supersede(
     shell: State<'_, Arc<Shell>>,
     request: DeferralSupersedeRequest,
 ) -> Result<DeferralRecord, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "superseded deferral", |link| {
-            link.command("deferral.supersede", &payload)
-        })
+    run_blocking(shell, "deferral supersede", |shell| {
+        forward_command(shell, "deferral.supersede", "superseded deferral", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the deferral supersede task did not finish"))?
 }
 
 #[tauri::command]
@@ -337,15 +245,11 @@ async fn deferral_list(
     shell: State<'_, Arc<Shell>>,
     request: DeferralListQuery,
 ) -> Result<DeferralListResponse, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "deferral list", |link| {
-            link.query("deferral.list", &payload)
-        })
+    run_blocking(shell, "deferral list", |shell| {
+        forward_query(shell, "deferral.list", "deferral list", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the deferral list task did not finish"))?
 }
 
 #[tauri::command]
@@ -353,15 +257,11 @@ async fn evidence_attach(
     shell: State<'_, Arc<Shell>>,
     request: EvidenceAttachRequest,
 ) -> Result<EvidenceRecord, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "attached evidence", |link| {
-            link.command("evidence.attach", &payload)
-        })
+    run_blocking(shell, "evidence attach", |shell| {
+        forward_command(shell, "evidence.attach", "attached evidence", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the attach task did not finish"))?
 }
 
 #[tauri::command]
@@ -369,15 +269,11 @@ async fn evidence_list(
     shell: State<'_, Arc<Shell>>,
     request: EvidenceListRequest,
 ) -> Result<EvidenceListResponse, ApiError> {
-    let payload = encode(request)?;
     let shell = shell.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        over_link(&shell, "evidence list", |link| {
-            link.command("evidence.list", &payload)
-        })
+    run_blocking(shell, "evidence list", |shell| {
+        forward_command(shell, "evidence.list", "evidence list", request)
     })
     .await
-    .map_err(|_| ApiError::internal("the list task did not finish"))?
 }
 
 /// Build the window, start the core on demand, and supervise the
@@ -430,7 +326,7 @@ fn supervise(socket_path: PathBuf, shell: Arc<Shell>, app: AppHandle) {
             return;
         }
     };
-    let link = match CoreLink::connect(&socket_path) {
+    let link = match core_link::CoreLink::connect(&socket_path) {
         Ok(link) => link,
         Err(failure) => {
             eprintln!("kanban shell: the core socket is unreachable: {failure}");

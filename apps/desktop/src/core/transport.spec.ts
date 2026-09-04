@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { KANBAN_CLIENT_OPERATIONS } from '@kanban/contracts'
+
 // The Tauri IPC bridge, faked at the module boundary so the adapter
 // is proven on its own.
 const { invokeMock, listenMock } = vi.hoisted(() => ({
@@ -32,11 +34,40 @@ describe('tauri transport', () => {
       { connected: boolean; service_version: string }
     >('health.get', {})
 
-    expect(invokeMock).toHaveBeenCalledWith('health_get', {})
+    expect(invokeMock).toHaveBeenCalledWith('health_get', { request: {} })
     expect(health).toStrictEqual({ connected: true, service_version: '0.1.0' })
   })
 
-  it('wraps a timeline query in the shell request argument', async () => {
+  it('wraps every catalogued operation in the shell request envelope', async () => {
+    invokeMock.mockResolvedValue({})
+
+    for (const name of KANBAN_CLIENT_OPERATIONS) {
+      await tauriTransport.query(name, {})
+    }
+
+    expect(invokeMock).toHaveBeenCalledTimes(KANBAN_CLIENT_OPERATIONS.length)
+    for (const call of invokeMock.mock.calls) {
+      expect(call[1]).toStrictEqual({ request: {} })
+    }
+  })
+
+  it('routes initiative create through the request envelope', async () => {
+    invokeMock.mockResolvedValueOnce({ id: 1, name: 'Alpha', archived: false, version: 1 })
+
+    await tauriTransport.command('initiative.create', {
+      mutation: { optimistic_version: 0, idempotency_key: 'key-1' },
+      name: 'Alpha',
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith('initiative_create', {
+      request: {
+        mutation: { optimistic_version: 0, idempotency_key: 'key-1' },
+        name: 'Alpha',
+      },
+    })
+  })
+
+  it('wraps a timeline query in the shell request envelope', async () => {
     invokeMock.mockResolvedValueOnce({ events: [] })
 
     await tauriTransport.query('timeline.query', {

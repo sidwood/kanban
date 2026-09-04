@@ -11,8 +11,8 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "lint": "tsc --project tsconfig.json --noEmit",
-    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "lint": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.spec.json --noEmit",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.spec.json --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {

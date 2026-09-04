@@ -16,14 +16,15 @@ bootstrap: need-rust need-web
     pnpm install
     cargo fetch
 
-# fmt, clippy, Rust tests, web lint, typecheck, and web tests.
+# fmt, clippy, Rust tests, and the lint, typecheck, and tests of
+# every web package that defines them.
 check: need-rust need-web
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
-    pnpm --filter desktop lint
-    pnpm --filter desktop typecheck
-    pnpm --filter desktop test
+    pnpm -r run lint
+    pnpm -r run typecheck
+    pnpm -r run test
 
 # Debug builds of the core and the desktop app.
 build: need-rust need-web

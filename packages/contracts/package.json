@@ -10,7 +10,8 @@
     }
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json"
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

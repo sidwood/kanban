@@ -89,6 +89,27 @@ define_exposed_catalogue! {
         mcp: "initiative_list",
         description: "List every Initiative, archived ones included.",
     },
+    "project.register" => {
+        kind: Command,
+        request: "ProjectRegisterRequest",
+        response: "ProjectRecord",
+        mcp: "project_register",
+        description: "Register a Project with one Git repository, Seed Workspace, default branch, and exclusive Herdr session.",
+    },
+    "project.archive" => {
+        kind: Command,
+        request: "ProjectArchiveRequest",
+        response: "ProjectRecord",
+        mcp: "project_archive",
+        description: "Archive a Project. Archiving is terminal and preserves every recorded fact.",
+    },
+    "project.list" => {
+        kind: Query,
+        request: "ProjectListQuery",
+        response: "ProjectListResponse",
+        mcp: "project_list",
+        description: "List every Project, archived ones included.",
+    },
     "timeline.query" => {
         kind: Query,
         request: "TimelineQuery",

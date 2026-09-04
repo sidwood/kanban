@@ -11,6 +11,7 @@ pub mod events;
 pub mod evidence;
 pub mod initiative;
 pub mod mutation;
+pub mod project;
 pub mod rulings;
 pub mod timeline;
 
@@ -30,6 +31,7 @@ pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{
     CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
+pub use project::{GitObservation, ProjectStore, duplicate_code_error, duplicate_session_error};
 pub use rulings::RulingStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
@@ -80,6 +82,8 @@ mod tests {
             kanban_dto::LiveEventName::InitiativeCreated,
             kanban_dto::LiveEventName::InitiativeRenamed,
             kanban_dto::LiveEventName::InitiativeArchived,
+            kanban_dto::LiveEventName::ProjectRegistered,
+            kanban_dto::LiveEventName::ProjectArchived,
             kanban_dto::LiveEventName::CommentCreated,
             kanban_dto::LiveEventName::CommentEdited,
             kanban_dto::LiveEventName::RulingRecorded,

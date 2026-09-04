@@ -26,6 +26,16 @@ pub fn exposed_events() -> &'static [EventDescriptor] {
             description: "An Initiative was archived.",
         },
         EventDescriptor {
+            name: "project.registered",
+            payload_schema: "ProjectRecord",
+            description: "A Project was registered.",
+        },
+        EventDescriptor {
+            name: "project.archived",
+            payload_schema: "ProjectRecord",
+            description: "A Project was archived.",
+        },
+        EventDescriptor {
             name: "comment.created",
             payload_schema: "CommentRecord",
             description: "A Comment was created.",

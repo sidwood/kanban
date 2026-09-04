@@ -332,6 +332,13 @@ fn serve_connection(
                 if let Some(previous) = subscription.take() {
                     end_subscription(previous, broker);
                 }
+                // Acknowledge before attaching, so the
+                // acknowledgement always precedes this
+                // subscription's first event frame: an attached
+                // writer races this write for the socket.
+                if write_frame(&shared_write, &ResponseFrame::Subscribed {}).is_err() {
+                    break;
+                }
                 let (id, events) = broker.subscribe();
                 let end_quietly = Arc::new(AtomicBool::new(false));
                 let writer =
@@ -342,9 +349,6 @@ fn serve_connection(
                     end_quietly,
                     writer,
                 });
-                if write_frame(&shared_write, &ResponseFrame::Subscribed {}).is_err() {
-                    break;
-                }
             }
             FrameKind::Query | FrameKind::Command => {
                 let Some(operation) = request.operation.as_deref() else {
@@ -852,6 +856,40 @@ mod tests {
             other => panic!("the new subscription delivers, got {other:?}"),
         }
 
+        handle.shutdown();
+    }
+
+    #[test]
+    fn the_acknowledgement_precedes_the_first_event() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let handle = served(dir.path());
+
+        // A second client keeps events flowing while fresh
+        // connections subscribe, so an attached writer has every
+        // chance to race the acknowledgement onto the wire.
+        let hammer_path = handle.socket_path().to_owned();
+        let hammer = std::thread::spawn(move || {
+            let mut client = TestClient::connect(&hammer_path);
+            for i in 1..=5_000u32 {
+                client.pad(pad(0, &format!("hammer-{i}")));
+            }
+        });
+
+        for _ in 0..20 {
+            let mut subscriber = TestClient::connect(handle.socket_path());
+            subscriber.send(&RequestFrame {
+                kind: FrameKind::Subscribe,
+                operation: None,
+                payload: None,
+            });
+            match subscriber.recv() {
+                ResponseFrame::Subscribed {} => {}
+                other => panic!("the acknowledgement must be the first frame, got {other:?}"),
+            }
+            drop(subscriber);
+        }
+
+        hammer.join().expect("the hammering client finishes");
         handle.shutdown();
     }
 

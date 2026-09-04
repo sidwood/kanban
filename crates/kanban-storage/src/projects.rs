@@ -5,7 +5,8 @@
 
 use kanban_app::{ProjectStore, TimelineEnvelope, duplicate_code_error, duplicate_session_error};
 use kanban_domain::{
-    InitiativeId, Project, ProjectCounters, ProjectId, ProjectRegistration, ProjectState,
+    InitiativeId, NumberKind, Project, ProjectCounters, ProjectId, ProjectRegistration,
+    ProjectState,
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
@@ -105,21 +106,28 @@ impl ProjectStore for SqliteProjectStore {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let archived = project.is_archived();
+        let counters = project.counters();
         let preceding_version = project.version() - 1;
         let changed = span
             .execute(
                 "UPDATE projects
                  SET archived = ?2,
                      version = ?3,
+                     plan_counter = ?4,
+                     spec_counter = ?5,
+                     ticket_counter = ?6,
                      archived_at = CASE
                          WHEN ?2 = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                          ELSE archived_at
                      END
-                 WHERE id = ?1 AND version = ?4",
+                 WHERE id = ?1 AND version = ?7",
                 params![
                     project.id().value() as i64,
                     archived,
                     project.version() as i64,
+                    counters.last(NumberKind::Plan) as i64,
+                    counters.last(NumberKind::Spec) as i64,
+                    counters.last(NumberKind::Ticket) as i64,
                     preceding_version as i64,
                 ],
             )
@@ -247,7 +255,8 @@ fn append_timeline(
 mod tests {
     use kanban_app::{InitiativeStore, ProjectStore, TimelineEnvelope};
     use kanban_domain::{
-        InitiativeId, InitiativeName, NumberKind, Project, ProjectId, ProjectRegistration,
+        InitiativeId, InitiativeName, NumberKind, Project, ProjectCounters, ProjectId,
+        ProjectRegistration, ProjectState,
     };
     use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::json;
@@ -631,6 +640,42 @@ mod tests {
             stored_rows(&database),
             vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 3, 1, 7)]
         );
+    }
+
+    #[test]
+    fn saving_persists_the_counters_the_aggregate_holds() {
+        let (_dir, database, store) = store();
+        let created = store
+            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+        // Stand in for the later slices that mint numbers: the
+        // aggregate rehydrates, mints in memory, and saves, so the row
+        // must take the aggregate's counters rather than keep stale
+        // ones a reload would mint again.
+        let mut minted = Project::restore(
+            created.id(),
+            created.registration().clone(),
+            ProjectState::Active,
+            ProjectCounters::restore(4, 2, 6),
+            created.version(),
+        );
+        minted.archive().expect("active archives");
+
+        store
+            .save(&minted, archived(minted.id()))
+            .expect("the save lands");
+
+        assert_eq!(
+            stored_rows(&database),
+            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 4, 2, 6)]
+        );
+        let found = store
+            .find(ProjectId::new(1))
+            .expect("the find serves")
+            .expect("the Project exists");
+        assert_eq!(found.counters().last(NumberKind::Plan), 4);
+        assert_eq!(found.counters().last(NumberKind::Spec), 2);
+        assert_eq!(found.counters().last(NumberKind::Ticket), 6);
     }
 
     #[test]

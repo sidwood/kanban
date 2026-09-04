@@ -16,4 +16,3 @@ name = "kanban-contracts-gen"
 path = "src/bin/kanban-contracts-gen.rs"
 
 [dev-dependencies]
-serde_json = { workspace = true }

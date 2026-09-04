@@ -13,4 +13,5 @@ serde_json = { workspace = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+kanban-app = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"

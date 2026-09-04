@@ -18,9 +18,10 @@ pub use deferrals::DeferralStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
 pub use initiative::{InitiativeStore, TimelineAppend};
+#[cfg(any(test, feature = "test-support"))]
+pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{
-    CommandHandler, IdempotencyStore, MemoryIdempotencyStore, MutationSpan, ParsedCommand,
-    RecordedOutcome, parse_payload,
+    CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
 pub use rulings::RulingStore;
 pub use timeline::{

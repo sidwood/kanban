@@ -2,7 +2,9 @@
 //! mutation context, and the durable record of spent idempotency
 //! keys (DR-SS-03).
 
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 use kanban_dto::{ApiError, MutationContext};
@@ -112,12 +114,16 @@ pub trait MutationSpan {
 
 /// An in-memory [`IdempotencyStore`] for tests. It records nothing
 /// durably, so it replays only within one process: the production
-/// core wires the SQLite store instead.
+/// core wires the SQLite store instead. Reaching it from another
+/// crate needs the `test-support` feature, which only a
+/// dev-dependency may enable.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryIdempotencyStore {
     outcomes: Mutex<HashMap<String, RecordedOutcome>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryIdempotencyStore {
     /// An empty store.
     pub fn new() -> Self {
@@ -125,6 +131,7 @@ impl MemoryIdempotencyStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl IdempotencyStore for MemoryIdempotencyStore {
     fn recorded(&self, key: &str) -> Result<Option<RecordedOutcome>, ApiError> {
         Ok(self
@@ -142,10 +149,12 @@ impl IdempotencyStore for MemoryIdempotencyStore {
 
 /// The in-memory store's span. Memory has no crash boundary to
 /// straddle, so committing is only the record itself.
+#[cfg(any(test, feature = "test-support"))]
 struct MemoryMutationSpan<'a> {
     store: &'a MemoryIdempotencyStore,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MutationSpan for MemoryMutationSpan<'_> {
     fn commit(self: Box<Self>, key: &str, outcome: RecordedOutcome) -> Result<(), ApiError> {
         self.store

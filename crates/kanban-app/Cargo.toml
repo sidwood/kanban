@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# The in-memory idempotency store is a test double, not a shipped
+# capability: only a dev-dependency may switch it on, so no release
+# build of the core can contain it.
+[features]
+test-support = []
+
 [dependencies]
 kanban-domain = { workspace = true }
 kanban-dto = { workspace = true }

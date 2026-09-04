@@ -17,10 +17,10 @@ check: need-rust need-web
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
+    just verify-contracts
     pnpm -r run lint
     pnpm -r run typecheck
     pnpm -r run test
-    just verify-contracts
 
 # Regenerate contracts and fail when committed artifacts drift.
 verify-contracts: need-rust

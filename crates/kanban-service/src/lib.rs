@@ -2,18 +2,22 @@
 //! application core, and the socket transport together and keeps
 //! serving after the desktop UI quits (ADR-0001).
 
-use std::path::Path;
-use std::sync::Arc;
+pub mod timeline;
 
-use kanban_app::{Core, MemoryIdempotencyStore};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use kanban_app::{Core, MemoryIdempotencyStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{AllowAllMigrations, Database, SqliteInitiativeStore};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
+use timeline::StorageTimelineStore;
+
 /// The running core process: its open database and its serving
 /// socket.
 pub struct CoreProcess {
-    database: Database,
+    database: Arc<Mutex<Database>>,
     server: ServerHandle,
 }
 
@@ -39,6 +43,8 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     // Forward-only from the first boot; the verified-backup hook
     // arrives with KAN-T60.
     database.migrate(&AllowAllMigrations)?;
+    let database = Arc::new(Mutex::new(database));
+    let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
     let mut core = Core::with_health(
@@ -47,6 +53,10 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         broker,
     )?;
     core.register_initiatives(Arc::new(SqliteInitiativeStore::new(&database)))?;
+    core.register_query(
+        "timeline.query",
+        Arc::new(TimelineQueryHandler::new(timeline_store)),
+    )?;
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess { database, server })
 }

@@ -7,8 +7,10 @@ publish.workspace = true
 
 [dependencies]
 kanban-app = { workspace = true }
+kanban-dto = { workspace = true }
 kanban-storage = { workspace = true }
 kanban-transport = { workspace = true }
+serde_json = { workspace = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]

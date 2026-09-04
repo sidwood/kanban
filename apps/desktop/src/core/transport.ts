@@ -34,6 +34,18 @@ const COMMAND_FOR_OPERATION = {
   'timeline.query': 'timeline_query',
 } as const satisfies Record<KanbanOperationName, string>
 
+function shellInvokePayload<Request>(
+  name: KanbanOperationName,
+  request: Request,
+): Record<string, unknown> {
+  switch (name) {
+    case 'timeline.query':
+      return { request: request as Record<string, unknown> }
+    default:
+      return request as Record<string, unknown>
+  }
+}
+
 // The transport the generated client runs on, plus the shell's
 // connection announcements.
 export interface ShellTransport extends KanbanTransport {
@@ -45,13 +57,13 @@ export const tauriTransport: ShellTransport = {
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], request as Record<string, unknown>)
+    return invoke<Response>(COMMAND_FOR_OPERATION[name], shellInvokePayload(name, request))
   },
   async command<Request, Response>(
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], request as Record<string, unknown>)
+    return invoke<Response>(COMMAND_FOR_OPERATION[name], shellInvokePayload(name, request))
   },
   subscribe(handler: (event: EventEnvelope) => void): () => void {
     return listenTo(CORE_EVENT, (payload) => handler(payload as EventEnvelope))

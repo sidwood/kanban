@@ -36,6 +36,22 @@ describe('tauri transport', () => {
     expect(health).toStrictEqual({ connected: true, service_version: '0.1.0' })
   })
 
+  it('wraps a timeline query in the shell request argument', async () => {
+    invokeMock.mockResolvedValueOnce({ events: [] })
+
+    await tauriTransport.query('timeline.query', {
+      project_id: 'kan',
+      since: '2026-09-04T12:00:00Z',
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith('timeline_query', {
+      request: {
+        project_id: 'kan',
+        since: '2026-09-04T12:00:00Z',
+      },
+    })
+  })
+
   it('carries a shell rejection through to the caller', async () => {
     invokeMock.mockRejectedValueOnce({ code: 'internal', message: 'the core is not up' })
 

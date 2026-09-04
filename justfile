@@ -7,8 +7,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Install toolchains and dependencies.
-bootstrap: need-rust need-web
+# Enable the repository hooks, then install toolchains and dependencies.
+bootstrap: enable-hooks need-rust need-web
     pnpm install
     cargo fetch
 
@@ -33,13 +33,15 @@ build: need-rust need-web
     cargo build --workspace
     pnpm -r run build
 
-# fmt, clippy, Rust tests, web lint, typecheck, tests, and contract drift.
+# fmt, clippy, Rust tests, contract drift, the repository gates, web
+# lint, typecheck, and web tests.
 check: need-rust need-web
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
     just check-shell
     just verify-contracts
+    just check-gates
     pnpm -r run lint
     pnpm -r run typecheck
     pnpm -r run test
@@ -55,6 +57,10 @@ check-shell: need-rust need-web
     cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
     cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
+# Prove the commit hooks and contract verification reject bad input.
+check-gates: need-rust need-web
+    scripts/check_gates.sh
+
 # Run the core and the desktop app for development. The shell starts
 # the core on demand; quitting the window leaves it running.
 dev: need-rust need-web
@@ -67,6 +73,45 @@ dev: need-rust need-web
 # product's own stop path with warnings lands in KAN-T63.
 stop-core:
     pkill -x kanban-service || true
+
+# Point this repository at the tracked hooks in .githooks. The hooks are
+# never copied into .git/hooks; that directory stays Git's own.
+[private]
+enable-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for hook in commit-msg pre-commit; do
+      if [[ ! -x ".githooks/$hook" ]]; then
+        echo "kanban: .githooks/$hook is missing or not executable." >&2
+        echo "" >&2
+        echo "Restore the tracked hook, then re-run just bootstrap:" >&2
+        echo "    git checkout -- .githooks/$hook" >&2
+        echo "    chmod +x .githooks/$hook" >&2
+        echo "" >&2
+        echo "Agents: repair the hook; do not disable it." >&2
+        exit 1
+      fi
+    done
+    if ! command -v pre-commit >/dev/null 2>&1; then
+      echo "kanban: the pre-commit runner is required but was not found." >&2
+      echo "" >&2
+      echo "Install it with: brew install pre-commit" >&2
+      echo "Then re-run just bootstrap." >&2
+      echo "" >&2
+      echo "Agents: install the runner or ask the user for help; do not" >&2
+      echo "commit with the hooks disabled." >&2
+      exit 1
+    fi
+    git config --local core.hooksPath .githooks
+    configured="$(git config --get core.hooksPath || true)"
+    if [[ "$configured" != ".githooks" ]]; then
+      echo "kanban: core.hooksPath is \"$configured\" after configuration." >&2
+      echo "" >&2
+      echo "A higher-priority Git scope is overriding it. Clear it with:" >&2
+      echo "    git config --worktree --unset core.hooksPath" >&2
+      echo "Then re-run just bootstrap." >&2
+      exit 1
+    fi
 
 # Fail loudly when the Rust toolchain or its components are missing.
 [private]

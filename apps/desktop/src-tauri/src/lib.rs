@@ -110,7 +110,10 @@ async fn initiative_create(
     .map_err(|_| ApiError::internal("the create task did not finish"))?
 }
 
-#[tauri::command]
+// The generated contract sends snake_case argument names, while the
+// command macro defaults to camelCase lookup; multi-word arguments
+// need the explicit rename to cross the IPC boundary.
+#[tauri::command(rename_all = "snake_case")]
 async fn initiative_rename(
     shell: State<'_, Arc<Shell>>,
     mutation: MutationContext,
@@ -132,7 +135,7 @@ async fn initiative_rename(
     .map_err(|_| ApiError::internal("the rename task did not finish"))?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn initiative_archive(
     shell: State<'_, Arc<Shell>>,
     mutation: MutationContext,

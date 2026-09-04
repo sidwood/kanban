@@ -50,5 +50,11 @@ const eventStream = computed(() =>
     >
       {{ eventStream }}
     </p>
+    <RouterLink
+      to="/initiatives"
+      class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+    >
+      Manage Initiatives
+    </RouterLink>
   </main>
 </template>

@@ -19,6 +19,8 @@
     "Pocock",
     "rereview",
     "rustup",
+    "schemars",
+    "serde",
     "shadcn",
     "SQLite",
     "stdio",

@@ -79,4 +79,27 @@ mod append_only {
             "the refusal should say append-only, got: {error}"
         );
     }
+
+    #[test]
+    fn replacing_audit_events_fails() {
+        let database = seeded_database();
+
+        let outcome = database.connection().execute(
+            "INSERT OR REPLACE INTO audit_events (id, kind, detail) VALUES (1, 'tampered', '{}')",
+            [],
+        );
+
+        let error = outcome.expect_err("the schema must refuse replaces");
+        assert!(
+            error.to_string().contains("append-only"),
+            "the refusal should say append-only, got: {error}"
+        );
+        let kind: String = database
+            .connection()
+            .query_row("SELECT kind FROM audit_events WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .expect("the original row is still readable");
+        assert_eq!(kind, "migration.applied", "the row must not be mutated");
+    }
 }

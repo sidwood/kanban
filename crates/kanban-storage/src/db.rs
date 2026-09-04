@@ -46,6 +46,8 @@ impl Database {
     fn configure(conn: Connection) -> Result<Self, StorageError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // The append-only triggers must fire for REPLACE's implicit delete.
+        conn.pragma_update(None, "recursive_triggers", "ON")?;
         let database = Self { conn };
         let mode = database.journal_mode()?;
         if mode != "wal" {
@@ -122,6 +124,19 @@ mod tests {
             database.journal_mode().expect("journal mode is readable"),
             "wal"
         );
+    }
+
+    #[test]
+    fn open_enables_recursive_triggers() {
+        let dir = scratch_dir();
+        let database = Database::open(&dir.path().join("kanban.sqlite"))
+            .expect("opening a fresh database succeeds");
+
+        let recursive: i64 = database
+            .connection()
+            .query_row("PRAGMA recursive_triggers", [], |row| row.get(0))
+            .expect("recursive triggers are readable");
+        assert_eq!(recursive, 1);
     }
 
     #[test]

@@ -5,11 +5,13 @@ pub mod catalog;
 pub mod contracts_gen;
 pub mod dispatch;
 pub mod events;
+pub mod initiative;
 pub mod mutation;
 
 pub use catalog::{OperationDescriptor, OperationKind, exposed_operations};
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
+pub use initiative::{InitiativeStore, TimelineAppend};
 pub use mutation::{
     CommandHandler, IdempotencyStore, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome,
     parse_payload,

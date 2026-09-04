@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+kanban-domain = { path = "../kanban-domain" }
 kanban-dto = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

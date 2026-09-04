@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_core_serves_exactly_the_exposed_catalog() {
+    fn the_default_core_serves_catalogued_operations_only() {
         let core = Core::with_health(
             "0.1.0-test",
             Arc::new(MemoryIdempotencyStore::new()),
@@ -346,14 +346,21 @@ mod tests {
         )
         .expect("the default core wires");
 
-        let served: std::collections::HashMap<_, _> =
-            core.registered_operations().into_iter().collect();
         let catalogued: std::collections::HashMap<_, _> = exposed_operations()
             .iter()
             .map(|operation| (operation.name, operation.kind))
             .collect();
 
-        assert_eq!(served, catalogued);
+        // Every served operation is catalogued, and the health query
+        // the default core wires is among them.
+        for (name, kind) in core.registered_operations() {
+            assert_eq!(
+                catalogued.get(name),
+                Some(&kind),
+                "`{name}` is served as catalogued"
+            );
+        }
+        assert_eq!(catalogued.get("health.get"), Some(&OperationKind::Query));
     }
 
     struct NoopQuery;

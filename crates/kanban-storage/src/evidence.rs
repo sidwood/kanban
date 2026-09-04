@@ -737,9 +737,8 @@ mod evidence_storage {
         );
     }
 
-    #[test]
-    fn deleting_evidence_is_refused_by_the_schema() {
-        let (_dir, _database, store) = store();
+    fn attached_store() -> (tempfile::TempDir, Database, SqliteEvidenceStore) {
+        let (dir, database, store) = store();
         let encoded = STANDARD.encode(b"immutable");
         store
             .attach_managed_file(
@@ -750,6 +749,55 @@ mod evidence_storage {
                 append("evidence", json!({ "action": "attached" })),
             )
             .expect("the managed file lands");
+        (dir, database, store)
+    }
+
+    #[test]
+    fn updating_evidence_is_refused_by_the_schema() {
+        let (_dir, _database, store) = attached_store();
+
+        let outcome = store.lock().execute(
+            "UPDATE evidence_items SET entity_id = 'tampered' WHERE id = 1",
+            [],
+        );
+
+        let error = outcome.expect_err("the schema must refuse updates");
+        assert!(
+            error.to_string().contains("append-only"),
+            "the refusal should say append-only, got: {error}"
+        );
+    }
+
+    #[test]
+    fn replacing_evidence_is_refused_by_the_schema() {
+        let (_dir, _database, store) = attached_store();
+
+        let outcome = store.lock().execute(
+            "INSERT OR REPLACE INTO evidence_items
+                 (id, project_id, entity_kind, entity_id, kind)
+             VALUES (1, 'kan-p1', 'ticket', 'tampered', 'repository')",
+            [],
+        );
+
+        let error = outcome.expect_err("the schema must refuse replaces");
+        assert!(
+            error.to_string().contains("append-only"),
+            "the refusal should say append-only, got: {error}"
+        );
+        let entity_id: String = store
+            .lock()
+            .query_row(
+                "SELECT entity_id FROM evidence_items WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the original row is still readable");
+        assert_eq!(entity_id, "kan-t10", "the row must not be mutated");
+    }
+
+    #[test]
+    fn deleting_evidence_is_refused_by_the_schema() {
+        let (_dir, _database, store) = attached_store();
 
         let outcome = store
             .lock()

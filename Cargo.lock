@@ -202,6 +202,7 @@ dependencies = [
  "kanban-dto",
  "kanban-storage",
  "kanban-transport",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "thiserror",

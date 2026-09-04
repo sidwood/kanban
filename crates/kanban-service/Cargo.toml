@@ -14,5 +14,8 @@ serde_json = { workspace = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+# The timeline integration test writes a row the typed envelope
+# cannot express, to prove the read path refuses it.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde_json = { workspace = true }
 tempfile = "3.27.0"

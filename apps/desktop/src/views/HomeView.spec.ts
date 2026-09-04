@@ -84,4 +84,25 @@ describe('HomeView boot surface', () => {
       'Event stream live · sequence 7',
     )
   })
+
+  it('shows an unselected timeline state once the core connects', async () => {
+    const { transport } = harness()
+    const view = mountView(transport)
+    await flushPromises()
+
+    expect(view.find('[data-testid="timeline-unselected"]').exists()).toBe(true)
+    expect(view.find('[data-testid="timeline-surface"]').exists()).toBe(false)
+    expect(view.find('[data-testid="timeline-unselected"]').text()).toContain(
+      'Select a Project',
+    )
+  })
+
+  it('does not query the timeline on a clean boot surface', async () => {
+    const { transport, queries } = harness()
+    mountView(transport)
+    await flushPromises()
+
+    const timelineCalls = queries.mock.calls.filter(([name]) => name === 'timeline.query')
+    expect(timelineCalls).toHaveLength(0)
+  })
 })

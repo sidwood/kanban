@@ -144,7 +144,7 @@ watch(scopeKey, () => {
           v-model="filterEntityId"
           data-testid="timeline-filter-entity-id"
           class="rounded border border-slate-300 px-2 py-1"
-          placeholder="kan-t9"
+          placeholder="Entity id"
         >
       </label>
 

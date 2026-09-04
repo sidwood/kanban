@@ -67,6 +67,38 @@ describe('timeline surface', () => {
     expect(wrapper.get('[data-testid="timeline-event-1"]').text()).toContain('kan-t9')
   })
 
+  it('loads the timeline when real project and entity selection are provided', async () => {
+    const query = vi.fn(async () => ({ events: [] }))
+    const transport = {
+      query,
+      command: vi.fn(),
+      subscribe: () => () => undefined,
+      onConnectionChange: () => () => undefined,
+    }
+
+    mount(TimelineSurface, {
+      props: {
+        scope: { project: 'my-project' },
+        entityKind: 'ticket',
+        entityId: 'my-ticket',
+      },
+      global: {
+        provide: {
+          [kanbanTransportKey as symbol]: transport,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(query).toHaveBeenCalledWith('timeline.query', {
+      scope: { project: 'my-project' },
+      entity: { kind: 'ticket', id: 'my-ticket' },
+      kinds: undefined,
+      since: undefined,
+      until: undefined,
+    })
+  })
+
   it('applies entity, kind, and time filters through the store', async () => {
     const query = vi.fn(async () => ({
       events: [],

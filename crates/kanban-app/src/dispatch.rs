@@ -172,7 +172,8 @@ impl Core {
         // The mutation belongs to the span: an apply that fails, or
         // an outcome that cannot be recorded, discards both together.
         let span = self.idempotency.begin()?;
-        let response = handler.apply(&command, self.events.as_ref())?;
+        let announced = PendingEvents::default();
+        let response = handler.apply(&command, &announced)?;
         span.commit(
             &command.idempotency_key,
             RecordedOutcome {
@@ -180,6 +181,7 @@ impl Core {
                 response: response.clone(),
             },
         )?;
+        announced.release(self.events.as_ref());
         Ok(response)
     }
 
@@ -192,6 +194,38 @@ impl Core {
                 Err(RegistrationError::WrongKind(name.to_owned()))
             }
             Some(_) => Ok(()),
+        }
+    }
+}
+
+/// Holds one command's events until its mutation commits. Handlers
+/// announce as they apply, but a span that never commits leaves no
+/// mutation to announce, so the guard releases the events only once
+/// the commit has landed.
+#[derive(Default)]
+struct PendingEvents {
+    events: Mutex<Vec<(String, Value)>>,
+}
+
+impl EventSink for PendingEvents {
+    fn emit(&self, event_type: &str, payload: Value) {
+        self.events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((event_type.to_owned(), payload));
+    }
+}
+
+impl PendingEvents {
+    /// Publish everything the command announced, in the order it was
+    /// announced.
+    fn release(self, sink: &dyn EventSink) {
+        for (event_type, payload) in self
+            .events
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            sink.emit(&event_type, payload);
         }
     }
 }
@@ -626,6 +660,29 @@ mod tests {
             error.code,
             ErrorCode::Internal,
             "the guard reports the refusal rather than claiming success"
+        );
+    }
+
+    #[test]
+    fn a_command_that_cannot_commit_announces_nothing() {
+        let sink = Arc::new(RecordingSink::default());
+        let mut core = Core::new(
+            TEST_CATALOG,
+            Arc::new(RefusingIdempotencyStore),
+            sink.clone(),
+        );
+        core.register_command("counter.bump", Arc::new(Counter::default()))
+            .expect("the test command registers");
+
+        core.command("counter.bump", &bump(1, "key-1", 0))
+            .expect_err("the outcome cannot be recorded");
+
+        assert!(
+            sink.events
+                .lock()
+                .expect("the recorder lock is sound")
+                .is_empty(),
+            "no subscriber may hear about a mutation that did not commit"
         );
     }
 

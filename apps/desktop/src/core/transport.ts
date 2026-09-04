@@ -31,6 +31,7 @@ const COMMAND_FOR_OPERATION = {
   'initiative.create': 'initiative_create',
   'initiative.list': 'initiative_list',
   'initiative.rename': 'initiative_rename',
+  'timeline.query': 'timeline_query',
 } as const satisfies Record<KanbanOperationName, string>
 
 // The transport the generated client runs on, plus the shell's

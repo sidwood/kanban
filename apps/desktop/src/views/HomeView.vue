@@ -2,6 +2,7 @@
 // The boot surface: everything the operator sees before the board
 // views land, bound to connection state from the generated client.
 import { computed, inject, onMounted } from 'vue'
+import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useConnectionStore } from '../stores/connection'
 
@@ -56,5 +57,12 @@ const eventStream = computed(() =>
     >
       Manage Initiatives
     </RouterLink>
+    <TimelineSurface
+      v-if="connection.phase === 'connected'"
+      project-id="kan"
+      entity-kind="ticket"
+      entity-id="kan-t9"
+      class="mt-6"
+    />
   </main>
 </template>

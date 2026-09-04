@@ -1,16 +1,19 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
-import type { HealthResponse } from '@kanban/contracts'
+import type { HealthResponse, TimelineQueryResponse } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import HomeView from './HomeView.vue'
 
 // A transport whose health answer and event stream the test steers.
 function harness() {
-  const queries = vi.fn(() =>
-    Promise.resolve<HealthResponse>({ connected: true, service_version: '0.1.0' }),
-  )
+  const queries = vi.fn(async (name: string) => {
+    if (name === 'timeline.query') {
+      return { events: [] } as TimelineQueryResponse
+    }
+    return { connected: true, service_version: '0.1.0' } as HealthResponse
+  })
   let eventHandler: ((event: { sequence: number }) => void) | undefined
   const transport = {
     query: queries,

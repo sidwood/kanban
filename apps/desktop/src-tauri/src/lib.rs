@@ -14,6 +14,7 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, HealthResponse, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, MutationContext,
+    TimelineQuery, TimelineQueryResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -93,6 +94,7 @@ async fn health_get(shell: State<'_, Arc<Shell>>) -> Result<HealthResponse, ApiE
     .map_err(|_| ApiError::internal("the health task did not finish"))?
 }
 
+
 #[tauri::command]
 async fn initiative_create(
     shell: State<'_, Arc<Shell>>,
@@ -167,6 +169,22 @@ async fn initiative_list(shell: State<'_, Arc<Shell>>) -> Result<InitiativeListR
     .map_err(|_| ApiError::internal("the list task did not finish"))?
 }
 
+/// The per-Project timeline query, served through the generated
+/// contract's DTOs.
+#[tauri::command]
+async fn timeline_query(
+    shell: State<'_, Arc<Shell>>,
+    request: TimelineQuery,
+) -> Result<TimelineQueryResponse, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "timeline", |link| link.query("timeline.query", &payload))
+    })
+    .await
+    .map_err(|_| ApiError::internal("the timeline task did not finish"))?
+}
+
 /// Build the window, start the core on demand, and supervise the
 /// connection for as long as this shell process lives.
 pub fn run() -> tauri::Result<()> {
@@ -189,7 +207,8 @@ pub fn run() -> tauri::Result<()> {
             initiative_create,
             initiative_rename,
             initiative_archive,
-            initiative_list
+            initiative_list,
+            timeline_query,
         ])
         .run(tauri::generate_context!())
 }

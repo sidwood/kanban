@@ -19,8 +19,8 @@ pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
 pub use initiative::{InitiativeStore, TimelineAppend};
 pub use mutation::{
-    CommandHandler, IdempotencyStore, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome,
-    parse_payload,
+    CommandHandler, IdempotencyStore, MemoryIdempotencyStore, MutationSpan, ParsedCommand,
+    RecordedOutcome, parse_payload,
 };
 pub use rulings::RulingStore;
 pub use timeline::{

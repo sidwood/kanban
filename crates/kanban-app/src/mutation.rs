@@ -1,5 +1,6 @@
 //! The mutation guard's inputs: payload validation, the required
-//! mutation context, and the idempotency store (DR-SS-03).
+//! mutation context, and the durable record of spent idempotency
+//! keys (DR-SS-03).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -87,17 +88,31 @@ pub struct RecordedOutcome {
     pub response: Value,
 }
 
-/// The record of spent idempotency keys. The service wires the
-/// durable store; the in-memory store serves the in-process core.
+/// The record of spent idempotency keys and the durable span each
+/// mutation shares with its outcome. The service wires the durable
+/// store; the in-memory store serves tests.
 pub trait IdempotencyStore: Send + Sync {
     /// The outcome recorded for `key`, if it was spent.
-    fn recorded(&self, key: &str) -> Option<RecordedOutcome>;
-    /// Record a successful outcome against `key`.
-    fn record(&self, key: &str, outcome: RecordedOutcome);
+    fn recorded(&self, key: &str) -> Result<Option<RecordedOutcome>, ApiError>;
+    /// Open the span the mutation and its outcome share. Everything
+    /// the mutation writes belongs to the span, so dropping it
+    /// without committing discards the mutation too.
+    fn begin(&self) -> Result<Box<dyn MutationSpan + '_>, ApiError>;
 }
 
-/// An in-memory [`IdempotencyStore`] for the in-process core and
-/// tests.
+/// The durable span one mutation shares with the outcome that
+/// replays it.
+pub trait MutationSpan {
+    /// Record `outcome` against `key` and commit the span. The
+    /// mutation's writes and the outcome a retry replays land in one
+    /// commit, so no crash boundary can leave either without the
+    /// other.
+    fn commit(self: Box<Self>, key: &str, outcome: RecordedOutcome) -> Result<(), ApiError>;
+}
+
+/// An in-memory [`IdempotencyStore`] for tests. It records nothing
+/// durably, so it replays only within one process: the production
+/// core wires the SQLite store instead.
 #[derive(Debug, Default)]
 pub struct MemoryIdempotencyStore {
     outcomes: Mutex<HashMap<String, RecordedOutcome>>,
@@ -111,19 +126,34 @@ impl MemoryIdempotencyStore {
 }
 
 impl IdempotencyStore for MemoryIdempotencyStore {
-    fn recorded(&self, key: &str) -> Option<RecordedOutcome> {
-        self.outcomes
+    fn recorded(&self, key: &str) -> Result<Option<RecordedOutcome>, ApiError> {
+        Ok(self
+            .outcomes
             .lock()
             .expect("the idempotency index is sound")
             .get(key)
-            .cloned()
+            .cloned())
     }
 
-    fn record(&self, key: &str, outcome: RecordedOutcome) {
-        self.outcomes
+    fn begin(&self) -> Result<Box<dyn MutationSpan + '_>, ApiError> {
+        Ok(Box::new(MemoryMutationSpan { store: self }))
+    }
+}
+
+/// The in-memory store's span. Memory has no crash boundary to
+/// straddle, so committing is only the record itself.
+struct MemoryMutationSpan<'a> {
+    store: &'a MemoryIdempotencyStore,
+}
+
+impl MutationSpan for MemoryMutationSpan<'_> {
+    fn commit(self: Box<Self>, key: &str, outcome: RecordedOutcome) -> Result<(), ApiError> {
+        self.store
+            .outcomes
             .lock()
             .expect("the idempotency index is sound")
             .insert(key.to_owned(), outcome);
+        Ok(())
     }
 }
 
@@ -286,20 +316,45 @@ mod tests {
         let store = MemoryIdempotencyStore::new();
 
         assert!(
-            store.recorded("key-1").is_none(),
+            store
+                .recorded("key-1")
+                .expect("the lookup serves")
+                .is_none(),
             "an unspent key has no outcome"
         );
 
-        store.record(
-            "key-1",
-            RecordedOutcome {
-                fingerprint: "counter:{\"step\":1}".to_owned(),
-                response: json!({ "value": 1 }),
-            },
-        );
+        store
+            .begin()
+            .expect("the span opens")
+            .commit(
+                "key-1",
+                RecordedOutcome {
+                    fingerprint: "counter:{\"step\":1}".to_owned(),
+                    response: json!({ "value": 1 }),
+                },
+            )
+            .expect("the span commits");
 
-        let recorded = store.recorded("key-1").expect("the spent key is recorded");
+        let recorded = store
+            .recorded("key-1")
+            .expect("the lookup serves")
+            .expect("the spent key is recorded");
         assert_eq!(recorded.fingerprint, "counter:{\"step\":1}");
         assert_eq!(recorded.response, json!({ "value": 1 }));
+    }
+
+    #[test]
+    fn a_span_dropped_without_committing_spends_no_key() {
+        let store = MemoryIdempotencyStore::new();
+
+        drop(store.begin().expect("the span opens"));
+
+        assert!(
+            store
+                .recorded("key-1")
+                .expect("the lookup serves")
+                .is_none(),
+            "an uncommitted span records nothing"
+        );
     }
 }

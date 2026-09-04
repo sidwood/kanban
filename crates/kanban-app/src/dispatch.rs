@@ -137,7 +137,8 @@ impl Core {
 
     /// Serve a named command through the mutation guard: idempotent
     /// replay first, then the optimistic version check, then one
-    /// apply, then the outcome is recorded (DR-SS-03).
+    /// apply and its outcome inside a single durable span
+    /// (DR-SS-03).
     pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
         let handler = self
             .commands
@@ -154,7 +155,7 @@ impl Core {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if let Some(recorded) = self.idempotency.recorded(&command.idempotency_key) {
+        if let Some(recorded) = self.idempotency.recorded(&command.idempotency_key)? {
             if recorded.fingerprint == command.fingerprint {
                 return Ok(recorded.response);
             }
@@ -168,14 +169,17 @@ impl Core {
             return Err(ApiError::stale_version(command.optimistic_version, current));
         }
 
+        // The mutation belongs to the span: an apply that fails, or
+        // an outcome that cannot be recorded, discards both together.
+        let span = self.idempotency.begin()?;
         let response = handler.apply(&command, self.events.as_ref())?;
-        self.idempotency.record(
+        span.commit(
             &command.idempotency_key,
             RecordedOutcome {
                 fingerprint: command.fingerprint,
                 response: response.clone(),
             },
-        );
+        )?;
         Ok(response)
     }
 
@@ -218,7 +222,9 @@ mod tests {
     use super::{Core, QueryHandler, RegistrationError};
     use crate::catalog::{OperationDescriptor, OperationKind, exposed_operations};
     use crate::events::{EventSink, NoopEventSink};
-    use crate::mutation::{CommandHandler, MemoryIdempotencyStore, ParsedCommand, parse_payload};
+    use crate::mutation::{
+        CommandHandler, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome, parse_payload,
+    };
 
     const TEST_CATALOG: &[OperationDescriptor] = &[OperationDescriptor {
         name: "counter.bump",
@@ -577,6 +583,49 @@ mod tests {
             error.message.contains("key-1"),
             "the message should name the reused key: {}",
             error.message
+        );
+    }
+
+    /// An idempotency store whose span cannot commit, standing in
+    /// for a database that refuses the write.
+    struct RefusingIdempotencyStore;
+
+    impl crate::mutation::IdempotencyStore for RefusingIdempotencyStore {
+        fn recorded(&self, _key: &str) -> Result<Option<RecordedOutcome>, ApiError> {
+            Ok(None)
+        }
+
+        fn begin(&self) -> Result<Box<dyn crate::mutation::MutationSpan + '_>, ApiError> {
+            Ok(Box::new(RefusingSpan))
+        }
+    }
+
+    struct RefusingSpan;
+
+    impl crate::mutation::MutationSpan for RefusingSpan {
+        fn commit(self: Box<Self>, _key: &str, _outcome: RecordedOutcome) -> Result<(), ApiError> {
+            Err(ApiError::internal("the outcome could not be recorded"))
+        }
+    }
+
+    #[test]
+    fn a_command_whose_outcome_cannot_be_recorded_is_refused() {
+        let mut core = Core::new(
+            TEST_CATALOG,
+            Arc::new(RefusingIdempotencyStore),
+            Arc::new(NoopEventSink),
+        );
+        core.register_command("counter.bump", Arc::new(Counter::default()))
+            .expect("the test command registers");
+
+        let error = core
+            .command("counter.bump", &bump(1, "key-1", 0))
+            .expect_err("a mutation whose outcome cannot be recorded is not a success");
+
+        assert_eq!(
+            error.code,
+            ErrorCode::Internal,
+            "the guard reports the refusal rather than claiming success"
         );
     }
 

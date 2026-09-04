@@ -8,8 +8,8 @@ export const KANBAN_CLIENT_OPERATIONS = [
 export type KanbanOperationName = (typeof KANBAN_CLIENT_OPERATIONS)[number];
 
 export interface KanbanTransport {
-  query<Request, Response>(name: string, request: Request): Promise<Response>;
-  command<Request, Response>(name: string, request: Request): Promise<Response>;
+  query<Request, Response>(name: KanbanOperationName, request: Request): Promise<Response>;
+  command<Request, Response>(name: KanbanOperationName, request: Request): Promise<Response>;
   subscribe(handler: (event: EventEnvelope) => void): () => void;
 }
 

@@ -269,10 +269,10 @@ fn render_client(
     );
     output.push_str("export interface KanbanTransport {\n");
     output.push_str(
-        "  query<Request, Response>(name: string, request: Request): Promise<Response>;\n",
+        "  query<Request, Response>(name: KanbanOperationName, request: Request): Promise<Response>;\n",
     );
     output.push_str(
-        "  command<Request, Response>(name: string, request: Request): Promise<Response>;\n",
+        "  command<Request, Response>(name: KanbanOperationName, request: Request): Promise<Response>;\n",
     );
     output.push_str("  subscribe(handler: (event: EventEnvelope) => void): () => void;\n");
     output.push_str("}\n\n");

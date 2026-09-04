@@ -58,7 +58,7 @@ export const useTimelineStore = defineStore('timeline', {
           entity: this.entityFilter(),
           kinds: this.filters.kinds.length > 0 ? this.filters.kinds : undefined,
           since: datetimeLocalToUtcIso(this.filters.since),
-          until: datetimeLocalToUtcIso(this.filters.until),
+          until: datetimeLocalToUtcIso(this.filters.until, 'end'),
         })
         this.events = response.events.map((event) => ({
           id: event.id,

@@ -6,7 +6,7 @@ pub mod timeline;
 
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use kanban_app::{Core, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
@@ -27,7 +27,7 @@ const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound 
 /// The running core process: its open database and its serving
 /// socket.
 pub struct CoreProcess {
-    database: Arc<Mutex<Database>>,
+    database: Arc<Database>,
     server: ServerHandle,
 }
 
@@ -61,7 +61,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         &database,
         RetentionPolicy::keep_most_recent(RETAINED_OUTCOMES),
     ));
-    let database = Arc::new(Mutex::new(database));
+    let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();

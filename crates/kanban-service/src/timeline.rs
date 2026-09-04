@@ -1,6 +1,6 @@
 //! SQLite-backed implementation of the timeline port.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use kanban_app::{TimelineError, TimelineStore, entity_kind_wire, event_kind_wire};
 use kanban_dto::{
@@ -9,14 +9,21 @@ use kanban_dto::{
 use kanban_storage::{Database, TimelineAppend, TimelineFilter, TimelineRow};
 use serde_json::Value;
 
-/// The storage adapter the core uses for timeline queries and appends.
+/// The storage adapter the core uses for timeline queries and
+/// appends.
+///
+/// It shares the database handle rather than wrapping it: the
+/// database already serialises its own connection, and a second lock
+/// here would let a query hold this one while waiting for the
+/// connection a mutation span holds, which is a deadlock as soon as
+/// a command appends through this port.
 pub struct StorageTimelineStore {
-    database: Arc<Mutex<Database>>,
+    database: Arc<Database>,
 }
 
 impl StorageTimelineStore {
     /// Wraps the authoritative database handle.
-    pub fn new(database: Arc<Mutex<Database>>) -> Self {
+    pub fn new(database: Arc<Database>) -> Self {
         Self { database }
     }
 }
@@ -37,8 +44,6 @@ impl TimelineStore for StorageTimelineStore {
             detail,
         };
         self.database
-            .lock()
-            .expect("the database lock is sound")
             .append_timeline_event(&append)
             .map_err(|error| TimelineError::Storage(error.to_string()))
     }
@@ -61,8 +66,6 @@ impl TimelineStore for StorageTimelineStore {
         };
         let rows = self
             .database
-            .lock()
-            .expect("the database lock is sound")
             .query_timeline(&filter)
             .map_err(|error| TimelineError::Storage(error.to_string()))?;
         rows.into_iter().map(row_to_record).collect()

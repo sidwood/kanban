@@ -447,7 +447,10 @@ mod tests {
 
         let orphan_path = temp_root.join("src/schemas/OrphanedSchema.json");
         fs::write(&orphan_path, "{}\n").expect("orphan schema is written");
-        assert!(orphan_path.is_file(), "orphan schema must exist before regeneration");
+        assert!(
+            orphan_path.is_file(),
+            "orphan schema must exist before regeneration"
+        );
 
         generate(&temp_root).expect("regeneration succeeds");
         assert!(

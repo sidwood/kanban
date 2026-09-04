@@ -43,6 +43,33 @@ export type CommentRevisionsResponse = {
   comment: CommentRecord;
   revisions: CommentRevisionRecord[];
 };
+export type DeferralListQuery = {
+  finding_id?: string | null;
+  project_id: string;
+};
+export type DeferralListResponse = {
+  deferrals: DeferralRecord[];
+};
+export type DeferralRecord = {
+  finding_id: string;
+  id: number;
+  project_id: string;
+  reason: string;
+  recorded_at: string;
+  supersedes_id?: number | null;
+};
+export type DeferralRecordRequest = {
+  finding_id: string;
+  mutation: MutationContext;
+  project_id: string;
+  reason: string;
+};
+export type DeferralSupersedeRequest = {
+  deferral_id: number;
+  mutation: MutationContext;
+  project_id: string;
+  reason: string;
+};
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;
@@ -80,6 +107,33 @@ export type InitiativeRenameRequest = {
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
+};
+export type RulingListQuery = {
+  entity?: TimelineEntityRef | null;
+  project_id: string;
+};
+export type RulingListResponse = {
+  rulings: RulingRecord[];
+};
+export type RulingRecord = {
+  entity?: TimelineEntityRef | null;
+  id: number;
+  project_id: string;
+  recorded_at: string;
+  summary: string;
+  supersedes_id?: number | null;
+};
+export type RulingRecordRequest = {
+  entity?: TimelineEntityRef | null;
+  mutation: MutationContext;
+  project_id: string;
+  summary: string;
+};
+export type RulingSupersedeRequest = {
+  mutation: MutationContext;
+  project_id: string;
+  ruling_id: number;
+  summary: string;
 };
 export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment';
 export type TimelineEntityRef = {

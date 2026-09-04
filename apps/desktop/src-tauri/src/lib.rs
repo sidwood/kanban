@@ -13,9 +13,11 @@ use std::time::Duration;
 
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse, HealthResponse, InitiativeArchiveRequest, InitiativeCreateRequest,
-    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, MutationContext,
-    TimelineEntityRef, TimelineQuery, TimelineQueryResponse,
+    CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
+    DeferralRecordRequest, DeferralSupersedeRequest, HealthResponse, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
+    MutationContext, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
+    RulingSupersedeRequest, TimelineEntityRef, TimelineQuery, TimelineQueryResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -249,6 +251,102 @@ async fn comment_revisions(
     .map_err(|_| ApiError::internal("the comment revisions task did not finish"))?
 }
 
+#[tauri::command]
+async fn ruling_record(
+    shell: State<'_, Arc<Shell>>,
+    request: RulingRecordRequest,
+) -> Result<RulingRecord, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "recorded ruling", |link| {
+            link.command("ruling.record", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the ruling record task did not finish"))?
+}
+
+#[tauri::command]
+async fn ruling_supersede(
+    shell: State<'_, Arc<Shell>>,
+    request: RulingSupersedeRequest,
+) -> Result<RulingRecord, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "superseded ruling", |link| {
+            link.command("ruling.supersede", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the ruling supersede task did not finish"))?
+}
+
+#[tauri::command]
+async fn ruling_list(
+    shell: State<'_, Arc<Shell>>,
+    request: RulingListQuery,
+) -> Result<RulingListResponse, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "ruling list", |link| {
+            link.query("ruling.list", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the ruling list task did not finish"))?
+}
+
+#[tauri::command]
+async fn deferral_record(
+    shell: State<'_, Arc<Shell>>,
+    request: DeferralRecordRequest,
+) -> Result<DeferralRecord, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "recorded deferral", |link| {
+            link.command("deferral.record", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the deferral record task did not finish"))?
+}
+
+#[tauri::command]
+async fn deferral_supersede(
+    shell: State<'_, Arc<Shell>>,
+    request: DeferralSupersedeRequest,
+) -> Result<DeferralRecord, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "superseded deferral", |link| {
+            link.command("deferral.supersede", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the deferral supersede task did not finish"))?
+}
+
+#[tauri::command]
+async fn deferral_list(
+    shell: State<'_, Arc<Shell>>,
+    request: DeferralListQuery,
+) -> Result<DeferralListResponse, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "deferral list", |link| {
+            link.query("deferral.list", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the deferral list task did not finish"))?
+}
+
 /// Build the window, start the core on demand, and supervise the
 /// connection for as long as this shell process lives.
 pub fn run() -> tauri::Result<()> {
@@ -276,6 +374,12 @@ pub fn run() -> tauri::Result<()> {
             comment_create,
             comment_edit,
             comment_revisions,
+            ruling_record,
+            ruling_supersede,
+            ruling_list,
+            deferral_record,
+            deferral_supersede,
+            deferral_list,
         ])
         .run(tauri::generate_context!())
 }

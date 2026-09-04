@@ -2,17 +2,23 @@
 //! with schema derivation. Depends on nothing internal.
 
 pub mod comment;
+pub mod deferral;
 pub mod error;
 pub mod event;
 pub mod health;
 pub mod initiative;
 pub mod mutation;
+pub mod ruling;
 pub mod schema;
 pub mod timeline;
 
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
+};
+pub use deferral::{
+    DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
+    DeferralSupersedeRequest,
 };
 pub use error::{ApiError, ErrorCode};
 pub use event::EventEnvelope;
@@ -22,6 +28,9 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use mutation::MutationContext;
+pub use ruling::{
+    RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
+};
 pub use schema::schema_definitions;
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -92,6 +101,16 @@ mod tests {
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
                 "MutationContext",
+                "DeferralListQuery",
+                "DeferralListResponse",
+                "DeferralRecord",
+                "DeferralRecordRequest",
+                "DeferralSupersedeRequest",
+                "RulingListQuery",
+                "RulingListResponse",
+                "RulingRecord",
+                "RulingRecordRequest",
+                "RulingSupersedeRequest",
                 "TimelineEntityKind",
                 "TimelineEntityRef",
                 "TimelineEventKind",

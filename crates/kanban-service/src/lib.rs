@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use kanban_app::{Core, MemoryIdempotencyStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
-use kanban_storage::{AllowAllMigrations, Database, SqliteCommentStore, SqliteInitiativeStore};
+use kanban_storage::{
+    AllowAllMigrations, Database, SqliteCommentStore, SqliteDeferralStore, SqliteInitiativeStore,
+    SqliteRulingStore,
+};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use timeline::StorageTimelineStore;
@@ -45,6 +48,8 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     database.migrate(&AllowAllMigrations)?;
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
+    let ruling_store = Arc::new(SqliteRulingStore::new(&database));
+    let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
     let database = Arc::new(Mutex::new(database));
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
@@ -56,6 +61,8 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     )?;
     core.register_initiatives(initiative_store)?;
     core.register_comments(comment_store)?;
+    core.register_rulings(ruling_store)?;
+    core.register_deferrals(deferral_store)?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),

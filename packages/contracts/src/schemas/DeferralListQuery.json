@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `deferral.list` query.",
+  "properties": {
+    "finding_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "DeferralListQuery",
+  "type": "object"
+}

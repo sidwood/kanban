@@ -1004,5 +1004,786 @@
       "title": "CommentRevisionsResponse",
       "type": "object"
     }
+  },
+  {
+    "description": "Record an immutable operator ruling on the timeline.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ruling.record` command.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id",
+        "summary"
+      ],
+      "title": "RulingRecordRequest",
+      "type": "object"
+    },
+    "name": "ruling_record",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "One immutable ruling as every client sees it.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The entity the ruling concerns, if any."
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The project the ruling belongs to.",
+          "type": "string"
+        },
+        "recorded_at": {
+          "description": "When the ruling was recorded.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "The operator decision text.",
+          "type": "string"
+        },
+        "supersedes_id": {
+          "description": "The ruling this one supersedes, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "recorded_at",
+        "summary"
+      ],
+      "title": "RulingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Supersede a ruling with a new immutable record.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ruling.supersede` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "ruling_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id",
+        "ruling_id",
+        "summary"
+      ],
+      "title": "RulingSupersedeRequest",
+      "type": "object"
+    },
+    "name": "ruling_supersede",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "One immutable ruling as every client sees it.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The entity the ruling concerns, if any."
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The project the ruling belongs to.",
+          "type": "string"
+        },
+        "recorded_at": {
+          "description": "When the ruling was recorded.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "The operator decision text.",
+          "type": "string"
+        },
+        "supersedes_id": {
+          "description": "The ruling this one supersedes, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "recorded_at",
+        "summary"
+      ],
+      "title": "RulingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every ruling for a project, superseded originals included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ruling.list` query.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "RulingListQuery",
+      "type": "object"
+    },
+    "name": "ruling_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "RulingRecord": {
+          "additionalProperties": false,
+          "description": "One immutable ruling as every client sees it.",
+          "properties": {
+            "entity": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TimelineEntityRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The entity the ruling concerns, if any."
+            },
+            "id": {
+              "description": "The storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "description": "The project the ruling belongs to.",
+              "type": "string"
+            },
+            "recorded_at": {
+              "description": "When the ruling was recorded.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "The operator decision text.",
+              "type": "string"
+            },
+            "supersedes_id": {
+              "description": "The ruling this one supersedes, if any.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "project_id",
+            "recorded_at",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `ruling.list` query.",
+      "properties": {
+        "rulings": {
+          "description": "Every ruling for the project, superseded originals included.",
+          "items": {
+            "$ref": "#/definitions/RulingRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rulings"
+      ],
+      "title": "RulingListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Record an immutable finding deferral on the timeline.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `deferral.record` command.",
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding_id",
+        "mutation",
+        "project_id",
+        "reason"
+      ],
+      "title": "DeferralRecordRequest",
+      "type": "object"
+    },
+    "name": "deferral_record",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "One immutable deferral as every client sees it.",
+      "properties": {
+        "finding_id": {
+          "description": "The finding that was deferred.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The project the deferral belongs to.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the finding was deferred.",
+          "type": "string"
+        },
+        "recorded_at": {
+          "description": "When the deferral was recorded.",
+          "type": "string"
+        },
+        "supersedes_id": {
+          "description": "The deferral this one supersedes, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finding_id",
+        "id",
+        "project_id",
+        "reason",
+        "recorded_at"
+      ],
+      "title": "DeferralRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Supersede a deferral with a new immutable record.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `deferral.supersede` command.",
+      "properties": {
+        "deferral_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "deferral_id",
+        "mutation",
+        "project_id",
+        "reason"
+      ],
+      "title": "DeferralSupersedeRequest",
+      "type": "object"
+    },
+    "name": "deferral_supersede",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "One immutable deferral as every client sees it.",
+      "properties": {
+        "finding_id": {
+          "description": "The finding that was deferred.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The project the deferral belongs to.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the finding was deferred.",
+          "type": "string"
+        },
+        "recorded_at": {
+          "description": "When the deferral was recorded.",
+          "type": "string"
+        },
+        "supersedes_id": {
+          "description": "The deferral this one supersedes, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finding_id",
+        "id",
+        "project_id",
+        "reason",
+        "recorded_at"
+      ],
+      "title": "DeferralRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every deferral for a project, superseded originals included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `deferral.list` query.",
+      "properties": {
+        "finding_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "DeferralListQuery",
+      "type": "object"
+    },
+    "name": "deferral_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DeferralRecord": {
+          "additionalProperties": false,
+          "description": "One immutable deferral as every client sees it.",
+          "properties": {
+            "finding_id": {
+              "description": "The finding that was deferred.",
+              "type": "string"
+            },
+            "id": {
+              "description": "The storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "description": "The project the deferral belongs to.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why the finding was deferred.",
+              "type": "string"
+            },
+            "recorded_at": {
+              "description": "When the deferral was recorded.",
+              "type": "string"
+            },
+            "supersedes_id": {
+              "description": "The deferral this one supersedes, if any.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "finding_id",
+            "id",
+            "project_id",
+            "reason",
+            "recorded_at"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `deferral.list` query.",
+      "properties": {
+        "deferrals": {
+          "description": "Every deferral for the project, superseded originals included.",
+          "items": {
+            "$ref": "#/definitions/DeferralRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "deferrals"
+      ],
+      "title": "DeferralListResponse",
+      "type": "object"
+    }
   }
 ]

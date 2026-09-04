@@ -35,6 +35,12 @@ const COMMAND_FOR_OPERATION = {
   'comment.create': 'comment_create',
   'comment.edit': 'comment_edit',
   'comment.revisions': 'comment_revisions',
+  'ruling.record': 'ruling_record',
+  'ruling.supersede': 'ruling_supersede',
+  'ruling.list': 'ruling_list',
+  'deferral.record': 'deferral_record',
+  'deferral.supersede': 'deferral_supersede',
+  'deferral.list': 'deferral_list',
 } as const satisfies Record<KanbanOperationName, string>
 
 function shellInvokePayload<Request>(
@@ -44,6 +50,12 @@ function shellInvokePayload<Request>(
   switch (name) {
     case 'timeline.query':
     case 'comment.revisions':
+    case 'ruling.record':
+    case 'ruling.supersede':
+    case 'ruling.list':
+    case 'deferral.record':
+    case 'deferral.supersede':
+    case 'deferral.list':
       return { request: request as Record<string, unknown> }
     default:
       return request as Record<string, unknown>

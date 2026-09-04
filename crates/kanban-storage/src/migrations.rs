@@ -72,6 +72,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "comments",
         sql: include_str!("../migrations/0004_comments.sql"),
     },
+    Migration {
+        version: 5,
+        name: "rulings and deferrals",
+        sql: include_str!("../migrations/0005_rulings_deferrals.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -212,7 +217,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4]
+                applied: vec![1, 2, 3, 4, 5]
             }
         );
         assert_eq!(
@@ -232,13 +237,15 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5]);
         for table in [
             "audit_events",
             "timeline_events",
             "initiatives",
             "comments",
             "comment_revisions",
+            "rulings",
+            "deferrals",
         ] {
             let present: i64 = database
                 .connection()
@@ -287,7 +294,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 4, "one event per applied migration");
+        assert_eq!(events.len(), 5, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -307,6 +314,11 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[3].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 4, "name": "comments" })
+        );
+        assert_eq!(events[4].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[4].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 5, "name": "rulings and deferrals" })
         );
     }
 
@@ -357,6 +369,10 @@ mod tests {
                 PendingMigration {
                     version: 4,
                     name: "comments",
+                },
+                PendingMigration {
+                    version: 5,
+                    name: "rulings and deferrals",
                 },
             ]]
         );

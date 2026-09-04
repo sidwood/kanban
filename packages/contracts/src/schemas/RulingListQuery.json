@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TimelineEntityKind": {
+      "description": "Entity kinds that may appear on the activity timeline.",
+      "enum": [
+        "initiative",
+        "project",
+        "plan",
+        "spec",
+        "ticket",
+        "run",
+        "review",
+        "finding",
+        "evidence",
+        "comment"
+      ],
+      "type": "string"
+    },
+    "TimelineEntityRef": {
+      "additionalProperties": false,
+      "description": "A timeline-visible entity reference.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/TimelineEntityKind"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `ruling.list` query.",
+  "properties": {
+    "entity": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TimelineEntityRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "project_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "RulingListQuery",
+  "type": "object"
+}

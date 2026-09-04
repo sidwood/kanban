@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "DeferralRecord": {
+      "additionalProperties": false,
+      "description": "One immutable deferral as every client sees it.",
+      "properties": {
+        "finding_id": {
+          "description": "The finding that was deferred.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The project the deferral belongs to.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the finding was deferred.",
+          "type": "string"
+        },
+        "recorded_at": {
+          "description": "When the deferral was recorded.",
+          "type": "string"
+        },
+        "supersedes_id": {
+          "description": "The deferral this one supersedes, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finding_id",
+        "id",
+        "project_id",
+        "reason",
+        "recorded_at"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `deferral.list` query.",
+  "properties": {
+    "deferrals": {
+      "description": "Every deferral for the project, superseded originals included.",
+      "items": {
+        "$ref": "#/definitions/DeferralRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "deferrals"
+  ],
+  "title": "DeferralListResponse",
+  "type": "object"
+}

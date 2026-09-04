@@ -19,6 +19,12 @@ describe('generated client', () => {
       'comment.create',
       'comment.edit',
       'comment.revisions',
+      'ruling.record',
+      'ruling.supersede',
+      'ruling.list',
+      'deferral.record',
+      'deferral.supersede',
+      'deferral.list',
     ])
   })
 

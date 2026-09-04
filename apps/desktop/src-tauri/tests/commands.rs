@@ -13,8 +13,9 @@ use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
     HealthQuery, InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeRenameRequest, MutationContext, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    InitiativeRenameRequest, MutationContext, ProjectArchiveRequest, ProjectListQuery,
+    ProjectRegisterRequest, RulingListQuery, RulingRecordRequest, RulingSupersedeRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -109,12 +110,23 @@ fn production_timeline_query_fixture() -> Value {
 fn sample_request(schema: &str) -> Value {
     let mutation = mutation_for(schema);
     match schema {
-        "HealthQuery" | "InitiativeListQuery" => json!({}),
+        "HealthQuery" | "InitiativeListQuery" | "ProjectListQuery" => json!({}),
         "InitiativeCreateRequest" => json!({ "mutation": mutation, "name": "Alpha" }),
         "InitiativeRenameRequest" => {
             json!({ "mutation": mutation, "initiative_id": 1, "name": "Beta" })
         }
         "InitiativeArchiveRequest" => json!({ "mutation": mutation, "initiative_id": 1 }),
+        "ProjectRegisterRequest" => json!({
+            "mutation": mutation,
+            "code": "CORE",
+            "name": "Control plane",
+            "repository": "/repositories/kanban",
+            "seed_workspace": "/workspaces/kanban.seed",
+            "default_branch": "main",
+            "herdr_session": "kanban-main",
+            "initiative_id": null,
+        }),
+        "ProjectArchiveRequest" => json!({ "mutation": mutation, "project_id": 1 }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -261,6 +273,18 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "InitiativeListQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<InitiativeListQuery>,
+        >(envelope)
+        .is_err(),
+        "ProjectRegisterRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectRegisterRequest>,
+        >(envelope)
+        .is_err(),
+        "ProjectArchiveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectArchiveRequest>,
+        >(envelope)
+        .is_err(),
+        "ProjectListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectListQuery>,
         >(envelope)
         .is_err(),
         "TimelineQuery" => serde_json::from_value::<

@@ -17,7 +17,8 @@ use kanban_dto::{
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
     EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, InitiativeArchiveRequest,
     InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
-    InitiativeRenameRequest, RulingListQuery, RulingListResponse, RulingRecord,
+    InitiativeRenameRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
+    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
     RulingRecordRequest, RulingSupersedeRequest, TimelineQuery, TimelineQueryResponse,
 };
 use serde::Serialize;
@@ -129,6 +130,42 @@ async fn initiative_list(
     let shell = shell.inner().clone();
     run_blocking(shell, "initiative list", |shell| {
         forward_query(shell, "initiative.list", "initiative list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_register(
+    shell: State<'_, Arc<Shell>>,
+    request: ProjectRegisterRequest,
+) -> Result<ProjectRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "project register", |shell| {
+        forward_command(shell, "project.register", "registered Project", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_archive(
+    shell: State<'_, Arc<Shell>>,
+    request: ProjectArchiveRequest,
+) -> Result<ProjectRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "project archive", |shell| {
+        forward_command(shell, "project.archive", "archived Project", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_list(
+    shell: State<'_, Arc<Shell>>,
+    request: ProjectListQuery,
+) -> Result<ProjectListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "project list", |shell| {
+        forward_query(shell, "project.list", "project list", request)
     })
     .await
 }
@@ -283,6 +320,9 @@ shell_handlers::shell_handler_catalogue! {
     initiative_rename,
     initiative_archive,
     initiative_list,
+    project_register,
+    project_archive,
+    project_list,
     timeline_query,
     comment_create,
     comment_edit,

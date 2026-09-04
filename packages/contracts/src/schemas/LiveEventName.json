@@ -5,6 +5,8 @@
     "initiative.created",
     "initiative.renamed",
     "initiative.archived",
+    "project.registered",
+    "project.archived",
     "comment.created",
     "comment.edited",
     "ruling.recorded",

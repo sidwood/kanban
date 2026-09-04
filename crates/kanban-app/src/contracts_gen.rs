@@ -606,6 +606,24 @@ mod tests {
     }
 
     #[test]
+    fn documented_nested_structs_render_as_their_type() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "kanban-contracts-gen-nested-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_root);
+        generate(&temp_root).expect("generation succeeds");
+
+        let types = fs::read_to_string(temp_root.join("src/types.ts")).expect("types exist");
+        assert!(
+            types.contains("counters: ProjectCounters;"),
+            "a documented nested struct is its type, not an empty object:\n{types}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
     fn optional_schema_properties_render_as_optional_typescript() {
         let temp_root = std::env::temp_dir().join(format!(
             "kanban-contracts-gen-optional-{}",

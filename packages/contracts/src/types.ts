@@ -141,10 +141,46 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
+};
+export type ProjectArchiveRequest = {
+  mutation: MutationContext;
+  project_id: number;
+};
+export type ProjectCounters = {
+  plan: number;
+  spec: number;
+  ticket: number;
+};
+export type ProjectListQuery = Record<string, never>;
+export type ProjectListResponse = {
+  projects: ProjectRecord[];
+};
+export type ProjectRecord = {
+  archived: boolean;
+  code: string;
+  counters: ProjectCounters;
+  default_branch: string;
+  herdr_session: string;
+  id: number;
+  initiative_id?: number | null;
+  name: string;
+  repository: string;
+  seed_workspace: string;
+  version: number;
+};
+export type ProjectRegisterRequest = {
+  code: string;
+  default_branch: string;
+  herdr_session: string;
+  initiative_id?: number | null;
+  mutation: MutationContext;
+  name: string;
+  repository: string;
+  seed_workspace: string;
 };
 export type RulingIdentity = {
   id: number;

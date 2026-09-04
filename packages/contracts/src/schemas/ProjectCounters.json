@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The Plan, Spec, and Ticket counters of one Project: the last number minted per kind. Zero means nothing has been minted yet, and the counters survive archiving.",
+  "properties": {
+    "plan": {
+      "description": "The last Plan number minted.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "spec": {
+      "description": "The last Spec number minted.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ticket": {
+      "description": "The last Ticket number minted.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "plan",
+    "spec",
+    "ticket"
+  ],
+  "title": "ProjectCounters",
+  "type": "object"
+}

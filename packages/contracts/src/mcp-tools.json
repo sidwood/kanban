@@ -344,6 +344,490 @@
     }
   },
   {
+    "description": "Register a Project with one Git repository, Seed Workspace, default branch, and exclusive Herdr session.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `project.register` command.",
+      "properties": {
+        "code": {
+          "description": "The intended code; it must match `[A-Z][A-Z0-9]{1,7}` in full and `KAN` is reserved.",
+          "type": "string"
+        },
+        "default_branch": {
+          "description": "The default branch.",
+          "type": "string"
+        },
+        "herdr_session": {
+          "description": "The exclusive Herdr session name; duplicate session names are refused.",
+          "type": "string"
+        },
+        "initiative_id": {
+          "description": "The Initiative the Project sits under, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The intended name; blank names are refused.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "The target Git repository; non-Git targets are refused.",
+          "type": "string"
+        },
+        "seed_workspace": {
+          "description": "The Seed Workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "default_branch",
+        "herdr_session",
+        "mutation",
+        "name",
+        "repository",
+        "seed_workspace"
+      ],
+      "title": "ProjectRegisterRequest",
+      "type": "object"
+    },
+    "name": "project_register",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ProjectCounters": {
+          "additionalProperties": false,
+          "description": "The Plan, Spec, and Ticket counters of one Project: the last number minted per kind. Zero means nothing has been minted yet, and the counters survive archiving.",
+          "properties": {
+            "plan": {
+              "description": "The last Plan number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec": {
+              "description": "The last Spec number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket": {
+              "description": "The last Ticket number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "plan",
+            "spec",
+            "ticket"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The Project record as every client sees it.",
+      "properties": {
+        "archived": {
+          "description": "Whether the Project is archived. Archived Projects stay listed; no fact is ever removed.",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "The immutable, globally unique Project code.",
+          "type": "string"
+        },
+        "counters": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProjectCounters"
+            }
+          ],
+          "description": "The Project's counters, preserved through every state."
+        },
+        "default_branch": {
+          "description": "The one default branch.",
+          "type": "string"
+        },
+        "herdr_session": {
+          "description": "The one exclusive named Herdr session.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "initiative_id": {
+          "description": "The Initiative the Project sits under, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The display name.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "The one target Git repository.",
+          "type": "string"
+        },
+        "seed_workspace": {
+          "description": "The one Seed Workspace.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archived",
+        "code",
+        "counters",
+        "default_branch",
+        "herdr_session",
+        "id",
+        "name",
+        "repository",
+        "seed_workspace",
+        "version"
+      ],
+      "title": "ProjectRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Archive a Project. Archiving is terminal and preserves every recorded fact.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `project.archive` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "description": "The Project being archived.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id"
+      ],
+      "title": "ProjectArchiveRequest",
+      "type": "object"
+    },
+    "name": "project_archive",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ProjectCounters": {
+          "additionalProperties": false,
+          "description": "The Plan, Spec, and Ticket counters of one Project: the last number minted per kind. Zero means nothing has been minted yet, and the counters survive archiving.",
+          "properties": {
+            "plan": {
+              "description": "The last Plan number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec": {
+              "description": "The last Spec number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket": {
+              "description": "The last Ticket number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "plan",
+            "spec",
+            "ticket"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The Project record as every client sees it.",
+      "properties": {
+        "archived": {
+          "description": "Whether the Project is archived. Archived Projects stay listed; no fact is ever removed.",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "The immutable, globally unique Project code.",
+          "type": "string"
+        },
+        "counters": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProjectCounters"
+            }
+          ],
+          "description": "The Project's counters, preserved through every state."
+        },
+        "default_branch": {
+          "description": "The one default branch.",
+          "type": "string"
+        },
+        "herdr_session": {
+          "description": "The one exclusive named Herdr session.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "initiative_id": {
+          "description": "The Initiative the Project sits under, if any.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The display name.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "The one target Git repository.",
+          "type": "string"
+        },
+        "seed_workspace": {
+          "description": "The one Seed Workspace.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archived",
+        "code",
+        "counters",
+        "default_branch",
+        "herdr_session",
+        "id",
+        "name",
+        "repository",
+        "seed_workspace",
+        "version"
+      ],
+      "title": "ProjectRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Project, archived ones included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `project.list` query.",
+      "title": "ProjectListQuery",
+      "type": "object"
+    },
+    "name": "project_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ProjectCounters": {
+          "additionalProperties": false,
+          "description": "The Plan, Spec, and Ticket counters of one Project: the last number minted per kind. Zero means nothing has been minted yet, and the counters survive archiving.",
+          "properties": {
+            "plan": {
+              "description": "The last Plan number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec": {
+              "description": "The last Spec number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket": {
+              "description": "The last Ticket number minted.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "plan",
+            "spec",
+            "ticket"
+          ],
+          "type": "object"
+        },
+        "ProjectRecord": {
+          "additionalProperties": false,
+          "description": "The Project record as every client sees it.",
+          "properties": {
+            "archived": {
+              "description": "Whether the Project is archived. Archived Projects stay listed; no fact is ever removed.",
+              "type": "boolean"
+            },
+            "code": {
+              "description": "The immutable, globally unique Project code.",
+              "type": "string"
+            },
+            "counters": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ProjectCounters"
+                }
+              ],
+              "description": "The Project's counters, preserved through every state."
+            },
+            "default_branch": {
+              "description": "The one default branch.",
+              "type": "string"
+            },
+            "herdr_session": {
+              "description": "The one exclusive named Herdr session.",
+              "type": "string"
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "initiative_id": {
+              "description": "The Initiative the Project sits under, if any.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "name": {
+              "description": "The display name.",
+              "type": "string"
+            },
+            "repository": {
+              "description": "The one target Git repository.",
+              "type": "string"
+            },
+            "seed_workspace": {
+              "description": "The one Seed Workspace.",
+              "type": "string"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "archived",
+            "code",
+            "counters",
+            "default_branch",
+            "herdr_session",
+            "id",
+            "name",
+            "repository",
+            "seed_workspace",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `project.list` query.",
+      "properties": {
+        "projects": {
+          "description": "Every Project, archived included, newest last.",
+          "items": {
+            "$ref": "#/definitions/ProjectRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "projects"
+      ],
+      "title": "ProjectListResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

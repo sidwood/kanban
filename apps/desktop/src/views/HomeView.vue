@@ -50,12 +50,20 @@ const eventStream = computed(() =>
     >
       {{ eventStream }}
     </p>
-    <RouterLink
-      to="/initiatives"
-      class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
-    >
-      Manage Initiatives
-    </RouterLink>
+    <div class="flex items-center gap-6">
+      <RouterLink
+        to="/register"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Register a Project
+      </RouterLink>
+      <RouterLink
+        to="/initiatives"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Manage Initiatives
+      </RouterLink>
+    </div>
     <section
       v-if="connection.phase === 'connected'"
       data-testid="timeline-unselected"

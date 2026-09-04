@@ -417,7 +417,8 @@ pub fn ensure_core_running(socket_path: &Path) -> Result<Option<Child>, String> 
 
 /// Where the core binary is: in debug and test builds an explicit
 /// override first; in every configuration the copy packaged beside
-/// the shell second; the workspace build `just dev` produces third.
+/// the shell second; in debug builds the workspace build `just dev`
+/// produces third.
 pub fn locate_core_binary() -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     if let Some(override_path) = std::env::var_os("KANBAN_CORE_BIN") {
@@ -432,9 +433,13 @@ pub fn locate_core_binary() -> Result<PathBuf, String> {
             return Ok(beside);
         }
     }
-    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/debug/kanban-service");
-    if dev.is_file() {
-        return Ok(dev);
+    #[cfg(debug_assertions)]
+    {
+        let dev =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/debug/kanban-service");
+        if dev.is_file() {
+            return Ok(dev);
+        }
     }
     #[cfg(debug_assertions)]
     {

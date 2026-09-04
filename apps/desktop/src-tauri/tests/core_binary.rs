@@ -39,6 +39,18 @@ fn release_probe_exe() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/core-binary-probe")
 }
 
+/// Lay out a shell directory with no packaged core beside the probe.
+fn shell_without_core(dir: &Path, probe: &Path) -> PathBuf {
+    let shell = dir.join("kanban-desktop");
+    std::fs::copy(probe, &shell).expect("the probe copies into the fixture");
+    let mut permissions = std::fs::metadata(&shell)
+        .expect("the shell binary exists")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&shell, permissions).expect("the shell binary is executable");
+    shell
+}
+
 /// Lay out a packaged shell directory: the probe stands in for the
 /// desktop binary and the fixture names the trusted core beside it.
 fn packaged_shell_dir(dir: &Path, probe: &Path) -> PathBuf {
@@ -98,5 +110,26 @@ fn core_binary_release_ignores_kanban_core_bin_override() {
     assert_ne!(
         resolved, MALICIOUS_OVERRIDE,
         "the override must not win in release"
+    );
+}
+
+#[test]
+fn core_binary_release_fails_without_packaged_core() {
+    let probe = release_probe_exe();
+    let dir = tempfile::tempdir().expect("a scratch directory is available");
+    let shell = shell_without_core(dir.path(), &probe);
+
+    let output = Command::new(&shell)
+        .output()
+        .expect("the release probe runs");
+
+    assert!(
+        !output.status.success(),
+        "release builds must not fall back to the workspace debug core"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no kanban-service binary found"),
+        "expected a locate failure, got: {stderr}"
     );
 }

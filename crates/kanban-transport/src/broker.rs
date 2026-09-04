@@ -66,25 +66,25 @@ impl EventBroker {
 
 impl EventSink for EventBroker {
     fn emit(&self, event_type: &str, payload: Value) {
-        let line = {
-            let mut inner = self.inner.lock().expect("the broker lock is sound");
-            inner.next_sequence += 1;
-            let envelope = ResponseFrame::Event {
-                event: EventEnvelope {
-                    sequence: inner.next_sequence,
-                    event_type: event_type.to_owned(),
-                    payload,
-                },
-            };
-            serde_json::to_string(&envelope).expect("an event frame encodes")
+        // Sequence assignment, encoding, and fan-out share one
+        // critical section: releasing the lock between them would let
+        // two concurrent emits deliver their lines out of sequence
+        // order.
+        let mut inner = self.inner.lock().expect("the broker lock is sound");
+        inner.next_sequence += 1;
+        let envelope = ResponseFrame::Event {
+            event: EventEnvelope {
+                sequence: inner.next_sequence,
+                event_type: event_type.to_owned(),
+                payload,
+            },
         };
+        let line = serde_json::to_string(&envelope).expect("an event frame encodes");
 
         // A full queue means the subscriber stopped reading; drop it
         // instead of stalling every command that emits. try_send, not
         // send: send would block the core on the stalled reader.
-        self.inner
-            .lock()
-            .expect("the broker lock is sound")
+        inner
             .subscribers
             .retain(|subscriber| subscriber.tx.try_send(line.clone()).is_ok());
     }
@@ -177,6 +177,45 @@ mod tests {
         // works and reaches remaining subscribers.
         broker.emit("counter.bumped", json!({ "to": 0 }));
         assert_eq!(drain(&live).len(), 1);
+    }
+
+    #[test]
+    fn concurrent_emits_deliver_in_sequence_order() {
+        let broker = Arc::new(EventBroker::new());
+        let (_id, rx) = broker.subscribe();
+
+        // Stay within one subscriber buffer so this subscriber can
+        // never be evicted; eviction is another test's concern.
+        const THREADS: u64 = 8;
+        const EMITS: u64 = 30;
+        let mut senders = Vec::new();
+        for _ in 0..THREADS {
+            let broker = Arc::clone(&broker);
+            senders.push(std::thread::spawn(move || {
+                for _ in 0..EMITS {
+                    broker.emit("counter.bumped", json!(null));
+                }
+            }));
+        }
+        for sender in senders {
+            sender.join().expect("every emitter finishes");
+        }
+
+        let sequences: Vec<u64> = drain(&rx)
+            .into_iter()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(&line)
+                    .expect("the line is a frame")
+                    .pointer("/event/sequence")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("the event carries a sequence")
+            })
+            .collect();
+        let expected: Vec<u64> = (1..=THREADS * EMITS).collect();
+        assert_eq!(
+            sequences, expected,
+            "every event arrives exactly once, in sequence order"
+        );
     }
 
     #[test]

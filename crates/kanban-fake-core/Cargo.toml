@@ -1,0 +1,17 @@
+[package]
+name = "kanban-fake-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Test helper: a real core binary for shell on-demand start tests"
+
+[[bin]]
+name = "fake-core"
+path = "src/main.rs"
+
+[dependencies]
+kanban-service = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.27.0"

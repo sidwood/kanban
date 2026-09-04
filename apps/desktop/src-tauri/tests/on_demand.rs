@@ -2,7 +2,7 @@
 //! serving core is reused; a spawned core outlives the shell.
 
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -11,6 +11,25 @@ use tempfile::TempDir;
 
 /// Env-var tests share one lock: std::env::set_var races otherwise.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// The isolated fake-core tool package builds this binary in the root
+/// workspace target directory.
+fn fake_core_binary() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_fake-core") {
+        return PathBuf::from(path);
+    }
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_owned());
+    let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("target")
+        .join(profile)
+        .join("fake-core");
+    assert!(
+        built.is_file(),
+        "build the fake core with `cargo build -p kanban-fake-core --bin fake-core`"
+    );
+    built
+}
 
 /// Wait until `socket_path` is connectable, or panic.
 fn await_socket(socket_path: &Path) {
@@ -55,7 +74,7 @@ fn a_missing_core_is_started_on_demand_and_serves() {
     let socket_path = dir.path().join("core.sock");
     // Safety: the lock above serialises every env-writing test in
     // this binary.
-    unsafe { std::env::set_var("KANBAN_CORE_BIN", env!("CARGO_BIN_EXE_fake-core")) };
+    unsafe { std::env::set_var("KANBAN_CORE_BIN", fake_core_binary()) };
 
     let spawned = ensure_core_running(&socket_path).expect("the core starts on demand");
 
@@ -89,7 +108,7 @@ fn a_serving_core_is_reused_without_a_spawn() {
     // Safety: the lock above serialises every env-writing test in
     // this binary.
     unsafe { std::env::set_var("KANBAN_CORE_BIN", "/nonexistent/kanban-service") };
-    let mut core = std::process::Command::new(env!("CARGO_BIN_EXE_fake-core"))
+    let mut core = std::process::Command::new(fake_core_binary())
         .arg(dir.path())
         .spawn()
         .expect("the fake core spawns");

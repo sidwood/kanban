@@ -244,6 +244,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanban-fake-core"
+version = "0.1.0"
+dependencies = [
+ "kanban-service",
+ "tempfile",
+]
+
+[[package]]
 name = "kanban-herdr"
 version = "0.1.0"
 

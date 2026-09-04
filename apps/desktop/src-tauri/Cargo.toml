@@ -16,18 +16,12 @@ default-run = "kanban-desktop"
 name = "kanban_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-# Test support: a fake core binary the on-demand start tests spawn.
-[[bin]]
-name = "fake-core"
-path = "src/bin/fake_core.rs"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dirs = "6.0.0"
 kanban-dto = { path = "../../../crates/kanban-dto" }
-kanban-service = { path = "../../../crates/kanban-service" }
-kanban-storage = { path = "../../../crates/kanban-storage" }
 kanban-transport = { path = "../../../crates/kanban-transport" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

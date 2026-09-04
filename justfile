@@ -64,6 +64,7 @@ check-shell: need-rust need-web
     #!/usr/bin/env bash
     set -euo pipefail
     pnpm --filter desktop run build:web
+    cargo build -p kanban-fake-core --bin fake-core
     cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
     cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
     cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml

@@ -365,7 +365,9 @@ fn supervise(socket_path: PathBuf, shell: Arc<Shell>, app: AppHandle) {
 
 /// The socket the core serves inside managed application data.
 fn managed_socket_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let data_dir = kanban_storage::paths::managed_data_dir()?;
+    let data_dir = dirs::data_dir()
+        .map(|dir| dir.join("Kanban"))
+        .ok_or("the home directory is unknown")?;
     Ok(data_dir.join(kanban_transport::SOCKET_FILE_NAME))
 }
 

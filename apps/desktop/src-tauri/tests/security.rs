@@ -157,6 +157,28 @@ fn the_shell_links_no_capability_plugins() {
     }
 }
 
+/// Production dependencies the thin shell must never link (KAN-T73-AC1).
+const FORBIDDEN_DEPS: &[&str] = &["kanban-service", "kanban-storage", "rusqlite"];
+
+#[test]
+fn the_shell_links_no_service_or_storage_crates() {
+    let deps_section = MANIFEST
+        .split("[dependencies]")
+        .nth(1)
+        .and_then(|section| section.split('[').next())
+        .expect("[dependencies] is present");
+    for dep in FORBIDDEN_DEPS {
+        assert!(
+            !deps_section.contains(&format!("{dep} =")),
+            "the shell must not depend on {dep}"
+        );
+    }
+    assert!(
+        !MANIFEST.contains("name = \"fake-core\""),
+        "the fake core binary must not ship inside the production shell crate"
+    );
+}
+
 #[test]
 fn the_tauri_global_is_not_injected() {
     assert_eq!(

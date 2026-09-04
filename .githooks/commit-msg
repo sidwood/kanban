@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:?usage: commit-msg <message-file>}"
+clean_message="$(mktemp "${TMPDIR:-/tmp}/kanban-commit-message.XXXXXX")"
+trap 'rm -f "$clean_message"' EXIT
+
+# Match Git's eventual cleanup so comments and status output are not checked.
+git stripspace --strip-comments < "$message_file" > "$clean_message"
+
+awk '
+function reject(message) {
+  print "commit-msg: " message > "/dev/stderr"
+  invalid = 1
+}
+
+NR == 1 {
+  subject = $0
+
+  if (subject ~ /^(fixup|squash|amend)! /) {
+    autosquash = 1
+    next
+  }
+
+  if (length(subject) > 50) {
+    reject("subject is " length(subject) " characters; limit it to 50")
+  }
+
+  first_letter = subject
+  sub(/^[^[:alpha:]]*/, "", first_letter)
+  if (first_letter == "" || first_letter !~ /^[[:upper:]]/) {
+    reject("capitalize the first word of the subject")
+  }
+
+  first_word = subject
+  sub(/^[^[:alpha:]]*/, "", first_word)
+  sub(/[^[:alpha:]-].*$/, "", first_word)
+  first_word = tolower(first_word)
+
+  if (first_word ~ /^(added|adding|changed|changing|created|creating|documented|documenting|fixed|fixes|fixing|implemented|implementing|improved|improving|introduced|introducing|moved|moving|refactored|refactoring|removed|removes|removing|renamed|renaming|replaced|replaces|replacing|updated|updates|updating)$/) {
+    reject("write the subject in imperative mood (for example, Add or Fix)")
+  }
+
+  next
+}
+
+autosquash { next }
+
+NR == 2 {
+  if ($0 != "") {
+    reject("separate the subject from the body with a blank line")
+  }
+  next
+}
+
+NR >= 3 {
+  lower_line = tolower($0)
+  if (lower_line ~ /^co-authored-by:/ || lower_line ~ /generated with \[/) {
+    reject("body line " NR " adds an attribution trailer; remove it")
+  }
+
+  if (length($0) > 72) {
+    reject("body line " NR " is " length($0) " characters; limit it to 72")
+  }
+
+  if ($0 == "") {
+    open_bullet = 0
+    next
+  }
+
+  if ($0 ~ /^[-*]/) {
+    if ($0 !~ /^[-*] [^ ]/) {
+      reject("body line " NR " must use a bullet followed by one space")
+    }
+    if (open_bullet) {
+      reject("separate bullet points with a blank line")
+    }
+    open_bullet = 1
+    next
+  }
+
+  if (open_bullet && $0 !~ /^  /) {
+    reject("indent wrapped bullet text by at least two spaces on line " NR)
+  }
+}
+
+END {
+  if (NR == 0) {
+    reject("commit message is empty")
+  }
+
+  if (invalid) {
+    print "" > "/dev/stderr"
+    print "Convention: capitalized imperative subject of 50 characters or fewer, a" > "/dev/stderr"
+    print "blank line, then an optional body wrapped at 72 explaining why rather" > "/dev/stderr"
+    print "than what." > "/dev/stderr"
+    print "" > "/dev/stderr"
+    print "Agents: rewrite the message; do not re-run with --no-verify." > "/dev/stderr"
+    print "" > "/dev/stderr"
+    print "Human override: git commit --no-verify" > "/dev/stderr"
+    exit 1
+  }
+}
+' "$clean_message"

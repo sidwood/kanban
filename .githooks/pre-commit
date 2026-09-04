@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v pre-commit &>/dev/null; then
+  echo "pre-commit: the pre-commit runner is not installed." >&2
+  echo "" >&2
+  echo "Install it with: brew install pre-commit" >&2
+  echo "Then retry the commit." >&2
+  echo "" >&2
+  echo "Agents: install the runner or ask the user for help; do not re-run" >&2
+  echo "with --no-verify." >&2
+  exit 1
+fi
+
+if ! pre-commit run --hook-stage pre-commit; then
+  echo "" >&2
+  echo "pre-commit: checks failed." >&2
+  echo "" >&2
+  echo "Fix the reported problems and stage any resulting changes, then retry" >&2
+  echo "the commit." >&2
+  echo "" >&2
+  echo "Agents: recover from the reported failure; do not re-run with" >&2
+  echo "--no-verify." >&2
+  exit 1
+fi

@@ -38,6 +38,25 @@ const LAND_SPAN: &str = "RELEASE kanban_write_span";
 /// writer on this connection.
 const DISCARD_SPAN: &str = "ROLLBACK TO kanban_write_span; RELEASE kanban_write_span";
 
+/// Open an atomic write on `conn`, nesting inside any write already
+/// open on it.
+pub(crate) fn open_span(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(OPEN_SPAN)
+}
+
+/// Land the innermost open write on `conn`.
+pub(crate) fn land_span(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(LAND_SPAN)
+}
+
+/// Discard the innermost open write on `conn`. Nothing useful
+/// remains to be done with a failure here: the caller is already
+/// unwinding an error, and the next writer on this connection
+/// reports the open span itself.
+pub(crate) fn discard_span(conn: &Connection) {
+    let _ = conn.execute_batch(DISCARD_SPAN);
+}
+
 /// One atomic write on the shared connection. The outermost span is
 /// the transaction SQLite commits; spans opened inside it are
 /// savepoints, so an aggregate's rows, its timeline appends, and the
@@ -52,7 +71,7 @@ pub(crate) struct WriteSpan<'a> {
 impl<'a> WriteSpan<'a> {
     /// Open a span on `conn`.
     pub(crate) fn begin(conn: &'a Connection) -> Result<Self, rusqlite::Error> {
-        conn.execute_batch(OPEN_SPAN)?;
+        open_span(conn)?;
         Ok(Self {
             conn,
             committed: false,
@@ -61,7 +80,7 @@ impl<'a> WriteSpan<'a> {
 
     /// Land everything written inside the span.
     pub(crate) fn commit(mut self) -> Result<(), rusqlite::Error> {
-        self.conn.execute_batch(LAND_SPAN)?;
+        land_span(self.conn)?;
         self.committed = true;
         Ok(())
     }
@@ -78,10 +97,7 @@ impl std::ops::Deref for WriteSpan<'_> {
 impl Drop for WriteSpan<'_> {
     fn drop(&mut self) {
         if !self.committed {
-            // Nothing useful remains to be done with a failure here:
-            // the caller is already unwinding an error, and the next
-            // writer on this connection reports the open span itself.
-            let _ = self.conn.execute_batch(DISCARD_SPAN);
+            discard_span(self.conn);
         }
     }
 }

@@ -6,6 +6,7 @@ pub mod comments;
 pub mod db;
 pub mod deferrals;
 pub mod error;
+pub mod idempotency;
 pub mod initiatives;
 pub mod migrations;
 pub mod paths;
@@ -19,6 +20,7 @@ pub use comments::SqliteCommentStore;
 pub use db::Database;
 pub use deferrals::SqliteDeferralStore;
 pub use error::StorageError;
+pub use idempotency::{RetentionPolicy, SqliteIdempotencyStore};
 pub use initiatives::SqliteInitiativeStore;
 pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,

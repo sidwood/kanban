@@ -78,6 +78,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "rulings and deferrals",
         sql: include_str!("../migrations/0005_rulings_deferrals.sql"),
     },
+    Migration {
+        version: 6,
+        name: "idempotency outcomes",
+        sql: include_str!("../migrations/0006_idempotency.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -217,7 +222,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5]
+                applied: vec![1, 2, 3, 4, 5, 6]
             }
         );
         assert_eq!(
@@ -237,7 +242,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -246,6 +251,7 @@ mod tests {
             "comment_revisions",
             "rulings",
             "deferrals",
+            "idempotency_outcomes",
         ] {
             let present: i64 = database
                 .connection()
@@ -294,7 +300,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 5, "one event per applied migration");
+        assert_eq!(events.len(), 6, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -319,6 +325,11 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[4].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 5, "name": "rulings and deferrals" })
+        );
+        assert_eq!(events[5].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[5].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 6, "name": "idempotency outcomes" })
         );
     }
 
@@ -373,6 +384,10 @@ mod tests {
                 PendingMigration {
                     version: 5,
                     name: "rulings and deferrals",
+                },
+                PendingMigration {
+                    version: 6,
+                    name: "idempotency outcomes",
                 },
             ]]
         );

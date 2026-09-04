@@ -211,6 +211,14 @@ dependencies = [
 [[package]]
 name = "kanban-transport"
 version = "0.1.0"
+dependencies = [
+ "kanban-app",
+ "kanban-dto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "libc"

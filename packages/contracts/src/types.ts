@@ -10,9 +10,10 @@ export type JsonValue =
 
 export type ApiError = {
   code: ErrorCode;
+  current_version?: number | null;
   message: string;
 };
-export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'internal';
+export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;
   payload: JsonValue;

@@ -9,6 +9,7 @@
         "stale_version",
         "duplicate_idempotency_key",
         "not_found",
+        "invalid_request",
         "internal"
       ],
       "type": "string"
@@ -18,6 +19,15 @@
   "properties": {
     "code": {
       "$ref": "#/definitions/ErrorCode"
+    },
+    "current_version": {
+      "description": "The aggregate's current version, carried by `stale_version` rejections so the client can correct and retry.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "message": {
       "type": "string"

@@ -195,9 +195,8 @@ fn render_interface(
     root: &schemars::schema::RootSchema,
     depth: usize,
 ) -> String {
-    let properties: Vec<_> = object
-        .object
-        .as_ref()
+    let object_validation = object.object.as_ref();
+    let properties: Vec<_> = object_validation
         .map(|validation| validation.properties.iter().collect())
         .unwrap_or_default();
 
@@ -210,7 +209,13 @@ fn render_interface(
 
     for (property_name, property_schema) in properties {
         let property_type = render_schema_type(property_schema, root, depth + 1);
-        lines.push(format!("{indent}{property_name}: {property_type};"));
+        let optional = object_validation
+            .map(|validation| !validation.required.contains(property_name.as_str()))
+            .unwrap_or(true);
+        let optional_marker = if optional { "?" } else { "" };
+        lines.push(format!(
+            "{indent}{property_name}{optional_marker}: {property_type};"
+        ));
     }
 
     lines.push(format!("{}}}", "  ".repeat(depth)));
@@ -490,5 +495,23 @@ mod tests {
             operation_method_name("health.get", OperationKind::Query),
             "queryHealthGet"
         );
+    }
+
+    #[test]
+    fn optional_schema_properties_render_as_optional_typescript() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "kanban-contracts-gen-optional-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_root);
+        generate(&temp_root).expect("generation succeeds");
+
+        let types = fs::read_to_string(temp_root.join("src/types.ts")).expect("types exist");
+        assert!(
+            types.contains("current_version?: number | null;"),
+            "fields the Rust side may omit must render optional:\n{types}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_root);
     }
 }

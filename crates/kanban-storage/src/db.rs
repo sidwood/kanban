@@ -39,7 +39,7 @@ impl Database {
             path: directory.to_path_buf(),
             source,
         })?;
-        Self::open(&directory.join(database_file_name()))
+        Self::open(&directory.join(paths::database_file_name()))
     }
 
     /// Applies the connection pragmas every connection must carry.
@@ -95,12 +95,6 @@ impl Database {
     pub(crate) fn connection(&self) -> &Connection {
         &self.conn
     }
-}
-
-/// The file name of the authoritative database inside managed
-/// application data.
-const fn database_file_name() -> &'static str {
-    "kanban.sqlite"
 }
 
 #[cfg(test)]

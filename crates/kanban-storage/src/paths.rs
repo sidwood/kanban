@@ -15,9 +15,15 @@ pub fn managed_data_dir() -> Result<PathBuf, StorageError> {
         .ok_or(StorageError::HomeUnknown)
 }
 
+/// The file name of the authoritative database inside managed
+/// application data.
+pub const fn database_file_name() -> &'static str {
+    "kanban.sqlite"
+}
+
 /// The path of the single authoritative SQLite database.
 pub fn database_path() -> Result<PathBuf, StorageError> {
-    Ok(managed_data_dir()?.join("kanban.sqlite"))
+    Ok(managed_data_dir()?.join(database_file_name()))
 }
 
 #[cfg(test)]

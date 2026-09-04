@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One immutable revision as returned by queries.",
+  "properties": {
+    "recorded_at": {
+      "description": "When the revision was recorded.",
+      "type": "string"
+    },
+    "revision": {
+      "description": "The one-based revision number.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "text": {
+      "description": "The revision text.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "recorded_at",
+    "revision",
+    "text"
+  ],
+  "title": "CommentRevisionRecord",
+  "type": "object"
+}

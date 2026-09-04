@@ -12,9 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kanban_dto::{
-    ApiError, HealthResponse, InitiativeArchiveRequest, InitiativeCreateRequest,
+    ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
+    CommentRevisionsResponse, HealthResponse, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, MutationContext,
-    TimelineQuery, TimelineQueryResponse,
+    TimelineEntityRef, TimelineQuery, TimelineQueryResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -186,6 +187,68 @@ async fn timeline_query(
     .map_err(|_| ApiError::internal("the timeline task did not finish"))?
 }
 
+#[tauri::command(rename_all = "snake_case")]
+async fn comment_create(
+    shell: State<'_, Arc<Shell>>,
+    mutation: MutationContext,
+    project_id: String,
+    target: TimelineEntityRef,
+    text: String,
+) -> Result<CommentRecord, ApiError> {
+    let payload = encode(CommentCreateRequest {
+        mutation,
+        project_id,
+        target,
+        text,
+    })?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "created Comment", |link| {
+            link.command("comment.create", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the comment create task did not finish"))?
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn comment_edit(
+    shell: State<'_, Arc<Shell>>,
+    mutation: MutationContext,
+    comment_id: u64,
+    text: String,
+) -> Result<CommentRecord, ApiError> {
+    let payload = encode(CommentEditRequest {
+        mutation,
+        comment_id,
+        text,
+    })?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "edited Comment", |link| {
+            link.command("comment.edit", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the comment edit task did not finish"))?
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn comment_revisions(
+    shell: State<'_, Arc<Shell>>,
+    request: CommentRevisionsQuery,
+) -> Result<CommentRevisionsResponse, ApiError> {
+    let payload = encode(request)?;
+    let shell = shell.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        over_link(&shell, "comment revisions", |link| {
+            link.query("comment.revisions", &payload)
+        })
+    })
+    .await
+    .map_err(|_| ApiError::internal("the comment revisions task did not finish"))?
+}
+
 /// Build the window, start the core on demand, and supervise the
 /// connection for as long as this shell process lives.
 pub fn run() -> tauri::Result<()> {
@@ -210,6 +273,9 @@ pub fn run() -> tauri::Result<()> {
             initiative_archive,
             initiative_list,
             timeline_query,
+            comment_create,
+            comment_edit,
+            comment_revisions,
         ])
         .run(tauri::generate_context!())
 }

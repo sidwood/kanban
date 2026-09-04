@@ -1,6 +1,7 @@
 //! Authoritative command, query, event, and error payload definitions
 //! with schema derivation. Depends on nothing internal.
 
+pub mod comment;
 pub mod error;
 pub mod event;
 pub mod health;
@@ -9,6 +10,10 @@ pub mod mutation;
 pub mod schema;
 pub mod timeline;
 
+pub use comment::{
+    CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
+    CommentRevisionsQuery, CommentRevisionsResponse,
+};
 pub use error::{ApiError, ErrorCode};
 pub use event::EventEnvelope;
 pub use health::{HealthQuery, HealthResponse};
@@ -70,6 +75,12 @@ mod tests {
             names,
             vec![
                 "ApiError",
+                "CommentCreateRequest",
+                "CommentEditRequest",
+                "CommentRecord",
+                "CommentRevisionRecord",
+                "CommentRevisionsQuery",
+                "CommentRevisionsResponse",
                 "ErrorCode",
                 "EventEnvelope",
                 "HealthQuery",

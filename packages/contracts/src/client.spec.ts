@@ -16,6 +16,9 @@ describe('generated client', () => {
       'initiative.archive',
       'initiative.list',
       'timeline.query',
+      'comment.create',
+      'comment.edit',
+      'comment.revisions',
     ])
   })
 

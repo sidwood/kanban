@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use kanban_app::{Core, MemoryIdempotencyStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
-use kanban_storage::{AllowAllMigrations, Database, SqliteInitiativeStore};
+use kanban_storage::{AllowAllMigrations, Database, SqliteCommentStore, SqliteInitiativeStore};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use timeline::StorageTimelineStore;
@@ -44,6 +44,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     // arrives with KAN-T60.
     database.migrate(&AllowAllMigrations)?;
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
+    let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let database = Arc::new(Mutex::new(database));
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let server = SocketServer::bind(data_dir)?;
@@ -54,6 +55,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         broker,
     )?;
     core.register_initiatives(initiative_store)?;
+    core.register_comments(comment_store)?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),

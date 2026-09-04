@@ -67,5 +67,29 @@ pub fn exposed_operations() -> &'static [OperationDescriptor] {
             mcp_tool_name: "timeline_query",
             description: "Query the per-Project append-only activity timeline.",
         },
+        OperationDescriptor {
+            name: "comment.create",
+            kind: OperationKind::Command,
+            request_schema: "CommentCreateRequest",
+            response_schema: "CommentRecord",
+            mcp_tool_name: "comment_create",
+            description: "Create a Comment with its first revision on a timeline-visible entity.",
+        },
+        OperationDescriptor {
+            name: "comment.edit",
+            kind: OperationKind::Command,
+            request_schema: "CommentEditRequest",
+            response_schema: "CommentRecord",
+            mcp_tool_name: "comment_edit",
+            description: "Edit a Comment by appending a new immutable revision.",
+        },
+        OperationDescriptor {
+            name: "comment.revisions",
+            kind: OperationKind::Query,
+            request_schema: "CommentRevisionsQuery",
+            response_schema: "CommentRevisionsResponse",
+            mcp_tool_name: "comment_revisions",
+            description: "Query the full revision history for one Comment.",
+        },
     ]
 }

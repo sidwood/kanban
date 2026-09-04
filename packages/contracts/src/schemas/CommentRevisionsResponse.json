@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CommentRecord": {
+      "additionalProperties": false,
+      "description": "The Comment record as every client sees it.",
+      "properties": {
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The owning Project.",
+          "type": "string"
+        },
+        "target": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            }
+          ],
+          "description": "The entity this Comment attaches to."
+        },
+        "text": {
+          "description": "The current text, resolved from the latest revision.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "target",
+        "text",
+        "version"
+      ],
+      "type": "object"
+    },
+    "CommentRevisionRecord": {
+      "additionalProperties": false,
+      "description": "One immutable revision as returned by queries.",
+      "properties": {
+        "recorded_at": {
+          "description": "When the revision was recorded.",
+          "type": "string"
+        },
+        "revision": {
+          "description": "The one-based revision number.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "The revision text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recorded_at",
+        "revision",
+        "text"
+      ],
+      "type": "object"
+    },
+    "TimelineEntityKind": {
+      "description": "Entity kinds that may appear on the activity timeline.",
+      "enum": [
+        "initiative",
+        "project",
+        "plan",
+        "spec",
+        "ticket",
+        "run",
+        "review",
+        "finding",
+        "evidence",
+        "comment"
+      ],
+      "type": "string"
+    },
+    "TimelineEntityRef": {
+      "additionalProperties": false,
+      "description": "A timeline-visible entity reference.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/TimelineEntityKind"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `comment.revisions` query.",
+  "properties": {
+    "comment": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CommentRecord"
+        }
+      ],
+      "description": "The Comment with its current text resolved."
+    },
+    "revisions": {
+      "description": "Every revision, oldest first.",
+      "items": {
+        "$ref": "#/definitions/CommentRevisionRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "comment",
+    "revisions"
+  ],
+  "title": "CommentRevisionsResponse",
+  "type": "object"
+}

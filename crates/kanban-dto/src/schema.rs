@@ -1,6 +1,10 @@
 use schemars::schema::RootSchema;
 use schemars::schema_for;
 
+use crate::comment::{
+    CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
+    CommentRevisionsQuery, CommentRevisionsResponse,
+};
 use crate::error::{ApiError, ErrorCode};
 use crate::event::EventEnvelope;
 use crate::health::{HealthQuery, HealthResponse};
@@ -18,6 +22,15 @@ use crate::timeline::{
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
         ("ApiError", schema_for!(ApiError)),
+        ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
+        ("CommentEditRequest", schema_for!(CommentEditRequest)),
+        ("CommentRecord", schema_for!(CommentRecord)),
+        ("CommentRevisionRecord", schema_for!(CommentRevisionRecord)),
+        ("CommentRevisionsQuery", schema_for!(CommentRevisionsQuery)),
+        (
+            "CommentRevisionsResponse",
+            schema_for!(CommentRevisionsResponse),
+        ),
         ("ErrorCode", schema_for!(ErrorCode)),
         ("EventEnvelope", schema_for!(EventEnvelope)),
         ("HealthQuery", schema_for!(HealthQuery)),

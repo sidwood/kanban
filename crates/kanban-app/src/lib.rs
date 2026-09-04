@@ -2,6 +2,7 @@
 //! other client, with the ports they call through.
 
 pub mod catalog;
+pub mod comment;
 pub mod contracts_gen;
 pub mod dispatch;
 pub mod events;
@@ -10,6 +11,7 @@ pub mod mutation;
 pub mod timeline;
 
 pub use catalog::{OperationDescriptor, OperationKind, exposed_operations};
+pub use comment::CommentStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use events::{EventSink, NoopEventSink};
 pub use initiative::{InitiativeStore, TimelineAppend};

@@ -2,6 +2,7 @@
 //! forward-only migrations, and the append-only audit tables.
 
 pub mod audit;
+pub mod comments;
 pub mod db;
 pub mod error;
 pub mod initiatives;
@@ -12,6 +13,7 @@ pub mod timeline;
 #[cfg(test)]
 mod test_support;
 
+pub use comments::SqliteCommentStore;
 pub use db::Database;
 pub use error::StorageError;
 pub use initiatives::SqliteInitiativeStore;

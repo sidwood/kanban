@@ -32,6 +32,9 @@ const COMMAND_FOR_OPERATION = {
   'initiative.list': 'initiative_list',
   'initiative.rename': 'initiative_rename',
   'timeline.query': 'timeline_query',
+  'comment.create': 'comment_create',
+  'comment.edit': 'comment_edit',
+  'comment.revisions': 'comment_revisions',
 } as const satisfies Record<KanbanOperationName, string>
 
 function shellInvokePayload<Request>(
@@ -40,6 +43,7 @@ function shellInvokePayload<Request>(
 ): Record<string, unknown> {
   switch (name) {
     case 'timeline.query':
+    case 'comment.revisions':
       return { request: request as Record<string, unknown> }
     default:
       return request as Record<string, unknown>

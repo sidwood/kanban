@@ -67,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "timeline envelope",
         sql: include_str!("../migrations/0003_timeline_envelope.sql"),
     },
+    Migration {
+        version: 4,
+        name: "comments",
+        sql: include_str!("../migrations/0004_comments.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -207,7 +212,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3]
+                applied: vec![1, 2, 3, 4]
             }
         );
         assert_eq!(
@@ -227,8 +232,14 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3]);
-        for table in ["audit_events", "timeline_events", "initiatives"] {
+        assert_eq!(versions, vec![1, 2, 3, 4]);
+        for table in [
+            "audit_events",
+            "timeline_events",
+            "initiatives",
+            "comments",
+            "comment_revisions",
+        ] {
             let present: i64 = database
                 .connection()
                 .query_row(
@@ -276,7 +287,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 3, "one event per applied migration");
+        assert_eq!(events.len(), 4, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -291,6 +302,11 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[2].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 3, "name": "timeline envelope" })
+        );
+        assert_eq!(events[3].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[3].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 4, "name": "comments" })
         );
     }
 
@@ -337,6 +353,10 @@ mod tests {
                 PendingMigration {
                     version: 3,
                     name: "timeline envelope",
+                },
+                PendingMigration {
+                    version: 4,
+                    name: "comments",
                 },
             ]]
         );

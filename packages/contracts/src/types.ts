@@ -13,6 +13,36 @@ export type ApiError = {
   current_version?: number | null;
   message: string;
 };
+export type CommentCreateRequest = {
+  mutation: MutationContext;
+  project_id: string;
+  target: TimelineEntityRef;
+  text: string;
+};
+export type CommentEditRequest = {
+  comment_id: number;
+  mutation: MutationContext;
+  text: string;
+};
+export type CommentRecord = {
+  id: number;
+  project_id: string;
+  target: TimelineEntityRef;
+  text: string;
+  version: number;
+};
+export type CommentRevisionRecord = {
+  recorded_at: string;
+  revision: number;
+  text: string;
+};
+export type CommentRevisionsQuery = {
+  comment_id: number;
+};
+export type CommentRevisionsResponse = {
+  comment: CommentRecord;
+  revisions: CommentRevisionRecord[];
+};
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;

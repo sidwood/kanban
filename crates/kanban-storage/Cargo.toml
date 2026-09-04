@@ -7,4 +7,8 @@ publish.workspace = true
 
 [dependencies]
 dirs = "6.0.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 thiserror = "2.0.20"
+
+[dev-dependencies]
+tempfile = "3.27.0"

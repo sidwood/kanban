@@ -14,7 +14,8 @@ use kanban_dto::{
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::events::EventSink;
+use crate::event_catalog::event_descriptor;
+use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
 
@@ -109,7 +110,7 @@ impl CommandHandler for CreateInitiative {
         let initiative = self.store.create(&name, &|id| {
             transition(id, "created", json!({ "name": name.as_str() }))
         })?;
-        announce(events, "initiative.created", &initiative);
+        announce(events, event_descriptor("initiative.created"), &initiative);
         encode_record(&initiative)
     }
 }
@@ -148,7 +149,7 @@ impl CommandHandler for RenameInitiative {
                 json!({ "from": previous, "to": initiative.name() }),
             ),
         )?;
-        announce(events, "initiative.renamed", &initiative);
+        announce(events, event_descriptor("initiative.renamed"), &initiative);
         encode_record(&initiative)
     }
 }
@@ -180,7 +181,7 @@ impl CommandHandler for ArchiveInitiative {
             &initiative,
             transition(initiative.id(), "archived", json!({})),
         )?;
-        announce(events, "initiative.archived", &initiative);
+        announce(events, event_descriptor("initiative.archived"), &initiative);
         encode_record(&initiative)
     }
 }
@@ -226,16 +227,12 @@ fn encode_record(initiative: &Initiative) -> Result<Value, ApiError> {
 
 /// Publish the change on the live event stream, matching the
 /// durable timeline append.
-fn announce(events: &dyn EventSink, kind: &str, initiative: &Initiative) {
-    events.emit(
-        kind,
-        json!({
-            "id": initiative.id().value(),
-            "name": initiative.name(),
-            "archived": initiative.is_archived(),
-            "version": initiative.version(),
-        }),
-    );
+fn announce(
+    events: &dyn EventSink,
+    event: &crate::event_catalog::EventDescriptor,
+    initiative: &Initiative,
+) {
+    emit_catalogued(events, event, &record_of(initiative));
 }
 
 #[cfg(test)]

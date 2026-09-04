@@ -22,7 +22,11 @@ pub use deferral::{
     DeferralSupersedeRequest,
 };
 pub use error::{ApiError, ErrorCode};
-pub use event::EventEnvelope;
+pub use event::{
+    DecodeLiveEventError, DeferralIdentity, EventEnvelope, EvidenceListSummary,
+    InvalidLiveEventPayloadError, LiveEvent, LiveEventName, RulingIdentity, UnknownLiveEventError,
+    decode_live_event,
+};
 pub use evidence::{
     EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
     EvidenceRecord,
@@ -96,12 +100,15 @@ mod tests {
                 "CommentRevisionsQuery",
                 "CommentRevisionsResponse",
                 "ErrorCode",
+                "DeferralIdentity",
                 "EventEnvelope",
                 "EvidenceAttachRequest",
                 "EvidenceKindDto",
                 "EvidenceListRequest",
                 "EvidenceListResponse",
+                "EvidenceListSummary",
                 "EvidenceRecord",
+                "LiveEventName",
                 "HealthQuery",
                 "HealthResponse",
                 "InitiativeArchiveRequest",
@@ -116,6 +123,7 @@ mod tests {
                 "DeferralRecord",
                 "DeferralRecordRequest",
                 "DeferralSupersedeRequest",
+                "RulingIdentity",
                 "RulingListQuery",
                 "RulingListResponse",
                 "RulingRecord",

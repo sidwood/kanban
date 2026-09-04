@@ -93,14 +93,22 @@ describe('tauri transport', () => {
 
   it('delivers the shell events as generated envelopes', async () => {
     const handlers = captureListeners()
-    const seen: Array<{ sequence: number }> = []
+    const seen: Array<{ sequence: number; event_type: string }> = []
     tauriTransport.subscribe((event) => seen.push(event))
 
     handlers.get('core://event')?.({
-      payload: { sequence: 3, event_type: 'counter.bumped', payload: { to: 3 } },
+      payload: {
+        sequence: 3,
+        event_type: 'initiative.created',
+        payload: { id: 1, name: 'Alpha', archived: false, version: 1 },
+      },
     })
     expect(seen).toStrictEqual([
-      { sequence: 3, event_type: 'counter.bumped', payload: { to: 3 } },
+      {
+        sequence: 3,
+        event_type: 'initiative.created',
+        payload: { id: 1, name: 'Alpha', archived: false, version: 1 },
+      },
     ])
   })
 

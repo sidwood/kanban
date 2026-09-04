@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use kanban_domain::{Deferral, DeferralDraft, DeferralId, DeferralReason};
 use kanban_dto::{
-    ApiError, DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
-    DeferralSupersedeRequest,
+    ApiError, DeferralIdentity, DeferralListQuery, DeferralListResponse, DeferralRecord,
+    DeferralRecordRequest, DeferralSupersedeRequest,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::events::EventSink;
+use crate::event_catalog::event_descriptor;
+use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineFacts;
 
@@ -79,7 +80,7 @@ impl CommandHandler for RecordDeferral {
                 }),
             },
         )?;
-        announce(events, "deferral.recorded", &deferral);
+        announce(events, event_descriptor("deferral.recorded"), &deferral);
         serde_json::to_value(encode_record(&deferral))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -120,7 +121,7 @@ impl CommandHandler for SupersedeDeferral {
                 }),
             },
         )?;
-        announce(events, "deferral.superseded", &deferral);
+        announce(events, event_descriptor("deferral.superseded"), &deferral);
         serde_json::to_value(encode_record(&deferral))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -162,8 +163,18 @@ fn encode_record(deferral: &Deferral) -> DeferralRecord {
     }
 }
 
-fn announce(events: &dyn EventSink, kind: &str, deferral: &Deferral) {
-    events.emit(kind, json!({ "id": deferral.id().value() }));
+fn announce(
+    events: &dyn EventSink,
+    event: &crate::event_catalog::EventDescriptor,
+    deferral: &Deferral,
+) {
+    emit_catalogued(
+        events,
+        event,
+        &DeferralIdentity {
+            id: deferral.id().value(),
+        },
+    );
 }
 
 #[cfg(test)]

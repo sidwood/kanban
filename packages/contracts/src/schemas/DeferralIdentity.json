@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The identity carried on deferral live events.",
+  "properties": {
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "DeferralIdentity",
+  "type": "object"
+}

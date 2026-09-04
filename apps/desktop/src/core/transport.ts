@@ -8,9 +8,11 @@ import type { InjectionKey } from 'vue'
 import type {
   ApiError,
   EventEnvelope,
+  KanbanLiveEvent,
   KanbanOperationName,
   KanbanTransport,
 } from '@kanban/contracts'
+import { parseKanbanLiveEvent } from '@kanban/contracts'
 
 // The shell's Tauri event names. These are shell-level plumbing,
 // not domain contracts; `core://event` payloads are the generated
@@ -64,8 +66,8 @@ export const tauriTransport: ShellTransport = {
   ): Promise<Response> {
     return invoke<Response>(COMMAND_FOR_OPERATION[name], { request })
   },
-  subscribe(handler: (event: EventEnvelope) => void): () => void {
-    return listenTo(CORE_EVENT, (payload) => handler(payload as EventEnvelope))
+  subscribe(handler: (event: KanbanLiveEvent) => void): () => void {
+    return listenTo(CORE_EVENT, (payload) => handler(parseKanbanLiveEvent(payload as EventEnvelope)))
   },
   onConnectionChange(handler: (state: ShellConnectionState) => void): () => void {
     return listenTo(CONNECTION_EVENT, (payload) => {

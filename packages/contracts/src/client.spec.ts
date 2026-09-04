@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  KANBAN_CLIENT_EVENTS,
   KANBAN_CLIENT_OPERATIONS,
   KanbanClient,
+  parseKanbanLiveEvent,
   type KanbanOperationName,
   type KanbanTransport,
 } from './client.js'
+import type { EventEnvelope } from './types.js'
 
 describe('generated client', () => {
   it('lists only application-layer operations', () => {
@@ -28,6 +31,34 @@ describe('generated client', () => {
       'evidence.attach',
       'evidence.list',
     ])
+  })
+
+  it('lists only application-layer live events', () => {
+    expect(KANBAN_CLIENT_EVENTS).toStrictEqual([
+      'initiative.created',
+      'initiative.renamed',
+      'initiative.archived',
+      'comment.created',
+      'comment.edited',
+      'ruling.recorded',
+      'ruling.superseded',
+      'deferral.recorded',
+      'deferral.superseded',
+      'evidence.attached',
+      'evidence.listed',
+    ])
+  })
+
+  it('refuses unknown live event envelopes', () => {
+    const envelope: EventEnvelope = {
+      sequence: 1,
+      event_type: 'counter.bumped',
+      payload: { to: 1 },
+    }
+
+    expect(() => parseKanbanLiveEvent(envelope)).toThrow(
+      'unknown live event type `counter.bumped`',
+    )
   })
 
   it('routes queries through the transport boundary', async () => {

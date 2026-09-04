@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use kanban_domain::{Ruling, RulingDraft, RulingEntityRef, RulingId, RulingSummary};
 use kanban_dto::{
-    ApiError, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityRef,
+    ApiError, RulingIdentity, RulingListQuery, RulingListResponse, RulingRecord,
+    RulingRecordRequest, RulingSupersedeRequest, TimelineEntityRef,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::events::EventSink;
+use crate::event_catalog::event_descriptor;
+use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineFacts;
 
@@ -77,7 +78,7 @@ impl CommandHandler for RecordRuling {
                 facts: json!({ "summary": ruling_summary(&draft) }),
             },
         )?;
-        announce(events, "ruling.recorded", &ruling);
+        announce(events, event_descriptor("ruling.recorded"), &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -113,7 +114,7 @@ impl CommandHandler for SupersedeRuling {
                 }),
             },
         )?;
-        announce(events, "ruling.superseded", &ruling);
+        announce(events, event_descriptor("ruling.superseded"), &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -168,8 +169,18 @@ fn encode_record(ruling: &Ruling) -> RulingRecord {
     }
 }
 
-fn announce(events: &dyn EventSink, kind: &str, ruling: &Ruling) {
-    events.emit(kind, json!({ "id": ruling.id().value() }));
+fn announce(
+    events: &dyn EventSink,
+    event: &crate::event_catalog::EventDescriptor,
+    ruling: &Ruling,
+) {
+    emit_catalogued(
+        events,
+        event,
+        &RulingIdentity {
+            id: ruling.id().value(),
+        },
+    );
 }
 
 #[cfg(test)]

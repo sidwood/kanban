@@ -10,7 +10,9 @@ use crate::deferral::{
     DeferralSupersedeRequest,
 };
 use crate::error::{ApiError, ErrorCode};
-use crate::event::EventEnvelope;
+use crate::event::{
+    DeferralIdentity, EventEnvelope, EvidenceListSummary, LiveEventName, RulingIdentity,
+};
 use crate::evidence::{
     EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
     EvidenceRecord,
@@ -43,12 +45,15 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(CommentRevisionsResponse),
         ),
         ("ErrorCode", schema_for!(ErrorCode)),
+        ("DeferralIdentity", schema_for!(DeferralIdentity)),
         ("EventEnvelope", schema_for!(EventEnvelope)),
         ("EvidenceAttachRequest", schema_for!(EvidenceAttachRequest)),
         ("EvidenceKindDto", schema_for!(EvidenceKindDto)),
         ("EvidenceListRequest", schema_for!(EvidenceListRequest)),
         ("EvidenceListResponse", schema_for!(EvidenceListResponse)),
+        ("EvidenceListSummary", schema_for!(EvidenceListSummary)),
         ("EvidenceRecord", schema_for!(EvidenceRecord)),
+        ("LiveEventName", schema_for!(LiveEventName)),
         ("HealthQuery", schema_for!(HealthQuery)),
         ("HealthResponse", schema_for!(HealthResponse)),
         (
@@ -78,6 +83,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "DeferralSupersedeRequest",
             schema_for!(DeferralSupersedeRequest),
         ),
+        ("RulingIdentity", schema_for!(RulingIdentity)),
         ("RulingListQuery", schema_for!(RulingListQuery)),
         ("RulingListResponse", schema_for!(RulingListResponse)),
         ("RulingRecord", schema_for!(RulingRecord)),

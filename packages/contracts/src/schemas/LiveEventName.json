@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed set of live event names the desktop may consume.",
+  "enum": [
+    "initiative.created",
+    "initiative.renamed",
+    "initiative.archived",
+    "comment.created",
+    "comment.edited",
+    "ruling.recorded",
+    "ruling.superseded",
+    "deferral.recorded",
+    "deferral.superseded",
+    "evidence.attached",
+    "evidence.listed"
+  ],
+  "title": "LiveEventName",
+  "type": "string"
+}

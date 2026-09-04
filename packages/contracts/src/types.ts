@@ -43,6 +43,9 @@ export type CommentRevisionsResponse = {
   comment: CommentRecord;
   revisions: CommentRevisionRecord[];
 };
+export type DeferralIdentity = {
+  id: number;
+};
 export type DeferralListQuery = {
   finding_id?: string | null;
   project_id: string;
@@ -96,6 +99,10 @@ export type EvidenceListRequest = {
 export type EvidenceListResponse = {
   evidence: EvidenceRecord[];
 };
+export type EvidenceListSummary = {
+  count: number;
+  project_id: string;
+};
 export type EvidenceRecord = {
   commit_identity?: string | null;
   content_hash?: string | null;
@@ -134,9 +141,13 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
+};
+export type RulingIdentity = {
+  id: number;
 };
 export type RulingListQuery = {
   entity?: TimelineEntityRef | null;

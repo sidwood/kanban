@@ -9,10 +9,11 @@ use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, TimelineEntityKind, TimelineEntityRef,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::events::EventSink;
+use crate::event_catalog::event_descriptor;
+use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 
 /// The storage port Comment commands call through.
@@ -81,7 +82,7 @@ impl CommandHandler for CreateComment {
         let text = parse_text(&request.text)?;
         let target = parse_target(&request.target)?;
         let comment = self.store.create(&request.project_id, &target, &text)?;
-        announce(events, "comment.created", &comment);
+        announce(events, event_descriptor("comment.created"), &comment);
         encode_record(&comment)
     }
 }
@@ -111,7 +112,7 @@ impl CommandHandler for EditComment {
             .edit(text)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store.save(&comment)?;
-        announce(events, "comment.edited", &comment);
+        announce(events, event_descriptor("comment.edited"), &comment);
         encode_record(&comment)
     }
 }
@@ -165,20 +166,12 @@ fn encode_record(comment: &Comment) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(comment)).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
-fn announce(events: &dyn EventSink, kind: &str, comment: &Comment) {
-    events.emit(
-        kind,
-        json!({
-            "id": comment.id().value(),
-            "project_id": comment.project_id(),
-            "target": {
-                "kind": comment.target().kind(),
-                "id": comment.target().id(),
-            },
-            "text": comment.current_text().as_str(),
-            "version": comment.version(),
-        }),
-    );
+fn announce(
+    events: &dyn EventSink,
+    event: &crate::event_catalog::EventDescriptor,
+    comment: &Comment,
+) {
+    emit_catalogued(events, event, &record_of(comment));
 }
 
 #[cfg(test)]

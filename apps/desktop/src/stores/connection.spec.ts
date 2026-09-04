@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import type { EventEnvelope, HealthResponse } from '@kanban/contracts'
+import type { HealthResponse, KanbanLiveEvent } from '@kanban/contracts'
 import type { ShellConnectionState, ShellTransport } from '../core/transport'
 import { useConnectionStore } from './connection'
 
@@ -9,12 +9,12 @@ import { useConnectionStore } from './connection'
 // connection deliveries are all steerable from the test.
 function harness() {
   const queries = vi.fn()
-  let eventHandler: ((event: EventEnvelope) => void) | undefined
+  let eventHandler: ((event: KanbanLiveEvent) => void) | undefined
   let connectionHandler: ((state: ShellConnectionState) => void) | undefined
   const transport = {
     query: (name: string, request: unknown) => queries(name, request),
     command: () => Promise.reject(new Error('no commands are catalogued yet')),
-    subscribe(handler: (event: EventEnvelope) => void) {
+    subscribe(handler: (event: KanbanLiveEvent) => void) {
       eventHandler = handler
       return () => undefined
     },
@@ -39,8 +39,8 @@ function harness() {
     emitEvent(sequence: number) {
       eventHandler?.({
         sequence,
-        event_type: 'counter.bumped',
-        payload: { to: sequence },
+        event_type: 'initiative.created',
+        payload: { id: 1, name: 'Alpha', archived: false, version: 1 },
       })
     },
     announce(state: ShellConnectionState) {

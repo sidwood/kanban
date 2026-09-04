@@ -7,13 +7,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kanban_domain::{CommitIdentity, EvidenceItem, EvidenceKind, RelativePath, is_entity_kind};
 use kanban_dto::{
     ApiError, EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    EvidenceListSummary, EvidenceRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::dispatch::{Core, RegistrationError};
-use crate::events::EventSink;
+use crate::event_catalog::event_descriptor;
+use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::{TimelineEnvelope, TimelineFacts};
 
@@ -279,13 +280,17 @@ fn encode_record(item: &EvidenceItem) -> Result<Value, ApiError> {
 }
 
 fn announce(events: &dyn EventSink, kind: &str, item: &EvidenceItem) {
-    events.emit(kind, json!(record_of(item)));
+    emit_catalogued(events, event_descriptor(kind), &record_of(item));
 }
 
 fn announce_list(events: &dyn EventSink, project_id: &str, count: usize) {
-    events.emit(
-        "evidence.listed",
-        json!({ "project_id": project_id, "count": count }),
+    emit_catalogued(
+        events,
+        event_descriptor("evidence.listed"),
+        &EvidenceListSummary {
+            project_id: project_id.to_owned(),
+            count,
+        },
     );
 }
 

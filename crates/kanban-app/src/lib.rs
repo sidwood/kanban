@@ -6,6 +6,7 @@ pub mod comment;
 pub mod contracts_gen;
 pub mod deferrals;
 pub mod dispatch;
+pub mod event_catalog;
 pub mod events;
 pub mod evidence;
 pub mod initiative;
@@ -17,7 +18,8 @@ pub use catalog::{OperationDescriptor, OperationKind, exposed_operations};
 pub use comment::CommentStore;
 pub use deferrals::DeferralStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
-pub use events::{EventSink, NoopEventSink};
+pub use event_catalog::{EventDescriptor, exposed_events};
+pub use events::{EventSink, NoopEventSink, emit_catalogued};
 pub use evidence::{EvidenceFilter, EvidenceStore};
 pub use initiative::InitiativeStore;
 #[cfg(any(test, feature = "test-support"))]
@@ -34,7 +36,63 @@ pub use timeline::{
 mod tests {
     use std::collections::HashSet;
 
-    use super::exposed_operations;
+    use super::{exposed_events, exposed_operations};
+
+    #[test]
+    fn exposed_events_reference_known_dto_schemas() {
+        let known_schemas: HashSet<_> = kanban_dto::schema_definitions()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+
+        for event in exposed_events() {
+            assert!(
+                known_schemas.contains(event.payload_schema),
+                "unknown payload schema `{}` for `{}`",
+                event.payload_schema,
+                event.name
+            );
+        }
+    }
+
+    #[test]
+    fn exposed_event_names_are_unique() {
+        let mut seen = HashSet::new();
+
+        for event in exposed_events() {
+            assert!(
+                seen.insert(event.name),
+                "duplicate event name `{}`",
+                event.name
+            );
+        }
+    }
+
+    #[test]
+    fn exposed_events_match_the_live_event_name_catalogue() {
+        let mut names: Vec<_> = exposed_events().iter().map(|event| event.name).collect();
+        names.sort_unstable();
+
+        let mut catalogue: Vec<_> = [
+            kanban_dto::LiveEventName::InitiativeCreated,
+            kanban_dto::LiveEventName::InitiativeRenamed,
+            kanban_dto::LiveEventName::InitiativeArchived,
+            kanban_dto::LiveEventName::CommentCreated,
+            kanban_dto::LiveEventName::CommentEdited,
+            kanban_dto::LiveEventName::RulingRecorded,
+            kanban_dto::LiveEventName::RulingSuperseded,
+            kanban_dto::LiveEventName::DeferralRecorded,
+            kanban_dto::LiveEventName::DeferralSuperseded,
+            kanban_dto::LiveEventName::EvidenceAttached,
+            kanban_dto::LiveEventName::EvidenceListed,
+        ]
+        .into_iter()
+        .map(kanban_dto::LiveEventName::as_str)
+        .collect();
+        catalogue.sort_unstable();
+
+        assert_eq!(names, catalogue, "the catalogues must agree");
+    }
 
     #[test]
     fn exposed_operations_reference_known_dto_schemas() {

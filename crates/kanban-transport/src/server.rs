@@ -94,8 +94,9 @@ impl SocketServer {
     }
 
     /// Serve `core` on the bound socket until
-    /// [`ServerHandle::shutdown`] is called.
-    pub fn serve(self, core: Arc<kanban_app::Core>) -> ServerHandle {
+    /// [`ServerHandle::shutdown`] is called. Fails, without starting,
+    /// when the accept thread cannot be spawned.
+    pub fn serve(self, core: Arc<kanban_app::Core>) -> Result<ServerHandle, TransportError> {
         let Self {
             listener,
             socket_path,
@@ -139,12 +140,15 @@ impl SocketServer {
                     let _ = entry.reader.join();
                 }
             })
-            .expect("spawning the accept thread succeeds");
-        ServerHandle {
+            .map_err(|source| TransportError::Serve {
+                path: socket_path.clone(),
+                source,
+            })?;
+        Ok(ServerHandle {
             socket_path,
             shutdown,
             accept,
-        }
+        })
     }
 }
 
@@ -227,7 +231,9 @@ fn clear_stale_socket(socket_path: &Path) -> Result<(), TransportError> {
 }
 
 /// Accept one connection's threads into the registry and start its
-/// reader.
+/// reader. A connection whose reader cannot be spawned is dropped:
+/// its client sees a closed socket and may reconnect, and the
+/// server keeps serving everyone else.
 fn spawn_connection(
     stream: UnixStream,
     core: &Arc<kanban_app::Core>,
@@ -244,7 +250,7 @@ fn spawn_connection(
     let shared_write = Arc::new(Mutex::new(write_half));
     let stream = Arc::new(stream);
     let id = next_connection_id.fetch_add(1, Ordering::Relaxed);
-    let reader = std::thread::Builder::new()
+    let reader = match std::thread::Builder::new()
         .name("kanban-transport-connection".to_owned())
         .spawn({
             let core = core.clone();
@@ -257,8 +263,12 @@ fn spawn_connection(
                 // client instead of lingering until server shutdown.
                 forget_connection(&connections, id);
             }
-        })
-        .expect("spawning a connection thread succeeds");
+        }) {
+        Ok(reader) => reader,
+        // Dropping the halves closes the socket; a spawn failure
+        // must not take the accept loop down with it.
+        Err(_) => return,
+    };
     connections
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -341,14 +351,29 @@ fn serve_connection(
                 }
                 let (id, events) = broker.subscribe();
                 let end_quietly = Arc::new(AtomicBool::new(false));
-                let writer =
-                    spawn_event_writer(events, shared_write.clone(), Arc::clone(&end_quietly))
-                        .expect("spawning an event writer succeeds");
-                subscription = Some(ActiveSubscription {
-                    id,
-                    end_quietly,
-                    writer,
-                });
+                match spawn_event_writer(events, shared_write.clone(), Arc::clone(&end_quietly)) {
+                    Ok(writer) => {
+                        subscription = Some(ActiveSubscription {
+                            id,
+                            end_quietly,
+                            writer,
+                        });
+                    }
+                    // Without a writer the subscription would be a
+                    // silent lie: end it, say so, and keep serving
+                    // the connection.
+                    Err(_) => {
+                        broker.unsubscribe(id);
+                        let refused = ResponseFrame::Error {
+                            error: ApiError::internal(
+                                "the subscription could not start; subscribe again",
+                            ),
+                        };
+                        if write_frame(&shared_write, &refused).is_err() {
+                            break;
+                        }
+                    }
+                }
             }
             FrameKind::Query | FrameKind::Command => {
                 let Some(operation) = request.operation.as_deref() else {
@@ -578,7 +603,7 @@ mod tests {
             .expect("the test command registers");
         core.register_command("counter.pad", Arc::new(Pad))
             .expect("the test command registers");
-        server.serve(Arc::new(core))
+        server.serve(Arc::new(core)).expect("the server serves")
     }
 
     fn bump(step: i64, key: &str, version: u64) -> Value {
@@ -719,7 +744,7 @@ mod tests {
             broker,
         )
         .expect("the core wires");
-        let handle = server.serve(Arc::new(core));
+        let handle = server.serve(Arc::new(core)).expect("the server serves");
 
         let mut client = TestClient::connect(handle.socket_path());
         let response = client.query("health.get");

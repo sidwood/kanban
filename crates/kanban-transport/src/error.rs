@@ -52,4 +52,13 @@ pub enum TransportError {
         /// The underlying filesystem error.
         source: std::io::Error,
     },
+    /// Serving could not start: the accept thread could not be
+    /// spawned.
+    #[error("serving the socket at {path} failed: {source}")]
+    Serve {
+        /// The socket path that could not be served.
+        path: PathBuf,
+        /// The underlying thread-spawn failure.
+        source: std::io::Error,
+    },
 }

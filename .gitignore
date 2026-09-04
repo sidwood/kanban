@@ -1,8 +1,9 @@
 /temp/
-/node_modules/
+node_modules/
 /target/
-/dist/
-/.vite/
-/coverage/
+dist/
+.vite/
+coverage/
 *.log
+*.tsbuildinfo
 .DS_Store

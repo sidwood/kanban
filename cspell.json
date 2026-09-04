@@ -3,6 +3,7 @@
   "version": "0.2",
   "language": "en-GB",
   "useGitignore": true,
+  "ignorePaths": ["pnpm-lock.yaml"],
   "words": [
     "autosquash",
     "codegen",

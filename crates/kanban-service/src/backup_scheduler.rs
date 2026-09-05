@@ -8,6 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kanban_storage::{BackupOptions, BackupStore, Database, load_backup_settings};
 
+use crate::logs::{LogLevel, LogRecord, LogWriter};
+
 /// How often the production scheduler checks for a due backup.
 const DAILY_BACKUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -26,9 +28,10 @@ pub(crate) struct BackupScheduler {
 }
 
 impl BackupScheduler {
-    /// Spawn the daily backup loop for `data_dir`.
-    pub fn spawn(data_dir: PathBuf, database: Arc<Database>) -> Self {
-        Self::spawn_with_interval(data_dir, database, DAILY_BACKUP_INTERVAL)
+    /// Spawn the daily backup loop for `data_dir`, recording every
+    /// outcome in `log`.
+    pub fn spawn(data_dir: PathBuf, database: Arc<Database>, log: Arc<LogWriter>) -> Self {
+        Self::spawn_with_interval(data_dir, database, DAILY_BACKUP_INTERVAL, log)
     }
 
     /// Spawn a scheduler with a testable interval.
@@ -36,8 +39,9 @@ impl BackupScheduler {
         data_dir: PathBuf,
         database: Arc<Database>,
         interval: Duration,
+        log: Arc<LogWriter>,
     ) -> Self {
-        let handle = thread::spawn(move || scheduler_loop(&data_dir, &database, interval));
+        let handle = thread::spawn(move || scheduler_loop(&data_dir, &database, interval, &log));
         Self { _handle: handle }
     }
 }
@@ -119,8 +123,8 @@ pub(crate) fn scheduler_loop_sleep(
     }
 }
 
-fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration) {
-    let mut last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval);
+fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration, log: &LogWriter) {
+    let mut last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
     loop {
         let last_success = load_scheduler_state(data_dir);
         let now = SystemTime::now();
@@ -128,11 +132,16 @@ fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration) {
         if !sleep_for.is_zero() {
             thread::sleep(sleep_for);
         }
-        last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval);
+        last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
     }
 }
 
-fn run_scheduled_backup_if_due(data_dir: &Path, database: &Database, interval: Duration) -> bool {
+fn run_scheduled_backup_if_due(
+    data_dir: &Path,
+    database: &Database,
+    interval: Duration,
+    log: &LogWriter,
+) -> bool {
     let now = SystemTime::now();
     let last_success = load_scheduler_state(data_dir);
     if !is_backup_due(last_success, interval, now) {
@@ -140,8 +149,20 @@ fn run_scheduled_backup_if_due(data_dir: &Path, database: &Database, interval: D
     }
     match run_due_backup(data_dir, database) {
         Ok(()) => {
+            // A backup whose state cannot be recorded will run again;
+            // the log says so before the scheduler state says anything.
+            let _ = log.append(&LogRecord::new(
+                LogLevel::Info,
+                "backup",
+                "scheduled backup completed",
+            ));
             if let Err(error) = save_scheduler_state(data_dir, now) {
                 eprintln!("kanban daily backup state failed: {error}");
+                let _ = log.append(&LogRecord::new(
+                    LogLevel::Warn,
+                    "backup",
+                    format!("scheduled backup state failed: {error}"),
+                ));
                 false
             } else {
                 true
@@ -149,6 +170,11 @@ fn run_scheduled_backup_if_due(data_dir: &Path, database: &Database, interval: D
         }
         Err(error) => {
             eprintln!("kanban daily backup failed: {error}");
+            let _ = log.append(&LogRecord::new(
+                LogLevel::Error,
+                "backup",
+                format!("scheduled backup failed: {error}"),
+            ));
             false
         }
     }
@@ -185,7 +211,12 @@ mod tests {
         run_due_backup, run_scheduled_backup_if_due, save_scheduler_state, scheduler_loop_sleep,
         scheduler_state_path, sleep_until_due,
     };
+    use crate::logs::LogWriter;
     use crate::test_client::boot;
+
+    fn test_log(dir: &TempDir) -> LogWriter {
+        LogWriter::open(dir.path()).expect("the scheduler log opens")
+    }
 
     fn open_migrated_database(dir: &TempDir) -> Database {
         let mut database =
@@ -277,7 +308,7 @@ mod tests {
         let overdue = SystemTime::now() - interval * 2;
         save_scheduler_state(dir.path(), overdue).expect("scheduler state writes");
 
-        run_scheduled_backup_if_due(dir.path(), &database, interval);
+        run_scheduled_backup_if_due(dir.path(), &database, interval, &test_log(&dir));
 
         assert_eq!(
             bundle_count(&dir),
@@ -294,8 +325,12 @@ mod tests {
         let interval = Duration::from_secs(60);
         save_scheduler_state(dir.path(), SystemTime::now()).expect("scheduler state writes");
 
-        let _scheduler =
-            BackupScheduler::spawn_with_interval(dir.path().to_path_buf(), database, interval);
+        let _scheduler = BackupScheduler::spawn_with_interval(
+            dir.path().to_path_buf(),
+            database,
+            interval,
+            std::sync::Arc::new(test_log(&dir)),
+        );
         thread::sleep(Duration::from_millis(300));
 
         assert_eq!(
@@ -313,7 +348,7 @@ mod tests {
         let overdue = SystemTime::now() - interval * 2;
         save_scheduler_state(dir.path(), overdue).expect("scheduler state writes");
 
-        run_scheduled_backup_if_due(dir.path(), &database, interval);
+        run_scheduled_backup_if_due(dir.path(), &database, interval, &test_log(&dir));
 
         assert_eq!(bundle_count(&dir), 1, "overdue scheduler must back up");
         assert!(load_scheduler_state(dir.path()).is_some());
@@ -326,7 +361,7 @@ mod tests {
         let interval = Duration::from_secs(60);
         save_scheduler_state(dir.path(), SystemTime::now()).expect("scheduler state writes");
 
-        run_scheduled_backup_if_due(dir.path(), &database, interval);
+        run_scheduled_backup_if_due(dir.path(), &database, interval, &test_log(&dir));
 
         assert_eq!(
             bundle_count(&dir),
@@ -342,7 +377,7 @@ mod tests {
         let database = open_migrated_database(&dir);
         std::fs::write(dir.path().join("backups"), b"blocked").expect("backups path blocks writes");
 
-        run_scheduled_backup_if_due(dir.path(), &database, interval);
+        run_scheduled_backup_if_due(dir.path(), &database, interval, &test_log(&dir));
 
         assert!(
             !scheduler_state_path(dir.path()).exists(),
@@ -362,8 +397,12 @@ mod tests {
         let interval = Duration::from_secs(60);
 
         let database = Arc::new(open_migrated_database(&dir));
-        let _scheduler =
-            BackupScheduler::spawn_with_interval(dir.path().to_path_buf(), database, interval);
+        let _scheduler = BackupScheduler::spawn_with_interval(
+            dir.path().to_path_buf(),
+            database,
+            interval,
+            std::sync::Arc::new(test_log(&dir)),
+        );
         thread::sleep(Duration::from_millis(300));
 
         assert_eq!(
@@ -383,7 +422,7 @@ mod tests {
             .expect("scheduler state writes");
         assert_eq!(bundle_count(&dir), 1);
 
-        run_scheduled_backup_if_due(dir.path(), &database, interval);
+        run_scheduled_backup_if_due(dir.path(), &database, interval, &test_log(&dir));
 
         assert!(
             bundle_count(&dir) >= 2,
@@ -434,7 +473,9 @@ mod tests {
         std::fs::write(dir.path().join("backups"), b"blocked").expect("backups path blocks writes");
 
         let mut attempts = 0_u32;
-        let mut last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+        let log = test_log(&dir);
+        let mut last_attempt_failed =
+            !run_scheduled_backup_if_due(dir.path(), &database, interval, &log);
         attempts += 1;
         let failure_window = Duration::from_millis(400);
         let window_start = Instant::now();
@@ -452,7 +493,8 @@ mod tests {
             if window_start.elapsed() >= failure_window {
                 break;
             }
-            last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+            last_attempt_failed =
+                !run_scheduled_backup_if_due(dir.path(), &database, interval, &log);
             attempts += 1;
         }
 
@@ -462,7 +504,7 @@ mod tests {
         );
 
         std::fs::remove_file(dir.path().join("backups")).expect("backups block removed");
-        last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+        last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval, &log);
         assert!(
             !last_attempt_failed,
             "scheduler must recover once backups succeed again"

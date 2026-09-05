@@ -5,6 +5,7 @@
 mod backup_scheduler;
 pub mod git_observer;
 pub mod herdr;
+pub mod logs;
 pub mod redaction;
 pub mod timeline;
 
@@ -33,6 +34,7 @@ use timeline::StorageTimelineStore;
 
 use backup_scheduler::BackupScheduler;
 use git_observer::LocalWorkspaceGitObserver;
+use logs::{LogLevel, LogRecord, LogWriter};
 
 /// How many replay outcomes the core keeps. A retry follows its
 /// original within seconds and the Operator drives one window, so a
@@ -60,11 +62,12 @@ impl GitObservation for LocalRepositories {
 }
 
 /// The running core process: its open database, its serving
-/// socket, and its Herdr observer.
+/// socket, its Herdr observer, and its structured logs.
 pub struct CoreProcess {
     database: Arc<Database>,
     server: ServerHandle,
     herdr: Arc<HerdrObserver>,
+    logs: Arc<LogWriter>,
     _backup_scheduler: BackupScheduler,
 }
 
@@ -87,10 +90,13 @@ impl CoreProcess {
             database,
             server,
             herdr,
+            logs,
             _backup_scheduler,
         } = self;
         server.shutdown();
         herdr.shutdown();
+        // A failing log write must never fail the shutdown it records.
+        let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));
         drop(database);
     }
 }
@@ -187,12 +193,24 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         production_socket_root(),
         ObservationTuning::PRODUCTION,
     )?;
-    let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
+    let logs =
+        Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
+    let backup_scheduler =
+        BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
     let server = server.serve(Arc::new(core))?;
+    let socket_path = server.socket_path().to_path_buf();
+    // The startup record names the live socket, which is the fact a
+    // support session wants first; a failing write never blocks serve.
+    let _ = logs.append(&LogRecord::new(
+        LogLevel::Info,
+        "service",
+        format!("core serving on {}", socket_path.display()),
+    ));
     Ok(CoreProcess {
         database,
         server,
         herdr,
+        logs,
         _backup_scheduler: backup_scheduler,
     })
 }
@@ -220,12 +238,16 @@ pub(crate) fn serve_with_herdr_sessions(
             settle: std::time::Duration::from_millis(50),
         },
     )?;
-    let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
+    let logs =
+        Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
+    let backup_scheduler =
+        BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
         database,
         server,
         herdr,
+        logs,
         _backup_scheduler: backup_scheduler,
     })
 }
@@ -236,6 +258,12 @@ pub enum ServiceError {
     /// The data directory could not be created.
     #[error("the data directory could not be created: {source}")]
     DataDir {
+        /// The underlying failure.
+        source: std::io::Error,
+    },
+    /// The managed logs directory could not be opened.
+    #[error("the logs directory could not be opened: {source}")]
+    LogOpen {
         /// The underlying failure.
         source: std::io::Error,
     },

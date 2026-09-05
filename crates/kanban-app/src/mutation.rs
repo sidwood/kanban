@@ -169,14 +169,26 @@ impl MutationSpan for MemoryMutationSpan<'_> {
 /// One effect a command defers until its mutation commits.
 pub type PostCommitEffect = Box<dyn FnOnce() + Send>;
 
+/// One write a refused command still owes after its mutation is
+/// discarded: the durable record of the refusal (DR-LW-07).
+pub type PostDiscardWrite = Box<dyn FnOnce() + Send>;
+
 /// What `apply` reports alongside its response: the events the
 /// applied change announces, plus effects that must not run while the
 /// mutation's durable span is still open. A span that never commits
 /// discards the effects with it, so a failed commit leaves nothing
-/// they would have started.
+/// they would have started. A discarded write runs the other way
+/// round: it exists precisely because the span rolled back, so it
+/// must not run until the discard has finished.
 pub trait CommandEffects: EventSink {
     /// Run `effect` once the command's mutation has committed.
     fn after_commit(&self, effect: PostCommitEffect);
+
+    /// Run `write` once the command's failed mutation has been
+    /// discarded. The span is closed by then, so the write opens its
+    /// own and lands alone: nothing the rejected mutation wrote can
+    /// commit with it, and nothing of it survives to be announced.
+    fn after_discard(&self, write: PostDiscardWrite);
 }
 
 /// [`CommandEffects`] that discards everything, for exercising
@@ -190,6 +202,8 @@ impl EventSink for NoopCommandEffects {
 
 impl CommandEffects for NoopCommandEffects {
     fn after_commit(&self, _effect: PostCommitEffect) {}
+
+    fn after_discard(&self, _write: PostDiscardWrite) {}
 }
 
 /// A catalogued command's handler. The dispatcher runs the guard

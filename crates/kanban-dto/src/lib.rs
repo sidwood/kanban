@@ -11,6 +11,7 @@ pub mod evidence;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
+pub mod lane;
 pub mod mutation;
 pub mod plan;
 pub mod project;
@@ -53,6 +54,10 @@ pub use herdr::{
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
+};
+pub use lane::{
+    LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
+    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
 };
 pub use mutation::MutationContext;
 pub use plan::{
@@ -288,6 +293,14 @@ mod tests {
                 "WorkspaceRegisterRequest",
                 "WorkspaceRetireRequest",
                 "WorkspaceReuseDto",
+                "LaneRecord",
+                "LaneCreateRequest",
+                "LaneWorkspaceAssignRequest",
+                "LaneWorkspaceReleaseRequest",
+                "LaneTicketAssignRequest",
+                "LaneTicketReleaseRequest",
+                "LaneListQuery",
+                "LaneListResponse",
             ]
         );
     }

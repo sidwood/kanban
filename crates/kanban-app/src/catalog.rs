@@ -498,6 +498,48 @@ define_exposed_catalogue! {
         mcp: "workspace_list",
         description: "List every Workspace for one Project with health and observation.",
     },
+    "lane.create" => {
+        kind: Command,
+        request: "LaneCreateRequest",
+        response: "LaneRecord",
+        mcp: "lane_create",
+        description: "Create a Lane: a durable execution slot holding at most one active Ticket.",
+    },
+    "lane.workspace.assign" => {
+        kind: Command,
+        request: "LaneWorkspaceAssignRequest",
+        response: "LaneRecord",
+        mcp: "lane_workspace_assign",
+        description: "Claim a Workspace for a Lane. The Seed Workspace is refused and the refusal recorded.",
+    },
+    "lane.workspace.release" => {
+        kind: Command,
+        request: "LaneWorkspaceReleaseRequest",
+        response: "LaneRecord",
+        mcp: "lane_workspace_release",
+        description: "Release the Workspace a Lane claims. The Workspace record and its health follow.",
+    },
+    "lane.ticket.assign" => {
+        kind: Command,
+        request: "LaneTicketAssignRequest",
+        response: "LaneRecord",
+        mcp: "lane_ticket_assign",
+        description: "Hold a Ticket as a Lane's active occupant; a second Ticket is refused.",
+    },
+    "lane.ticket.release" => {
+        kind: Command,
+        request: "LaneTicketReleaseRequest",
+        response: "LaneRecord",
+        mcp: "lane_ticket_release",
+        description: "Free a Lane's Ticket slot.",
+    },
+    "lane.list" => {
+        kind: Query,
+        request: "LaneListQuery",
+        response: "LaneListResponse",
+        mcp: "lane_list",
+        description: "List every Lane of one Project with its Workspace claim and held Ticket.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+  "properties": {
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ticket_id": {
+      "description": "The Ticket this Lane holds, when one is active.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "workspace_id": {
+      "description": "The Workspace this Lane runs in, when claimed.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "version"
+  ],
+  "title": "LaneRecord",
+  "type": "object"
+}

@@ -454,6 +454,51 @@ impl Workspace {
         })
     }
 
+    /// Mirror a Lane's claim onto the Workspace (DR-LW-03, DR-LW-04):
+    /// the durable lane pointer moves and health recomputes from the
+    /// recorded facts, so an observed Workspace becomes assigned the
+    /// moment a Lane holds it. Git facts never change here; a Lane
+    /// claim is durable state, not an observation.
+    pub fn assign_lane(&mut self, lane: u64) -> Option<(WorkspaceHealth, WorkspaceHealth)> {
+        self.lane_id = Some(lane);
+        self.observation.lane_assignment = Some(lane);
+        self.recompute_health()
+    }
+
+    /// Clear the Lane claim. Health recomputes from the recorded
+    /// facts, so the Workspace returns to available, dirty, or
+    /// missing as its own state dictates. Clearing a claim the
+    /// Workspace does not hold is a no-op that changes nothing, not
+    /// an error: the Lane aggregate owns the refusal when its own
+    /// claim slot is empty.
+    pub fn release_lane(&mut self) -> Option<(WorkspaceHealth, WorkspaceHealth)> {
+        // Nothing held: the whole release is the no-op.
+        self.lane_id?;
+        self.lane_id = None;
+        self.observation.lane_assignment = None;
+        self.recompute_health()
+    }
+
+    /// Recompute health from the durable flags and the recorded
+    /// observation, whatever moved. Returns the transition when the
+    /// state changed.
+    fn recompute_health(&mut self) -> Option<(WorkspaceHealth, WorkspaceHealth)> {
+        let previous = self.health;
+        let next = compute_health(WorkspaceHealthInputs {
+            retired: self.retired,
+            present: self.observation.observed_present(),
+            lane_assigned: self.lane_id.is_some(),
+            working_tree_clean: self.observation.working_tree_clean(),
+        });
+        self.health = next;
+        self.version += 1;
+        if previous == next {
+            None
+        } else {
+            Some((previous, next))
+        }
+    }
+
     /// Retire the Workspace: the explicit operator action that ends
     /// reuse while preserving every recorded fact. Retirement is
     /// terminal, so a second retirement is refused rather than
@@ -919,6 +964,154 @@ mod reuse_rules {
             "reuse stays refused until git proves the tree landed"
         );
         assert!(!verdict.free_of_unlanded_commits());
+    }
+}
+
+#[cfg(test)]
+mod lane_rules {
+    use crate::project::ProjectId;
+
+    use super::{
+        Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceRegistration,
+        WorkspaceRetirementError,
+    };
+
+    fn workspace(path: &str) -> Workspace {
+        Workspace::new(
+            WorkspaceId::new(1),
+            WorkspaceRegistration::new(ProjectId::new(1), path, false)
+                .expect("the fixture registration validates"),
+        )
+    }
+
+    fn observed_clean(workspace: &mut Workspace) {
+        workspace
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some(WorkspaceCheckout::Branch("feature".to_owned())),
+                Some("abc123".to_owned()),
+                Some(true),
+                Some(false),
+            )
+            .expect("the observation transitions");
+    }
+
+    #[test]
+    fn assigning_a_lane_moves_an_available_workspace_to_assigned() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        observed_clean(&mut workspace);
+
+        let transition = workspace.assign_lane(7);
+
+        assert_eq!(
+            transition,
+            Some((WorkspaceHealth::Available, WorkspaceHealth::Assigned))
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Assigned);
+        assert_eq!(workspace.lane_id(), Some(7));
+        assert_eq!(workspace.observation().lane_assignment(), Some(7));
+        assert_eq!(
+            workspace.observation().head(),
+            Some("abc123"),
+            "a Lane claim never rewrites git facts"
+        );
+    }
+
+    #[test]
+    fn an_unobserved_workspace_stays_missing_under_a_lane_claim() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+
+        let transition = workspace.assign_lane(7);
+
+        assert_eq!(
+            transition, None,
+            "a never-observed Workspace stays missing; missing outranks assigned"
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Missing);
+        assert_eq!(
+            workspace.lane_id(),
+            Some(7),
+            "the durable claim still lands"
+        );
+    }
+
+    #[test]
+    fn releasing_a_lane_restores_computed_health() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        observed_clean(&mut workspace);
+        workspace.assign_lane(7).expect("the claim lands");
+
+        let transition = workspace.release_lane();
+
+        assert_eq!(
+            transition,
+            Some((WorkspaceHealth::Assigned, WorkspaceHealth::Available))
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Available);
+        assert_eq!(workspace.lane_id(), None);
+        assert_eq!(workspace.observation().lane_assignment(), None);
+    }
+
+    #[test]
+    fn releasing_a_lane_claim_the_workspace_does_not_hold_changes_nothing() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        let version = workspace.version();
+
+        let transition = workspace.release_lane();
+
+        assert_eq!(transition, None);
+        assert_eq!(
+            workspace.version(),
+            version,
+            "a no-op release costs nothing"
+        );
+    }
+
+    #[test]
+    fn a_retired_workspace_stays_retired_under_a_lane_claim() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        observed_clean(&mut workspace);
+        workspace.retire().expect("the retirement applies");
+
+        let transition = workspace.assign_lane(7);
+
+        assert_eq!(transition, None, "retired dominates every claim");
+        assert_eq!(workspace.health(), WorkspaceHealth::Retired);
+    }
+
+    #[test]
+    fn retirement_refusal_survives_a_lane_claim_being_mirrored() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        observed_clean(&mut workspace);
+        workspace.assign_lane(7).expect("the claim lands");
+
+        assert_eq!(
+            workspace.retire(),
+            Ok(Some((WorkspaceHealth::Assigned, WorkspaceHealth::Retired))),
+            "an assigned Workspace still retires explicitly"
+        );
+        let _ = WorkspaceRetirementError::AlreadyRetired;
+    }
+
+    #[test]
+    fn reuse_refuses_a_lane_assigned_workspace_on_the_assignment_condition() {
+        let mut workspace = workspace("/workspaces/kanban.feature");
+        observed_clean(&mut workspace);
+
+        let before = workspace.reuse_evaluation();
+        assert!(before.reusable());
+
+        workspace.assign_lane(7).expect("the claim lands");
+
+        let after = workspace.reuse_evaluation();
+        assert!(!after.reusable());
+        assert!(after.clean(), "the other conditions still report");
+        assert!(
+            !after.unassigned(),
+            "a Lane claim fails the unassigned condition"
+        );
+        assert!(after.free_of_unlanded_commits());
     }
 }
 

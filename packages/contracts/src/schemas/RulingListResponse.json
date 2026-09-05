@@ -68,7 +68,8 @@
         "finding",
         "evidence",
         "comment",
-        "workspace"
+        "workspace",
+        "lane"
       ],
       "type": "string"
     },

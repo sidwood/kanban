@@ -198,7 +198,42 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired';
+export type LaneCreateRequest = {
+  mutation: MutationContext;
+  project_id: number;
+};
+export type LaneListQuery = {
+  project_id: number;
+};
+export type LaneListResponse = {
+  lanes: LaneRecord[];
+};
+export type LaneRecord = {
+  id: number;
+  project_id: number;
+  ticket_id?: number | null;
+  version: number;
+  workspace_id?: number | null;
+};
+export type LaneTicketAssignRequest = {
+  lane_id: number;
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type LaneTicketReleaseRequest = {
+  lane_id: number;
+  mutation: MutationContext;
+};
+export type LaneWorkspaceAssignRequest = {
+  lane_id: number;
+  mutation: MutationContext;
+  workspace_id: number;
+};
+export type LaneWorkspaceReleaseRequest = {
+  lane_id: number;
+  mutation: MutationContext;
+};
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -623,7 +658,7 @@ export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready'
 export type TicketVerificationStep = {
   command: string;
 };
-export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace';
+export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace' | 'lane';
 export type TimelineEntityRef = {
   id: string;
   kind: TimelineEntityKind;

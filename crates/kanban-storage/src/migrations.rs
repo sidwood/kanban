@@ -174,6 +174,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "task fields",
         sql: include_str!("../migrations/0024_task_fields.sql"),
     },
+    Migration {
+        version: 25,
+        name: "lanes",
+        sql: include_str!("../migrations/0025_lanes.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -419,7 +424,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24
+                    23, 24, 25
                 ]
             }
         );
@@ -444,7 +449,7 @@ mod tests {
             versions,
             vec![
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24
+                24, 25
             ]
         );
         for table in [
@@ -467,6 +472,7 @@ mod tests {
             "plan_version_specs",
             "plan_version_edges",
             "workspaces",
+            "lanes",
             "specs",
             "spec_versions",
             "tickets",
@@ -521,7 +527,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 24, "one event per applied migration");
+        assert_eq!(events.len(), 25, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -642,6 +648,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[23].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 24, "name": "task fields" })
         );
+        assert_eq!(events[24].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[24].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 25, "name": "lanes" })
+        );
     }
 
     #[test]
@@ -666,7 +677,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
             }
         );
         let present: i64 = database
@@ -691,6 +702,51 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
             serde_json::json!({ "version": 13, "name": "workspaces" })
+        );
+    }
+
+    #[test]
+    fn migrate_from_version_twenty_adds_lanes() {
+        let (_dir, mut database) = scratch_database();
+        crate::migrations::apply_through(&database.connection(), 20)
+            .expect("the older schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lanes'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(before, 0, "version twenty must not create lanes");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the upgrade applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![21] });
+        let present: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lanes'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(present, 1, "version twenty-one creates lanes");
+        let audited: String = database
+            .connection()
+            .query_row(
+                "SELECT detail FROM audit_events
+                 WHERE kind = 'migration.applied'
+                   AND json_extract(detail, '$.version') = 21",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the audit trail is readable");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
+            serde_json::json!({ "version": 21, "name": "lanes" })
         );
     }
 
@@ -730,7 +786,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21, 22, 23, 24]
+                applied: vec![19, 20, 21, 22, 23, 24, 25]
             }
         );
         let rewritten = database
@@ -889,7 +945,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
             }
         );
         let after: i64 = database
@@ -955,7 +1011,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
             }
         );
         let conn = database.connection();
@@ -1228,6 +1284,10 @@ mod tests {
                     version: 24,
                     name: "task fields",
                 },
+                PendingMigration {
+                    version: 25,
+                    name: "lanes",
+                },
             ]]
         );
     }
@@ -1268,11 +1328,13 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0024 apply");
+            .expect("migrations 0010 through 0025 apply");
 
         assert_eq!(
             report.applied,
-            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+            vec![
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
+            ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
@@ -1345,7 +1407,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
         );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)

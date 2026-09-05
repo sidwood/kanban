@@ -13,23 +13,77 @@ use kanban_desktop_lib::commands::{
 };
 use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest,
-    EvidenceListQuery, HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
-    HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
-    InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, MutationContext,
-    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanDiagnosticsQuery, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
-    PlanGetQuery, PlanListQuery, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest,
-    PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest,
-    RulingListQuery, RulingRecordRequest, RulingSupersedeRequest, SpecContent,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest,
-    SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
-    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCreateRequest, TicketDependenciesQuery, TicketDependencyAddRequest,
-    TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery, TicketReadinessQuery,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
-    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    DeferralRecordRequest,
+    DeferralSupersedeRequest,
+    DiagnosticsExportQuery,
+    EvidenceAttachRequest,
+    EvidenceListQuery,
+    HealthQuery,
+    HerdrDefaultsGetQuery,
+    HerdrDefaultsUpdateRequest,
+    HerdrSettingsGetQuery,
+    HerdrSettingsUpdateRequest,
+    InitiativeArchiveRequest,
+    InitiativeCreateRequest,
+    InitiativeListQuery,
+    InitiativeRenameRequest,
+    LaneCreateRequest,
+    LaneListQuery,
+    LaneTicketAssignRequest,
+    LaneTicketReleaseRequest,
+    LaneWorkspaceAssignRequest,
+    LaneWorkspaceReleaseRequest,
+    MutationContext,
+    PlanActivateRequest,
+    PlanArchiveRequest,
+    PlanCancelRequest,
+    PlanCompleteRequest,
+    PlanCreateRequest,
+    PlanDiagnosticsQuery,
+    PlanEdgeAddRequest,
+    PlanEdgeRemoveRequest,
+    PlanGetQuery,
+    PlanListQuery,
+    PlanReplanRequest,
+    PlanSpecAddRequest,
+    PlanSpecMoveRequest,
+    PlanSpecRemoveRequest,
+    ProjectArchiveRequest,
+    ProjectListQuery,
+    ProjectRegisterRequest,
+    RulingListQuery,
+    RulingRecordRequest,
+    RulingSupersedeRequest,
+    SpecContent,
+    SpecContentUpdateRequest,
+    SpecCoverageCheckQuery,
+    SpecCreateRequest,
+    SpecExecutionMoveRequest,
+    SpecGetQuery,
+    SpecListQuery,
+    SpecPlanJoinRequest,
+    SpecVersionApproveRequest,
+    SpecVersionGetQuery,
+    SpecVersionSupersedeRequest,
+    TicketBlockerAddRequest,
+    TicketBlockerRemoveRequest,
+    TicketBugFactsRequest,
+    TicketBugQualifyRequest,
+    TicketCreateRequest,
+    TicketDependenciesQuery,
+    TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest,
+    TicketGetQuery,
+    TicketListQuery,
+    TicketReadinessQuery,
+    TimelineEntityKind,
+    TimelineEntityRef,
+    TimelineQuery,
+    TimelineScope,
+    WorkspaceListQuery,
+    WorkspaceObserveRequest,
+    WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -357,6 +411,16 @@ fn sample_request(schema: &str) -> Value {
             "workspace_id": 1,
         }),
         "WorkspaceListQuery" => json!({ "project_id": 1 }),
+        "LaneCreateRequest" => json!({ "mutation": mutation, "project_id": 1 }),
+        "LaneWorkspaceAssignRequest" => {
+            json!({ "mutation": mutation, "lane_id": 1, "workspace_id": 2 })
+        }
+        "LaneWorkspaceReleaseRequest" => json!({ "mutation": mutation, "lane_id": 1 }),
+        "LaneTicketAssignRequest" => {
+            json!({ "mutation": mutation, "lane_id": 1, "ticket_id": 3 })
+        }
+        "LaneTicketReleaseRequest" => json!({ "mutation": mutation, "lane_id": 1 }),
+        "LaneListQuery" => json!({ "project_id": 1 }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -535,6 +599,20 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<WorkspaceObserveRequest>(request).is_err()
         }
         "WorkspaceRetireRequest" => decode_invoke_args::<WorkspaceRetireRequest>(request).is_err(),
+        "LaneCreateRequest" => decode_invoke_args::<LaneCreateRequest>(request).is_err(),
+        "LaneWorkspaceAssignRequest" => {
+            decode_invoke_args::<LaneWorkspaceAssignRequest>(request).is_err()
+        }
+        "LaneWorkspaceReleaseRequest" => {
+            decode_invoke_args::<LaneWorkspaceReleaseRequest>(request).is_err()
+        }
+        "LaneTicketAssignRequest" => {
+            decode_invoke_args::<LaneTicketAssignRequest>(request).is_err()
+        }
+        "LaneTicketReleaseRequest" => {
+            decode_invoke_args::<LaneTicketReleaseRequest>(request).is_err()
+        }
+        "LaneListQuery" => decode_invoke_args::<LaneListQuery>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

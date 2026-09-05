@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::comment::CommentRecord;
 use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
+use crate::lane::LaneRecord;
 use crate::plan::PlanRecord;
 use crate::project::ProjectRecord;
 use crate::spec::SpecRecord;
@@ -203,6 +204,26 @@ define_live_event_catalogue! {
         payload: "WorkspaceRecord",
         description: "A Workspace was retired. The record is preserved, never deleted.",
     },
+    LaneCreated @ "lane.created" => {
+        payload: "LaneRecord",
+        description: "A Lane was created as a durable execution slot.",
+    },
+    LaneWorkspaceAssigned @ "lane.workspace.assigned" => {
+        payload: "LaneRecord",
+        description: "A Workspace was claimed by a Lane.",
+    },
+    LaneWorkspaceReleased @ "lane.workspace.released" => {
+        payload: "LaneRecord",
+        description: "A Lane released its Workspace claim.",
+    },
+    LaneTicketAssigned @ "lane.ticket.assigned" => {
+        payload: "LaneRecord",
+        description: "A Ticket became the active occupant of a Lane.",
+    },
+    LaneTicketReleased @ "lane.ticket.released" => {
+        payload: "LaneRecord",
+        description: "A Lane released its active Ticket.",
+    },
 }
 
 /// The identity carried on ruling live events.
@@ -342,6 +363,26 @@ pub enum LiveEvent {
         sequence: u64,
         payload: WorkspaceRecord,
     },
+    LaneCreated {
+        sequence: u64,
+        payload: LaneRecord,
+    },
+    LaneWorkspaceAssigned {
+        sequence: u64,
+        payload: LaneRecord,
+    },
+    LaneWorkspaceReleased {
+        sequence: u64,
+        payload: LaneRecord,
+    },
+    LaneTicketAssigned {
+        sequence: u64,
+        payload: LaneRecord,
+    },
+    LaneTicketReleased {
+        sequence: u64,
+        payload: LaneRecord,
+    },
 }
 
 impl LiveEvent {
@@ -376,6 +417,11 @@ impl LiveEvent {
             Self::WorkspaceRegistered { .. } => LiveEventName::WorkspaceRegistered,
             Self::WorkspaceObserved { .. } => LiveEventName::WorkspaceObserved,
             Self::WorkspaceRetired { .. } => LiveEventName::WorkspaceRetired,
+            Self::LaneCreated { .. } => LiveEventName::LaneCreated,
+            Self::LaneWorkspaceAssigned { .. } => LiveEventName::LaneWorkspaceAssigned,
+            Self::LaneWorkspaceReleased { .. } => LiveEventName::LaneWorkspaceReleased,
+            Self::LaneTicketAssigned { .. } => LiveEventName::LaneTicketAssigned,
+            Self::LaneTicketReleased { .. } => LiveEventName::LaneTicketReleased,
         }
     }
 
@@ -409,7 +455,12 @@ impl LiveEvent {
             | Self::EvidenceListed { sequence, .. }
             | Self::WorkspaceRegistered { sequence, .. }
             | Self::WorkspaceObserved { sequence, .. }
-            | Self::WorkspaceRetired { sequence, .. } => *sequence,
+            | Self::WorkspaceRetired { sequence, .. }
+            | Self::LaneCreated { sequence, .. }
+            | Self::LaneWorkspaceAssigned { sequence, .. }
+            | Self::LaneWorkspaceReleased { sequence, .. }
+            | Self::LaneTicketAssigned { sequence, .. }
+            | Self::LaneTicketReleased { sequence, .. } => *sequence,
         }
     }
 }
@@ -571,6 +622,26 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::WorkspaceRetired => LiveEvent::WorkspaceRetired {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::LaneCreated => LiveEvent::LaneCreated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::LaneWorkspaceAssigned => LiveEvent::LaneWorkspaceAssigned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::LaneWorkspaceReleased => LiveEvent::LaneWorkspaceReleased {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::LaneTicketAssigned => LiveEvent::LaneTicketAssigned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::LaneTicketReleased => LiveEvent::LaneTicketReleased {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -807,6 +878,36 @@ mod tests {
                 payload: EvidenceListSummary {
                     project_id: 1,
                     count: 2,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn catalogued_lane_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 6,
+            event_type: "lane.workspace.assigned".to_owned(),
+            payload: json!({
+                "id": 1,
+                "project_id": 2,
+                "workspace_id": 3,
+                "ticket_id": null,
+                "version": 2,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::LaneWorkspaceAssigned {
+                sequence: 6,
+                payload: LaneRecord {
+                    id: 1,
+                    project_id: 2,
+                    workspace_id: Some(3),
+                    ticket_id: None,
+                    version: 2,
                 },
             }
         );

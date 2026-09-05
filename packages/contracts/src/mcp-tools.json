@@ -9765,7 +9765,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -9890,7 +9891,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10047,7 +10049,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10120,7 +10123,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10254,7 +10258,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10428,7 +10433,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10514,7 +10520,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10586,7 +10593,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10733,7 +10741,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10827,7 +10836,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -10944,7 +10954,8 @@
             "finding",
             "evidence",
             "comment",
-            "workspace"
+            "workspace",
+            "lane"
           ],
           "type": "string"
         },
@@ -12770,6 +12781,569 @@
         "workspaces"
       ],
       "title": "WorkspaceListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Create a Lane: a durable execution slot holding at most one active Ticket.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `lane.create` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id"
+      ],
+      "title": "LaneCreateRequest",
+      "type": "object"
+    },
+    "name": "lane_create",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket this Lane holds, when one is active.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The Workspace this Lane runs in, when claimed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "version"
+      ],
+      "title": "LaneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Claim a Workspace for a Lane. The Seed Workspace is refused and the refusal recorded.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `lane.workspace.assign` command. The Seed Workspace is refused and the refusal recorded (DR-LW-07).",
+      "properties": {
+        "lane_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "lane_id",
+        "mutation",
+        "workspace_id"
+      ],
+      "title": "LaneWorkspaceAssignRequest",
+      "type": "object"
+    },
+    "name": "lane_workspace_assign",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket this Lane holds, when one is active.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The Workspace this Lane runs in, when claimed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "version"
+      ],
+      "title": "LaneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Release the Workspace a Lane claims. The Workspace record and its health follow.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `lane.workspace.release` command.",
+      "properties": {
+        "lane_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "lane_id",
+        "mutation"
+      ],
+      "title": "LaneWorkspaceReleaseRequest",
+      "type": "object"
+    },
+    "name": "lane_workspace_release",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket this Lane holds, when one is active.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The Workspace this Lane runs in, when claimed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "version"
+      ],
+      "title": "LaneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Hold a Ticket as a Lane's active occupant; a second Ticket is refused.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `lane.ticket.assign` command.",
+      "properties": {
+        "lane_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "lane_id",
+        "mutation",
+        "ticket_id"
+      ],
+      "title": "LaneTicketAssignRequest",
+      "type": "object"
+    },
+    "name": "lane_ticket_assign",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket this Lane holds, when one is active.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The Workspace this Lane runs in, when claimed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "version"
+      ],
+      "title": "LaneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Free a Lane's Ticket slot.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `lane.ticket.release` command.",
+      "properties": {
+        "lane_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "lane_id",
+        "mutation"
+      ],
+      "title": "LaneTicketReleaseRequest",
+      "type": "object"
+    },
+    "name": "lane_ticket_release",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket this Lane holds, when one is active.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The Workspace this Lane runs in, when claimed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "project_id",
+        "version"
+      ],
+      "title": "LaneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Lane of one Project with its Workspace claim and held Ticket.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `lane.list` query.",
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "LaneListQuery",
+      "type": "object"
+    },
+    "name": "lane_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "LaneRecord": {
+          "additionalProperties": false,
+          "description": "The Lane record as every client sees it: a durable execution slot of one Project, holding at most one Workspace claim and at most one active Ticket (DR-LW-01 to DR-LW-03).",
+          "properties": {
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_id": {
+              "description": "The Ticket this Lane holds, when one is active.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "description": "The Workspace this Lane runs in, when claimed.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "project_id",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `lane.list` query.",
+      "properties": {
+        "lanes": {
+          "items": {
+            "$ref": "#/definitions/LaneRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "lanes"
+      ],
+      "title": "LaneListResponse",
       "type": "object"
     }
   }

@@ -12,6 +12,7 @@ pub mod evidence;
 pub mod herdr;
 pub mod idempotency;
 pub mod initiatives;
+pub mod lanes;
 pub mod migrations;
 pub mod paths;
 pub mod plan;
@@ -41,6 +42,7 @@ pub use evidence::{SqliteEvidenceStore, content_hash};
 pub use herdr::SqliteHerdrSettingsStore;
 pub use idempotency::{RetentionPolicy, SqliteIdempotencyStore};
 pub use initiatives::SqliteInitiativeStore;
+pub use lanes::SqliteLaneStore;
 pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,
 };

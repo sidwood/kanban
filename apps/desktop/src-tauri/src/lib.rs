@@ -14,27 +14,98 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
-    DiagnosticsExportResponse, EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse,
-    EvidenceRecord, HealthQuery, HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
-    HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
-    HerdrSettingsGetResponse, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
-    InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
-    InitiativeRenameRequest, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
-    PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
-    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse, PlanListQuery,
-    PlanListResponse, PlanRecord, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest,
-    PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
-    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
-    RulingRecordRequest, RulingSupersedeRequest, SpecContentUpdateRequest, SpecCoverageCheckQuery,
-    SpecCoverageCheckResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
-    SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
-    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
-    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketBugFactsRequest,
-    TicketBugQualifyRequest, TicketCreateRequest, TicketDependenciesQuery,
-    TicketDependenciesResponse, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
-    TicketGetQuery, TicketListQuery, TicketListResponse, TicketReadinessQuery,
-    TicketReadinessResponse, TicketRecord, TimelineQuery, TimelineQueryResponse,
+    DeferralRecordRequest,
+    DeferralSupersedeRequest,
+    DiagnosticsExportQuery,
+    DiagnosticsExportResponse,
+    EvidenceAttachRequest,
+    EvidenceListQuery,
+    EvidenceListResponse,
+    EvidenceRecord,
+    HealthQuery,
+    HealthResponse,
+    HerdrDefaultsGetQuery,
+    HerdrDefaultsGetResponse,
+    HerdrDefaultsUpdateRequest,
+    HerdrGlobalDefaults,
+    HerdrProjectSettings,
+    HerdrSettingsGetQuery,
+    HerdrSettingsGetResponse,
+    HerdrSettingsUpdateRequest,
+    InitiativeArchiveRequest,
+    InitiativeCreateRequest,
+    InitiativeListQuery,
+    InitiativeListResponse,
+    InitiativeRecord,
+    InitiativeRenameRequest,
+    LaneCreateRequest,
+    LaneListQuery,
+    LaneListResponse,
+    LaneRecord,
+    LaneTicketAssignRequest,
+    LaneTicketReleaseRequest,
+    LaneWorkspaceAssignRequest,
+    LaneWorkspaceReleaseRequest,
+    PlanActivateRequest,
+    PlanArchiveRequest,
+    PlanCancelRequest,
+    PlanCompleteRequest,
+    PlanCreateRequest,
+    PlanDiagnosticsQuery,
+    PlanDiagnosticsResponse,
+    PlanEdgeAddRequest,
+    PlanEdgeRemoveRequest,
+    PlanGetQuery,
+    PlanGetResponse,
+    PlanListQuery,
+    PlanListResponse,
+    PlanRecord,
+    PlanReplanRequest,
+    PlanSpecAddRequest,
+    PlanSpecMoveRequest,
+    PlanSpecRemoveRequest,
+    ProjectArchiveRequest,
+    ProjectListQuery,
+    ProjectListResponse,
+    ProjectRecord,
+    ProjectRegisterRequest,
+    RulingListQuery,
+    RulingListResponse,
+    RulingRecord,
+    RulingRecordRequest,
+    RulingSupersedeRequest,
+    SpecContentUpdateRequest,
+    SpecCoverageCheckQuery,
+    SpecCoverageCheckResponse,
+    SpecCreateRequest,
+    SpecExecutionMoveRequest,
+    SpecGetQuery,
+    SpecGetResponse,
+    SpecListQuery,
+    SpecListResponse,
+    SpecPlanJoinRequest,
+    SpecRecord,
+    SpecVersionApproveRequest,
+    SpecVersionGetQuery,
+    SpecVersionRecord,
+    SpecVersionSupersedeRequest,
+    TicketBlockerAddRequest,
+    TicketBlockerRemoveRequest,
+    TicketBugFactsRequest,
+    TicketBugQualifyRequest,
+    TicketCreateRequest,
+    TicketDependenciesQuery,
+    TicketDependenciesResponse,
+    TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest,
+    TicketGetQuery,
+    TicketListQuery,
+    TicketListResponse,
+    TicketReadinessQuery,
+    TicketReadinessResponse,
+    TicketRecord,
+    TimelineQuery,
+    TimelineQueryResponse,
     WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
     WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
@@ -965,6 +1036,98 @@ async fn workspace_list(
     .await
 }
 
+#[tauri::command]
+async fn lane_create(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneCreateRequest,
+) -> Result<LaneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane create", |shell| {
+        forward_command(shell, "lane.create", "created Lane", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lane_workspace_assign(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneWorkspaceAssignRequest,
+) -> Result<LaneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane workspace assign", |shell| {
+        forward_command(
+            shell,
+            "lane.workspace.assign",
+            "assigned Workspace to Lane",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lane_workspace_release(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneWorkspaceReleaseRequest,
+) -> Result<LaneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane workspace release", |shell| {
+        forward_command(
+            shell,
+            "lane.workspace.release",
+            "released Workspace from Lane",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lane_ticket_assign(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneTicketAssignRequest,
+) -> Result<LaneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane ticket assign", |shell| {
+        forward_command(
+            shell,
+            "lane.ticket.assign",
+            "assigned Ticket to Lane",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lane_ticket_release(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneTicketReleaseRequest,
+) -> Result<LaneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane ticket release", |shell| {
+        forward_command(
+            shell,
+            "lane.ticket.release",
+            "released Ticket from Lane",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lane_list(
+    shell: State<'_, Arc<Shell>>,
+    request: LaneListQuery,
+) -> Result<LaneListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "lane list", |shell| {
+        forward_query(shell, "lane.list", "lane list", request)
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
     health_get,
     diagnostics_export,
@@ -1030,6 +1193,12 @@ shell_handlers::shell_handler_catalogue! {
     workspace_observe,
     workspace_retire,
     workspace_list,
+    lane_create,
+    lane_workspace_assign,
+    lane_workspace_release,
+    lane_ticket_assign,
+    lane_ticket_release,
+    lane_list,
 }
 
 /// Build the window, start the core on demand, and supervise the

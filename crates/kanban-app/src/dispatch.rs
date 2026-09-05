@@ -11,7 +11,8 @@ use serde_json::Value;
 use crate::catalog::{OperationDescriptor, OperationKind};
 use crate::events::EventSink;
 use crate::mutation::{
-    CommandEffects, CommandHandler, IdempotencyStore, PostCommitEffect, RecordedOutcome,
+    CommandEffects, CommandHandler, IdempotencyStore, PostCommitEffect, PostDiscardWrite,
+    RecordedOutcome,
 };
 
 /// A catalogued query's handler.
@@ -175,7 +176,19 @@ impl Core {
         // an outcome that cannot be recorded, discards both together.
         let span = self.idempotency.begin()?;
         let announced = PendingEffects::default();
-        let response = handler.apply(&command, &announced)?;
+        let applied = handler.apply(&command, &announced);
+        let response = match applied {
+            Ok(response) => response,
+            Err(error) => {
+                // Dropping the span rolls the rejected mutation back
+                // first; only then may the writes it deferred to its
+                // own discard land, so a refusal record can never
+                // carry anything the command failed to earn.
+                drop(span);
+                announced.discard();
+                return Err(error);
+            }
+        };
         span.commit(
             &command.idempotency_key,
             RecordedOutcome {
@@ -205,10 +218,13 @@ impl Core {
 /// apply, but a span that never commits leaves no mutation to
 /// announce and nothing the effects may start, so the guard releases
 /// the events and runs the effects only once the commit has landed.
+/// Writes deferred to the discard run only after the failed span is
+/// gone, so they can never ride the transaction being rolled back.
 #[derive(Default)]
 struct PendingEffects {
     events: Mutex<Vec<(String, Value)>>,
     effects: Mutex<Vec<PostCommitEffect>>,
+    discarded: Mutex<Vec<PostDiscardWrite>>,
 }
 
 impl EventSink for PendingEffects {
@@ -226,6 +242,13 @@ impl CommandEffects for PendingEffects {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(effect);
+    }
+
+    fn after_discard(&self, write: PostDiscardWrite) {
+        self.discarded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(write);
     }
 }
 
@@ -247,6 +270,25 @@ impl PendingEffects {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
         {
             effect();
+        }
+    }
+
+    /// Run the writes a refused command still owes, in the order they
+    /// were deferred. The caller has already discarded the span, so
+    /// each write opens its own. The events the failed command
+    /// announced are dropped here, never published: a refused command
+    /// has no live surface, only its durable record.
+    fn discard(self) {
+        self.events
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        for write in self
+            .discarded
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            write();
         }
     }
 }

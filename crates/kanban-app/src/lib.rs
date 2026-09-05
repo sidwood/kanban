@@ -15,6 +15,7 @@ pub mod events;
 pub mod evidence;
 pub mod herdr;
 pub mod initiative;
+pub mod lane;
 pub mod mutation;
 pub mod plan;
 pub mod project;
@@ -46,6 +47,7 @@ pub use herdr::{
     HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, NoopHerdrProjectObserver,
 };
 pub use initiative::InitiativeStore;
+pub use lane::LaneStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{

@@ -8,6 +8,7 @@ pub mod dependency;
 pub mod evidence;
 pub mod herdr;
 pub mod initiative;
+pub mod lane;
 pub mod plan;
 pub mod project;
 pub mod ruling;
@@ -38,6 +39,7 @@ pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
+pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
 pub use plan::{
     DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
     SpecNumber, SpecNumberError,

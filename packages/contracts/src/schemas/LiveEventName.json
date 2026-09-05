@@ -29,7 +29,12 @@
     "evidence.listed",
     "workspace.registered",
     "workspace.observed",
-    "workspace.retired"
+    "workspace.retired",
+    "lane.created",
+    "lane.workspace.assigned",
+    "lane.workspace.released",
+    "lane.ticket.assigned",
+    "lane.ticket.released"
   ],
   "title": "LiveEventName",
   "type": "string"

@@ -422,7 +422,7 @@ fn announce(events: &dyn EventSink, event: LiveEventName, workspace: &Workspace)
 }
 
 #[cfg(test)]
-mod testing {
+pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
@@ -440,7 +440,7 @@ mod testing {
     use crate::timeline::TimelineEnvelope;
 
     #[derive(Default)]
-    pub(super) struct MemoryWorkspaceStore {
+    pub(crate) struct MemoryWorkspaceStore {
         state: Mutex<MemoryState>,
     }
 
@@ -452,12 +452,12 @@ mod testing {
     }
 
     impl MemoryWorkspaceStore {
-        pub(super) fn snapshot(&self) -> (Vec<Workspace>, Vec<TimelineEnvelope>) {
+        pub(crate) fn snapshot(&self) -> (Vec<Workspace>, Vec<TimelineEnvelope>) {
             let state = self.state.lock().expect("the memory store lock is sound");
             (state.workspaces.clone(), state.timeline.clone())
         }
 
-        pub(super) fn seed(&self, workspace: Workspace) {
+        pub(crate) fn seed(&self, workspace: Workspace) {
             self.state
                 .lock()
                 .expect("the memory store lock is sound")
@@ -522,8 +522,8 @@ mod testing {
 
     /// A git observer the tests steer with fixed snapshots per path.
     #[derive(Default)]
-    pub(super) struct ScriptedObserver {
-        pub(super) snapshots: std::collections::HashMap<String, WorkspaceGitSnapshot>,
+    pub(crate) struct ScriptedObserver {
+        pub(crate) snapshots: std::collections::HashMap<String, WorkspaceGitSnapshot>,
     }
 
     impl WorkspaceGitObserver for ScriptedObserver {

@@ -12,7 +12,8 @@
     "finding",
     "evidence",
     "comment",
-    "workspace"
+    "workspace",
+    "lane"
   ],
   "title": "TimelineEntityKind",
   "type": "string"

@@ -78,6 +78,12 @@ describe('generated client', () => {
       'workspace.observe': 'workspace_observe',
       'workspace.retire': 'workspace_retire',
       'workspace.list': 'workspace_list',
+      'lane.create': 'lane_create',
+      'lane.workspace.assign': 'lane_workspace_assign',
+      'lane.workspace.release': 'lane_workspace_release',
+      'lane.ticket.assign': 'lane_ticket_assign',
+      'lane.ticket.release': 'lane_ticket_release',
+      'lane.list': 'lane_list',
     })
   })
 
@@ -147,6 +153,12 @@ describe('generated client', () => {
       'workspace.observe',
       'workspace.retire',
       'workspace.list',
+      'lane.create',
+      'lane.workspace.assign',
+      'lane.workspace.release',
+      'lane.ticket.assign',
+      'lane.ticket.release',
+      'lane.list',
     ])
   })
 
@@ -180,6 +192,11 @@ describe('generated client', () => {
       'workspace.registered',
       'workspace.observed',
       'workspace.retired',
+      'lane.created',
+      'lane.workspace.assigned',
+      'lane.workspace.released',
+      'lane.ticket.assigned',
+      'lane.ticket.released',
     ])
   })
 

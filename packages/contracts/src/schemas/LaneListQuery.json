@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `lane.list` query.",
+  "properties": {
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "LaneListQuery",
+  "type": "object"
+}

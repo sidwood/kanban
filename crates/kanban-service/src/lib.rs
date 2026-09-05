@@ -23,8 +23,9 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteDependencyStore, SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore,
-    SqliteInitiativeStore, SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore,
-    SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore, SqliteProjectStore, SqliteRulingStore,
+    SqliteSpecStore, SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook,
+    load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -128,6 +129,7 @@ fn assemble_core(
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
     let plan_store = Arc::new(SqlitePlanStore::new(&database));
     let workspace_store = Arc::new(SqliteWorkspaceStore::new(&database));
+    let lane_store = Arc::new(SqliteLaneStore::new(&database));
     let spec_store = Arc::new(SqliteSpecStore::new(&database));
     let ticket_store = Arc::new(SqliteTicketStore::new(&database));
     let dependency_store = Arc::new(SqliteDependencyStore::new(&database));
@@ -157,7 +159,7 @@ fn assemble_core(
         herdr.clone(),
     )?;
     core.register_workspaces(
-        workspace_store,
+        workspace_store.clone(),
         project_store.clone(),
         Arc::new(LocalWorkspaceGitObserver),
     )?;
@@ -168,6 +170,12 @@ fn assemble_core(
         projects.clone(),
         spec_store,
         evidence_store.clone(),
+    )?;
+    core.register_lanes(
+        lane_store,
+        projects.clone(),
+        workspace_store,
+        ticket_store.clone(),
     )?;
     core.register_dependencies(dependency_store, ticket_store, projects)?;
     core.register_comments(comment_store, project_store.clone())?;

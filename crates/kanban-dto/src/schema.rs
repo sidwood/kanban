@@ -31,6 +31,10 @@ use crate::initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
 };
+use crate::lane::{
+    LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
+    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
+};
 use crate::mutation::MutationContext;
 use crate::plan::{
     PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
@@ -344,5 +348,25 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(WorkspaceRetireRequest),
         ),
         ("WorkspaceReuseDto", schema_for!(WorkspaceReuseDto)),
+        ("LaneRecord", schema_for!(LaneRecord)),
+        ("LaneCreateRequest", schema_for!(LaneCreateRequest)),
+        (
+            "LaneWorkspaceAssignRequest",
+            schema_for!(LaneWorkspaceAssignRequest),
+        ),
+        (
+            "LaneWorkspaceReleaseRequest",
+            schema_for!(LaneWorkspaceReleaseRequest),
+        ),
+        (
+            "LaneTicketAssignRequest",
+            schema_for!(LaneTicketAssignRequest),
+        ),
+        (
+            "LaneTicketReleaseRequest",
+            schema_for!(LaneTicketReleaseRequest),
+        ),
+        ("LaneListQuery", schema_for!(LaneListQuery)),
+        ("LaneListResponse", schema_for!(LaneListResponse)),
     ]
 }

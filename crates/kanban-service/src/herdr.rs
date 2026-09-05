@@ -981,7 +981,7 @@ mod tests {
         let answer = client.query_with(
             "timeline.query",
             json!({
-                "scope": { "project": "1" },
+                "scope": { "project": 1 },
                 "kinds": ["telemetry"],
             }),
         );

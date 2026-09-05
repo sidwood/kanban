@@ -27,7 +27,8 @@
     "evidence.attached",
     "evidence.listed",
     "workspace.registered",
-    "workspace.observed"
+    "workspace.observed",
+    "workspace.retired"
   ],
   "title": "LiveEventName",
   "type": "string"

@@ -23,7 +23,7 @@ use kanban_dto::{
     SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
     TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
-    WorkspaceObserveRequest, WorkspaceRegisterRequest,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -264,6 +264,10 @@ fn sample_request(schema: &str) -> Value {
             "path": "/workspaces/kanban.seed",
         }),
         "WorkspaceObserveRequest" => json!({
+            "mutation": mutation,
+            "workspace_id": 1,
+        }),
+        "WorkspaceRetireRequest" => json!({
             "mutation": mutation,
             "workspace_id": 1,
         }),
@@ -538,6 +542,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "WorkspaceObserveRequest" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceObserveRequest>,
+        >(envelope)
+        .is_err(),
+        "WorkspaceRetireRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceRetireRequest>,
         >(envelope)
         .is_err(),
         "WorkspaceListQuery" => serde_json::from_value::<

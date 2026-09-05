@@ -117,6 +117,7 @@ mod tests {
             kanban_dto::LiveEventName::EvidenceListed,
             kanban_dto::LiveEventName::WorkspaceRegistered,
             kanban_dto::LiveEventName::WorkspaceObserved,
+            kanban_dto::LiveEventName::WorkspaceRetired,
         ]
         .into_iter()
         .map(kanban_dto::LiveEventName::as_str)

@@ -69,6 +69,16 @@ pub struct WorkspaceObserveRequest {
     pub workspace_id: u64,
 }
 
+/// Request payload for the `workspace.retire` command. Retirement is
+/// the explicit operator action that ends reuse; the record is
+/// preserved, never deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRetireRequest {
+    pub mutation: super::MutationContext,
+    pub workspace_id: u64,
+}
+
 /// Request payload for the `workspace.list` query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -89,7 +99,7 @@ mod tests {
 
     use super::{
         WorkspaceHealthDto, WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRecord,
-        WorkspaceRegisterRequest,
+        WorkspaceRegisterRequest, WorkspaceRetireRequest,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -125,6 +135,20 @@ mod tests {
         });
 
         let error = serde_json::from_value::<WorkspaceObserveRequest>(payload)
+            .expect_err("unknown fields are rejected");
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn workspace_retire_request_rejects_unknown_fields() {
+        let payload = json!({
+            "mutation": context(),
+            "workspace_id": 1,
+            "reason": "stale",
+        });
+
+        let error = serde_json::from_value::<WorkspaceRetireRequest>(payload)
             .expect_err("unknown fields are rejected");
 
         assert!(error.to_string().contains("unknown field"));

@@ -76,6 +76,7 @@ const COMMAND_FOR_OPERATION = {
   'herdr.defaults.update': 'herdr_defaults_update',
   'workspace.register': 'workspace_register',
   'workspace.observe': 'workspace_observe',
+  'workspace.retire': 'workspace_retire',
   'workspace.list': 'workspace_list',
 } as const satisfies Record<KanbanOperationName, string>
 

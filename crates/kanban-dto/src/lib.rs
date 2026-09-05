@@ -74,7 +74,7 @@ pub use timeline::{
 };
 pub use workspace::{
     WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 
 #[cfg(test)]
@@ -224,6 +224,7 @@ mod tests {
                 "WorkspaceObservationDto",
                 "WorkspaceRecord",
                 "WorkspaceRegisterRequest",
+                "WorkspaceRetireRequest",
             ]
         );
     }

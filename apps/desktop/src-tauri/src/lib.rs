@@ -30,7 +30,7 @@ use kanban_dto::{
     SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
     TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -692,6 +692,18 @@ async fn herdr_defaults_update(
 }
 
 #[tauri::command]
+async fn workspace_retire(
+    shell: State<'_, Arc<Shell>>,
+    request: WorkspaceRetireRequest,
+) -> Result<WorkspaceRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "workspace retire", |shell| {
+        forward_command(shell, "workspace.retire", "retired Workspace", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn workspace_list(
     shell: State<'_, Arc<Shell>>,
     request: WorkspaceListQuery,
@@ -752,6 +764,7 @@ shell_handlers::shell_handler_catalogue! {
     herdr_defaults_update,
     workspace_register,
     workspace_observe,
+    workspace_retire,
     workspace_list,
 }
 

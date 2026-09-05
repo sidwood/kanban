@@ -140,6 +140,11 @@ pub fn exposed_events() -> &'static [EventDescriptor] {
             payload_schema: "WorkspaceRecord",
             description: "A Workspace was observed and its health updated.",
         },
+        EventDescriptor {
+            name: "workspace.retired",
+            payload_schema: "WorkspaceRecord",
+            description: "A Workspace was retired. The record is preserved, never deleted.",
+        },
     ]
 }
 

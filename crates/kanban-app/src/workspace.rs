@@ -8,7 +8,7 @@ use kanban_domain::{ProjectId, Workspace, WorkspaceHealth, WorkspaceId, Workspac
 use kanban_dto::{
     ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceHealthDto,
     WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde_json::{Value, json};
 
@@ -133,6 +133,12 @@ impl Core {
                 git,
             }),
         )?;
+        self.register_command(
+            "workspace.retire",
+            Arc::new(RetireWorkspace {
+                store: workspaces.clone(),
+            }),
+        )?;
         self.register_query(
             "workspace.list",
             Arc::new(ListWorkspaces { store: workspaces }),
@@ -237,6 +243,54 @@ impl CommandHandler for ObserveWorkspace {
         };
         self.store.save(&workspace, envelope)?;
         announce(events, event_descriptor("workspace.observed"), &workspace);
+        encode_record(&workspace)
+    }
+}
+
+/// Retirement is the explicit operator action that ends reuse. No
+/// command or automated path deletes a Workspace (DR-LW-11); the
+/// record and every observed fact survive retirement.
+struct RetireWorkspace {
+    store: Arc<dyn WorkspaceStore>,
+}
+
+impl CommandHandler for RetireWorkspace {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<WorkspaceRetireRequest>(payload)?;
+        ParsedCommand::lift("workspace", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: WorkspaceRetireRequest = parse_payload(&command.payload)?;
+        let workspace = load_workspace(&self.store, request.workspace_id)?;
+        Ok(workspace.version())
+    }
+
+    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+        let request: WorkspaceRetireRequest = parse_payload(&command.payload)?;
+        let mut workspace = load_workspace(&self.store, request.workspace_id)?;
+        let project_id = workspace.registration().project_id();
+        let health_change = workspace
+            .retire()
+            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        let envelope = if let Some((from, to)) = health_change {
+            health_transition(
+                project_id,
+                workspace.id(),
+                from,
+                to,
+                observation_facts(&workspace),
+            )?
+        } else {
+            transition(
+                project_id,
+                workspace.id(),
+                "retired",
+                observation_facts(&workspace),
+            )?
+        };
+        self.store.save(&workspace, envelope)?;
+        announce(events, event_descriptor("workspace.retired"), &workspace);
         encode_record(&workspace)
     }
 }
@@ -515,6 +569,13 @@ mod testing {
             "workspace_id": workspace_id,
         })
     }
+
+    pub(super) fn retire(workspace_id: u64, key: &str, version: u64) -> Value {
+        json!({
+            "mutation": { "optimistic_version": version, "idempotency_key": key },
+            "workspace_id": workspace_id,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -780,5 +841,203 @@ mod workspace_observe {
 
         assert_eq!(error.code, ErrorCode::StaleVersion);
         assert_eq!(error.current_version, Some(2));
+    }
+}
+
+#[cfg(test)]
+mod workspace_retire {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use kanban_dto::{
+        ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
+    };
+    use serde_json::json;
+
+    use super::WorkspaceGitSnapshot;
+    use super::testing::{ScriptedObserver, harness, observe, register, retire, stored_project};
+
+    fn clean_observer() -> Arc<ScriptedObserver> {
+        Arc::new(ScriptedObserver {
+            snapshots: HashMap::from([(
+                "/workspaces/kanban.feature".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    branch: Some("feature".to_owned()),
+                    head: Some("abc".to_owned()),
+                    working_tree_clean: true,
+                },
+            )]),
+        })
+    }
+
+    fn registered_and_observed(harness: &super::testing::Harness) -> serde_json::Value {
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.feature", "key-1"),
+            )
+            .expect("the workspace registers");
+        harness
+            .core
+            .command("workspace.observe", &observe(1, "key-2", 1))
+            .expect("the observation applies")
+    }
+
+    #[test]
+    fn retiring_moves_health_to_retired_and_appends_a_timeline_transition() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+        registered_and_observed(&harness);
+
+        let response = harness
+            .core
+            .command("workspace.retire", &retire(1, "key-3", 2))
+            .expect("the retirement applies");
+
+        assert_eq!(response["health"], json!("retired"));
+        let (_, timeline) = harness.workspaces.snapshot();
+        let retirement = timeline
+            .iter()
+            .find(|row| {
+                row.detail().get("action") == Some(&json!("health_changed"))
+                    && row.detail().get("to") == Some(&json!("retired"))
+            })
+            .expect("retirement appends a health transition");
+        assert_eq!(
+            retirement.detail().get("from"),
+            Some(&json!("available")),
+            "the transition names the state it left"
+        );
+        assert_eq!(retirement.kind(), TimelineEventKind::Transition);
+        assert_eq!(
+            retirement.entity(),
+            Some(&TimelineEntityRef {
+                kind: TimelineEntityKind::Workspace,
+                id: "1".to_owned(),
+            })
+        );
+        assert!(matches!(retirement.scope(), TimelineScope::Project(_)));
+    }
+
+    #[test]
+    fn retirement_preserves_the_record_in_the_project_listing() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+        registered_and_observed(&harness);
+
+        harness
+            .core
+            .command("workspace.retire", &retire(1, "key-3", 2))
+            .expect("the retirement applies");
+
+        let listing = harness
+            .core
+            .query("workspace.list", &json!({ "project_id": 1 }))
+            .expect("the listing serves");
+        assert_eq!(
+            listing["workspaces"]
+                .as_array()
+                .expect("the listing is an array")
+                .len(),
+            1,
+            "a retired Workspace stays listed; retirement never deletes"
+        );
+        assert_eq!(listing["workspaces"][0]["health"], json!("retired"));
+        assert_eq!(
+            listing["workspaces"][0]["path"],
+            json!("/workspaces/kanban.feature")
+        );
+
+        let (stored, _) = harness.workspaces.snapshot();
+        assert!(
+            stored.iter().any(|row| row.is_retired()),
+            "the stored record survives retirement"
+        );
+    }
+
+    #[test]
+    fn retiring_twice_is_refused() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+        registered_and_observed(&harness);
+        harness
+            .core
+            .command("workspace.retire", &retire(1, "key-3", 2))
+            .expect("the first retirement applies");
+
+        let error = harness
+            .core
+            .command("workspace.retire", &retire(1, "key-4", 3))
+            .expect_err("the second retirement is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(error.message.contains("already retired"));
+    }
+
+    #[test]
+    fn retiring_an_unknown_workspace_is_not_found() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+
+        let error = harness
+            .core
+            .command("workspace.retire", &retire(9, "key-1", 1))
+            .expect_err("the unknown Workspace is refused");
+
+        assert_eq!(error.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn retiring_with_a_stale_version_is_rejected() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+        registered_and_observed(&harness);
+
+        let error = harness
+            .core
+            .command("workspace.retire", &retire(1, "key-3", 1))
+            .expect_err("the stale version is refused");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        assert_eq!(error.current_version, Some(2));
+    }
+
+    #[test]
+    fn no_exposed_operation_deletes_a_workspace() {
+        let destructive = ["delete", "remove", "unregister", "destroy", "drop", "purge"];
+        for operation in crate::catalog::exposed_operations() {
+            if let Some(suffix) = operation.name.strip_prefix("workspace.") {
+                assert!(
+                    !destructive.contains(&suffix),
+                    "`{}` must not exist: Workspaces are retired, never deleted",
+                    operation.name
+                );
+            }
+        }
+        assert!(
+            crate::catalog::exposed_operations()
+                .iter()
+                .any(|operation| operation.name == "workspace.retire"),
+            "retirement is the explicit operator action that ends a Workspace"
+        );
+    }
+
+    #[test]
+    fn dispatching_a_fabricated_delete_is_refused() {
+        let harness = harness(clean_observer());
+        harness.projects.seed(stored_project());
+        registered_and_observed(&harness);
+
+        let error = harness
+            .core
+            .command("workspace.delete", &retire(1, "key-9", 2))
+            .expect_err("no destructive operation is registered");
+
+        assert_eq!(error.code, ErrorCode::NotFound);
+        let (stored, _) = harness.workspaces.snapshot();
+        assert_eq!(stored.len(), 1, "nothing was removed");
     }
 }

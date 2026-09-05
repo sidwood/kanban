@@ -53,7 +53,7 @@ use crate::timeline::{
 };
 use crate::workspace::{
     WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 
 /// Every DTO schema exported to `packages/contracts`.
@@ -219,6 +219,10 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         (
             "WorkspaceRegisterRequest",
             schema_for!(WorkspaceRegisterRequest),
+        ),
+        (
+            "WorkspaceRetireRequest",
+            schema_for!(WorkspaceRetireRequest),
         ),
     ]
 }

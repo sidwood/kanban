@@ -390,6 +390,13 @@ define_exposed_catalogue! {
         mcp: "workspace_observe",
         description: "Observe git state for a Workspace without mutating the clone.",
     },
+    "workspace.retire" => {
+        kind: Command,
+        request: "WorkspaceRetireRequest",
+        response: "WorkspaceRecord",
+        mcp: "workspace_retire",
+        description: "Retire a Workspace. Retirement is the explicit operator action; the record is preserved, never deleted.",
+    },
     "workspace.list" => {
         kind: Query,
         request: "WorkspaceListQuery",

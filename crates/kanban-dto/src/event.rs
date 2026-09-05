@@ -68,6 +68,8 @@ pub enum LiveEventName {
     WorkspaceRegistered,
     #[serde(rename = "workspace.observed")]
     WorkspaceObserved,
+    #[serde(rename = "workspace.retired")]
+    WorkspaceRetired,
 }
 
 impl LiveEventName {
@@ -100,6 +102,7 @@ impl LiveEventName {
             Self::EvidenceListed => "evidence.listed",
             Self::WorkspaceRegistered => "workspace.registered",
             Self::WorkspaceObserved => "workspace.observed",
+            Self::WorkspaceRetired => "workspace.retired",
         }
     }
 
@@ -132,6 +135,7 @@ impl LiveEventName {
             "evidence.listed" => Ok(Self::EvidenceListed),
             "workspace.registered" => Ok(Self::WorkspaceRegistered),
             "workspace.observed" => Ok(Self::WorkspaceObserved),
+            "workspace.retired" => Ok(Self::WorkspaceRetired),
             other => Err(UnknownLiveEventError {
                 event_type: other.to_owned(),
             }),
@@ -268,6 +272,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: WorkspaceRecord,
     },
+    WorkspaceRetired {
+        sequence: u64,
+        payload: WorkspaceRecord,
+    },
 }
 
 impl LiveEvent {
@@ -300,6 +308,7 @@ impl LiveEvent {
             Self::EvidenceListed { .. } => LiveEventName::EvidenceListed,
             Self::WorkspaceRegistered { .. } => LiveEventName::WorkspaceRegistered,
             Self::WorkspaceObserved { .. } => LiveEventName::WorkspaceObserved,
+            Self::WorkspaceRetired { .. } => LiveEventName::WorkspaceRetired,
         }
     }
 
@@ -331,7 +340,8 @@ impl LiveEvent {
             | Self::EvidenceAttached { sequence, .. }
             | Self::EvidenceListed { sequence, .. }
             | Self::WorkspaceRegistered { sequence, .. }
-            | Self::WorkspaceObserved { sequence, .. } => *sequence,
+            | Self::WorkspaceObserved { sequence, .. }
+            | Self::WorkspaceRetired { sequence, .. } => *sequence,
         }
     }
 }
@@ -485,6 +495,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::WorkspaceObserved => LiveEvent::WorkspaceObserved {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::WorkspaceRetired => LiveEvent::WorkspaceRetired {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

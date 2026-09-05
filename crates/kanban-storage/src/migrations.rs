@@ -144,6 +144,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "supersession unique",
         sql: include_str!("../migrations/0018_supersession_unique.sql"),
     },
+    Migration {
+        version: 19,
+        name: "workspace detached head",
+        sql: include_str!("../migrations/0019_workspace_detached_head.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -360,7 +365,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
                 ]
             }
         );
@@ -384,7 +389,7 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
             ]
         );
         for table in [
@@ -458,7 +463,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 18, "one event per applied migration");
+        assert_eq!(events.len(), 19, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -549,6 +554,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[17].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 18, "name": "supersession unique" })
         );
+        assert_eq!(events[18].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[18].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 19, "name": "workspace detached head" })
+        );
     }
 
     #[test]
@@ -573,7 +583,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18]
+                applied: vec![13, 14, 15, 16, 17, 18, 19]
             }
         );
         let present: i64 = database
@@ -602,6 +612,70 @@ mod tests {
     }
 
     #[test]
+    fn migration_0019_rewrites_workspace_detached_head_rows() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 18).expect("the pre-0019 schema applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_workspace, herdr_session, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban.seed', 'kanban-main', 0, 1)",
+                [],
+            )
+            .expect("the fixture Project lands");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO workspaces (project_id, path, health, branch, head,
+                                         working_tree_clean, version)
+                 VALUES (1, '/workspaces/clone.detached', 'available', 'HEAD',
+                         'abc123', 1, 4);
+                 INSERT INTO workspaces (project_id, path, health, branch, head,
+                                         working_tree_clean, version)
+                 VALUES (1, '/workspaces/clone.attached', 'available', 'main',
+                         'abc123', 1, 4);",
+            )
+            .expect("the pre-upgrade Workspaces land");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the upgrade applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![19] });
+        let rewritten = database
+            .connection()
+            .query_row(
+                "SELECT branch, detached FROM workspaces
+                 WHERE path = '/workspaces/clone.detached'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("the detached row is readable");
+        assert_eq!(
+            rewritten,
+            (None, 1),
+            "a recorded `HEAD` branch becomes the detached state"
+        );
+        let attached = database
+            .connection()
+            .query_row(
+                "SELECT branch, detached FROM workspaces
+                 WHERE path = '/workspaces/clone.attached'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("the attached row is readable");
+        assert_eq!(
+            attached,
+            (Some("main".to_owned()), 0),
+            "an attached branch name is untouched"
+        );
+    }
+
+    #[test]
     fn migrate_from_version_thirteen_adds_the_unlanded_guard() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 13).expect("the older schema applies");
@@ -626,7 +700,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18]
+                applied: vec![14, 15, 16, 17, 18, 19]
             }
         );
         let after: i64 = database
@@ -692,7 +766,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18]
+                applied: vec![15, 16, 17, 18, 19]
             }
         );
         let conn = database.connection();
@@ -941,6 +1015,10 @@ mod tests {
                     version: 18,
                     name: "supersession unique",
                 },
+                PendingMigration {
+                    version: 19,
+                    name: "workspace detached head",
+                },
             ]]
         );
     }
@@ -981,9 +1059,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0018 apply");
+            .expect("migrations 0010 through 0019 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(
@@ -1053,7 +1131,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0011 applies");
 
-        assert_eq!(report.applied, vec![11, 12, 13, 14, 15, 16, 17, 18]);
+        assert_eq!(report.applied, vec![11, 12, 13, 14, 15, 16, 17, 18, 19]);
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)
              VALUES ('kan', 'Reconsider', 1)",

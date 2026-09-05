@@ -12,8 +12,8 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 const WORKSPACE_COLUMNS: &str = "id, project_id, path, is_seed, retired, lane_id, health, \
-                                 repository_identity, branch, head, working_tree_clean, \
-                                 unique_unlanded_commits, version";
+                                 repository_identity, branch, detached, head, \
+                                 working_tree_clean, unique_unlanded_commits, version";
 
 /// The Workspace port over the authoritative database.
 pub struct SqliteWorkspaceStore {
@@ -92,11 +92,12 @@ impl WorkspaceStore for SqliteWorkspaceStore {
                      health = ?4,
                      repository_identity = ?5,
                      branch = ?6,
-                     head = ?7,
-                     working_tree_clean = ?8,
-                     unique_unlanded_commits = ?9,
-                     version = ?10
-                 WHERE id = ?1 AND version = ?11",
+                     detached = ?7,
+                     head = ?8,
+                     working_tree_clean = ?9,
+                     unique_unlanded_commits = ?10,
+                     version = ?11
+                 WHERE id = ?1 AND version = ?12",
                 params![
                     workspace.id().value() as i64,
                     workspace.is_retired(),
@@ -104,6 +105,7 @@ impl WorkspaceStore for SqliteWorkspaceStore {
                     workspace.health().as_str(),
                     observation.repository_identity(),
                     observation.branch(),
+                    i64::from(observation.checkout() == Some(&WorkspaceCheckout::Detached)),
                     observation.head(),
                     observation.working_tree_clean().map(|clean| clean as i64),
                     observation
@@ -185,47 +187,49 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
         rusqlite::Error::InvalidColumnType(6, "health".to_owned(), rusqlite::types::Type::Text)
     })?;
     let lane_id = row.get::<_, Option<i64>>(5)?.map(|id| id as u64);
-    let working_tree_clean = match row.get::<_, Option<i64>>(10)? {
-        Some(1) => Some(true),
-        Some(0) => Some(false),
-        None => None,
-        _ => {
-            return Err(rusqlite::Error::InvalidColumnType(
-                10,
-                "working_tree_clean".to_owned(),
-                rusqlite::types::Type::Integer,
-            ));
-        }
-    };
-    let unique_unlanded_commits = match row.get::<_, Option<i64>>(11)? {
+    let working_tree_clean = match row.get::<_, Option<i64>>(11)? {
         Some(1) => Some(true),
         Some(0) => Some(false),
         None => None,
         _ => {
             return Err(rusqlite::Error::InvalidColumnType(
                 11,
+                "working_tree_clean".to_owned(),
+                rusqlite::types::Type::Integer,
+            ));
+        }
+    };
+    let unique_unlanded_commits = match row.get::<_, Option<i64>>(12)? {
+        Some(1) => Some(true),
+        Some(0) => Some(false),
+        None => None,
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                12,
                 "unique_unlanded_commits".to_owned(),
                 rusqlite::types::Type::Integer,
             ));
         }
     };
-    // A `branch` column recorded before KAN-T98 may still hold the
-    // literal `HEAD`; interpreting it here keeps reads truthful until
-    // migration 0019 rewrites the row.
-    let checkout = row
-        .get::<_, Option<String>>(8)?
-        .map(|branch| WorkspaceCheckout::from_abbrev_ref(&branch));
+    // The detached flag is the durable marker of the closed state;
+    // `branch` carries a name only when HEAD is attached (KAN-T98).
+    let checkout = if row.get::<_, i64>(9)? == 1 {
+        Some(WorkspaceCheckout::Detached)
+    } else {
+        row.get::<_, Option<String>>(8)?
+            .map(WorkspaceCheckout::Branch)
+    };
     let mut observation = WorkspaceObservation::empty();
     if row.get::<_, Option<String>>(7)?.is_some()
         || checkout.is_some()
-        || row.get::<_, Option<String>>(9)?.is_some()
+        || row.get::<_, Option<String>>(10)?.is_some()
         || working_tree_clean.is_some()
         || unique_unlanded_commits.is_some()
     {
         observation.apply_git_read(
             row.get(7)?,
             checkout,
-            row.get(9)?,
+            row.get(10)?,
             working_tree_clean.unwrap_or(true),
             unique_unlanded_commits,
             lane_id,
@@ -248,7 +252,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
         lane_id,
         health,
         observation,
-        row.get::<_, i64>(12)? as u64,
+        row.get::<_, i64>(13)? as u64,
     ))
 }
 
@@ -258,4 +262,154 @@ fn append_timeline(span: &WriteSpan<'_>, envelope: &TimelineEnvelope) -> Result<
 
 fn internal(error: impl std::error::Error) -> ApiError {
     ApiError::internal(&error.to_string())
+}
+
+#[cfg(test)]
+mod workspace_store {
+    use kanban_app::{TimelineEnvelope, WorkspaceStore};
+    use kanban_domain::{
+        ProjectId, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId,
+        WorkspaceRegistration,
+    };
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use serde_json::json;
+
+    use super::SqliteWorkspaceStore;
+    use crate::db::Database;
+    use crate::migrations::AllowAllMigrations;
+    use crate::test_support::scratch_database;
+
+    fn store() -> (tempfile::TempDir, Database, SqliteWorkspaceStore) {
+        let (dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_workspace, herdr_session, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban.seed', 'kanban-main', 0, 1)",
+                [],
+            )
+            .expect("the fixture Project lands");
+        let store = SqliteWorkspaceStore::new(&database);
+        (dir, database, store)
+    }
+
+    fn registration(path: &str) -> WorkspaceRegistration {
+        WorkspaceRegistration::new(ProjectId::new(1), path, false)
+            .expect("the fixture registration validates")
+    }
+
+    /// The envelope the application layer builds for one Workspace
+    /// transition, as the store receives it.
+    fn transition(id: WorkspaceId, action: &str) -> TimelineEnvelope {
+        TimelineEnvelope::project(
+            1,
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Workspace,
+                id: id.value().to_string(),
+            }),
+            json!({ "action": action, "id": id.value() }),
+        )
+    }
+
+    fn observe_and_save(
+        store: &SqliteWorkspaceStore,
+        workspace: &mut Workspace,
+        checkout: Option<WorkspaceCheckout>,
+    ) {
+        workspace
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                checkout,
+                Some("abc123".to_owned()),
+                true,
+                Some(false),
+            )
+            .expect("the observation applies");
+        store
+            .save(workspace, transition(workspace.id(), "observed"))
+            .expect("the observation persists");
+    }
+
+    fn raw_row(database: &Database, id: WorkspaceId) -> (Option<String>, Option<i64>) {
+        database
+            .connection()
+            .query_row(
+                "SELECT branch, detached FROM workspaces WHERE id = ?1",
+                [id.value() as i64],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the SQLite row is readable")
+    }
+
+    #[test]
+    fn a_detached_checkout_round_trips_as_the_closed_state() {
+        let (_dir, database, store) = store();
+        let mut workspace = store
+            .create(&registration("/workspaces/core.detached"), &|id| {
+                transition(id, "registered")
+            })
+            .expect("the workspace registers");
+
+        observe_and_save(&store, &mut workspace, Some(WorkspaceCheckout::Detached));
+
+        assert_eq!(
+            workspace.observation().checkout(),
+            Some(&WorkspaceCheckout::Detached)
+        );
+        assert_eq!(workspace.observation().branch(), None);
+        let restored = store
+            .find(workspace.id())
+            .expect("the workspace loads")
+            .expect("the workspace exists");
+        assert_eq!(
+            restored.observation().checkout(),
+            Some(&WorkspaceCheckout::Detached),
+            "a detached checkout must survive persistence as the closed state"
+        );
+        assert_eq!(restored.observation().branch(), None);
+        assert_eq!(restored.health(), WorkspaceHealth::Available);
+        let (branch, detached) = raw_row(&database, workspace.id());
+        assert_eq!(
+            branch, None,
+            "no branch name may be recorded for a detached HEAD"
+        );
+        assert_eq!(detached, Some(1), "the detached flag is the durable marker");
+    }
+
+    #[test]
+    fn an_attached_checkout_round_trips_its_branch_name() {
+        let (_dir, database, store) = store();
+        let mut workspace = store
+            .create(&registration("/workspaces/core.attached"), &|id| {
+                transition(id, "registered")
+            })
+            .expect("the workspace registers");
+
+        observe_and_save(
+            &store,
+            &mut workspace,
+            Some(WorkspaceCheckout::Branch("main".to_owned())),
+        );
+
+        let restored = store
+            .find(workspace.id())
+            .expect("the workspace loads")
+            .expect("the workspace exists");
+        assert_eq!(
+            restored.observation().checkout(),
+            Some(&WorkspaceCheckout::Branch("main".to_owned()))
+        );
+        assert_eq!(restored.observation().branch(), Some("main"));
+        let (branch, detached) = raw_row(&database, workspace.id());
+        assert_eq!(branch.as_deref(), Some("main"));
+        assert_eq!(detached, Some(0));
+    }
 }

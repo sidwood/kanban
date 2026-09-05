@@ -807,6 +807,7 @@ mod workspace_observe {
                     checkout: Some(kanban_domain::WorkspaceCheckout::Detached),
                     head: Some("abc123".to_owned()),
                     working_tree_clean: true,
+                    unique_unlanded_commits: Some(false),
                 },
             )]),
         }));
@@ -872,7 +873,9 @@ mod workspace_observe {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(kanban_domain::WorkspaceCheckout::Branch(
+                        "feature".to_owned(),
+                    )),
                     head: Some("def456".to_owned()),
                     working_tree_clean: true,
                     unique_unlanded_commits: Some(true),
@@ -917,7 +920,9 @@ mod workspace_observe {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(kanban_domain::WorkspaceCheckout::Branch(
+                        "feature".to_owned(),
+                    )),
                     head: Some("abc123".to_owned()),
                     working_tree_clean: true,
                     unique_unlanded_commits: Some(false),
@@ -1057,7 +1062,9 @@ mod workspace_retire {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(kanban_domain::WorkspaceCheckout::Branch(
+                        "feature".to_owned(),
+                    )),
                     head: Some("abc".to_owned()),
                     working_tree_clean: true,
                     unique_unlanded_commits: Some(false),

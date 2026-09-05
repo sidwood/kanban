@@ -295,7 +295,10 @@ mod tests {
             snapshot.present,
             "sanctioned branch clones must be observed"
         );
-        assert_eq!(snapshot.branch, Some("main".to_owned()));
+        assert_eq!(
+            snapshot.checkout,
+            Some(WorkspaceCheckout::Branch("main".to_owned()))
+        );
         assert!(snapshot.head.is_some());
         assert!(snapshot.working_tree_clean);
         assert_eq!(
@@ -625,7 +628,10 @@ mod tests {
             snapshot.present,
             "linked worktrees share the repository's common Git directory"
         );
-        assert_eq!(snapshot.branch, Some("feature".to_owned()));
+        assert_eq!(
+            snapshot.checkout,
+            Some(WorkspaceCheckout::Branch("feature".to_owned()))
+        );
         assert!(snapshot.working_tree_clean);
     }
 

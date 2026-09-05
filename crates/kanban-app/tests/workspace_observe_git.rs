@@ -11,7 +11,7 @@ use kanban_app::dispatch::Core;
 use kanban_app::herdr::NoopHerdrProjectObserver;
 use kanban_app::project::ProjectStore;
 use kanban_app::workspace::WorkspaceStore;
-use kanban_domain::{ProjectRegistration, WorkspaceHealth, WorkspaceId};
+use kanban_domain::{ProjectRegistration, WorkspaceCheckout, WorkspaceHealth, WorkspaceId};
 use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_service::LocalRepositories;
 use kanban_service::git_observer::LocalWorkspaceGitObserver;
@@ -212,6 +212,10 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         .expect("the workspace exists");
     assert_eq!(stored.health(), WorkspaceHealth::Available);
     assert_eq!(stored.observation().branch(), Some("main"));
+    assert_eq!(
+        stored.observation().checkout(),
+        Some(&WorkspaceCheckout::Branch("main".to_owned()))
+    );
     assert!(stored.observation().head().is_some());
     assert_eq!(stored.observation().working_tree_clean(), Some(true));
     assert_eq!(stored.observation().unique_unlanded_commits(), Some(false));
@@ -223,10 +227,11 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         Option<String>,
         Option<i64>,
         Option<i64>,
+        Option<i64>,
     ) = rusqlite::Connection::open(scratch.path().join("kanban.sqlite"))
         .expect("the database reopens")
         .query_row(
-            "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits
+            "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits, detached
              FROM workspaces WHERE id = 1",
             [],
             |row| {
@@ -236,6 +241,7 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -245,6 +251,7 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
     assert!(row.2.is_some());
     assert_eq!(row.3, Some(1));
     assert_eq!(row.4, Some(0));
+    assert_eq!(row.5, Some(0));
 }
 
 #[test]
@@ -407,4 +414,109 @@ fn unique_unlanded_commits_block_reuse_end_to_end() {
         )
         .expect("the SQLite row is readable");
     assert_eq!(unlanded, Some(1));
+}
+
+/// A sanctioned branch clone: a local clone of the repository that
+/// carries the `bc.source` marker the observer honours.
+fn branch_clone(dir: &TempDir) -> (String, std::path::PathBuf) {
+    let repository = init_repo(dir.path());
+    git(
+        Path::new(&repository),
+        &["remote", "add", "origin", "https://example.com/kanban.git"],
+    );
+    let workspace = dir.path().join("clone");
+    git(
+        dir.path(),
+        &["clone", "--local", &repository, workspace.to_str().unwrap()],
+    );
+    git(
+        &workspace,
+        &[
+            "config",
+            "bc.source",
+            Path::new(&repository)
+                .canonicalize()
+                .expect("the repository resolves")
+                .to_str()
+                .expect("the path is UTF-8"),
+        ],
+    );
+    (repository, workspace)
+}
+
+#[test]
+fn workspace_observe_detached_head_persists_the_closed_state() {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let harness = wired(scratch.path());
+    let git_dir = TempDir::new().expect("a scratch directory is available");
+    let (repository, workspace) = branch_clone(&git_dir);
+    create_project(&harness.projects, &repository, workspace.to_str().unwrap());
+
+    harness
+        .core
+        .command(
+            "workspace.register",
+            &register_workspace(1, workspace.to_str().unwrap(), "key-1"),
+        )
+        .expect("the workspace registers");
+    let attached = harness
+        .core
+        .command("workspace.observe", &register(1, "key-2", 1))
+        .expect("the first observation applies");
+    assert_eq!(attached["observation"]["checkout"], json!("branch"));
+
+    git(&workspace, &["checkout", "--detach"]);
+
+    let detached = harness
+        .core
+        .command("workspace.observe", &register(1, "key-3", 2))
+        .expect("the second observation applies");
+
+    assert_eq!(detached["health"], json!("available"));
+    assert_eq!(
+        detached["observation"]["checkout"],
+        json!("detached"),
+        "a detached checkout must surface as the closed state"
+    );
+    assert_eq!(
+        detached["observation"]["branch"],
+        json!(null),
+        "a detached checkout must never expose a branch name"
+    );
+
+    let stored = harness
+        .workspaces
+        .find(WorkspaceId::new(1))
+        .expect("the workspace loads")
+        .expect("the workspace exists");
+    assert_eq!(
+        stored.observation().checkout(),
+        Some(&WorkspaceCheckout::Detached)
+    );
+    assert_eq!(stored.observation().branch(), None);
+
+    let row: (Option<String>, Option<i64>) =
+        rusqlite::Connection::open(scratch.path().join("kanban.sqlite"))
+            .expect("the database reopens")
+            .query_row(
+                "SELECT branch, detached FROM workspaces WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the SQLite row is readable");
+    assert_eq!(
+        row,
+        (None, Some(1)),
+        "persistence records the detached flag, never a `HEAD` branch"
+    );
+
+    let listed = harness
+        .core
+        .query("workspace.list", &json!({ "project_id": 1 }))
+        .expect("the management surface lists Workspaces");
+    assert_eq!(
+        listed["workspaces"][0]["observation"]["checkout"],
+        json!("detached"),
+        "the management surface reports the closed state"
+    );
 }

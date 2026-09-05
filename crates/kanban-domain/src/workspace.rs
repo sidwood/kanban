@@ -115,6 +115,23 @@ impl fmt::Display for WorkspaceRegistrationError {
 
 impl std::error::Error for WorkspaceRegistrationError {}
 
+/// Why a retirement was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceRetirementError {
+    /// The Workspace is already retired; retirement is terminal.
+    AlreadyRetired,
+}
+
+impl fmt::Display for WorkspaceRetirementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyRetired => write!(f, "the Workspace is already retired"),
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceRetirementError {}
+
 /// One validated registration: the Project and filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceRegistration {
@@ -344,6 +361,27 @@ impl Workspace {
             None
         } else {
             Some((previous, next))
+        }
+    }
+
+    /// Retire the Workspace: the explicit operator action that ends
+    /// reuse while preserving every recorded fact. Retirement is
+    /// terminal, so a second retirement is refused rather than
+    /// absorbed. Returns the health transition when one occurred.
+    pub fn retire(
+        &mut self,
+    ) -> Result<Option<(WorkspaceHealth, WorkspaceHealth)>, WorkspaceRetirementError> {
+        if self.retired {
+            return Err(WorkspaceRetirementError::AlreadyRetired);
+        }
+        self.retired = true;
+        let previous = self.health;
+        self.health = WorkspaceHealth::Retired;
+        self.version += 1;
+        if previous == WorkspaceHealth::Retired {
+            Ok(None)
+        } else {
+            Ok(Some((previous, WorkspaceHealth::Retired)))
         }
     }
 }
@@ -648,7 +686,7 @@ mod tests {
 
     use super::{
         Workspace, WorkspaceHealth, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,
-        WorkspaceRegistrationError,
+        WorkspaceRegistrationError, WorkspaceRetirementError,
     };
 
     fn registration(path: &str) -> WorkspaceRegistration {
@@ -719,6 +757,65 @@ mod tests {
             .expect("the first observation transitions");
 
         assert_eq!(workspace.health(), WorkspaceHealth::Dirty);
+    }
+
+    #[test]
+    fn retiring_moves_health_to_retired_and_preserves_the_record() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+        workspace
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some("main".to_owned()),
+                Some("abc123".to_owned()),
+                true,
+            )
+            .expect("the first observation transitions");
+
+        let transition = workspace.retire().expect("an active Workspace retires");
+
+        assert_eq!(
+            transition,
+            Some((WorkspaceHealth::Available, WorkspaceHealth::Retired))
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Retired);
+        assert!(workspace.is_retired());
+        assert_eq!(
+            workspace.observation().head(),
+            Some("abc123"),
+            "retirement preserves every observed fact"
+        );
+        assert_eq!(workspace.version(), 3);
+    }
+
+    #[test]
+    fn retiring_twice_is_refused_and_changes_nothing() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+        workspace.retire().expect("the first retirement applies");
+
+        assert_eq!(
+            workspace.retire(),
+            Err(WorkspaceRetirementError::AlreadyRetired)
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Retired);
+        assert_eq!(workspace.version(), 2, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn observation_after_retirement_keeps_retired_health() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+        workspace.retire().expect("the retirement applies");
+
+        let transition = workspace.observe(
+            true,
+            Some("identity".to_owned()),
+            Some("main".to_owned()),
+            Some("abc123".to_owned()),
+            true,
+        );
+
+        assert_eq!(transition, None, "retired dominates every observation");
+        assert_eq!(workspace.health(), WorkspaceHealth::Retired);
     }
 
     #[test]

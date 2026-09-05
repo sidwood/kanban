@@ -141,4 +141,59 @@ mod tests {
         assert_eq!(since.as_deref(), Some("2026-09-04T12:00:00.000000Z"));
         assert!(until.is_none());
     }
+
+    #[test]
+    fn normalised_bounds_match_the_stored_millisecond_shape() {
+        assert_eq!(
+            normalise_timeline_bound("since", "2026-09-04T12:00:01Z").expect("parses"),
+            "2026-09-04T12:00:01.000Z",
+            "SQLite stores three fractional digits via strftime %f"
+        );
+        assert_eq!(
+            normalise_timeline_bound("until", "2026-03-01T00:00:00.123Z").expect("parses"),
+            "2026-03-01T00:00:00.123Z",
+            "a stored millisecond must normalise to the identical text"
+        );
+    }
+
+    #[test]
+    fn a_whole_millisecond_since_bound_keeps_its_instant() {
+        let (since, _) = validate_timeline_time_window(Some("2026-03-01T00:00:00.123Z"), None)
+            .expect("whole milliseconds are valid bounds");
+        assert_eq!(since.as_deref(), Some("2026-03-01T00:00:00.123Z"));
+    }
+
+    #[test]
+    fn sub_millisecond_since_rounds_up_to_the_stored_millisecond() {
+        let (since, _) = validate_timeline_time_window(Some("2026-03-01T00:00:00.1239Z"), None)
+            .expect("sub-millisecond bounds are valid RFC 3339");
+        assert_eq!(
+            since.as_deref(),
+            Some("2026-03-01T00:00:00.124Z"),
+            "a since finer than the stored millisecond must not admit the earlier millisecond"
+        );
+    }
+
+    #[test]
+    fn sub_millisecond_until_truncates_to_the_stored_millisecond() {
+        let (_, until) = validate_timeline_time_window(None, Some("2026-03-01T00:00:00.1239Z"))
+            .expect("sub-millisecond bounds are valid RFC 3339");
+        assert_eq!(
+            until.as_deref(),
+            Some("2026-03-01T00:00:00.123Z"),
+            "an until finer than the stored millisecond still holds its own millisecond"
+        );
+    }
+
+    #[test]
+    fn a_window_inside_one_stored_millisecond_matches_nothing() {
+        let (since, until) = validate_timeline_time_window(
+            Some("2026-03-01T00:00:00.1235Z"),
+            Some("2026-03-01T00:00:00.1239Z"),
+        )
+        .expect("a window that holds no stored instant is still a valid window");
+
+        assert_eq!(since.as_deref(), Some("2026-03-01T00:00:00.124Z"));
+        assert_eq!(until.as_deref(), Some("2026-03-01T00:00:00.123Z"));
+    }
 }

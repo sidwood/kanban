@@ -153,6 +153,8 @@ mod query_filters {
     use kanban_domain::{TimelineTimeError, validate_timeline_time_window};
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
     use serde_json::json;
+    use time::format_description::well_known::Rfc3339;
+    use time::{Duration, OffsetDateTime, UtcOffset};
 
     use super::TimelineFilter;
     use crate::migrations::AllowAllMigrations;
@@ -190,6 +192,51 @@ mod query_filters {
             kind,
             Some(entity(TimelineEntityKind::Ticket, ticket)),
             detail,
+        )
+    }
+
+    /// Appends one event and returns the instant storage gave it.
+    /// Bounds are derived from these instants so every boundary test
+    /// faces the shape production actually writes.
+    fn append_and_record(database: &crate::db::Database, envelope: TimelineEnvelope) -> String {
+        append(database, envelope);
+        database
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
+            .expect("appended rows are readable")
+            .last()
+            .expect("the append landed")
+            .recorded_at
+            .clone()
+    }
+
+    /// One recorded instant at another offset, the way a client in
+    /// that timezone names the same moment.
+    fn at_offset(recorded_at: &str, offset_hours: i8) -> String {
+        OffsetDateTime::parse(recorded_at, &Rfc3339)
+            .expect("stored timestamps parse as RFC 3339")
+            .to_offset(UtcOffset::from_hms(offset_hours, 0, 0).expect("the offset is valid"))
+            .format(&Rfc3339)
+            .expect("the offset instant formats as RFC 3339")
+    }
+
+    /// One recorded instant shifted by whole seconds.
+    fn shifted_by_seconds(recorded_at: &str, seconds: i64) -> String {
+        OffsetDateTime::parse(recorded_at, &Rfc3339)
+            .expect("stored timestamps parse as RFC 3339")
+            .checked_add(Duration::seconds(seconds))
+            .expect("the shifted instant stays in range")
+            .format(&Rfc3339)
+            .expect("the shifted instant formats as RFC 3339")
+    }
+
+    /// One recorded instant with an extra fractional digit, finer
+    /// than the stored millisecond: `...123Z` becomes `...1239Z`.
+    fn finer_than_the_stored_millisecond(recorded_at: &str) -> String {
+        format!(
+            "{}9Z",
+            recorded_at
+                .strip_suffix('Z')
+                .expect("stored timestamps end in Z")
         )
     }
 
@@ -357,6 +404,195 @@ mod query_filters {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "run");
+    }
+
+    #[test]
+    fn an_until_bound_equal_to_a_row_instant_includes_the_row() {
+        let database = migrated_database();
+        let recorded_at = append_and_record(
+            &database,
+            ticket_event(
+                1,
+                TimelineEventKind::Transition,
+                "kan-t9",
+                json!({ "to": "in_progress" }),
+            ),
+        );
+
+        let (_, until) = validate_timeline_time_window(None, Some(&recorded_at))
+            .expect("a stored instant is a valid until bound");
+
+        let rows = database
+            .query_timeline(&TimelineFilter {
+                until,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the equal-instant until bound filters stored rows");
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "an until bound naming the row's own instant must include it"
+        );
+        assert_eq!(rows[0].entity_id.as_deref(), Some("kan-t9"));
+    }
+
+    #[test]
+    fn a_since_bound_equal_to_a_row_instant_includes_the_row() {
+        let database = migrated_database();
+        let recorded_at = append_and_record(
+            &database,
+            ticket_event(
+                1,
+                TimelineEventKind::Transition,
+                "kan-t9",
+                json!({ "to": "in_progress" }),
+            ),
+        );
+
+        let (since, _) = validate_timeline_time_window(Some(&recorded_at), None)
+            .expect("a stored instant is a valid since bound");
+
+        let rows = database
+            .query_timeline(&TimelineFilter {
+                since,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the equal-instant since bound filters stored rows");
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "a since bound naming the row's own instant must include it"
+        );
+        assert_eq!(rows[0].entity_id.as_deref(), Some("kan-t9"));
+    }
+
+    #[test]
+    fn sub_millisecond_bounds_settle_onto_the_stored_millisecond() {
+        let database = migrated_database();
+        let recorded_at = append_and_record(
+            &database,
+            ticket_event(1, TimelineEventKind::Run, "kan-t9", json!({ "attempt": 1 })),
+        );
+        let finer = finer_than_the_stored_millisecond(&recorded_at);
+
+        let (since, _) = validate_timeline_time_window(Some(&finer), None)
+            .expect("a sub-millisecond bound is valid RFC 3339");
+        let (_, until) = validate_timeline_time_window(None, Some(&finer))
+            .expect("a sub-millisecond bound is valid RFC 3339");
+
+        let after_the_row = database
+            .query_timeline(&TimelineFilter {
+                since,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the aligned since bound filters stored rows");
+        let through_the_row = database
+            .query_timeline(&TimelineFilter {
+                until,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the aligned until bound filters stored rows");
+
+        assert!(
+            after_the_row.is_empty(),
+            "a since inside the row's millisecond excludes the earlier row"
+        );
+        assert_eq!(
+            through_the_row.len(),
+            1,
+            "an until inside the row's millisecond still includes the row"
+        );
+    }
+
+    #[test]
+    fn offset_bounds_settle_onto_stored_utc_rows() {
+        let database = migrated_database();
+        append(
+            &database,
+            ticket_event(1, TimelineEventKind::Run, "kan-t9", json!({ "attempt": 1 })),
+        );
+        append(
+            &database,
+            ticket_event(
+                1,
+                TimelineEventKind::Comment,
+                "kan-t10",
+                json!({ "text": "noted" }),
+            ),
+        );
+        let rows = database
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
+            .expect("appended rows are readable");
+        let earliest = rows
+            .first()
+            .expect("the first append landed")
+            .recorded_at
+            .clone();
+        let latest = rows
+            .last()
+            .expect("the second append landed")
+            .recorded_at
+            .clone();
+
+        let (since, until) = validate_timeline_time_window(
+            Some(&at_offset(&earliest, 1)),
+            Some(&at_offset(&latest, -5)),
+        )
+        .expect("offset bounds name stored UTC instants");
+
+        let rows = database
+            .query_timeline(&TimelineFilter {
+                since,
+                until,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("normalised offset bounds filter stored rows");
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "offset bounds naming the outer row instants include every row"
+        );
+    }
+
+    #[test]
+    fn a_window_beyond_every_row_is_empty() {
+        let database = migrated_database();
+        let recorded_at = append_and_record(
+            &database,
+            ticket_event(1, TimelineEventKind::Run, "kan-t9", json!({ "attempt": 1 })),
+        );
+
+        let (since, _) =
+            validate_timeline_time_window(Some(&shifted_by_seconds(&recorded_at, 1)), None)
+                .expect("a shifted bound is valid RFC 3339");
+        let (_, until) =
+            validate_timeline_time_window(None, Some(&shifted_by_seconds(&recorded_at, -1)))
+                .expect("a shifted bound is valid RFC 3339");
+
+        let later = database
+            .query_timeline(&TimelineFilter {
+                since,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the since bound filters stored rows");
+        let earlier = database
+            .query_timeline(&TimelineFilter {
+                until,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("the until bound filters stored rows");
+
+        assert!(
+            later.is_empty(),
+            "no row records an instant after the only row"
+        );
+        assert!(
+            earlier.is_empty(),
+            "no row records an instant before the only row"
+        );
     }
 
     #[test]

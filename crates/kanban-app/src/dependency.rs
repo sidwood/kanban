@@ -661,6 +661,16 @@ pub(crate) mod testing {
             ))
         }
 
+        fn save(
+            &self,
+            _ticket: &kanban_domain::Ticket,
+            _envelope: TimelineEnvelope,
+        ) -> Result<(), ApiError> {
+            Err(ApiError::internal(
+                "the dependency fixtures seed Tickets directly",
+            ))
+        }
+
         fn find(
             &self,
             id: kanban_domain::TicketId,
@@ -877,8 +887,13 @@ pub(crate) mod testing {
             TicketNumber::new(number).expect("the fixture number is positive"),
             Priority::Normal,
             state,
-            TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped after a review lands.",
+                "The landing log names the drop immediately after the merge.",
+            )
+            .expect("the fixture body validates"),
             1,
         )
     }
@@ -1096,8 +1111,13 @@ mod cross_project_deps {
             kanban_domain::TicketNumber::new(1).expect("the fixture number is positive"),
             kanban_domain::Priority::Normal,
             kanban_domain::TicketState::Done,
-            kanban_domain::TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            kanban_domain::TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped after a review lands.",
+                "The landing log names the drop immediately after the merge.",
+            )
+            .expect("the fixture body validates"),
             4,
         );
         harness.rows.replace(landed.clone());
@@ -1107,8 +1127,13 @@ mod cross_project_deps {
             kanban_domain::TicketNumber::new(1).expect("the fixture number is positive"),
             kanban_domain::Priority::Normal,
             kanban_domain::TicketState::Draft,
-            kanban_domain::TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            kanban_domain::TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped after a review lands.",
+                "The landing log names the drop immediately after the merge.",
+            )
+            .expect("the fixture body validates"),
             2,
         );
         harness.rows.replace(landed);

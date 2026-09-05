@@ -322,7 +322,13 @@ mod tests {
                 &project,
                 number,
                 Priority::Normal,
-                &TicketBody::bug(title, None).expect("the fixture body validates"),
+                &TicketBody::bug(
+                    title,
+                    None,
+                    "The integration branch is dropped after a review lands.",
+                    "The landing log names the drop immediately after the merge.",
+                )
+                .expect("the fixture body validates"),
                 &|id| {
                     TimelineEnvelope::project(
                         project_id,

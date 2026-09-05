@@ -71,6 +71,24 @@ pub enum StorageError {
         /// The underlying filesystem error.
         source: std::io::Error,
     },
+    /// A restore committed its replacement set but could not remove
+    /// staging or quarantine data.
+    #[error("backup restore committed, but cleanup failed: {source}")]
+    BackupRestoreCleanup {
+        /// Cleanup failures do not make the committed live tree safe
+        /// to roll back.
+        #[source]
+        source: Box<StorageError>,
+    },
+    /// A restore failed before commit and its rollback also failed.
+    #[error("backup restore failed: {restore_error}; rollback also failed: {rollback_errors:?}")]
+    BackupRestoreRollback {
+        /// The error that began the rollback.
+        #[source]
+        restore_error: Box<StorageError>,
+        /// Every rollback failure, in attempted order.
+        rollback_errors: Vec<StorageError>,
+    },
     /// A backup snapshot could not be opened.
     #[error("opening backup snapshot at {path:?} failed: {source}")]
     BackupOpen {

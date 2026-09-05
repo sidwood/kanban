@@ -1164,7 +1164,8 @@ fn encryption_salt_bytes(manifest: &BackupManifest) -> Result<Option<Vec<u8>>, S
 
 #[cfg(test)]
 pub(crate) mod restore_swap_test_hooks {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+    use std::path::PathBuf;
 
     pub const PHASE_QUARANTINE_READY: usize = 1;
     pub const PHASE_AFTER_DB_QUARANTINE: usize = 2;
@@ -1173,9 +1174,12 @@ pub(crate) mod restore_swap_test_hooks {
     pub const PHASE_AFTER_DB_SWAP: usize = 5;
     pub const PHASE_AFTER_ATTACHMENTS_SWAP: usize = 6;
     pub const PHASE_AFTER_CONFIG_SWAP: usize = 7;
+    pub const PHASE_BEFORE_STAGING_CLEANUP: usize = 8;
+    pub const PHASE_BEFORE_QUARANTINE_CLEANUP: usize = 9;
 
     thread_local! {
         static FAIL_AFTER_PHASE: Cell<usize> = const { Cell::new(0) };
+        static ROLLBACK_MOVE_BLOCKERS: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
     }
 
     pub fn set_fail_after_phase(phase: usize) {
@@ -1184,6 +1188,7 @@ pub(crate) mod restore_swap_test_hooks {
 
     pub fn clear_fail_after_phase() {
         FAIL_AFTER_PHASE.with(|flag| flag.set(0));
+        ROLLBACK_MOVE_BLOCKERS.with(|paths| paths.borrow_mut().clear());
     }
 
     pub struct FailAfterPhaseGuard {
@@ -1193,6 +1198,12 @@ pub(crate) mod restore_swap_test_hooks {
     impl FailAfterPhaseGuard {
         pub fn set(phase: usize) -> Self {
             set_fail_after_phase(phase);
+            Self { active: true }
+        }
+
+        pub fn set_with_rollback_move_blockers(phase: usize, paths: Vec<PathBuf>) -> Self {
+            set_fail_after_phase(phase);
+            ROLLBACK_MOVE_BLOCKERS.with(|slot| *slot.borrow_mut() = paths);
             Self { active: true }
         }
     }
@@ -1208,6 +1219,24 @@ pub(crate) mod restore_swap_test_hooks {
     pub fn maybe_fail(phase: usize) -> Result<(), super::StorageError> {
         let should_fail = FAIL_AFTER_PHASE.with(|flag| flag.get() == phase);
         if should_fail {
+            ROLLBACK_MOVE_BLOCKERS.with(|paths| {
+                for path in paths.borrow().iter() {
+                    std::fs::create_dir_all(path).map_err(|source| {
+                        super::StorageError::BackupIo {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?;
+                    let marker = path.join("occupied");
+                    std::fs::write(&marker, b"force rollback rename failure").map_err(
+                        |source| super::StorageError::BackupIo {
+                            path: marker,
+                            source,
+                        },
+                    )?;
+                }
+                Ok::<(), super::StorageError>(())
+            })?;
             return Err(super::StorageError::BackupInvalid {
                 reason: format!("injected restore swap failure at phase {phase}"),
             });
@@ -1232,6 +1261,7 @@ struct RestoreSwapState {
     swapped_database: bool,
     swapped_attachments: bool,
     swapped_config: bool,
+    committed: bool,
 }
 
 fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), StorageError> {
@@ -1246,15 +1276,19 @@ fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), Storag
         swapped_database: false,
         swapped_attachments: false,
         swapped_config: false,
+        committed: false,
     };
 
+    if quarantine.exists() {
+        return Err(StorageError::BackupInvalid {
+            reason: format!(
+                "restore quarantine at {} contains recoverable pre-restore data",
+                quarantine.display()
+            ),
+        });
+    }
+
     let result = (|| {
-        if quarantine.exists() {
-            fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
-                path: quarantine.clone(),
-                source,
-            })?;
-        }
         fs::create_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
             path: quarantine.clone(),
             source,
@@ -1332,10 +1366,15 @@ fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), Storag
         }
         maybe_fail(7)?;
 
+        // Every requested replacement is now live. Cleanup failures
+        // beyond this point must leave that complete set in place.
+        state.committed = true;
+        maybe_fail(8)?;
         fs::remove_dir_all(staging).map_err(|source| StorageError::BackupIo {
             path: staging.to_path_buf(),
             source,
         })?;
+        maybe_fail(9)?;
         fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
             path: quarantine.clone(),
             source,
@@ -1343,10 +1382,22 @@ fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), Storag
         Ok(())
     })();
 
-    if result.is_err() {
-        rollback_restore_swap(managed_root, staging, &quarantine, &state)?;
+    let Err(restore_error) = result else {
+        return Ok(());
+    };
+    if state.committed {
+        return Err(StorageError::BackupRestoreCleanup {
+            source: Box::new(restore_error),
+        });
     }
-    result
+    let rollback_errors = rollback_restore_swap(managed_root, staging, &quarantine, &state);
+    if rollback_errors.is_empty() {
+        return Err(restore_error);
+    }
+    Err(StorageError::BackupRestoreRollback {
+        restore_error: Box::new(restore_error),
+        rollback_errors,
+    })
 }
 
 fn rollback_restore_swap(
@@ -1354,57 +1405,81 @@ fn rollback_restore_swap(
     staging: &Path,
     quarantine: &Path,
     state: &RestoreSwapState,
-) -> Result<(), StorageError> {
+) -> Vec<StorageError> {
     let database_live = managed_root.join(database_file_name());
     let attachments_live = attachments_dir(managed_root);
     let config_live = managed_root.join(config_file_name());
+    let mut failures = Vec::new();
 
-    if state.swapped_config && config_live.exists() {
-        let _ = fs::rename(&config_live, staging.join(config_file_name()));
+    if state.swapped_config {
+        rollback_move(
+            &config_live,
+            &staging.join(config_file_name()),
+            &mut failures,
+        );
     }
-    if state.swapped_attachments && attachments_live.exists() {
-        let _ = fs::rename(&attachments_live, staging.join("attachments"));
+    if state.swapped_attachments {
+        rollback_move(
+            &attachments_live,
+            &staging.join("attachments"),
+            &mut failures,
+        );
     }
-    if state.swapped_database && database_live.exists() {
-        remove_sqlite_sidecars(&database_live)?;
-        let _ = fs::rename(&database_live, staging.join(database_file_name()));
-    }
-
-    if state.quarantined_config && !config_live.exists() {
-        let quarantined = quarantine.join(config_file_name());
-        if quarantined.exists() {
-            fs::rename(&quarantined, &config_live).map_err(|source| StorageError::BackupIo {
-                path: config_live.clone(),
-                source,
-            })?;
+    if state.swapped_database {
+        if let Err(error) = remove_sqlite_sidecars(&database_live) {
+            failures.push(error);
         }
-    }
-    if state.quarantined_attachments && !attachments_live.exists() {
-        let quarantined = quarantine.join("attachments");
-        if quarantined.exists() {
-            fs::rename(&quarantined, &attachments_live).map_err(|source| {
-                StorageError::BackupIo {
-                    path: attachments_live.clone(),
-                    source,
-                }
-            })?;
-        }
-    }
-    if state.quarantined_database && !database_live.exists() {
-        let quarantined = quarantine.join(database_file_name());
-        if quarantined.exists() {
-            fs::rename(&quarantined, &database_live).map_err(|source| StorageError::BackupIo {
-                path: database_live.clone(),
-                source,
-            })?;
-            remove_sqlite_sidecars(&database_live)?;
-        }
+        rollback_move(
+            &database_live,
+            &staging.join(database_file_name()),
+            &mut failures,
+        );
     }
 
-    if quarantine.exists() {
-        let _ = fs::remove_dir_all(quarantine);
+    if state.quarantined_config {
+        rollback_move(
+            &quarantine.join(config_file_name()),
+            &config_live,
+            &mut failures,
+        );
     }
-    Ok(())
+    if state.quarantined_attachments {
+        rollback_move(
+            &quarantine.join("attachments"),
+            &attachments_live,
+            &mut failures,
+        );
+    }
+    if state.quarantined_database {
+        rollback_move(
+            &quarantine.join(database_file_name()),
+            &database_live,
+            &mut failures,
+        );
+        if let Err(error) = remove_sqlite_sidecars(&database_live) {
+            failures.push(error);
+        }
+    }
+
+    if failures.is_empty()
+        && quarantine.exists()
+        && let Err(source) = fs::remove_dir(quarantine)
+    {
+        failures.push(StorageError::BackupIo {
+            path: quarantine.to_path_buf(),
+            source,
+        });
+    }
+    failures
+}
+
+fn rollback_move(source: &Path, target: &Path, failures: &mut Vec<StorageError>) {
+    if let Err(io_error) = fs::rename(source, target) {
+        failures.push(StorageError::BackupIo {
+            path: target.to_path_buf(),
+            source: io_error,
+        });
+    }
 }
 
 fn list_bundle_dirs(root: &Path) -> Result<Vec<PathBuf>, StorageError> {
@@ -1579,7 +1654,10 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], StorageError> {
 
 #[cfg(test)]
 mod backup_restore {
-    use std::num::NonZeroU32;
+    use std::{
+        num::NonZeroU32,
+        path::{Path, PathBuf},
+    };
 
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use kanban_app::{EvidenceStore, TimelineFacts};
@@ -1640,6 +1718,110 @@ mod backup_restore {
                 timeline_facts(),
             )
             .expect("repository evidence attaches");
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct RestoreTreeSnapshot {
+        initiative_name: String,
+        evidence_count: i64,
+        config: String,
+        attachment_payloads: Vec<Vec<u8>>,
+    }
+
+    fn attachment_payloads(root: &Path) -> Vec<Vec<u8>> {
+        let mut payloads = std::fs::read_dir(attachments_dir(root))
+            .expect("attachments list")
+            .map(|entry| {
+                let path = entry.expect("attachment entry reads").path();
+                std::fs::read(path).expect("attachment reads")
+            })
+            .collect::<Vec<_>>();
+        payloads.sort();
+        payloads
+    }
+
+    fn restore_tree_snapshot(root: &Path) -> RestoreTreeSnapshot {
+        let connection =
+            rusqlite::Connection::open(root.join(database_file_name())).expect("database opens");
+        let initiative_name = connection
+            .query_row("SELECT name FROM initiatives", [], |row| row.get(0))
+            .expect("initiative reads");
+        let evidence_count = connection
+            .query_row("SELECT COUNT(*) FROM evidence_items", [], |row| row.get(0))
+            .expect("evidence count reads");
+        let config = std::fs::read_to_string(root.join(config_file_name())).expect("config reads");
+        RestoreTreeSnapshot {
+            initiative_name,
+            evidence_count,
+            config,
+            attachment_payloads: attachment_payloads(root),
+        }
+    }
+
+    fn backup_tree_snapshot() -> RestoreTreeSnapshot {
+        RestoreTreeSnapshot {
+            initiative_name: "Alpha".to_string(),
+            evidence_count: 2,
+            config: r#"{"theme":"dark"}"#.to_string(),
+            attachment_payloads: vec![b"evidence-bytes".to_vec()],
+        }
+    }
+
+    fn pre_restore_tree_snapshot() -> RestoreTreeSnapshot {
+        let mut attachment_payloads =
+            vec![b"evidence-bytes".to_vec(), b"pre-restore-only".to_vec()];
+        attachment_payloads.sort();
+        RestoreTreeSnapshot {
+            initiative_name: "Beta".to_string(),
+            evidence_count: 3,
+            config: r#"{"theme":"light"}"#.to_string(),
+            attachment_payloads,
+        }
+    }
+
+    fn distinct_restore_fixture() -> (tempfile::TempDir, BackupStore, PathBuf) {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        database
+            .connection()
+            .execute("UPDATE initiatives SET name = 'Beta' WHERE id = 1", [])
+            .expect("live initiative mutates");
+        let evidence = SqliteEvidenceStore::new(&database, attachments_dir(dir.path()));
+        evidence
+            .attach_managed_file(
+                "proj",
+                "ticket",
+                "3",
+                &STANDARD.encode(b"pre-restore-only"),
+                timeline_facts(),
+            )
+            .expect("live evidence mutates");
+        std::fs::write(dir.path().join(config_file_name()), br#"{"theme":"light"}"#)
+            .expect("live config mutates");
+        database
+            .connection()
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("live database checkpoints");
+        drop(evidence);
+        drop(database);
+
+        assert_eq!(
+            restore_tree_snapshot(dir.path()),
+            pre_restore_tree_snapshot()
+        );
+        (dir, store, bundle)
     }
 
     #[test]
@@ -2138,6 +2320,143 @@ mod backup_restore {
                 "phase {phase} must clean quarantine"
             );
         }
+    }
+
+    #[test]
+    fn staging_cleanup_failure_keeps_committed_tree_and_quarantine() {
+        use super::restore_swap_test_hooks::{FailAfterPhaseGuard, PHASE_BEFORE_STAGING_CLEANUP};
+
+        let (dir, store, bundle) = distinct_restore_fixture();
+        let managed_root = dir.path();
+        let _guard = FailAfterPhaseGuard::set(PHASE_BEFORE_STAGING_CLEANUP);
+
+        let error = store
+            .restore(&bundle, None)
+            .expect_err("staging cleanup failure must be reported");
+
+        let crate::error::StorageError::BackupRestoreCleanup { source } = error else {
+            panic!("post-commit failure must be cleanup-only: {error:?}");
+        };
+        assert!(
+            source
+                .to_string()
+                .contains("injected restore swap failure at phase 8")
+        );
+        assert_eq!(restore_tree_snapshot(managed_root), backup_tree_snapshot());
+        assert_eq!(
+            restore_tree_snapshot(&managed_root.join(".pre-restore-quarantine")),
+            pre_restore_tree_snapshot()
+        );
+        assert!(managed_root.join(".restore-staging").is_dir());
+    }
+
+    #[test]
+    fn quarantine_cleanup_failure_keeps_committed_tree_and_quarantine() {
+        use super::restore_swap_test_hooks::{
+            FailAfterPhaseGuard, PHASE_BEFORE_QUARANTINE_CLEANUP,
+        };
+
+        let (dir, store, bundle) = distinct_restore_fixture();
+        let managed_root = dir.path();
+        let _guard = FailAfterPhaseGuard::set(PHASE_BEFORE_QUARANTINE_CLEANUP);
+
+        let error = store
+            .restore(&bundle, None)
+            .expect_err("quarantine cleanup failure must be reported");
+
+        let crate::error::StorageError::BackupRestoreCleanup { source } = error else {
+            panic!("post-commit failure must be cleanup-only: {error:?}");
+        };
+        assert!(
+            source
+                .to_string()
+                .contains("injected restore swap failure at phase 9")
+        );
+        assert_eq!(restore_tree_snapshot(managed_root), backup_tree_snapshot());
+        assert_eq!(
+            restore_tree_snapshot(&managed_root.join(".pre-restore-quarantine")),
+            pre_restore_tree_snapshot()
+        );
+        assert!(!managed_root.join(".restore-staging").exists());
+    }
+
+    #[test]
+    fn restore_refuses_to_erase_existing_quarantine() {
+        let (dir, store, bundle) = distinct_restore_fixture();
+        let quarantine = dir.path().join(".pre-restore-quarantine");
+        std::fs::create_dir(&quarantine).expect("quarantine creates");
+        let recovery_marker = quarantine.join("recoverable-data");
+        std::fs::write(&recovery_marker, b"keep me").expect("recovery marker writes");
+
+        let error = store
+            .restore(&bundle, None)
+            .expect_err("an existing quarantine must block restore");
+
+        assert!(error.to_string().contains("recoverable pre-restore data"));
+        assert_eq!(
+            std::fs::read(&recovery_marker).expect("recovery marker remains"),
+            b"keep me"
+        );
+        assert_eq!(
+            restore_tree_snapshot(dir.path()),
+            pre_restore_tree_snapshot()
+        );
+    }
+
+    #[test]
+    fn restore_reports_original_and_rollback_move_failures() {
+        use super::restore_swap_test_hooks::{FailAfterPhaseGuard, PHASE_AFTER_CONFIG_SWAP};
+
+        let (dir, store, bundle) = distinct_restore_fixture();
+        let staging = dir.path().join(".restore-staging");
+        let blockers = vec![
+            staging.join(config_file_name()),
+            staging.join("attachments"),
+            staging.join(database_file_name()),
+        ];
+        let _guard = FailAfterPhaseGuard::set_with_rollback_move_blockers(
+            PHASE_AFTER_CONFIG_SWAP,
+            blockers.clone(),
+        );
+
+        let error = store
+            .restore(&bundle, None)
+            .expect_err("restore and rollback failures must be reported");
+        let crate::error::StorageError::BackupRestoreRollback {
+            restore_error,
+            rollback_errors,
+        } = error
+        else {
+            panic!("rollback failure evidence must be structured: {error:?}");
+        };
+        assert!(
+            restore_error
+                .to_string()
+                .contains("injected restore swap failure at phase 7")
+        );
+        let rollback_paths = rollback_errors
+            .iter()
+            .filter_map(|error| match error {
+                crate::error::StorageError::BackupIo { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for blocker in blockers {
+            assert!(
+                rollback_paths.contains(&&blocker),
+                "rollback evidence must name {}: {rollback_paths:?}",
+                blocker.display(),
+            );
+        }
+        let quarantine = dir.path().join(".pre-restore-quarantine");
+        assert!(
+            quarantine.is_dir(),
+            "failed rollback must retain recoverable quarantine"
+        );
+        assert!(
+            attachment_payloads(&quarantine).contains(&b"pre-restore-only".to_vec()),
+            "failed rollback must retain pre-restore attachment bytes"
+        );
     }
 
     #[test]

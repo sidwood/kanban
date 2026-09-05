@@ -3,6 +3,7 @@
 //! serving after the desktop UI quits (ADR-0001).
 
 mod backup_scheduler;
+pub mod diagnostics;
 pub mod git_observer;
 pub mod herdr;
 pub mod logs;

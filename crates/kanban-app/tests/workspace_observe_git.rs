@@ -104,7 +104,7 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         &[
             "config",
             "bc.source",
-            &Path::new(&repository)
+            Path::new(&repository)
                 .canonicalize()
                 .expect("the repository resolves")
                 .to_str()

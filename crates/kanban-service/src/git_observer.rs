@@ -184,7 +184,7 @@ mod tests {
             &[
                 "config",
                 "bc.source",
-                &Path::new(&repository)
+                Path::new(&repository)
                     .canonicalize()
                     .expect("the repository resolves")
                     .to_str()

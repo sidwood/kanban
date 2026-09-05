@@ -209,6 +209,7 @@ mod tests {
     use crate::error::StorageError;
     use crate::migrations::{
         AllowAllMigrations, MIGRATIONS, MigrationReport, PendingMigration, PreMigrationHook,
+        apply_through,
     };
     use crate::test_support::scratch_database;
 
@@ -475,6 +476,73 @@ mod tests {
             )
             .expect("sqlite_master is readable");
         assert_eq!(table_present, 0, "no migration SQL may have run");
+    }
+
+    #[test]
+    fn migration_0010_backfills_herdr_settings_for_existing_projects() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 9).expect("the pre-herdr schema applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_session, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban-main', 0, 1)",
+                [],
+            )
+            .expect("the pre-upgrade Project lands");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0010 applies");
+
+        assert_eq!(report.applied, vec![10]);
+        let settings: (i64, i64, i64, i64, i64) = database
+            .connection()
+            .query_row(
+                "SELECT reconciliation_interval_secs, polling_fallback_enabled,
+                        polling_fallback_interval_secs, stall_deadline_secs,
+                        missing_result_deadline_secs
+                 FROM herdr_project_settings WHERE project_id = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("the upgraded Project inherits settings");
+        assert_eq!(
+            settings,
+            (300, 0, 10, 3600, 7200),
+            "every pre-existing Project copies the global defaults"
+        );
+    }
+
+    #[test]
+    fn migration_0010_leaves_fresh_databases_without_project_settings_rows() {
+        let (_dir, mut database) = scratch_database();
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+
+        let count: i64 = database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM herdr_project_settings", [], |row| {
+                row.get(0)
+            })
+            .expect("project settings are readable");
+        assert_eq!(
+            count, 0,
+            "a fresh database creates tables but seeds settings only at registration"
+        );
     }
 
     #[test]

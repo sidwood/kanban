@@ -49,6 +49,11 @@ const tickets = [
     slice: 'Spec authoring creates content versions end to end',
     criteria: [{ outcome: 'Specs mint unique numbers.', stories: ['CORE-S1-US1'] }],
     bug: null,
+    subtype: null,
+    mode: null,
+    completion: [],
+    scheduled_for: null,
+    due: null,
     version: 1,
   },
   {
@@ -69,6 +74,11 @@ const tickets = [
       occurrence_snapshots: [],
       evidence_ids: [],
     },
+    subtype: null,
+    mode: null,
+    completion: [],
+    scheduled_for: null,
+    due: null,
     version: 1,
   },
   {
@@ -83,6 +93,11 @@ const tickets = [
     slice: null,
     criteria: [],
     bug: null,
+    subtype: 'migration' as const,
+    mode: 'agent' as const,
+    completion: ['The register moves.'],
+    scheduled_for: '2026-10-01T00:00:00.000Z',
+    due: null,
     version: 1,
   },
 ] satisfies TicketRecord[]
@@ -150,12 +165,66 @@ describe('TicketEditorView', () => {
     expect(wrapper.find('[data-testid="ticket-bug-evidence"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ticket-criteria"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-subtype"]').exists()).toBe(false)
 
     await wrapper.find('[data-testid="ticket-kind"]').setValue('implementation')
     expect(wrapper.find('[data-testid="ticket-title"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ticket-criteria"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ticket-spec"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-completion"]').exists()).toBe(false)
+
+    // A Task keeps the title and gains its bounded fields; it never
+    // shows story-linked criteria.
+    await wrapper.find('[data-testid="ticket-kind"]').setValue('task')
+    expect(wrapper.find('[data-testid="ticket-title"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-criteria"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-subtype"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-mode"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-completion"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-scheduled-for"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-due"]').exists()).toBe(true)
+  })
+
+  it('creating a task sends the subtype, mode, completion, and timing', async () => {
+    setActivePinia(createPinia())
+    const harnessState = harness()
+    const wrapper = await mountView(harnessState.transport)
+
+    await wrapper.find('[data-testid="ticket-kind"]').setValue('task')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Archive the old register')
+    await wrapper.find('[data-testid="ticket-subtype"]').setValue('migration')
+    await wrapper.find('[data-testid="ticket-mode"]').setValue('agent')
+    await wrapper
+      .find('[data-testid="ticket-completion-outcome-0"]')
+      .setValue('The register moves.')
+    await wrapper
+      .find('[data-testid="ticket-completion-add"]')
+      .trigger('click')
+    await wrapper
+      .find('[data-testid="ticket-completion-outcome-1"]')
+      .setValue('The archive restores.')
+    await wrapper
+      .find('[data-testid="ticket-scheduled-for"]')
+      .setValue('2026-10-01T09:00:00Z')
+    await wrapper.find('[data-testid="ticket-due"]').setValue('2026-09-30T17:00:00Z')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    const created = harnessState.operations.find((entry) => entry.name === 'ticket.create')
+    expect(created?.request).toMatchObject({
+      project_id: 4,
+      kind: 'task',
+      title: 'Archive the old register',
+      subtype: 'migration',
+      mode: 'agent',
+      completion: ['The register moves.', 'The archive restores.'],
+      scheduled_for: '2026-10-01T09:00:00Z',
+      due: '2026-09-30T17:00:00Z',
+    })
+    expect(created?.request).not.toHaveProperty('criteria')
+    expect(created?.request).not.toHaveProperty('slice')
   })
 
   it('creating an implementation addresses the picked project with the kind fields', async () => {

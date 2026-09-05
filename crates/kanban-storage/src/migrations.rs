@@ -169,6 +169,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "tickets bug qualification",
         sql: include_str!("../migrations/0023_tickets_bug_qualification.sql"),
     },
+    Migration {
+        version: 24,
+        name: "task fields",
+        sql: include_str!("../migrations/0024_task_fields.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -414,7 +419,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23
+                    23, 24
                 ]
             }
         );
@@ -438,7 +443,8 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                24
             ]
         );
         for table in [
@@ -515,7 +521,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 23, "one event per applied migration");
+        assert_eq!(events.len(), 24, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -626,6 +632,16 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[21].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 22, "name": "ticket dependencies" })
         );
+        assert_eq!(events[22].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[22].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 23, "name": "tickets bug qualification" })
+        );
+        assert_eq!(events[23].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[23].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 24, "name": "task fields" })
+        );
     }
 
     #[test]
@@ -650,7 +666,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
             }
         );
         let present: i64 = database
@@ -714,7 +730,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21, 22, 23]
+                applied: vec![19, 20, 21, 22, 23, 24]
             }
         );
         let rewritten = database
@@ -781,7 +797,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23]
+                applied: vec![21, 22, 23, 24]
             }
         );
         let conn = database.connection();
@@ -873,7 +889,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
             }
         );
         let after: i64 = database
@@ -939,7 +955,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23]
+                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
             }
         );
         let conn = database.connection();
@@ -1208,6 +1224,10 @@ mod tests {
                     version: 23,
                     name: "tickets bug qualification",
                 },
+                PendingMigration {
+                    version: 24,
+                    name: "task fields",
+                },
             ]]
         );
     }
@@ -1248,11 +1268,11 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0023 apply");
+            .expect("migrations 0010 through 0024 apply");
 
         assert_eq!(
             report.applied,
-            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
         );
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
@@ -1325,7 +1345,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
         );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)
@@ -1600,6 +1620,114 @@ mod tests {
         assert!(
             error.to_string().contains("UNIQUE constraint failed"),
             "the schema should enforce one successor: {error}"
+        );
+    }
+
+    /// KAN-T19: the bounded-Task rebuild carries every existing row
+    /// across, backfilling the Task facts a legacy row never named
+    /// and leaving every other kind's rows free of Task fields.
+    #[test]
+    fn migration_0024_backfills_and_bounds_task_rows() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 20).expect("the pre-0024 schema applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_session, herdr_workspace, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban-main', 'kanban.seed', 0, 1)",
+                [],
+            )
+            .expect("the fixture Project lands");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO tickets (project_id, number, kind, priority, state, title, version)
+                 VALUES (1, 1, 'task', 'normal', 'draft', 'Archive the old register', 1);
+                 INSERT INTO tickets (project_id, number, kind, priority, state, title, version)
+                 VALUES (1, 2, 'bug', 'urgent', 'draft', 'Landing drops the branch', 1);",
+            )
+            .expect("the pre-upgrade Tickets land");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the bounded rebuild applies");
+
+        assert_eq!(report.applied, vec![21, 22, 23, 24]);
+        let conn = database.connection();
+        let legacy_task: (Option<String>, Option<String>, String) = conn
+            .query_row(
+                "SELECT subtype, mode, completion FROM tickets WHERE number = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the legacy Task row is readable");
+        assert_eq!(
+            legacy_task,
+            (
+                Some("operational".to_owned()),
+                Some("human".to_owned()),
+                "[\"Completion criteria recorded by migration 0024; this Task predates bounded creation\"]"
+                    .to_owned(),
+            ),
+            "a Task recorded before KAN-T19 lands bounded, with its backfill recorded"
+        );
+        let bug: (Option<String>, Option<String>, String) = conn
+            .query_row(
+                "SELECT subtype, mode, completion FROM tickets WHERE number = 2",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the Bug row is readable");
+        assert_eq!(
+            bug,
+            (None, None, "[]".to_owned()),
+            "no other kind gains Task fields"
+        );
+
+        // The backfilled row rehydrates through the store, and the
+        // rebuilt schema still refuses deletes and Task rows outside
+        // the closed vocabularies.
+        use kanban_app::TicketStore as _;
+        let store = crate::tickets::SqliteTicketStore::new(&database);
+        let task = store
+            .find(kanban_domain::TicketId::new(1))
+            .expect("the find serves")
+            .expect("the legacy Task exists");
+        assert_eq!(
+            task.subtype(),
+            Some(kanban_domain::TaskSubtype::Operational)
+        );
+        assert_eq!(task.task_mode(), Some(kanban_domain::TaskMode::Human));
+        assert_eq!(task.completion().len(), 1);
+        assert!(
+            conn.execute("DELETE FROM tickets WHERE number = 1", [])
+                .is_err(),
+            "the delete refusal returns with the rebuilt table"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, subtype, mode, completion)
+                 VALUES (1, 3, 'task', 'normal', 'draft', 'A title', 'ghost', 'human',
+                         '[\"Done.\"]')",
+                [],
+            )
+            .is_err(),
+            "the closed subtype vocabulary is enforced after the rebuild"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, subtype, mode, completion)
+                 VALUES (1, 3, 'task', 'normal', 'draft', 'A title', 'research', 'ghost',
+                         '[\"Done.\"]')",
+                [],
+            )
+            .is_err(),
+            "the closed mode vocabulary is enforced after the rebuild"
         );
     }
 

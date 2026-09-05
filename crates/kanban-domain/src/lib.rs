@@ -52,9 +52,10 @@ pub use spec::{
     SpecVersion,
 };
 pub use ticket::{
-    BugFacts, BugQualification, BugTicket, ExternalReference, ImplementationTicket,
-    OccurrenceSnapshot, Priority, Severity, SnapshotError, TaskTicket, Ticket, TicketBody,
-    TicketError, TicketId, TicketKind, TicketNumber, TicketNumberError, TicketState,
+    BugFacts, BugQualification, BugTicket, CompletionCriterion, ExternalReference,
+    ImplementationTicket, OccurrenceSnapshot, Priority, Severity, SnapshotError, TaskMode,
+    TaskSubtype, TaskTicket, TaskTiming, Ticket, TicketBody, TicketError, TicketId, TicketKind,
+    TicketNumber, TicketNumberError, TicketState,
 };
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use timeline_time::{

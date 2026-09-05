@@ -53,13 +53,14 @@ use crate::spec::{
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
 use crate::ticket::{
-    TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
-    TicketBugFactsRequest, TicketBugQualification, TicketBugQualifyRequest, TicketBugRecord,
-    TicketCreateRequest, TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
-    TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
-    TicketOccurrenceSnapshot, TicketPriority, TicketReadinessBlocker, TicketReadinessQuery,
-    TicketReadinessResponse, TicketRecord, TicketSeverity, TicketState, TicketVerificationStep,
+    TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
+    TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRecord, TicketDependencyRemoveRequest, TicketExternalReference, TicketGetQuery,
+    TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot, TicketPriority,
+    TicketReadinessBlocker, TicketReadinessQuery, TicketReadinessResponse, TicketRecord,
+    TicketSeverity, TicketState, TicketVerificationStep,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -217,6 +218,8 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(TicketBugQualifyRequest),
         ),
         ("TicketBugRecord", schema_for!(TicketBugRecord)),
+        ("TaskMode", schema_for!(TaskMode)),
+        ("TaskSubtype", schema_for!(TaskSubtype)),
         ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
         ("TicketCriterion", schema_for!(TicketCriterion)),
         (

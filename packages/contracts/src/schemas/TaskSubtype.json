@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+  "oneOf": [
+    {
+      "description": "Keeping the product and its operations running.",
+      "enum": [
+        "operational"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Finding out what is true before acting on it.",
+      "enum": [
+        "investigative"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Bookkeeping and record-keeping work.",
+      "enum": [
+        "administrative"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Learning without a deliverable committed up front.",
+      "enum": [
+        "research"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Proving an approach before committing to it.",
+      "enum": [
+        "prototype"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Moving work or data from one place to another.",
+      "enum": [
+        "migration"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Work done by hand, on purpose.",
+      "enum": [
+        "manual"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TaskSubtype"
+}

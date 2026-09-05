@@ -22,6 +22,11 @@ function record(overrides: Partial<TicketRecord> = {}): TicketRecord {
     slice: 'Spec authoring creates content versions end to end',
     criteria: [{ outcome: 'Specs mint unique numbers.', stories: ['CORE-S1-US1'] }],
     bug: null,
+    subtype: null,
+    mode: null,
+    completion: [],
+    scheduled_for: null,
+    due: null,
     version: 1,
     ...overrides,
   }
@@ -140,6 +145,9 @@ describe('ticket editor store', () => {
       priority: 'normal',
       title: 'Archive the old register',
       spec_id: 3,
+      subtype: 'operational',
+      mode: 'human',
+      completion: [''],
     })
   })
 

@@ -4611,6 +4611,79 @@
           ],
           "type": "object"
         },
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketCriterion": {
           "additionalProperties": false,
           "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
@@ -4693,7 +4766,7 @@
           ]
         }
       },
-      "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug names its quick-capture facts; a Task names its title. Fields the kind does not carry are simply absent.",
+      "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug names its quick-capture facts; a Task names its title, subtype, mode, completion criteria, and optional timing. Fields the kind does not carry are simply absent.",
       "properties": {
         "actual_behaviour": {
           "description": "The Bug's actual behaviour (DR-TK-08); required for a Bug.",
@@ -4702,13 +4775,30 @@
             "null"
           ]
         },
+        "completion": {
+          "description": "The Task's completion criteria: observable outcomes that bound the work, with no story links.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "criteria": {
-          "description": "The Implementation's story-linked criteria.",
+          "description": "The Implementation's story-linked criteria. A Task never carries these (DR-TK-07); it sends `completion` instead.",
           "items": {
             "$ref": "#/definitions/TicketCriterion"
           },
           "type": [
             "array",
+            "null"
+          ]
+        },
+        "due": {
+          "description": "The Task's due date, RFC 3339.",
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -4719,6 +4809,17 @@
             }
           ],
           "description": "The kind whose schema the Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode."
         },
         "mutation": {
           "$ref": "#/definitions/MutationContext"
@@ -4744,6 +4845,13 @@
             "null"
           ]
         },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, RFC 3339; stored for KAN-S11, whose activation behaviour is KAN-T53 and KAN-T54.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "slice": {
           "description": "The Implementation slice description, naming the behaviour delivered end to end.",
           "type": [
@@ -4759,6 +4867,17 @@
             "integer",
             "null"
           ]
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype; a Task names exactly one (DR-TK-06)."
         },
         "title": {
           "description": "The Bug or Task title.",
@@ -4782,6 +4901,79 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketBugQualification": {
           "additionalProperties": false,
           "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
@@ -5160,7 +5352,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, and the Bug body for a Bug.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -5173,12 +5365,26 @@
           ],
           "description": "The Bug body, if this Ticket carries one."
         },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "criteria": {
           "description": "The Implementation's story-linked criteria; empty for every other kind.",
           "items": {
             "$ref": "#/definitions/TicketCriterion"
           },
           "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "id": {
           "description": "The immutable, storage-assigned identity.",
@@ -5193,6 +5399,17 @@
             }
           ],
           "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
         },
         "number": {
           "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
@@ -5213,6 +5430,13 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "slice": {
           "description": "The Implementation slice description, if this Ticket carries one.",
@@ -5238,6 +5462,17 @@
           ],
           "description": "The lifecycle state (DR-LC-01)."
         },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
         "title": {
           "description": "The Bug or Task title, if this Ticket carries one.",
           "type": [
@@ -5253,6 +5488,7 @@
         }
       },
       "required": [
+        "completion",
         "criteria",
         "id",
         "kind",
@@ -5458,6 +5694,79 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketBugQualification": {
           "additionalProperties": false,
           "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
@@ -5836,7 +6145,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, and the Bug body for a Bug.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -5849,12 +6158,26 @@
           ],
           "description": "The Bug body, if this Ticket carries one."
         },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "criteria": {
           "description": "The Implementation's story-linked criteria; empty for every other kind.",
           "items": {
             "$ref": "#/definitions/TicketCriterion"
           },
           "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "id": {
           "description": "The immutable, storage-assigned identity.",
@@ -5869,6 +6192,17 @@
             }
           ],
           "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
         },
         "number": {
           "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
@@ -5889,6 +6223,13 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "slice": {
           "description": "The Implementation slice description, if this Ticket carries one.",
@@ -5914,6 +6255,17 @@
           ],
           "description": "The lifecycle state (DR-LC-01)."
         },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
         "title": {
           "description": "The Bug or Task title, if this Ticket carries one.",
           "type": [
@@ -5929,6 +6281,7 @@
         }
       },
       "required": [
+        "completion",
         "criteria",
         "id",
         "kind",
@@ -6058,6 +6411,79 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketBugQualification": {
           "additionalProperties": false,
           "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
@@ -6436,7 +6862,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, and the Bug body for a Bug.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -6449,12 +6875,26 @@
           ],
           "description": "The Bug body, if this Ticket carries one."
         },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "criteria": {
           "description": "The Implementation's story-linked criteria; empty for every other kind.",
           "items": {
             "$ref": "#/definitions/TicketCriterion"
           },
           "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "id": {
           "description": "The immutable, storage-assigned identity.",
@@ -6469,6 +6909,17 @@
             }
           ],
           "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
         },
         "number": {
           "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
@@ -6489,6 +6940,13 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "slice": {
           "description": "The Implementation slice description, if this Ticket carries one.",
@@ -6514,6 +6972,17 @@
           ],
           "description": "The lifecycle state (DR-LC-01)."
         },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
         "title": {
           "description": "The Bug or Task title, if this Ticket carries one.",
           "type": [
@@ -6529,6 +6998,7 @@
         }
       },
       "required": [
+        "completion",
         "criteria",
         "id",
         "kind",
@@ -6567,6 +7037,79 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketBugQualification": {
           "additionalProperties": false,
           "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
@@ -6810,7 +7353,7 @@
         },
         "TicketRecord": {
           "additionalProperties": false,
-          "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, and the Bug body for a Bug.",
+          "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
           "properties": {
             "bug": {
               "anyOf": [
@@ -6823,12 +7366,26 @@
               ],
               "description": "The Bug body, if this Ticket carries one."
             },
+            "completion": {
+              "description": "The Task's completion criteria; empty for every other kind.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "criteria": {
               "description": "The Implementation's story-linked criteria; empty for every other kind.",
               "items": {
                 "$ref": "#/definitions/TicketCriterion"
               },
               "type": "array"
+            },
+            "due": {
+              "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "id": {
               "description": "The immutable, storage-assigned identity.",
@@ -6843,6 +7400,17 @@
                 }
               ],
               "description": "The kind whose schema this Ticket carries."
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TaskMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The Task's human-or-agent mode, if this Ticket carries one."
             },
             "number": {
               "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
@@ -6863,6 +7431,13 @@
               "format": "uint64",
               "minimum": 0.0,
               "type": "integer"
+            },
+            "scheduled_for": {
+              "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "slice": {
               "description": "The Implementation slice description, if this Ticket carries one.",
@@ -6888,6 +7463,17 @@
               ],
               "description": "The lifecycle state (DR-LC-01)."
             },
+            "subtype": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TaskSubtype"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The Task's subtype, if this Ticket carries one."
+            },
             "title": {
               "description": "The Bug or Task title, if this Ticket carries one.",
               "type": [
@@ -6903,6 +7489,7 @@
             }
           },
           "required": [
+            "completion",
             "criteria",
             "id",
             "kind",
@@ -7093,6 +7680,79 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
         "TicketBugQualification": {
           "additionalProperties": false,
           "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
@@ -7471,7 +8131,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, and the Bug body for a Bug.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -7484,12 +8144,26 @@
           ],
           "description": "The Bug body, if this Ticket carries one."
         },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "criteria": {
           "description": "The Implementation's story-linked criteria; empty for every other kind.",
           "items": {
             "$ref": "#/definitions/TicketCriterion"
           },
           "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "id": {
           "description": "The immutable, storage-assigned identity.",
@@ -7504,6 +8178,17 @@
             }
           ],
           "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
         },
         "number": {
           "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
@@ -7524,6 +8209,13 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "slice": {
           "description": "The Implementation slice description, if this Ticket carries one.",
@@ -7549,6 +8241,17 @@
           ],
           "description": "The lifecycle state (DR-LC-01)."
         },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
         "title": {
           "description": "The Bug or Task title, if this Ticket carries one.",
           "type": [
@@ -7564,6 +8267,7 @@
         }
       },
       "required": [
+        "completion",
         "criteria",
         "id",
         "kind",

@@ -2,18 +2,21 @@
 // The Ticket editor surface: pick a Project, create Tickets under
 // each kind's schema — an Implementation attached to one Spec with
 // its slice and story-linked criteria, a Bug quick-captured with
-// title, actual behaviour, and reporter evidence, a Task with a
-// title and an optional attachment — and read the Project's Tickets
-// back. A listed Bug opens the qualification form that completes it
-// and the facts form that records its vendor-neutral collections.
+// title, actual behaviour, and reporter evidence, a Task bounded by a
+// subtype, a human-or-agent mode, completion criteria, and optional
+// schedule or due-date timing — and read the Project's Tickets back.
+// A listed Bug opens the qualification form that completes it and the
+// facts form that records its vendor-neutral collections.
 // Presentation only; every domain call goes through the generated
 // clients in the ticket-editor and bug-editor stores
-// (KAN-S4-US1 through KAN-S4-US3).
+// (KAN-S4-US1 through KAN-S4-US4).
 import { computed, inject, onMounted, ref } from 'vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { useSpecEditorStore } from '../stores/spec-editor'
 import {
+  TASK_MODES,
+  TASK_SUBTYPES,
   TICKET_KINDS,
   TICKET_PRIORITIES,
   blankTicketDraft,
@@ -215,6 +218,14 @@ function addSnapshot(): void {
 
 function removeSnapshot(position: number): void {
   factsDraft.value.occurrenceSnapshots.splice(position, 1)
+}
+
+function addCompletion(): void {
+  draft.value.completion.push('')
+}
+
+function removeCompletion(position: number): void {
+  draft.value.completion.splice(position, 1)
 }
 
 const kindLabels: Record<string, string> = {
@@ -475,6 +486,106 @@ const kindLabels: Record<string, string> = {
               Add criterion
             </button>
           </fieldset>
+        </template>
+
+        <template v-if="draft.kind === 'task'">
+          <div class="flex flex-wrap gap-3">
+            <label class="flex w-fit flex-col gap-1 text-sm text-slate-600">
+              Subtype
+              <select
+                v-model="draft.subtype"
+                data-testid="ticket-subtype"
+                aria-label="Task subtype"
+                class="rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option
+                  v-for="subtype in TASK_SUBTYPES"
+                  :key="subtype"
+                  :value="subtype"
+                >
+                  {{ subtype }}
+                </option>
+              </select>
+            </label>
+            <label class="flex w-fit flex-col gap-1 text-sm text-slate-600">
+              Mode
+              <select
+                v-model="draft.mode"
+                data-testid="ticket-mode"
+                aria-label="Task mode"
+                class="rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option
+                  v-for="mode in TASK_MODES"
+                  :key="mode"
+                  :value="mode"
+                >
+                  {{ mode }}
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <fieldset
+            data-testid="ticket-completion"
+            class="flex flex-col gap-2"
+          >
+            <legend class="text-sm font-medium text-slate-600">
+              Completion criteria
+            </legend>
+            <div
+              v-for="(_, position) in draft.completion"
+              :key="position"
+              class="flex flex-wrap items-center gap-2"
+            >
+              <input
+                v-model="draft.completion[position]"
+                :data-testid="`ticket-completion-outcome-${position}`"
+                :aria-label="`Completion criterion ${position + 1}`"
+                placeholder="The outcome that bounds this Task"
+                class="min-w-56 flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+              <button
+                :data-testid="`ticket-completion-remove-${position}`"
+                type="button"
+                class="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                @click="removeCompletion(position)"
+              >
+                Remove
+              </button>
+            </div>
+            <button
+              data-testid="ticket-completion-add"
+              type="button"
+              class="w-fit rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+              @click="addCompletion"
+            >
+              Add criterion
+            </button>
+          </fieldset>
+
+          <div class="flex flex-wrap gap-3">
+            <label class="flex w-fit flex-col gap-1 text-sm text-slate-600">
+              Scheduled for (optional)
+              <input
+                v-model="draft.scheduledFor"
+                data-testid="ticket-scheduled-for"
+                aria-label="One-time activation, RFC 3339"
+                placeholder="2026-10-01T09:00:00Z"
+                class="rounded border border-slate-300 px-3 py-2 font-mono text-sm"
+              >
+            </label>
+            <label class="flex w-fit flex-col gap-1 text-sm text-slate-600">
+              Due date (optional)
+              <input
+                v-model="draft.due"
+                data-testid="ticket-due"
+                aria-label="Due date, RFC 3339"
+                placeholder="2026-09-30T17:00:00Z"
+                class="rounded border border-slate-300 px-3 py-2 font-mono text-sm"
+              >
+            </label>
+          </div>
         </template>
 
         <button

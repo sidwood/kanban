@@ -21,6 +21,79 @@
       ],
       "type": "object"
     },
+    "TaskMode": {
+      "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+      "oneOf": [
+        {
+          "description": "Sid executes the work.",
+          "enum": [
+            "human"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An agent executes the work under dispatch.",
+          "enum": [
+            "agent"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TaskSubtype": {
+      "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+      "oneOf": [
+        {
+          "description": "Keeping the product and its operations running.",
+          "enum": [
+            "operational"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Finding out what is true before acting on it.",
+          "enum": [
+            "investigative"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bookkeeping and record-keeping work.",
+          "enum": [
+            "administrative"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Learning without a deliverable committed up front.",
+          "enum": [
+            "research"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Proving an approach before committing to it.",
+          "enum": [
+            "prototype"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Moving work or data from one place to another.",
+          "enum": [
+            "migration"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Work done by hand, on purpose.",
+          "enum": [
+            "manual"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "TicketCriterion": {
       "additionalProperties": false,
       "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
@@ -103,7 +176,7 @@
       ]
     }
   },
-  "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug names its quick-capture facts; a Task names its title. Fields the kind does not carry are simply absent.",
+  "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug names its quick-capture facts; a Task names its title, subtype, mode, completion criteria, and optional timing. Fields the kind does not carry are simply absent.",
   "properties": {
     "actual_behaviour": {
       "description": "The Bug's actual behaviour (DR-TK-08); required for a Bug.",
@@ -112,13 +185,30 @@
         "null"
       ]
     },
+    "completion": {
+      "description": "The Task's completion criteria: observable outcomes that bound the work, with no story links.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "criteria": {
-      "description": "The Implementation's story-linked criteria.",
+      "description": "The Implementation's story-linked criteria. A Task never carries these (DR-TK-07); it sends `completion` instead.",
       "items": {
         "$ref": "#/definitions/TicketCriterion"
       },
       "type": [
         "array",
+        "null"
+      ]
+    },
+    "due": {
+      "description": "The Task's due date, RFC 3339.",
+      "type": [
+        "string",
         "null"
       ]
     },
@@ -129,6 +219,17 @@
         }
       ],
       "description": "The kind whose schema the Ticket carries."
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TaskMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Task's human-or-agent mode."
     },
     "mutation": {
       "$ref": "#/definitions/MutationContext"
@@ -154,6 +255,13 @@
         "null"
       ]
     },
+    "scheduled_for": {
+      "description": "The Task's one-time activation instant, RFC 3339; stored for KAN-S11, whose activation behaviour is KAN-T53 and KAN-T54.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "slice": {
       "description": "The Implementation slice description, naming the behaviour delivered end to end.",
       "type": [
@@ -169,6 +277,17 @@
         "integer",
         "null"
       ]
+    },
+    "subtype": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TaskSubtype"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Task's subtype; a Task names exactly one (DR-TK-06)."
     },
     "title": {
       "description": "The Bug or Task title.",

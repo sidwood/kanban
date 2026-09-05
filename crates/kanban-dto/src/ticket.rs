@@ -1,11 +1,12 @@
 //! Ticket payload definitions: the kind, priority, severity, and
 //! lifecycle vocabularies, the per-kind creation payload, the Bug's
 //! qualification and vendor-neutral facts payloads, and the record
-//! every client sees (KAN-S4-US1 through KAN-S4-US3). Each kind sends
+//! every client sees (KAN-S4-US1 through KAN-S4-US4). Each kind sends
 //! exactly its own fields on creation — an Implementation attaches to
 //! one Spec and carries its slice and story-linked criteria; a Bug
-//! carries its quick-capture facts; a Task carries a title and an
-//! optional attachment.
+//! carries its quick-capture facts; a Task carries a title, one
+//! subtype of the closed set, a human-or-agent mode, completion
+//! criteria, and optional schedule or due-date timing.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -195,6 +196,90 @@ impl TicketSeverity {
     }
 }
 
+/// The closed Task subtype vocabulary on the wire (DR-TK-06): the
+/// seven bounded flavours of non-story work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSubtype {
+    /// Keeping the product and its operations running.
+    Operational,
+    /// Finding out what is true before acting on it.
+    Investigative,
+    /// Bookkeeping and record-keeping work.
+    Administrative,
+    /// Learning without a deliverable committed up front.
+    Research,
+    /// Proving an approach before committing to it.
+    Prototype,
+    /// Moving work or data from one place to another.
+    Migration,
+    /// Work done by hand, on purpose.
+    Manual,
+}
+
+impl TaskSubtype {
+    /// Every subtype, in vocabulary order.
+    pub const ALL: &'static [Self] = &[
+        Self::Operational,
+        Self::Investigative,
+        Self::Administrative,
+        Self::Research,
+        Self::Prototype,
+        Self::Migration,
+        Self::Manual,
+    ];
+
+    /// The wire name, matching this subtype's serialised form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Operational => "operational",
+            Self::Investigative => "investigative",
+            Self::Administrative => "administrative",
+            Self::Research => "research",
+            Self::Prototype => "prototype",
+            Self::Migration => "migration",
+            Self::Manual => "manual",
+        }
+    }
+
+    /// The subtype `wire` names, or `None` outside the closed set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|subtype| subtype.as_str() == wire)
+    }
+}
+
+/// The closed Task mode vocabulary on the wire (KAN-S4-US4): whether
+/// a human or an agent executes the bounded work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskMode {
+    /// Sid executes the work.
+    Human,
+    /// An agent executes the work under dispatch.
+    Agent,
+}
+
+impl TaskMode {
+    /// Every mode, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Human, Self::Agent];
+
+    /// The wire name, matching this mode's serialised form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Agent => "agent",
+        }
+    }
+
+    /// The mode `wire` names, or `None` outside the closed set.
+    pub fn parse(wire: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|mode| mode.as_str() == wire)
+    }
+}
+
 /// One story-linked criterion a Ticket claims: an observable outcome
 /// and the User Stories it delivers, named like `CORE-S3-US6` or
 /// `S3-US6` (DR-TK-04, DR-PS-13).
@@ -292,7 +377,8 @@ pub struct TicketBugRecord {
 /// Request payload for the `ticket.create` command. Each kind sends
 /// exactly its own fields: an Implementation names its Spec, slice,
 /// and criteria; a Bug names its quick-capture facts; a Task names
-/// its title. Fields the kind does not carry are simply absent.
+/// its title, subtype, mode, completion criteria, and optional
+/// timing. Fields the kind does not carry are simply absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketCreateRequest {
@@ -321,9 +407,27 @@ pub struct TicketCreateRequest {
     /// delivered end to end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slice: Option<String>,
-    /// The Implementation's story-linked criteria.
+    /// The Implementation's story-linked criteria. A Task never
+    /// carries these (DR-TK-07); it sends `completion` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub criteria: Option<Vec<TicketCriterion>>,
+    /// The Task's subtype; a Task names exactly one (DR-TK-06).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<TaskSubtype>,
+    /// The Task's human-or-agent mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TaskMode>,
+    /// The Task's completion criteria: observable outcomes that bound
+    /// the work, with no story links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<Vec<String>>,
+    /// The Task's one-time activation instant, RFC 3339; stored for
+    /// KAN-S11, whose activation behaviour is KAN-T53 and KAN-T54.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_for: Option<String>,
+    /// The Task's due date, RFC 3339.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
 }
 
 /// Request payload for the `ticket.bug.qualify` command: one complete
@@ -358,8 +462,9 @@ pub struct TicketBugFactsRequest {
 /// The Ticket record as every client sees it: the Project it belongs
 /// to, the number that Project minted, the kind whose schema it
 /// carries, and the kind-specific fields — a title for Bugs and
-/// Tasks, a slice and criteria for Implementations, and the Bug body
-/// for a Bug.
+/// Tasks, a slice and criteria for Implementations, the Bug body for
+/// a Bug, and for Tasks the subtype, mode, completion criteria, and
+/// optional timing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketRecord {
@@ -388,6 +493,17 @@ pub struct TicketRecord {
     pub criteria: Vec<TicketCriterion>,
     /// The Bug body, if this Ticket carries one.
     pub bug: Option<TicketBugRecord>,
+    /// The Task's subtype, if this Ticket carries one.
+    pub subtype: Option<TaskSubtype>,
+    /// The Task's human-or-agent mode, if this Ticket carries one.
+    pub mode: Option<TaskMode>,
+    /// The Task's completion criteria; empty for every other kind.
+    pub completion: Vec<String>,
+    /// The Task's one-time activation instant, if it carries one;
+    /// RFC 3339 in UTC, stored for KAN-S11.
+    pub scheduled_for: Option<String>,
+    /// The Task's due date, if it carries one; RFC 3339 in UTC.
+    pub due: Option<String>,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
 }
@@ -580,13 +696,14 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
-        TicketBugFactsRequest, TicketBugQualification, TicketBugQualifyRequest, TicketBugRecord,
-        TicketCreateRequest, TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
-        TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
-        TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
-        TicketOccurrenceSnapshot, TicketPriority, TicketReadinessBlocker, TicketReadinessResponse,
-        TicketRecord, TicketSeverity, TicketState, TicketVerificationStep,
+        TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+        TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
+        TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
+        TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+        TicketDependencyRecord, TicketDependencyRemoveRequest, TicketExternalReference,
+        TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
+        TicketPriority, TicketReadinessBlocker, TicketReadinessResponse, TicketRecord,
+        TicketSeverity, TicketState, TicketVerificationStep,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -651,8 +768,87 @@ mod tests {
             slice: Some("Registration creates Projects end to end".to_owned()),
             criteria: vec![criterion()],
             bug: None,
+            subtype: None,
+            mode: None,
+            completion: Vec::new(),
+            scheduled_for: None,
+            due: None,
             version: 1,
         }
+    }
+
+    #[test]
+    fn subtypes_and_modes_round_trip_through_their_wire_names() {
+        assert_eq!(TaskSubtype::ALL.len(), 7);
+        for subtype in TaskSubtype::ALL {
+            assert_eq!(
+                TaskSubtype::parse(subtype.as_str()),
+                Some(*subtype),
+                "`{}` must survive the round trip",
+                subtype.as_str()
+            );
+            assert_eq!(
+                serde_json::to_value(subtype).expect("the subtype encodes"),
+                json!(subtype.as_str()),
+                "the wire name and the serialised name must agree"
+            );
+        }
+        assert_eq!(TaskSubtype::parse("ghost"), None);
+
+        assert_eq!(TaskMode::ALL.len(), 2);
+        for mode in TaskMode::ALL {
+            assert_eq!(TaskMode::parse(mode.as_str()), Some(*mode));
+            assert_eq!(
+                serde_json::to_value(mode).expect("the mode encodes"),
+                json!(mode.as_str())
+            );
+        }
+        assert_eq!(TaskMode::parse("ghost"), None);
+    }
+
+    #[test]
+    fn a_task_record_round_trips_with_its_bounded_fields() {
+        let task = TicketRecord {
+            kind: TicketKind::Task,
+            priority: TicketPriority::Low,
+            spec_id: None,
+            title: Some("Archive the old register".to_owned()),
+            slice: None,
+            criteria: Vec::new(),
+            subtype: Some(TaskSubtype::Migration),
+            mode: Some(TaskMode::Agent),
+            completion: vec!["The register archive is restorable.".to_owned()],
+            scheduled_for: Some("2026-10-01T00:00:00.000Z".to_owned()),
+            due: Some("2026-09-30T17:00:00.000Z".to_owned()),
+            ..record()
+        };
+
+        let encoded = serde_json::to_value(&task).expect("the record serialises");
+        assert_eq!(
+            encoded,
+            json!({
+                "id": 6,
+                "project_id": 2,
+                "number": 17,
+                "kind": "task",
+                "priority": "low",
+                "state": "draft",
+                "spec_id": null,
+                "title": "Archive the old register",
+                "slice": null,
+                "criteria": [],
+                "bug": null,
+                "subtype": "migration",
+                "mode": "agent",
+                "completion": ["The register archive is restorable."],
+                "scheduled_for": "2026-10-01T00:00:00.000Z",
+                "due": "2026-09-30T17:00:00.000Z",
+                "version": 1,
+            })
+        );
+        let decoded: TicketRecord =
+            serde_json::from_value(encoded).expect("the record deserialises");
+        assert_eq!(decoded, task);
     }
 
     #[test]
@@ -743,6 +939,11 @@ mod tests {
                     }
                 ],
                 "bug": null,
+                "subtype": null,
+                "mode": null,
+                "completion": [],
+                "scheduled_for": null,
+                "due": null,
                 "version": 1,
             })
         );
@@ -773,6 +974,12 @@ mod tests {
             "severity arrives only inside a qualification (DR-LC-13)"
         );
         assert_eq!(encoded["bug"]["evidence_ids"], json!([2]));
+        assert_eq!(
+            encoded["subtype"],
+            json!(null),
+            "a Bug carries no Task fields"
+        );
+        assert_eq!(encoded["completion"], json!([]));
         let decoded: TicketRecord =
             serde_json::from_value(encoded).expect("the record deserialises");
         assert_eq!(decoded, bug);
@@ -832,6 +1039,21 @@ mod tests {
                 }
             ],
             "evidence_ids": [2],
+        }));
+        // A Task sends its bounded fields and never story-linked
+        // criteria: `criteria` stays absent and `completion` carries
+        // the outcomes.
+        round_trips::<TicketCreateRequest>(json!({
+            "mutation": context(),
+            "project_id": 2,
+            "kind": "task",
+            "priority": "normal",
+            "title": "Archive the old register",
+            "subtype": "migration",
+            "mode": "agent",
+            "completion": ["The register archive is restorable."],
+            "scheduled_for": "2026-10-01T00:00:00Z",
+            "due": "2026-09-30T17:00:00Z",
         }));
 
         let list: TicketListQuery =
@@ -1007,6 +1229,8 @@ mod tests {
             "TicketBugQualification",
             "TicketBugQualifyRequest",
             "TicketBugRecord",
+            "TaskMode",
+            "TaskSubtype",
             "TicketCreateRequest",
             "TicketCriterion",
             "TicketDependenciesQuery",

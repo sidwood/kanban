@@ -1,26 +1,29 @@
 //! Ticket commands and queries: create a Ticket under its kind's
 //! schema — an Implementation attached to exactly one Spec with its
 //! slice and story-linked criteria, a Bug quick-captured with title,
-//! actual behaviour, and reporter evidence, a Task with a title and
-//! an optional attachment — qualify a Bug and record its
-//! vendor-neutral facts, and read Tickets back per Project
-//! (KAN-S4-US1 through KAN-S4-US3). Creation mints the Project's next
-//! Ticket number, lands the row with the counter move and the
-//! timeline append in one write, and announces live; no delete
-//! exists. Lifecycle transitions and dependencies arrive with their
-//! own tickets; readiness stays a computed projection, so qualifying
-//! a Bug never moves its state.
+//! actual behaviour, and reporter evidence, a Task with a title, one
+//! subtype of the closed set, a human-or-agent mode, completion
+//! criteria, and optional schedule or due-date timing stored for
+//! KAN-S11 — qualify a Bug and record its vendor-neutral facts, and
+//! read Tickets back per Project (KAN-S4-US1 through KAN-S4-US4).
+//! Creation mints the Project's next Ticket number, lands the row
+//! with the counter move and the timeline append in one write, and
+//! announces live; no delete exists. Lifecycle transitions and
+//! dependencies arrive with their own tickets; readiness stays a
+//! computed projection, so qualifying a Bug never moves its state.
 
 use std::sync::Arc;
 
 use kanban_domain::{
-    AcceptanceCriterion, BugFacts, BugQualification, ExternalReference, NumberKind,
-    OccurrenceSnapshot, Priority as DomainPriority, Project, ProjectCode, ProjectId,
-    Severity as DomainSeverity, SpecId, Ticket, TicketBody, TicketId, TicketKind as DomainKind,
-    TicketNumber, TicketState as DomainState, UserStoryRef, VerificationStep,
+    AcceptanceCriterion, BugFacts, BugQualification, CompletionCriterion as DomainCompletion,
+    ExternalReference, NumberKind, OccurrenceSnapshot, Priority as DomainPriority, Project,
+    ProjectCode, ProjectId, Severity as DomainSeverity, SpecId, TaskMode as DomainMode,
+    TaskSubtype as DomainSubtype, TaskTiming, Ticket, TicketBody, TicketId,
+    TicketKind as DomainKind, TicketNumber, TicketState as DomainState, UserStoryRef,
+    VerificationStep,
 };
 use kanban_dto::{
-    ApiError, LiveEventName, TicketBugFactsRequest, TicketBugQualification,
+    ApiError, LiveEventName, TaskMode, TaskSubtype, TicketBugFactsRequest, TicketBugQualification,
     TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
     TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
     TicketOccurrenceSnapshot, TicketPriority, TicketRecord, TicketSeverity, TicketState,
@@ -390,6 +393,39 @@ impl QueryHandler for GetTicket {
     }
 }
 
+/// Refuse the wire fields one kind does not carry (KAN-S4-US4): a
+/// Task never sends story-linked criteria, and no other kind sends a
+/// Task's bounded fields. Absence carries no fields at all, so only a
+/// present field is refused.
+fn refuse_cross_kind_fields(request: &TicketCreateRequest) -> Result<(), ApiError> {
+    match request.kind {
+        TicketKind::Task => {
+            if request.criteria.is_some() {
+                return Err(ApiError::invalid_request(
+                    "a Task Ticket carries completion criteria, never story-linked criteria",
+                ));
+            }
+        }
+        kind => {
+            let task_field_present = request.subtype.is_some()
+                || request.mode.is_some()
+                || request.completion.is_some()
+                || request.scheduled_for.is_some()
+                || request.due.is_some();
+            if task_field_present {
+                let named = match kind {
+                    TicketKind::Implementation => "an Implementation",
+                    _ => "a Bug",
+                };
+                return Err(ApiError::invalid_request(&format!(
+                    "{named} Ticket carries no Task fields"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Decode one request's kind-specific fields into the domain's
 /// validated body, resolving the Spec attachment through `specs`.
 fn body_of(
@@ -397,6 +433,7 @@ fn body_of(
     project: &Project,
     specs: &dyn SpecStore,
 ) -> Result<TicketBody, ApiError> {
+    refuse_cross_kind_fields(request)?;
     let attached = |spec_id: u64| -> Result<kanban_domain::Spec, ApiError> {
         let spec = specs
             .find(SpecId::new(spec_id))?
@@ -435,9 +472,23 @@ fn body_of(
         }
         TicketKind::Task => {
             let spec = request.spec_id.map(attached).transpose()?;
+            let completion = request
+                .completion
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|outcome| DomainCompletion::new(outcome.clone()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(refuse)?;
+            let timing = TaskTiming::new(request.scheduled_for.clone(), request.due.clone())
+                .map_err(refuse)?;
             TicketBody::task(
                 request.title.clone().unwrap_or_default(),
                 spec.map(|spec| spec.id()),
+                request.subtype.map(subtype_of),
+                request.mode.map(mode_of),
+                completion,
+                timing,
             )
             .map_err(refuse)
         }
@@ -604,6 +655,48 @@ fn kind_of(kind: DomainKind) -> TicketKind {
     }
 }
 
+/// The domain form of one wire Task subtype.
+fn subtype_of(subtype: TaskSubtype) -> DomainSubtype {
+    match subtype {
+        TaskSubtype::Operational => DomainSubtype::Operational,
+        TaskSubtype::Investigative => DomainSubtype::Investigative,
+        TaskSubtype::Administrative => DomainSubtype::Administrative,
+        TaskSubtype::Research => DomainSubtype::Research,
+        TaskSubtype::Prototype => DomainSubtype::Prototype,
+        TaskSubtype::Migration => DomainSubtype::Migration,
+        TaskSubtype::Manual => DomainSubtype::Manual,
+    }
+}
+
+/// The wire form of one domain Task subtype.
+fn subtype_named(subtype: DomainSubtype) -> TaskSubtype {
+    match subtype {
+        DomainSubtype::Operational => TaskSubtype::Operational,
+        DomainSubtype::Investigative => TaskSubtype::Investigative,
+        DomainSubtype::Administrative => TaskSubtype::Administrative,
+        DomainSubtype::Research => TaskSubtype::Research,
+        DomainSubtype::Prototype => TaskSubtype::Prototype,
+        DomainSubtype::Migration => TaskSubtype::Migration,
+        DomainSubtype::Manual => TaskSubtype::Manual,
+    }
+}
+
+/// The domain form of one wire Task mode.
+fn mode_of(mode: TaskMode) -> DomainMode {
+    match mode {
+        TaskMode::Human => DomainMode::Human,
+        TaskMode::Agent => DomainMode::Agent,
+    }
+}
+
+/// The wire form of one domain Task mode.
+fn mode_named(mode: DomainMode) -> TaskMode {
+    match mode {
+        DomainMode::Human => TaskMode::Human,
+        DomainMode::Agent => TaskMode::Agent,
+    }
+}
+
 /// The wire form of one domain state.
 fn state_of(state: DomainState) -> TicketState {
     match state {
@@ -641,6 +734,15 @@ fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
             .map(|criterion| criterion_of(criterion, code))
             .collect(),
         bug: ticket.bug().map(|bug| bug_record_of(bug, code)),
+        subtype: ticket.subtype().map(subtype_named),
+        mode: ticket.task_mode().map(mode_named),
+        completion: ticket
+            .completion()
+            .iter()
+            .map(|criterion| criterion.outcome().to_owned())
+            .collect(),
+        scheduled_for: ticket.scheduled_for().map(str::to_owned),
+        due: ticket.due().map(str::to_owned),
         version: ticket.version(),
     }
 }
@@ -1055,6 +1157,8 @@ mod ticket_create {
 
     /// A Bug or Task creation request with the fields a test varies.
     /// A Bug always carries its quick-capture facts (DR-TK-08).
+    /// A Task additionally carries its bounded fields: subtype, mode,
+    /// and one completion criterion.
     fn titled(
         kind: &str,
         title: Option<&str>,
@@ -1084,6 +1188,48 @@ mod ticket_create {
         }
         if let Some(spec_id) = spec_id {
             object.insert("spec_id".to_owned(), json!(spec_id));
+        }
+        if kind == "task" {
+            object.insert("subtype".to_owned(), json!("administrative"));
+            object.insert("mode".to_owned(), json!("human"));
+            object.insert(
+                "completion".to_owned(),
+                json!(["The old register is archived and restorable."]),
+            );
+        }
+        request
+    }
+
+    /// A Task creation request with the bounded fields a test varies,
+    /// otherwise rule-valid.
+    fn bounded(
+        subtype: Option<&str>,
+        mode: Option<&str>,
+        completion: Value,
+        scheduled_for: Option<&str>,
+        due: Option<&str>,
+        key: &str,
+    ) -> Value {
+        let mut request = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+            "project_id": 1,
+            "kind": "task",
+            "priority": "normal",
+            "title": "Archive the old register",
+        });
+        let object = request.as_object_mut().expect("the request is an object");
+        if let Some(subtype) = subtype {
+            object.insert("subtype".to_owned(), json!(subtype));
+        }
+        if let Some(mode) = mode {
+            object.insert("mode".to_owned(), json!(mode));
+        }
+        object.insert("completion".to_owned(), completion);
+        if let Some(scheduled_for) = scheduled_for {
+            object.insert("scheduled_for".to_owned(), json!(scheduled_for));
+        }
+        if let Some(due) = due {
+            object.insert("due".to_owned(), json!(due));
         }
         request
     }
@@ -1129,6 +1275,11 @@ mod ticket_create {
                     { "outcome": "Specs mint unique numbers.", "stories": ["CORE-S1-US1"] }
                 ],
                 "bug": null,
+                "subtype": null,
+                "mode": null,
+                "completion": [],
+                "scheduled_for": null,
+                "due": null,
                 "version": 1,
             })
         );
@@ -1195,6 +1346,235 @@ mod ticket_create {
         assert_eq!(attached["kind"], json!("task"));
         assert_eq!(attached["spec_id"], json!(spec));
         assert_eq!(attached["number"], json!(2), "the counter moves per Ticket");
+    }
+
+    #[test]
+    fn creating_a_task_returns_its_bounded_record() {
+        let harness = ticket_harness();
+
+        let response = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(
+                    Some("migration"),
+                    Some("agent"),
+                    json!(["The register moves.", "The archive restores."]),
+                    Some("2026-10-01T02:00:00+02:00"),
+                    Some("2026-09-30T17:00:00Z"),
+                    "key-task",
+                ),
+            )
+            .expect("the Task creates");
+
+        assert_eq!(
+            response,
+            json!({
+                "id": 1,
+                "project_id": 1,
+                "number": 1,
+                "kind": "task",
+                "priority": "normal",
+                "state": "draft",
+                "spec_id": null,
+                "title": "Archive the old register",
+                "slice": null,
+                "criteria": [],
+                "bug": null,
+                "subtype": "migration",
+                "mode": "agent",
+                "completion": ["The register moves.", "The archive restores."],
+                "scheduled_for": "2026-10-01T00:00:00.000Z",
+                "due": "2026-09-30T17:00:00.000Z",
+                "version": 1,
+            })
+        );
+
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": 1 }))
+            .expect("the get serves");
+        assert_eq!(read, response, "the bounded record round trips");
+    }
+
+    #[test]
+    fn creating_a_task_without_subtype_mode_or_completion_is_refused() {
+        let harness = ticket_harness();
+
+        let unspecified = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(None, Some("human"), json!(["Done."]), None, None, "key-1"),
+            )
+            .expect_err("a Task names one subtype");
+        assert_eq!(unspecified.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            unspecified.message,
+            "a Task Ticket names one subtype of the closed set"
+        );
+
+        let unstated = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(
+                    Some("research"),
+                    None,
+                    json!(["Done."]),
+                    None,
+                    None,
+                    "key-2",
+                ),
+            )
+            .expect_err("a Task names its mode");
+        assert_eq!(unstated.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            unstated.message,
+            "a Task Ticket names a human or agent mode"
+        );
+
+        let unbounded = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(
+                    Some("manual"),
+                    Some("human"),
+                    json!([]),
+                    None,
+                    None,
+                    "key-3",
+                ),
+            )
+            .expect_err("a Task is bounded by completion criteria");
+        assert_eq!(unbounded.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            unbounded.message,
+            "a Task Ticket carries completion criteria"
+        );
+
+        let blank = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(
+                    Some("manual"),
+                    Some("human"),
+                    json!(["   "]),
+                    None,
+                    None,
+                    "key-4",
+                ),
+            )
+            .expect_err("a completion criterion states its outcome");
+        assert_eq!(
+            blank.message,
+            "a Ticket completion criterion cannot be blank"
+        );
+
+        let untimed = harness
+            .core
+            .command(
+                "ticket.create",
+                &bounded(
+                    Some("operational"),
+                    Some("agent"),
+                    json!(["Done."]),
+                    None,
+                    Some("September"),
+                    "key-5",
+                ),
+            )
+            .expect_err("a due date names an RFC 3339 instant");
+        assert_eq!(
+            untimed.message,
+            "a Task due date must be an RFC 3339 instant: `September`"
+        );
+
+        assert_eq!(
+            harness.projects.rows()[0]
+                .counters()
+                .last(kanban_domain::NumberKind::Ticket),
+            0,
+            "a refused creation consumes no number"
+        );
+    }
+
+    #[test]
+    fn a_task_never_carries_story_linked_criteria() {
+        let harness = ticket_harness();
+
+        let mut request = bounded(
+            Some("investigative"),
+            Some("human"),
+            json!(["The cause is named."]),
+            None,
+            None,
+            "key-1",
+        );
+        request["criteria"] = json!([
+            { "outcome": "A story claim.", "stories": ["CORE-S1-US1"] }
+        ]);
+
+        let error = harness
+            .core
+            .command("ticket.create", &request)
+            .expect_err("a Task claims no User Story through criteria");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "a Task Ticket carries completion criteria, never story-linked criteria"
+        );
+    }
+
+    #[test]
+    fn task_fields_on_other_kinds_are_refused() {
+        let harness = ticket_harness();
+        let spec = super::testing::authored_spec(&harness.core, "key-author");
+
+        let mut implementation = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+            "project_id": 1,
+            "kind": "implementation",
+            "priority": "normal",
+            "spec_id": spec,
+            "slice": "A slice",
+            "criteria": [{ "outcome": "Done.", "stories": ["CORE-S1-US1"] }],
+            "subtype": "operational",
+        });
+        let error = harness
+            .core
+            .command("ticket.create", &implementation)
+            .expect_err("an Implementation carries no Task fields");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "an Implementation Ticket carries no Task fields"
+        );
+
+        implementation
+            .as_object_mut()
+            .expect("the request is an object")
+            .remove("subtype");
+        implementation["mode"] = json!("agent");
+        let error = harness
+            .core
+            .command("ticket.create", &implementation)
+            .expect_err("the mode is refused too");
+        assert_eq!(
+            error.message,
+            "an Implementation Ticket carries no Task fields"
+        );
+
+        let mut bug = titled("bug", Some("A Bug"), None, "normal", "key-2");
+        bug["completion"] = json!(["Done."]);
+        let error = harness
+            .core
+            .command("ticket.create", &bug)
+            .expect_err("a Bug carries no Task fields");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.message, "a Bug Ticket carries no Task fields");
     }
 
     #[test]
@@ -1599,6 +1979,11 @@ mod ticket_queries {
                     request["reporter_evidence"] =
                         json!("The landing log names the drop immediately after the merge.");
                 }
+                if kind == "task" {
+                    request["subtype"] = json!("administrative");
+                    request["mode"] = json!("human");
+                    request["completion"] = json!(["The old register is archived."]);
+                }
             }
             harness
                 .core
@@ -1894,6 +2279,9 @@ mod bug_capture {
                     "kind": "task",
                     "priority": "normal",
                     "title": "Archive the old register",
+                    "subtype": "administrative",
+                    "mode": "human",
+                    "completion": ["The old register is archived."],
                 }),
             )
             .expect("the Task creates");
@@ -2053,6 +2441,9 @@ mod bug_capture {
                     "kind": "task",
                     "priority": "normal",
                     "title": "Archive the old register",
+                    "subtype": "administrative",
+                    "mode": "human",
+                    "completion": ["The old register is archived."],
                 }),
             )
             .expect("the Task creates");

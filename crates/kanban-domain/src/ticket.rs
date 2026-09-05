@@ -11,24 +11,30 @@
 //! qualification exists (DR-TK-09), carrying vendor-neutral External
 //! References, Occurrence Snapshots, and Evidence Items while it waits
 //! (DR-TK-10); a Task is bounded non-story work with the same optional
-//! attachment (DR-TK-06). Every kind carries the closed priority
-//! vocabulary urgent, high, normal, low (DR-LC-12) and the Bug's
-//! severity the closed critical, high, medium, low (DR-LC-13); every
-//! kind starts its lifecycle in draft (DR-LC-01). The lifecycle's
-//! transitions and readiness rules land in KAN-T21, dependencies in
-//! KAN-T20, and graph approval pinning in KAN-T23; this module owns
-//! the shape a Ticket is created with and the Bug's capture and
-//! qualification rules.
+//! attachment, named by one subtype of the closed set and a
+//! human-or-agent mode, bounded by completion criteria instead of
+//! story-linked criteria, and carrying optional schedule or due-date
+//! timing stored for KAN-S11 (DR-TK-06, DR-TK-07). Every kind carries
+//! the closed priority vocabulary urgent, high, normal, low (DR-LC-12)
+//! and the Bug's severity the closed critical, high, medium, low
+//! (DR-LC-13); every kind starts its lifecycle in draft (DR-LC-01).
+//! The lifecycle's transitions and readiness rules land in KAN-T21,
+//! dependencies in KAN-T20, and graph approval pinning in KAN-T23;
+//! this module owns the shape a Ticket is created with, the Bug's
+//! capture and qualification rules, and the Task's bounds.
 
 use std::fmt;
 
 use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
 use crate::evidence::EvidenceId;
+
 use crate::plan::SpecNumber;
 use crate::project::ProjectId;
 use crate::spec::SpecId;
+use crate::timeline_time::stored_format;
 
 /// The identity of one Ticket. Assigned once by storage and immutable
 /// afterwards.
@@ -289,6 +295,173 @@ impl TicketState {
     }
 }
 
+/// The closed Task subtype vocabulary (DR-TK-06, CONTEXT.md): the
+/// seven bounded flavours of non-story work a Task names exactly one
+/// of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TaskSubtype {
+    /// Keeping the product and its operations running.
+    Operational,
+    /// Finding out what is true before acting on it.
+    Investigative,
+    /// Bookkeeping and record-keeping work.
+    Administrative,
+    /// Learning without a deliverable committed up front.
+    Research,
+    /// Proving an approach before committing to it.
+    Prototype,
+    /// Moving work or data from one place to another.
+    Migration,
+    /// Work done by hand, on purpose.
+    Manual,
+}
+
+impl TaskSubtype {
+    /// Every subtype, in vocabulary order.
+    pub const ALL: &'static [Self] = &[
+        Self::Operational,
+        Self::Investigative,
+        Self::Administrative,
+        Self::Research,
+        Self::Prototype,
+        Self::Migration,
+        Self::Manual,
+    ];
+
+    /// The stored and wire name of this subtype.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Operational => "operational",
+            Self::Investigative => "investigative",
+            Self::Administrative => "administrative",
+            Self::Research => "research",
+            Self::Prototype => "prototype",
+            Self::Migration => "migration",
+            Self::Manual => "manual",
+        }
+    }
+
+    /// The subtype a stored row names, or `None` outside the closed
+    /// set.
+    pub fn parse(stored: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|subtype| subtype.wire_name() == stored)
+    }
+}
+
+/// The closed Task mode vocabulary (KAN-S4-US4): whether a human or
+/// an agent executes the bounded work. Transition ownership follows
+/// the mode's kind rules in KAN-T21, not this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TaskMode {
+    /// Sid executes the work.
+    Human,
+    /// An agent executes the work under dispatch.
+    Agent,
+}
+
+impl TaskMode {
+    /// Every mode, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Human, Self::Agent];
+
+    /// The stored and wire name of this mode.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Agent => "agent",
+        }
+    }
+
+    /// The mode a stored row names, or `None` outside the closed set.
+    pub fn parse(stored: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|mode| mode.wire_name() == stored)
+    }
+}
+
+/// One Task completion criterion (DR-TK-07): the observable outcome
+/// that bounds the Task. Completion criteria state outcomes alone — a
+/// Task never claims a User Story through story-linked criteria, so
+/// this value carries no story links at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionCriterion {
+    outcome: String,
+}
+
+impl CompletionCriterion {
+    /// Assemble a criterion, refusing an outcome that states nothing.
+    pub fn new(outcome: impl Into<String>) -> Result<Self, TicketError> {
+        let outcome = outcome.into();
+        if outcome.trim().is_empty() {
+            return Err(TicketError::Blank("completion criterion"));
+        }
+        Ok(Self { outcome })
+    }
+
+    /// The observable outcome that bounds the Task.
+    pub fn outcome(&self) -> &str {
+        &self.outcome
+    }
+}
+
+/// One Task's optional timing (KAN-S4-US4): a one-time activation —
+/// the schedule a Task stores for KAN-S11's activation behaviour —
+/// and a due date. Both are RFC 3339 instants, normalised to the UTC
+/// shape storage keeps; both may sit absent. Activation semantics are
+/// KAN-T53 and KAN-T54; this value stores validated timing only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskTiming {
+    scheduled_for: Option<String>,
+    due: Option<String>,
+}
+
+impl TaskTiming {
+    /// Assemble timing from raw instants, refusing a value that is
+    /// not valid RFC 3339 and normalising the rest to the stored UTC
+    /// shape.
+    pub fn new(scheduled_for: Option<String>, due: Option<String>) -> Result<Self, TicketError> {
+        Ok(Self {
+            scheduled_for: scheduled_for
+                .map(|raw| instant("activation", raw))
+                .transpose()?,
+            due: due.map(|raw| instant("due date", raw)).transpose()?,
+        })
+    }
+
+    /// The absent timing: no activation, no due date.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The one-time activation instant, if the Task carries one.
+    pub fn scheduled_for(&self) -> Option<&str> {
+        self.scheduled_for.as_deref()
+    }
+
+    /// The due date, if the Task carries one.
+    pub fn due(&self) -> Option<&str> {
+        self.due.as_deref()
+    }
+}
+
+/// Parse one raw instant as RFC 3339 and render it in the stored UTC
+/// shape, naming the field a refusal reports.
+fn instant(field: &'static str, raw: String) -> Result<String, TicketError> {
+    let parsed = OffsetDateTime::parse(&raw, &Rfc3339)
+        .map(|parsed| parsed.to_offset(UtcOffset::UTC))
+        .map_err(|_| TicketError::MalformedTiming {
+            field,
+            value: raw.clone(),
+        })?;
+    parsed
+        .format(stored_format())
+        .map_err(|_| TicketError::MalformedTiming { field, value: raw })
+}
+
 /// Why a Ticket was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TicketError {
@@ -325,6 +498,22 @@ pub enum TicketError {
     /// A Bug named an Evidence Item by an identity no attachment can
     /// hold; storage-assigned identities start at one (DR-TK-10).
     InvalidEvidenceId,
+    /// A Task names one subtype of the closed set (DR-TK-06); work
+    /// without a subtype is unbounded.
+    UnspecifiedSubtype,
+    /// A Task names its human-or-agent mode (KAN-S4-US4).
+    UnstatedMode,
+    /// A Task is bounded by completion criteria (DR-TK-07); an empty
+    /// list bounds nothing.
+    Unbounded,
+    /// A Task timing field was not a valid RFC 3339 instant. The
+    /// value names the field and the raw text refused.
+    MalformedTiming {
+        /// The field the refused instant belongs to.
+        field: &'static str,
+        /// The raw value that named no instant.
+        value: String,
+    },
 }
 
 /// Why an Occurrence Snapshot was refused.
@@ -371,6 +560,14 @@ impl fmt::Display for TicketError {
             Self::InvalidSnapshot { reason } => write!(f, "{reason}"),
             Self::InvalidEvidenceId => {
                 write!(f, "an Evidence Item identity starts at one")
+            }
+            Self::UnspecifiedSubtype => {
+                write!(f, "a Task Ticket names one subtype of the closed set")
+            }
+            Self::UnstatedMode => write!(f, "a Task Ticket names a human or agent mode"),
+            Self::Unbounded => write!(f, "a Task Ticket carries completion criteria"),
+            Self::MalformedTiming { field, value } => {
+                write!(f, "a Task {field} must be an RFC 3339 instant: `{value}`")
             }
         }
     }
@@ -780,21 +977,38 @@ impl BugTicket {
     }
 }
 
-/// One Task Ticket's creation schema (DR-TK-06): a title and an
-/// optional Spec attachment. Subtypes, modes, completion criteria,
-/// and schedule fields land in KAN-T19.
+/// One Task Ticket's creation schema (DR-TK-06, DR-TK-07): a title,
+/// an optional Spec attachment, one subtype of the closed set, a
+/// human-or-agent mode, the completion criteria that bound the work —
+/// never story-linked criteria — and optional schedule or due-date
+/// timing stored for KAN-S11.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskTicket {
     title: String,
     spec: Option<SpecId>,
+    subtype: TaskSubtype,
+    mode: TaskMode,
+    completion: Vec<CompletionCriterion>,
+    timing: TaskTiming,
 }
 
 impl TaskTicket {
     /// Rehydrate a stored body exactly as it was recorded.
-    pub fn restore(title: impl Into<String>, spec: Option<SpecId>) -> Self {
+    pub fn restore(
+        title: impl Into<String>,
+        spec: Option<SpecId>,
+        subtype: TaskSubtype,
+        mode: TaskMode,
+        completion: Vec<CompletionCriterion>,
+        timing: TaskTiming,
+    ) -> Self {
         Self {
             title: title.into(),
             spec,
+            subtype,
+            mode,
+            completion,
+            timing,
         }
     }
 
@@ -806,6 +1020,26 @@ impl TaskTicket {
     /// The Spec this Task attaches to, if any.
     pub fn spec(&self) -> Option<SpecId> {
         self.spec
+    }
+
+    /// The one subtype this Task names.
+    pub fn subtype(&self) -> TaskSubtype {
+        self.subtype
+    }
+
+    /// The Task's human-or-agent mode.
+    pub fn mode(&self) -> TaskMode {
+        self.mode
+    }
+
+    /// The completion criteria that bound this Task.
+    pub fn completion(&self) -> &[CompletionCriterion] {
+        &self.completion
+    }
+
+    /// The Task's optional timing.
+    pub fn timing(&self) -> &TaskTiming {
+        &self.timing
     }
 }
 
@@ -892,13 +1126,35 @@ impl TicketBody {
         })))
     }
 
-    /// Assemble a Task body, refusing a blank title.
-    pub fn task(title: impl Into<String>, spec: Option<SpecId>) -> Result<Self, TicketError> {
+    /// Assemble a Task body, refusing a blank title, a missing
+    /// subtype or mode, and an empty completion list. Completion
+    /// criteria state outcomes alone; a Task never carries
+    /// story-linked criteria (DR-TK-07).
+    pub fn task(
+        title: impl Into<String>,
+        spec: Option<SpecId>,
+        subtype: Option<TaskSubtype>,
+        mode: Option<TaskMode>,
+        completion: Vec<CompletionCriterion>,
+        timing: TaskTiming,
+    ) -> Result<Self, TicketError> {
         let title = title.into();
         if title.trim().is_empty() {
             return Err(TicketError::Blank("title"));
         }
-        Ok(Self::Task(TaskTicket { title, spec }))
+        let subtype = subtype.ok_or(TicketError::UnspecifiedSubtype)?;
+        let mode = mode.ok_or(TicketError::UnstatedMode)?;
+        if completion.is_empty() {
+            return Err(TicketError::Unbounded);
+        }
+        Ok(Self::Task(TaskTicket {
+            title,
+            spec,
+            subtype,
+            mode,
+            completion,
+            timing,
+        }))
     }
 
     /// The kind whose schema this body carries.
@@ -1042,7 +1298,8 @@ impl Ticket {
     }
 
     /// The Implementation's story-linked criteria; empty for every
-    /// other kind.
+    /// other kind. A Task claims no User Story through these
+    /// (DR-TK-07).
     pub fn criteria(&self) -> &[AcceptanceCriterion] {
         match &self.body {
             TicketBody::Implementation(implementation) => implementation.criteria(),
@@ -1083,6 +1340,46 @@ impl Ticket {
         Ok(())
     }
 
+    /// The Task's subtype, if this Ticket carries one.
+    pub fn subtype(&self) -> Option<TaskSubtype> {
+        match &self.body {
+            TicketBody::Task(task) => Some(task.subtype()),
+            _ => None,
+        }
+    }
+
+    /// The Task's human-or-agent mode, if this Ticket carries one.
+    pub fn task_mode(&self) -> Option<TaskMode> {
+        match &self.body {
+            TicketBody::Task(task) => Some(task.mode()),
+            _ => None,
+        }
+    }
+
+    /// The Task's completion criteria; empty for every other kind.
+    pub fn completion(&self) -> &[CompletionCriterion] {
+        match &self.body {
+            TicketBody::Task(task) => task.completion(),
+            _ => &[],
+        }
+    }
+
+    /// The Task's one-time activation instant, if it carries one.
+    pub fn scheduled_for(&self) -> Option<&str> {
+        match &self.body {
+            TicketBody::Task(task) => task.timing().scheduled_for(),
+            _ => None,
+        }
+    }
+
+    /// The Task's due date, if it carries one.
+    pub fn due(&self) -> Option<&str> {
+        match &self.body {
+            TicketBody::Task(task) => task.timing().due(),
+            _ => None,
+        }
+    }
+
     /// The number of applied changes, for optimistic version checks.
     pub fn version(&self) -> u64 {
         self.version
@@ -1092,8 +1389,9 @@ impl Ticket {
 #[cfg(test)]
 mod ticket_kinds {
     use super::{
-        BugFacts, BugTicket, Priority, TaskTicket, Ticket, TicketBody, TicketError, TicketId,
-        TicketKind, TicketNumber, TicketState,
+        BugFacts, BugTicket, CompletionCriterion, Priority, TaskMode, TaskSubtype, TaskTicket,
+        TaskTiming, Ticket, TicketBody, TicketError, TicketId, TicketKind, TicketNumber,
+        TicketState,
     };
     use crate::coverage::{AcceptanceCriterion, UserStoryRef};
     use crate::plan::SpecNumber;
@@ -1291,8 +1589,15 @@ mod ticket_kinds {
             "The landing log shows the drop.",
         )
         .expect("a Bug may stand alone");
-        let attached = TicketBody::task("Archive the old register", Some(SpecId::new(3)))
-            .expect("a Task may attach to one Spec");
+        let attached = TicketBody::task(
+            "Archive the old register",
+            Some(SpecId::new(3)),
+            Some(TaskSubtype::Operational),
+            Some(TaskMode::Human),
+            vec![CompletionCriterion::new("The register is archived.").expect("the outcome binds")],
+            TaskTiming::none(),
+        )
+        .expect("a Task may attach to one Spec");
 
         assert_eq!(
             standing,
@@ -1309,7 +1614,14 @@ mod ticket_kinds {
             attached,
             TicketBody::Task(TaskTicket::restore(
                 "Archive the old register",
-                Some(SpecId::new(3))
+                Some(SpecId::new(3)),
+                TaskSubtype::Operational,
+                TaskMode::Human,
+                vec![
+                    CompletionCriterion::new("The register is archived.")
+                        .expect("the outcome binds")
+                ],
+                TaskTiming::none(),
             ))
         );
         assert_eq!(standing.kind(), TicketKind::Bug);
@@ -1323,7 +1635,15 @@ mod ticket_kinds {
             TicketError::Blank("title")
         );
         assert_eq!(
-            TicketBody::task("\t", None).unwrap_err(),
+            TicketBody::task(
+                "\t",
+                None,
+                Some(TaskSubtype::Manual),
+                Some(TaskMode::Human),
+                vec![CompletionCriterion::new("Done.").expect("the outcome binds")],
+                TaskTiming::none(),
+            )
+            .unwrap_err(),
             TicketError::Blank("title")
         );
     }
@@ -1364,8 +1684,9 @@ mod ticket_kinds {
 #[cfg(test)]
 mod bug_qualification {
     use super::{
-        BugFacts, BugQualification, BugTicket, ExternalReference, OccurrenceSnapshot, Severity,
-        SnapshotError, Ticket, TicketBody, TicketError, TicketId, TicketKind, TicketState,
+        BugFacts, BugQualification, BugTicket, CompletionCriterion, ExternalReference,
+        OccurrenceSnapshot, Severity, SnapshotError, TaskMode, TaskSubtype, TaskTiming, Ticket,
+        TicketBody, TicketError, TicketId, TicketKind, TicketState,
     };
     use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
     use crate::evidence::EvidenceId;
@@ -1686,7 +2007,18 @@ mod bug_qualification {
             ProjectId::new(1),
             super::TicketNumber::new(2).expect("the fixture number is positive"),
             super::Priority::Normal,
-            TicketBody::task("Archive the old register", None).expect("the fixture body validates"),
+            TicketBody::task(
+                "Archive the old register",
+                None,
+                Some(TaskSubtype::Operational),
+                Some(TaskMode::Human),
+                vec![
+                    CompletionCriterion::new("The register is archived.")
+                        .expect("the outcome binds"),
+                ],
+                TaskTiming::none(),
+            )
+            .expect("the fixture body validates"),
         );
 
         let mut not_a_bug = implementation;
@@ -1885,5 +2217,242 @@ mod bug_qualification {
                 .len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod task_rules {
+    use super::{
+        CompletionCriterion, Priority, TaskMode, TaskSubtype, TaskTicket, TaskTiming, Ticket,
+        TicketBody, TicketError, TicketId, TicketKind, TicketNumber, TicketState,
+    };
+    use crate::project::ProjectId;
+    use crate::spec::SpecId;
+
+    fn number(value: u64) -> TicketNumber {
+        TicketNumber::new(value).expect("the fixture number is positive")
+    }
+
+    /// A rule-valid completion criterion.
+    fn done(outcome: &str) -> CompletionCriterion {
+        CompletionCriterion::new(outcome).expect("the fixture outcome states something")
+    }
+
+    /// A Task body with the fields a test varies, otherwise
+    /// rule-valid.
+    fn task(
+        subtype: Option<TaskSubtype>,
+        mode: Option<TaskMode>,
+        completion: Vec<CompletionCriterion>,
+    ) -> Result<TicketBody, TicketError> {
+        TicketBody::task(
+            "Archive the old register",
+            Some(SpecId::new(3)),
+            subtype,
+            mode,
+            completion,
+            TaskTiming::none(),
+        )
+    }
+
+    #[test]
+    fn subtypes_and_modes_round_trip_through_their_wire_names() {
+        assert_eq!(TaskSubtype::ALL.len(), 7);
+        for subtype in TaskSubtype::ALL {
+            assert_eq!(
+                TaskSubtype::parse(subtype.wire_name()),
+                Some(*subtype),
+                "`{}` must survive the round trip",
+                subtype.wire_name()
+            );
+        }
+        assert_eq!(TaskSubtype::parse("ghost"), None);
+
+        assert_eq!(TaskMode::ALL.len(), 2);
+        for mode in TaskMode::ALL {
+            assert_eq!(
+                TaskMode::parse(mode.wire_name()),
+                Some(*mode),
+                "`{}` must survive the round trip",
+                mode.wire_name()
+            );
+        }
+        assert_eq!(TaskMode::parse("ghost"), None);
+    }
+
+    #[test]
+    fn a_fresh_task_takes_one_subtype_and_one_mode() {
+        let ticket = Ticket::new(
+            TicketId::new(4),
+            ProjectId::new(1),
+            number(6),
+            Priority::Normal,
+            task(
+                Some(TaskSubtype::Migration),
+                Some(TaskMode::Agent),
+                vec![done("The register archive is restorable.")],
+            )
+            .expect("the body validates"),
+        );
+
+        assert_eq!(ticket.kind(), TicketKind::Task);
+        assert_eq!(ticket.state(), TicketState::Draft);
+        assert_eq!(ticket.subtype(), Some(TaskSubtype::Migration));
+        assert_eq!(ticket.task_mode(), Some(TaskMode::Agent));
+        assert_eq!(ticket.title(), Some("Archive the old register"));
+        assert_eq!(ticket.spec(), Some(SpecId::new(3)));
+        assert_eq!(ticket.completion().len(), 1);
+        assert_eq!(
+            ticket.completion()[0].outcome(),
+            "The register archive is restorable."
+        );
+        assert_eq!(ticket.scheduled_for(), None);
+        assert_eq!(ticket.due(), None);
+        assert_eq!(ticket.version(), 1);
+    }
+
+    #[test]
+    fn a_task_names_one_subtype_and_one_mode_or_is_refused() {
+        assert_eq!(
+            task(None, Some(TaskMode::Human), vec![done("Done.")]).unwrap_err(),
+            TicketError::UnspecifiedSubtype
+        );
+        assert_eq!(
+            task(Some(TaskSubtype::Research), None, vec![done("Done.")]).unwrap_err(),
+            TicketError::UnstatedMode
+        );
+        assert_eq!(
+            TicketError::UnspecifiedSubtype.to_string(),
+            "a Task Ticket names one subtype of the closed set"
+        );
+        assert_eq!(
+            TicketError::UnstatedMode.to_string(),
+            "a Task Ticket names a human or agent mode"
+        );
+    }
+
+    #[test]
+    fn a_task_is_bounded_by_completion_criteria() {
+        assert_eq!(
+            task(
+                Some(TaskSubtype::Operational),
+                Some(TaskMode::Human),
+                Vec::new()
+            )
+            .unwrap_err(),
+            TicketError::Unbounded
+        );
+        assert_eq!(
+            TicketError::Unbounded.to_string(),
+            "a Task Ticket carries completion criteria"
+        );
+        assert_eq!(
+            CompletionCriterion::new("   ").unwrap_err(),
+            TicketError::Blank("completion criterion")
+        );
+    }
+
+    #[test]
+    fn a_task_never_claims_user_stories() {
+        let ticket = Ticket::new(
+            TicketId::new(9),
+            ProjectId::new(1),
+            number(6),
+            Priority::Low,
+            task(
+                Some(TaskSubtype::Investigative),
+                Some(TaskMode::Human),
+                vec![
+                    done("The cause is named in writing."),
+                    done("The follow-up is decided."),
+                ],
+            )
+            .expect("the body validates"),
+        );
+
+        // Attaching to a Spec is not claiming it: a Task's
+        // criteria state outcomes alone, and the story-linked
+        // accessor — the one coverage reads — holds nothing.
+        assert_eq!(ticket.spec(), Some(SpecId::new(3)));
+        assert!(
+            ticket.criteria().is_empty(),
+            "a Task claims no User Story through story-linked criteria (DR-TK-07)"
+        );
+    }
+
+    #[test]
+    fn optional_timing_normalises_to_the_stored_shape() {
+        let timing = TaskTiming::new(
+            Some("2026-09-10T11:00:00+02:00".to_owned()),
+            Some("2026-09-30T17:00:00Z".to_owned()),
+        )
+        .expect("RFC 3339 instants validate");
+
+        assert_eq!(
+            timing.scheduled_for(),
+            Some("2026-09-10T09:00:00.000Z"),
+            "an offset instant stores as UTC"
+        );
+        assert_eq!(timing.due(), Some("2026-09-30T17:00:00.000Z"));
+
+        let absent = TaskTiming::new(None, None).expect("both timing fields are optional");
+        assert_eq!(absent, TaskTiming::none());
+    }
+
+    #[test]
+    fn malformed_timing_is_refused_with_the_field_named() {
+        assert_eq!(
+            TaskTiming::new(Some("September".to_owned()), None).unwrap_err(),
+            TicketError::MalformedTiming {
+                field: "activation",
+                value: "September".to_owned(),
+            }
+        );
+        assert_eq!(
+            TaskTiming::new(None, Some("2026-09-30".to_owned())).unwrap_err(),
+            TicketError::MalformedTiming {
+                field: "due date",
+                value: "2026-09-30".to_owned(),
+            }
+        );
+        assert_eq!(
+            TicketError::MalformedTiming {
+                field: "due date",
+                value: "2026-09-30".to_owned(),
+            }
+            .to_string(),
+            "a Task due date must be an RFC 3339 instant: `2026-09-30`"
+        );
+    }
+
+    #[test]
+    fn restore_rehydrates_every_recorded_task_fact() {
+        let ticket = Ticket::restore(
+            TicketId::new(5),
+            ProjectId::new(2),
+            number(11),
+            Priority::Urgent,
+            TicketState::Scheduled,
+            TicketBody::Task(TaskTicket::restore(
+                "Archive the old register",
+                None,
+                TaskSubtype::Administrative,
+                TaskMode::Human,
+                vec![done("The archive is restorable.")],
+                TaskTiming::new(Some("2026-10-01T00:00:00Z".to_owned()), None)
+                    .expect("the fixture timing validates"),
+            )),
+            4,
+        );
+
+        assert_eq!(ticket.subtype(), Some(TaskSubtype::Administrative));
+        assert_eq!(ticket.task_mode(), Some(TaskMode::Human));
+        assert_eq!(
+            ticket.completion()[0].outcome(),
+            "The archive is restorable."
+        );
+        assert_eq!(ticket.scheduled_for(), Some("2026-10-01T00:00:00.000Z"));
+        assert_eq!(ticket.due(), None);
+        assert_eq!(ticket.version(), 4);
     }
 }

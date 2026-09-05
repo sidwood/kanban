@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+  "oneOf": [
+    {
+      "description": "Sid executes the work.",
+      "enum": [
+        "human"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "An agent executes the work under dispatch.",
+      "enum": [
+        "agent"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TaskMode"
+}

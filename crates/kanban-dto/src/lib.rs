@@ -77,13 +77,14 @@ pub use spec::{
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
 pub use ticket::{
-    TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
-    TicketBugFactsRequest, TicketBugQualification, TicketBugQualifyRequest, TicketBugRecord,
-    TicketCreateRequest, TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
-    TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
-    TicketOccurrenceSnapshot, TicketPriority, TicketReadinessBlocker, TicketReadinessQuery,
-    TicketReadinessResponse, TicketRecord, TicketSeverity, TicketState, TicketVerificationStep,
+    TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
+    TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRecord, TicketDependencyRemoveRequest, TicketExternalReference, TicketGetQuery,
+    TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot, TicketPriority,
+    TicketReadinessBlocker, TicketReadinessQuery, TicketReadinessResponse, TicketRecord,
+    TicketSeverity, TicketState, TicketVerificationStep,
 };
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -224,6 +225,8 @@ mod tests {
                 "TicketBugQualification",
                 "TicketBugQualifyRequest",
                 "TicketBugRecord",
+                "TaskMode",
+                "TaskSubtype",
                 "TicketCreateRequest",
                 "TicketCriterion",
                 "TicketDependencyAddRequest",

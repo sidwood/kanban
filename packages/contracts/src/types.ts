@@ -464,6 +464,8 @@ export type SpecVersionSupersedeRequest = {
   spec_id: number;
   version: number;
 };
+export type TaskMode = 'human' | 'agent';
+export type TaskSubtype = 'operational' | 'investigative' | 'administrative' | 'research' | 'prototype' | 'migration' | 'manual';
 export type TicketBlockerAddRequest = {
   description: string;
   mutation: MutationContext;
@@ -512,14 +514,19 @@ export type TicketBugRecord = {
 };
 export type TicketCreateRequest = {
   actual_behaviour?: string | null;
+  completion?: string[] | null;
   criteria?: TicketCriterion[] | null;
+  due?: string | null;
   kind: TicketKind;
+  mode?: TaskMode | null;
   mutation: MutationContext;
   priority: TicketPriority;
   project_id: number;
   reporter_evidence?: string | null;
+  scheduled_for?: string | null;
   slice?: string | null;
   spec_id?: number | null;
+  subtype?: TaskSubtype | null;
   title?: string | null;
 };
 export type TicketCriterion = {
@@ -594,15 +601,20 @@ export type TicketReadinessResponse = {
 };
 export type TicketRecord = {
   bug?: TicketBugRecord | null;
+  completion: string[];
   criteria: TicketCriterion[];
+  due?: string | null;
   id: number;
   kind: TicketKind;
+  mode?: TaskMode | null;
   number: number;
   priority: TicketPriority;
   project_id: number;
+  scheduled_for?: string | null;
   slice?: string | null;
   spec_id?: number | null;
   state: TicketState;
+  subtype?: TaskSubtype | null;
   title?: string | null;
   version: number;
 };

@@ -3,13 +3,16 @@
 // editor drives — an Implementation attached to exactly one Spec,
 // carrying its slice description and story-linked criteria; a Bug
 // quick-captured with title, actual behaviour, and reporter evidence
-// and nothing else required; a Task carrying a title and an optional
-// attachment. Every kind takes the closed priority vocabulary,
-// creation lands in draft, and a refusal is reported, never
-// swallowed (KAN-S4-US1 through KAN-S4-US3).
+// and nothing else required; a Task bounded by a subtype, a
+// human-or-agent mode, completion criteria, and optional schedule or
+// due-date timing stored for KAN-S11. Every kind takes the closed
+// priority vocabulary, creation lands in draft, and a refusal is
+// reported, never swallowed (KAN-S4-US1 through KAN-S4-US4).
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type {
+  TaskMode,
+  TaskSubtype,
   TicketCreateRequest,
   TicketKind,
   TicketPriority,
@@ -18,9 +21,20 @@ import type {
 import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 
-// The closed Ticket kind and priority vocabularies the editor offers.
+// The closed Ticket kind, priority, and Task subtype and mode
+// vocabularies the editor offers.
 export const TICKET_KINDS: TicketKind[] = ['implementation', 'bug', 'task']
 export const TICKET_PRIORITIES: TicketPriority[] = ['urgent', 'high', 'normal', 'low']
+export const TASK_SUBTYPES: TaskSubtype[] = [
+  'operational',
+  'investigative',
+  'administrative',
+  'research',
+  'prototype',
+  'migration',
+  'manual',
+]
+export const TASK_MODES: TaskMode[] = ['human', 'agent']
 
 // One criterion row the editor holds before its story links parse.
 export interface TicketCriterionDraft {
@@ -39,9 +53,16 @@ export interface TicketDraft {
   specId: number | null
   slice: string
   criteria: TicketCriterionDraft[]
+  subtype: TaskSubtype
+  mode: TaskMode
+  completion: string[]
+  scheduledFor: string
+  due: string
 }
 
-// A fresh draft: a normal-priority Bug, the lightest capture.
+// A fresh draft: a normal-priority Bug, the lightest capture. The
+// Task fields default the first subtype and the human mode, ready
+// for the switch to a bounded kind.
 export function blankTicketDraft(): TicketDraft {
   return {
     kind: 'bug',
@@ -52,6 +73,11 @@ export function blankTicketDraft(): TicketDraft {
     specId: null,
     slice: '',
     criteria: [{ outcome: '', stories: '' }],
+    subtype: 'operational',
+    mode: 'human',
+    completion: [''],
+    scheduledFor: '',
+    due: '',
   }
 }
 
@@ -95,6 +121,21 @@ export function ticketCreateRequestOf(
       // and nothing else (DR-TK-08).
       request.actual_behaviour = draft.actualBehaviour
       request.reporter_evidence = draft.reporterEvidence
+    }
+    if (draft.kind === 'task') {
+      // A Task carries its bounded fields, never story-linked
+      // criteria: completion states outcomes alone.
+      request.subtype = draft.subtype
+      request.mode = draft.mode
+      request.completion = [...draft.completion]
+      const scheduledFor = draft.scheduledFor.trim()
+      if (scheduledFor !== '') {
+        request.scheduled_for = scheduledFor
+      }
+      const due = draft.due.trim()
+      if (due !== '') {
+        request.due = due
+      }
     }
   }
   return request

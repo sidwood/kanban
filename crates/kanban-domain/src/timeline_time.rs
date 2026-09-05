@@ -9,10 +9,16 @@ use time::{Duration, OffsetDateTime, UtcOffset};
 /// The UTC shape SQLite stores for `recorded_at`: `strftime('%f')`
 /// writes exactly three fractional digits, with a `Z` suffix and no
 /// offset. Bounds rendered to this shape compare with stored rows as
-/// plain text.
+/// plain text. Stored instants elsewhere in the domain — a Task's
+/// timing — keep the same shape.
 const STORED_FORMAT: &[time::format_description::FormatItem<'static>] = time::macros::format_description!(
     "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
 );
+
+/// The stored UTC shape every domain instant renders through.
+pub(crate) fn stored_format() -> &'static [time::format_description::FormatItem<'static>] {
+    STORED_FORMAT
+}
 
 /// One stored millisecond, in nanoseconds.
 const STORED_MILLISECOND_NANOS: u32 = 1_000_000;

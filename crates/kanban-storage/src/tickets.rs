@@ -2,12 +2,14 @@
 //! `tickets` carrying the Project, the minted number, the kind whose
 //! schema the Ticket holds, the priority, the lifecycle state, and
 //! the kind-specific fields — including a Bug's capture facts, its
-//! qualification, and the vendor-neutral collections it carries —
-//! with the application's timeline envelope landing unchanged in the
-//! same transaction as every change. Creating a Ticket persists the
-//! Project counter its number minted in the same write; saving an
-//! applied Ticket moves its row under the version the aggregate moved
-//! from. The schema-level CHECK and shape triggers keep each kind to
+//! qualification, and the vendor-neutral collections it carries, and
+//! a Task's subtype, mode, completion criteria, and optional schedule
+//! or due-date timing (DR-TK-06, DR-TK-07) — with the application's
+//! timeline envelope landing unchanged in the same transaction as
+//! every change. Creating a Ticket persists the Project counter its
+//! number minted in the same write; saving an applied Ticket moves
+//! its row under the version the aggregate moved from. The
+//! schema-level CHECK and shape triggers keep each kind to
 //! exactly its own fields and the trigger keeps Tickets never
 //! deleted; every stored value passed domain validation on the way
 //! in, so a row that fails to rehydrate is corruption the caller
@@ -15,10 +17,10 @@
 
 use kanban_app::{TicketStore, TimelineEnvelope};
 use kanban_domain::{
-    AcceptanceCriterion, BugFacts, BugQualification, BugTicket, EvidenceId, ExternalReference,
-    ImplementationTicket, OccurrenceSnapshot, Priority, Project, ProjectId, Severity, SpecId,
-    SpecNumber, TaskTicket, Ticket, TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef,
-    VerificationStep,
+    AcceptanceCriterion, BugFacts, BugQualification, BugTicket, CompletionCriterion, EvidenceId,
+    ExternalReference, ImplementationTicket, OccurrenceSnapshot, Priority, Project, ProjectId,
+    Severity, SpecId, SpecNumber, TaskMode, TaskSubtype, TaskTicket, TaskTiming, Ticket,
+    TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef, VerificationStep,
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
@@ -30,7 +32,8 @@ use crate::timeline::insert_event;
 /// Every stored column of one Ticket row, in select order.
 const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
                               slice, criteria, actual_behaviour, reporter_evidence, \
-                              bug_qualification, bug_facts, version";
+                              bug_qualification, bug_facts, subtype, mode, completion, \
+                              scheduled_for, due, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -91,8 +94,9 @@ impl TicketStore for SqliteTicketStore {
             "INSERT INTO tickets
                  (project_id, number, kind, priority, state, spec_id, title, slice,
                   criteria, actual_behaviour, reporter_evidence, bug_qualification,
-                  bug_facts, version)
-             VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)",
+                  bug_facts, subtype, mode, completion, scheduled_for, due, version)
+             VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                     ?14, ?15, ?16, ?17, 1)",
             params![
                 project.id().value() as i64,
                 number.value() as i64,
@@ -106,6 +110,11 @@ impl TicketStore for SqliteTicketStore {
                 stored.reporter_evidence,
                 stored.bug_qualification,
                 stored.bug_facts,
+                stored.subtype,
+                stored.mode,
+                stored.completion,
+                stored.scheduled_for,
+                stored.due,
             ],
         )
         .map_err(internal)?;
@@ -211,6 +220,11 @@ struct LoadedTicket {
     reporter_evidence: Option<String>,
     bug_qualification: Option<String>,
     bug_facts: Option<String>,
+    subtype: Option<String>,
+    mode: Option<String>,
+    completion: String,
+    scheduled_for: Option<String>,
+    due: Option<String>,
     version: u64,
 }
 
@@ -231,7 +245,12 @@ fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
         reporter_evidence: row.get::<_, Option<String>>(11)?,
         bug_qualification: row.get::<_, Option<String>>(12)?,
         bug_facts: row.get::<_, Option<String>>(13)?,
-        version: row.get::<_, i64>(14)?.unsigned_abs(),
+        subtype: row.get::<_, Option<String>>(14)?,
+        mode: row.get::<_, Option<String>>(15)?,
+        completion: row.get::<_, String>(16)?,
+        scheduled_for: row.get::<_, Option<String>>(17)?,
+        due: row.get::<_, Option<String>>(18)?,
+        version: row.get::<_, i64>(19)?.unsigned_abs(),
     })
 }
 
@@ -259,10 +278,28 @@ impl LoadedTicket {
                     .transpose()?,
                 decode_facts(self.bug_facts.as_deref().unwrap_or("{}"))?,
             ))),
-            "task" => TicketBody::Task(TaskTicket::restore(
-                self.title.clone().ok_or_else(corrupt)?,
-                self.spec_id.map(|spec| SpecId::new(spec.unsigned_abs())),
-            )),
+            "task" => {
+                let subtype = self
+                    .subtype
+                    .as_deref()
+                    .and_then(TaskSubtype::parse)
+                    .ok_or_else(corrupt)?;
+                let mode = self
+                    .mode
+                    .as_deref()
+                    .and_then(TaskMode::parse)
+                    .ok_or_else(corrupt)?;
+                let timing = TaskTiming::new(self.scheduled_for.clone(), self.due.clone())
+                    .map_err(|_| corrupt())?;
+                TicketBody::Task(TaskTicket::restore(
+                    self.title.clone().ok_or_else(corrupt)?,
+                    self.spec_id.map(|spec| SpecId::new(spec.unsigned_abs())),
+                    subtype,
+                    mode,
+                    decode_completion(&self.completion)?,
+                    timing,
+                ))
+            }
             _ => return Err(corrupt()),
         };
         Ok(Ticket::restore(
@@ -289,6 +326,11 @@ struct StoredTicket<'a> {
     reporter_evidence: Option<&'a str>,
     bug_qualification: Option<String>,
     bug_facts: Option<String>,
+    subtype: Option<&'a str>,
+    mode: Option<&'a str>,
+    completion: String,
+    scheduled_for: Option<&'a str>,
+    due: Option<&'a str>,
 }
 
 impl<'a> StoredTicket<'a> {
@@ -306,6 +348,11 @@ impl<'a> StoredTicket<'a> {
                 reporter_evidence: None,
                 bug_qualification: None,
                 bug_facts: None,
+                subtype: None,
+                mode: None,
+                completion: "[]".to_owned(),
+                scheduled_for: None,
+                due: None,
             },
             TicketBody::Bug(bug) => Self {
                 kind: "bug",
@@ -318,6 +365,11 @@ impl<'a> StoredTicket<'a> {
                 reporter_evidence: Some(bug.reporter_evidence()),
                 bug_qualification: bug.qualification().map(encode_qualification),
                 bug_facts: Some(encode_facts(bug.facts())),
+                subtype: None,
+                mode: None,
+                completion: "[]".to_owned(),
+                scheduled_for: None,
+                due: None,
             },
             TicketBody::Task(task) => Self {
                 kind: "task",
@@ -330,6 +382,11 @@ impl<'a> StoredTicket<'a> {
                 reporter_evidence: None,
                 bug_qualification: None,
                 bug_facts: None,
+                subtype: Some(task.subtype().wire_name()),
+                mode: Some(task.mode().wire_name()),
+                completion: encode_completion(task.completion()),
+                scheduled_for: task.timing().scheduled_for(),
+                due: task.timing().due(),
             },
         }
     }
@@ -559,6 +616,26 @@ fn decode_facts(stored: &str) -> Result<BugFacts, rusqlite::Error> {
     BugFacts::new(references, snapshots, items).map_err(|_| corrupt())
 }
 
+/// Encode the completion criteria the domain validated: outcomes
+/// alone, in their bounded order.
+fn encode_completion(completion: &[CompletionCriterion]) -> String {
+    let stored: Vec<&str> = completion
+        .iter()
+        .map(|criterion| criterion.outcome())
+        .collect();
+    serde_json::to_string(&stored).expect("the completion outcomes serialise")
+}
+
+/// Decode stored completion criteria back into the domain's
+/// rule-valid form.
+fn decode_completion(stored: &str) -> Result<Vec<CompletionCriterion>, rusqlite::Error> {
+    let outcomes: Vec<String> = serde_json::from_str(stored).map_err(|_| corrupt())?;
+    outcomes
+        .into_iter()
+        .map(|outcome| CompletionCriterion::new(outcome).map_err(|_| corrupt()))
+        .collect()
+}
+
 /// Why a guarded Project write was refused, read from the row's
 /// current state.
 fn project_write_refused(
@@ -713,6 +790,26 @@ mod tests {
             .expect("the migrations apply");
         let store = SqliteTicketStore::new(&database);
         (dir, database, store)
+    }
+
+    /// A bounded Task body with the fields a test varies.
+    fn task_body(spec: Option<SpecId>) -> TicketBody {
+        TicketBody::task(
+            "Archive the old register",
+            spec,
+            Some(kanban_domain::TaskSubtype::Migration),
+            Some(kanban_domain::TaskMode::Agent),
+            vec![
+                kanban_domain::CompletionCriterion::new("The register moves.")
+                    .expect("the fixture outcome binds"),
+            ],
+            kanban_domain::TaskTiming::new(
+                Some("2026-10-01T02:00:00+02:00".to_owned()),
+                Some("2026-09-30T17:00:00Z".to_owned()),
+            )
+            .expect("the fixture timing validates"),
+        )
+        .expect("the fixture body validates")
     }
 
     fn registration() -> ProjectRegistration {
@@ -929,13 +1026,7 @@ mod tests {
             Priority::Low,
             &bug_body().expect("the fixture body validates"),
         );
-        let task = created(
-            &store,
-            &database,
-            Priority::Normal,
-            &TicketBody::task("Archive the old register", Some(spec))
-                .expect("the fixture body validates"),
-        );
+        let task = created(&store, &database, Priority::Normal, &task_body(Some(spec)));
 
         let found_bug = store
             .find(bug.id())
@@ -946,6 +1037,7 @@ mod tests {
             Some("Landing drops the integration branch")
         );
         assert_eq!(found_bug.spec(), None, "a Bug may stand alone");
+        assert_eq!(found_bug.subtype(), None, "a Bug carries no Task fields");
 
         let found_task = store
             .find(task.id())
@@ -1125,8 +1217,8 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("the 0023 migration applies");
-        assert_eq!(report.applied, vec![21, 22, 23]);
+            .expect("the 0024 migration applies");
+        assert_eq!(report.applied, vec![21, 22, 23, 24]);
 
         let store = SqliteTicketStore::new(&database);
         let found = store
@@ -1145,6 +1237,38 @@ mod tests {
     }
 
     #[test]
+    fn the_created_task_round_trips_with_its_bounded_fields() {
+        let (_dir, database, store) = store();
+        let (_project, spec) = seeded_project_and_spec(&database);
+
+        let task = created(&store, &database, Priority::High, &task_body(Some(spec)));
+
+        let found = store
+            .find(task.id())
+            .expect("the find serves")
+            .expect("the Ticket exists");
+
+        assert_eq!(found, task);
+        assert_eq!(found.subtype(), Some(kanban_domain::TaskSubtype::Migration));
+        assert_eq!(found.task_mode(), Some(kanban_domain::TaskMode::Agent));
+        assert_eq!(
+            found.completion()[0].outcome(),
+            "The register moves.",
+            "the completion criteria persist in their bounded order"
+        );
+        assert!(
+            found.criteria().is_empty(),
+            "a stored Task claims no story-linked criteria (DR-TK-07)"
+        );
+        // The offset instant stored as its normalised UTC shape.
+        assert_eq!(found.scheduled_for(), Some("2026-10-01T00:00:00.000Z"));
+        assert_eq!(found.due(), Some("2026-09-30T17:00:00.000Z"));
+
+        let listed = store.list(ProjectId::new(1)).expect("the list serves");
+        assert_eq!(listed[0].scheduled_for(), Some("2026-10-01T00:00:00.000Z"));
+    }
+
+    #[test]
     fn creating_two_tickets_mints_unique_numbers() {
         let (_dir, database, store) = store();
         let (_project, spec) = seeded_project_and_spec(&database);
@@ -1152,13 +1276,7 @@ mod tests {
         let first = created(&store, &database, Priority::Normal, &implementation(spec));
         // The helper reloads the Project row each create guards on,
         // so the second mint follows the first.
-        let second = created(
-            &store,
-            &database,
-            Priority::Normal,
-            &TicketBody::task("Archive the old register", None)
-                .expect("the fixture body validates"),
-        );
+        let second = created(&store, &database, Priority::Normal, &task_body(None));
 
         assert_ne!(first.id(), second.id());
         assert_eq!(
@@ -1267,7 +1385,9 @@ mod tests {
 
         let conn = database.connection();
         // A Bug shape carrying the Implementation's slice, an
-        // Implementation without its Spec, and one without criteria:
+        // Implementation without its Spec, and one without criteria;
+        // a Bug carrying a Task's subtype, a Task outside the closed
+        // subtype or mode vocabulary, and a Task bounded by nothing:
         // each violates its kind's schema. A Bug missing its capture
         // facts and a Task carrying them violate the shape triggers.
         for (sql, params) in [
@@ -1303,8 +1423,41 @@ mod tests {
             (
                 "INSERT INTO tickets
                      (project_id, number, kind, priority, state, spec_id, title,
-                      criteria, actual_behaviour, version)
-                 VALUES (1, 9, 'task', 'normal', 'draft', NULL, 'A title', '[]', 'It drops.', 1)",
+                      criteria, actual_behaviour, subtype, mode, completion, version)
+                 VALUES (1, 9, 'task', 'normal', 'draft', NULL, 'A title', '[]', 'It drops.',
+                         'research', 'human', '[\"Done.\"]', 1)",
+                Vec::new(),
+            ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, actual_behaviour,
+                      reporter_evidence, bug_facts, subtype, mode, completion, version)
+                 VALUES (1, 9, 'bug', 'normal', 'draft', 'A title', 'It drops.', 'The log.',
+                         '{}', 'operational', 'human', '[]', 1)",
+                Vec::new(),
+            ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, subtype, mode,
+                      completion, version)
+                 VALUES (1, 9, 'task', 'normal', 'draft', 'A title', 'ghost', 'human',
+                         '[\"Done.\"]', 1)",
+                Vec::new(),
+            ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, subtype, mode,
+                      completion, version)
+                 VALUES (1, 9, 'task', 'normal', 'draft', 'A title', 'research', 'ghost',
+                         '[\"Done.\"]', 1)",
+                Vec::new(),
+            ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, subtype, mode,
+                      completion, version)
+                 VALUES (1, 9, 'task', 'normal', 'draft', 'A title', 'research', 'human',
+                         '[]', 1)",
                 Vec::new(),
             ),
         ] {
@@ -1330,13 +1483,7 @@ mod tests {
     fn ticket_history_decodes_from_the_projects_own_timeline() {
         let (_dir, database, store) = store();
         let (_project, _spec) = seeded_project_and_spec(&database);
-        created(
-            &store,
-            &database,
-            Priority::Normal,
-            &TicketBody::task("Archive the old register", None)
-                .expect("the fixture body validates"),
-        );
+        created(&store, &database, Priority::Normal, &task_body(None));
 
         let rows = database
             .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))

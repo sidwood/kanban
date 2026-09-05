@@ -7915,13 +7915,14 @@
           "type": "string"
         },
         "WorkspaceHealthDto": {
-          "description": "The closed health vocabulary as every client sees it.",
+          "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
           "enum": [
             "available",
             "assigned",
             "dirty",
             "missing",
-            "retired"
+            "retired",
+            "unobserved"
           ],
           "type": "string"
         },
@@ -7973,6 +7974,7 @@
               ]
             },
             "working_tree_clean": {
+              "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
               "type": [
                 "boolean",
                 "null"
@@ -8116,13 +8118,14 @@
           "type": "string"
         },
         "WorkspaceHealthDto": {
-          "description": "The closed health vocabulary as every client sees it.",
+          "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
           "enum": [
             "available",
             "assigned",
             "dirty",
             "missing",
-            "retired"
+            "retired",
+            "unobserved"
           ],
           "type": "string"
         },
@@ -8174,6 +8177,7 @@
               ]
             },
             "working_tree_clean": {
+              "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
               "type": [
                 "boolean",
                 "null"
@@ -8317,13 +8321,14 @@
           "type": "string"
         },
         "WorkspaceHealthDto": {
-          "description": "The closed health vocabulary as every client sees it.",
+          "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
           "enum": [
             "available",
             "assigned",
             "dirty",
             "missing",
-            "retired"
+            "retired",
+            "unobserved"
           ],
           "type": "string"
         },
@@ -8375,6 +8380,7 @@
               ]
             },
             "working_tree_clean": {
+              "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
               "type": [
                 "boolean",
                 "null"
@@ -8493,13 +8499,14 @@
           "type": "string"
         },
         "WorkspaceHealthDto": {
-          "description": "The closed health vocabulary as every client sees it.",
+          "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
           "enum": [
             "available",
             "assigned",
             "dirty",
             "missing",
-            "retired"
+            "retired",
+            "unobserved"
           ],
           "type": "string"
         },
@@ -8551,6 +8558,7 @@
               ]
             },
             "working_tree_clean": {
+              "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
               "type": [
                 "boolean",
                 "null"

@@ -131,8 +131,12 @@ fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {
     false
 }
 
-fn working_tree_clean(workspace_path: &str) -> bool {
-    Command::new("git")
+/// Whether the working tree is clean, when the status read could
+/// complete. A status read that fails or cannot run is `None` — an
+/// observation failure the health contract reports as unobserved,
+/// never as a dirty or clean tree (KAN-T99).
+fn working_tree_clean(workspace_path: &str) -> Option<bool> {
+    let output = Command::new("git")
         .args([
             "--no-optional-locks",
             "-C",
@@ -141,8 +145,11 @@ fn working_tree_clean(workspace_path: &str) -> bool {
             "--porcelain",
         ])
         .output()
-        .map(|output| output.status.success() && output.stdout.is_empty())
-        .unwrap_or(false)
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(output.stdout.is_empty())
 }
 
 /// Decide whether the Workspace holds commits the repository's HEAD
@@ -300,11 +307,27 @@ mod tests {
             Some(WorkspaceCheckout::Branch("main".to_owned()))
         );
         assert!(snapshot.head.is_some());
-        assert!(snapshot.working_tree_clean);
+        assert_eq!(snapshot.working_tree_clean, Some(true));
         assert_eq!(
             snapshot.unique_unlanded_commits,
             Some(false),
             "a clone at the seed head holds nothing unlanded"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_dirty_worktree_reports_a_dirty_verdict() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        fs::write(dir.path().join("notes.md"), "uncommitted\n")
+            .expect("the uncommitted change is written");
+
+        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+
+        assert_eq!(
+            snapshot.working_tree_clean,
+            Some(false),
+            "real uncommitted work is a dirty verdict, distinct from an observation failure"
         );
     }
 
@@ -632,7 +655,7 @@ mod tests {
             snapshot.checkout,
             Some(WorkspaceCheckout::Branch("feature".to_owned()))
         );
-        assert!(snapshot.working_tree_clean);
+        assert_eq!(snapshot.working_tree_clean, Some(true));
     }
 
     #[test]
@@ -669,7 +692,7 @@ mod tests {
             Some(WorkspaceCheckout::Branch("main".to_owned()))
         );
         assert!(snapshot.head.is_some());
-        assert!(snapshot.working_tree_clean);
+        assert_eq!(snapshot.working_tree_clean, Some(true));
     }
 
     #[test]
@@ -771,8 +794,9 @@ mod tests {
             snapshot_with_lock.present,
             "mtime-dirty workspaces must stay observable under a held index.lock"
         );
-        assert!(
+        assert_eq!(
             snapshot_with_lock.working_tree_clean,
+            Some(true),
             "git status must complete and report a clean tree under a held \
              index.lock for mtime-dirty tracked files"
         );
@@ -811,8 +835,9 @@ mod tests {
                 let repository = init_repo(dir.path());
                 let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
                 assert!(snapshot.present);
-                assert!(
+                assert_eq!(
                     snapshot.working_tree_clean,
+                    Some(true),
                     "sibling git status reads must stay clean when PATH is not theirs to poison"
                 );
             }

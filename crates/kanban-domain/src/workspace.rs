@@ -41,6 +41,10 @@ pub enum WorkspaceHealth {
     Missing,
     /// Retired by the operator; the record is preserved.
     Retired,
+    /// Present, but the last git status read could not complete. The
+    /// tree claims neither clean nor dirty; the observation itself
+    /// failed (KAN-T99).
+    Unobserved,
 }
 
 impl WorkspaceHealth {
@@ -52,6 +56,7 @@ impl WorkspaceHealth {
             Self::Dirty => "dirty",
             Self::Missing => "missing",
             Self::Retired => "retired",
+            Self::Unobserved => "unobserved",
         }
     }
 
@@ -63,6 +68,7 @@ impl WorkspaceHealth {
             "dirty" => Some(Self::Dirty),
             "missing" => Some(Self::Missing),
             "retired" => Some(Self::Retired),
+            "unobserved" => Some(Self::Unobserved),
             _ => None,
         }
     }
@@ -102,18 +108,21 @@ impl WorkspaceCheckout {
 
 /// Inputs the health rule needs: durable flags plus one observation
 /// snapshot. Observation never mutates the repository; it only informs
-/// whether the path is present and what git reports.
+/// whether the path is present and what git reports. A `None` clean
+/// flag means the status read itself failed, not that the tree is
+/// clean or dirty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkspaceHealthInputs {
     pub retired: bool,
     pub present: bool,
     pub lane_assigned: bool,
-    pub working_tree_clean: bool,
+    pub working_tree_clean: Option<bool>,
 }
 
 /// Compute the single health state from durable flags and observation.
-/// Retired wins, then missing, then assigned, then dirty, then
-/// available.
+/// Retired wins, then missing, then unobserved, then assigned, then
+/// dirty, then available. An unreadable status outranks assignment so
+/// the failure stays visible instead of hiding behind a Lane label.
 pub fn compute_health(inputs: WorkspaceHealthInputs) -> WorkspaceHealth {
     if inputs.retired {
         return WorkspaceHealth::Retired;
@@ -121,10 +130,13 @@ pub fn compute_health(inputs: WorkspaceHealthInputs) -> WorkspaceHealth {
     if !inputs.present {
         return WorkspaceHealth::Missing;
     }
+    let Some(working_tree_clean) = inputs.working_tree_clean else {
+        return WorkspaceHealth::Unobserved;
+    };
     if inputs.lane_assigned {
         return WorkspaceHealth::Assigned;
     }
-    if !inputs.working_tree_clean {
+    if !working_tree_clean {
         return WorkspaceHealth::Dirty;
     }
     WorkspaceHealth::Available
@@ -226,20 +238,21 @@ impl WorkspaceObservation {
 
     /// Apply a fresh git read. Lane assignment comes from durable
     /// storage, not from git; the unlanded guard is `None` when the
-    /// observer could not decide it.
+    /// observer could not decide it, and the clean flag is `None` when
+    /// the status read itself failed — never a guess at the tree.
     pub fn apply_git_read(
         &mut self,
         repository_identity: Option<String>,
         checkout: Option<WorkspaceCheckout>,
         head: Option<String>,
-        working_tree_clean: bool,
+        working_tree_clean: Option<bool>,
         unique_unlanded_commits: Option<bool>,
         lane_assignment: Option<u64>,
     ) {
         self.repository_identity = repository_identity;
         self.checkout = checkout;
         self.head = head;
-        self.working_tree_clean = Some(working_tree_clean);
+        self.working_tree_clean = working_tree_clean;
         self.unique_unlanded_commits = unique_unlanded_commits;
         self.lane_assignment = lane_assignment;
     }
@@ -254,7 +267,9 @@ impl WorkspaceObservation {
         self.lane_assignment = lane_assignment;
     }
 
-    /// Whether a git read ever applied on a present path.
+    /// Whether a git read ever completed on a present path. Only a
+    /// finished status read vouches for presence: a failed or
+    /// never-run observation reports `false`, so reuse stays refused.
     pub fn observed_present(&self) -> bool {
         self.working_tree_clean.is_some()
     }
@@ -384,14 +399,16 @@ impl Workspace {
     }
 
     /// Apply one observation read. Returns the previous and new
-    /// health when a transition occurred.
+    /// health when a transition occurred. A `None` clean flag on a
+    /// present path records a failed status read, so the health
+    /// becomes unobserved rather than dirty.
     pub fn observe(
         &mut self,
         present: bool,
         repository_identity: Option<String>,
         checkout: Option<WorkspaceCheckout>,
         head: Option<String>,
-        working_tree_clean: bool,
+        working_tree_clean: Option<bool>,
         unique_unlanded_commits: Option<bool>,
     ) -> Option<(WorkspaceHealth, WorkspaceHealth)> {
         let lane_assignment = self.lane_id;
@@ -412,7 +429,7 @@ impl Workspace {
             retired: self.retired,
             present,
             lane_assigned: self.lane_id.is_some(),
-            working_tree_clean: if present { working_tree_clean } else { true },
+            working_tree_clean: if present { working_tree_clean } else { None },
         });
         self.health = next;
         self.version += 1;
@@ -467,7 +484,7 @@ mod workspace_health {
     fn retired_wins_over_every_other_signal() {
         for present in [true, false] {
             for lane_assigned in [true, false] {
-                for working_tree_clean in [true, false] {
+                for working_tree_clean in [None, Some(true), Some(false)] {
                     assert_eq!(
                         compute_health(WorkspaceHealthInputs {
                             retired: true,
@@ -490,7 +507,7 @@ mod workspace_health {
                 retired: false,
                 present: false,
                 lane_assigned: false,
-                working_tree_clean: true,
+                working_tree_clean: Some(true),
             }),
             WorkspaceHealth::Missing
         );
@@ -499,10 +516,48 @@ mod workspace_health {
                 retired: false,
                 present: false,
                 lane_assigned: true,
-                working_tree_clean: false,
+                working_tree_clean: Some(false),
             }),
             WorkspaceHealth::Missing,
             "a missing path stays missing even when a Lane is recorded"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_status_is_unobserved_neither_clean_nor_dirty() {
+        assert_eq!(
+            compute_health(WorkspaceHealthInputs {
+                retired: false,
+                present: true,
+                lane_assigned: false,
+                working_tree_clean: None,
+            }),
+            WorkspaceHealth::Unobserved,
+            "a failed status read must not pose as a dirty tree"
+        );
+        assert_ne!(
+            compute_health(WorkspaceHealthInputs {
+                retired: false,
+                present: true,
+                lane_assigned: false,
+                working_tree_clean: None,
+            }),
+            WorkspaceHealth::Available,
+            "a failed status read must not pose as available capacity"
+        );
+    }
+
+    #[test]
+    fn unobserved_outranks_assignment_so_the_failure_stays_visible() {
+        assert_eq!(
+            compute_health(WorkspaceHealthInputs {
+                retired: false,
+                present: true,
+                lane_assigned: true,
+                working_tree_clean: None,
+            }),
+            WorkspaceHealth::Unobserved,
+            "a Lane label must not hide an unreadable tree"
         );
     }
 
@@ -513,7 +568,7 @@ mod workspace_health {
                 retired: false,
                 present: true,
                 lane_assigned: true,
-                working_tree_clean: true,
+                working_tree_clean: Some(true),
             }),
             WorkspaceHealth::Assigned
         );
@@ -522,7 +577,7 @@ mod workspace_health {
                 retired: false,
                 present: true,
                 lane_assigned: true,
-                working_tree_clean: false,
+                working_tree_clean: Some(false),
             }),
             WorkspaceHealth::Assigned,
             "Lane assignment dominates a dirty tree"
@@ -536,7 +591,7 @@ mod workspace_health {
                 retired: false,
                 present: true,
                 lane_assigned: false,
-                working_tree_clean: false,
+                working_tree_clean: Some(false),
             }),
             WorkspaceHealth::Dirty
         );
@@ -545,7 +600,7 @@ mod workspace_health {
                 retired: false,
                 present: true,
                 lane_assigned: false,
-                working_tree_clean: true,
+                working_tree_clean: Some(true),
             }),
             WorkspaceHealth::Available
         );
@@ -559,6 +614,7 @@ mod workspace_health {
             WorkspaceHealth::Dirty,
             WorkspaceHealth::Missing,
             WorkspaceHealth::Retired,
+            WorkspaceHealth::Unobserved,
         ] {
             assert_eq!(WorkspaceHealth::parse(health.as_str()), Some(health));
         }
@@ -611,7 +667,7 @@ mod workspace_health {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Detached),
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             );
 
@@ -645,7 +701,7 @@ mod workspace_health {
                     Some("identity".to_owned()),
                     Some(WorkspaceCheckout::Branch("main".to_owned())),
                     Some("abc123".to_owned()),
-                    true,
+                    Some(true),
                     Some(false),
                 )
                 .expect("the observation transitions");
@@ -916,7 +972,7 @@ mod tests {
             Some("identity".to_owned()),
             Some(WorkspaceCheckout::Branch("main".to_owned())),
             Some("abc123".to_owned()),
-            true,
+            Some(true),
             Some(false),
         );
 
@@ -939,12 +995,45 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
-                false,
+                Some(false),
                 Some(false),
             )
             .expect("the first observation transitions");
 
         assert_eq!(workspace.health(), WorkspaceHealth::Dirty);
+    }
+
+    #[test]
+    fn observing_a_failed_status_records_unobserved_health() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+
+        let transition = workspace.observe(
+            true,
+            Some("identity".to_owned()),
+            Some(WorkspaceCheckout::Branch("feature".to_owned())),
+            Some("def456".to_owned()),
+            None,
+            Some(false),
+        );
+
+        assert_eq!(
+            transition,
+            Some((WorkspaceHealth::Missing, WorkspaceHealth::Unobserved)),
+            "a failed status read transitions into the unobserved state"
+        );
+        assert_eq!(workspace.health(), WorkspaceHealth::Unobserved);
+        assert_eq!(workspace.observation().working_tree_clean(), None);
+        assert_eq!(
+            workspace.observation().head(),
+            Some("def456"),
+            "the facts that did read survive the failed status"
+        );
+        let verdict = workspace.reuse_evaluation();
+        assert!(
+            !verdict.reusable(),
+            "an unreadable tree is never reusable capacity"
+        );
+        assert!(!verdict.clean(), "a failed read cannot vouch for clean");
     }
 
     #[test]
@@ -956,7 +1045,7 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             )
             .expect("the first observation transitions");
@@ -1000,7 +1089,7 @@ mod tests {
             Some("identity".to_owned()),
             Some(WorkspaceCheckout::Branch("main".to_owned())),
             Some("abc123".to_owned()),
-            true,
+            Some(true),
             Some(false),
         );
 
@@ -1017,12 +1106,12 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             )
             .expect("the first observation transitions");
 
-        let transition = workspace.observe(false, None, None, None, true, None);
+        let transition = workspace.observe(false, None, None, None, None, None);
 
         assert_eq!(
             transition,
@@ -1042,7 +1131,7 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
-                true,
+                Some(true),
                 Some(true),
             )
             .expect("the first observation transitions");
@@ -1062,7 +1151,7 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             )
             .expect("the observation transitions");
@@ -1080,7 +1169,7 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
-                true,
+                Some(true),
                 Some(true),
             )
             .expect("the observation transitions");
@@ -1097,7 +1186,7 @@ mod tests {
                 Some("identity".to_owned()),
                 Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             )
             .expect("the observation transitions");

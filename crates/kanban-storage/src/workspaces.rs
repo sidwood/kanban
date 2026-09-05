@@ -219,6 +219,23 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
         row.get::<_, Option<String>>(8)?
             .map(WorkspaceCheckout::Branch)
     };
+    // A stored health that asserts a tree verdict the record lacks is
+    // invalid, never clean-by-default: an available record must carry
+    // a clean flag, a dirty record a dirty one, and an unobserved or
+    // missing record none at all (KAN-T99-AC3).
+    let verdict_matches_health = match health {
+        WorkspaceHealth::Available => working_tree_clean == Some(true),
+        WorkspaceHealth::Dirty => working_tree_clean == Some(false),
+        WorkspaceHealth::Unobserved | WorkspaceHealth::Missing => working_tree_clean.is_none(),
+        WorkspaceHealth::Assigned | WorkspaceHealth::Retired => true,
+    };
+    if !verdict_matches_health {
+        return Err(rusqlite::Error::InvalidColumnType(
+            11,
+            "working_tree_clean".to_owned(),
+            rusqlite::types::Type::Integer,
+        ));
+    }
     let mut observation = WorkspaceObservation::empty();
     if row.get::<_, Option<String>>(7)?.is_some()
         || checkout.is_some()
@@ -230,7 +247,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
             row.get(7)?,
             checkout,
             row.get(10)?,
-            working_tree_clean.unwrap_or(true),
+            working_tree_clean,
             unique_unlanded_commits,
             lane_id,
         );
@@ -272,6 +289,7 @@ mod workspace_store {
         WorkspaceRegistration,
     };
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use rusqlite::params;
     use serde_json::json;
 
     use super::SqliteWorkspaceStore;
@@ -329,13 +347,27 @@ mod workspace_store {
                 Some("identity".to_owned()),
                 checkout,
                 Some("abc123".to_owned()),
-                true,
+                Some(true),
                 Some(false),
             )
             .expect("the observation applies");
         store
             .save(workspace, transition(workspace.id(), "observed"))
             .expect("the observation persists");
+    }
+
+    /// Fabricate one stored Workspace row with an explicit health and
+    /// clean flag, standing in for legacy or damaged records.
+    fn seed_raw_row(database: &Database, path: &str, health: &str, clean: Option<i64>) -> i64 {
+        database
+            .connection()
+            .execute(
+                "INSERT INTO workspaces (project_id, path, health, working_tree_clean, version)
+                 VALUES (1, ?1, ?2, ?3, 1)",
+                params![path, health, clean],
+            )
+            .expect("the raw row lands");
+        database.connection().last_insert_rowid()
     }
 
     fn raw_row(database: &Database, id: WorkspaceId) -> (Option<String>, Option<i64>) {
@@ -411,5 +443,67 @@ mod workspace_store {
         let (branch, detached) = raw_row(&database, workspace.id());
         assert_eq!(branch.as_deref(), Some("main"));
         assert_eq!(detached, Some(0));
+    }
+
+    #[test]
+    fn an_available_row_without_a_clean_verdict_is_refused() {
+        let (_dir, database, store) = store();
+        let id = seed_raw_row(&database, "/workspaces/core.stale", "available", None);
+
+        let decoded = store.find(WorkspaceId::new(id as u64));
+
+        assert!(
+            decoded.is_err(),
+            "an absent clean flag must never restore as clean-by-default"
+        );
+    }
+
+    #[test]
+    fn a_dirty_row_without_a_dirty_verdict_is_refused() {
+        let (_dir, database, store) = store();
+        let id = seed_raw_row(&database, "/workspaces/core.stale", "dirty", None);
+
+        let decoded = store.find(WorkspaceId::new(id as u64));
+
+        assert!(
+            decoded.is_err(),
+            "a dirty health without its recorded verdict is invalid data"
+        );
+    }
+
+    #[test]
+    fn a_missing_row_with_a_clean_verdict_is_refused() {
+        let (_dir, database, store) = store();
+        let id = seed_raw_row(&database, "/workspaces/core.stale", "missing", Some(1));
+
+        let decoded = store.find(WorkspaceId::new(id as u64));
+
+        assert!(
+            decoded.is_err(),
+            "a missing path cannot carry a clean verdict"
+        );
+    }
+
+    #[test]
+    fn an_out_of_domain_clean_flag_is_refused() {
+        let (_dir, database, store) = store();
+        // The CHECK constraint refuses this value on insert; the proof
+        // stands in for damaged rows that reached storage anyway.
+        database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = 1")
+            .expect("the fabrication pragma applies");
+        let id = seed_raw_row(&database, "/workspaces/core.junk", "assigned", Some(2));
+        database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = 0")
+            .expect("the constraint enforcement returns");
+
+        let decoded = store.find(WorkspaceId::new(id as u64));
+
+        assert!(
+            decoded.is_err(),
+            "an invalid clean flag value must be refused, not defaulted"
+        );
     }
 }

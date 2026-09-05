@@ -1,12 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "The closed health vocabulary as every client sees it.",
+  "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
   "enum": [
     "available",
     "assigned",
     "dirty",
     "missing",
-    "retired"
+    "retired",
+    "unobserved"
   ],
   "title": "WorkspaceHealthDto",
   "type": "string"

@@ -24,14 +24,16 @@ use crate::timeline::TimelineEnvelope;
 
 /// The git facts one observation read returns without mutating the
 /// clone. `checkout` carries the closed state; a detached HEAD never
-/// appears as a branch name.
+/// appears as a branch name. `working_tree_clean` is `None` when the
+/// status read itself failed — an observation failure the health
+/// contract keeps distinct from a dirty tree (KAN-T99).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceGitSnapshot {
     pub present: bool,
     pub repository_identity: Option<String>,
     pub checkout: Option<WorkspaceCheckout>,
     pub head: Option<String>,
-    pub working_tree_clean: bool,
+    pub working_tree_clean: Option<bool>,
     /// Whether the Workspace holds unique unlanded commits; `None`
     /// when the observer could not decide (DR-LW-06).
     pub unique_unlanded_commits: Option<bool>,
@@ -406,6 +408,7 @@ fn health_dto(health: WorkspaceHealth) -> WorkspaceHealthDto {
         WorkspaceHealth::Dirty => WorkspaceHealthDto::Dirty,
         WorkspaceHealth::Missing => WorkspaceHealthDto::Missing,
         WorkspaceHealth::Retired => WorkspaceHealthDto::Retired,
+        WorkspaceHealth::Unobserved => WorkspaceHealthDto::Unobserved,
     }
 }
 
@@ -530,7 +533,6 @@ mod testing {
                 .cloned()
                 .unwrap_or(WorkspaceGitSnapshot {
                     present: false,
-                    working_tree_clean: true,
                     ..WorkspaceGitSnapshot::default()
                 })
         }
@@ -779,7 +781,7 @@ mod workspace_observe {
                     repository_identity: Some("identity".to_owned()),
                     checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("abc".to_owned()),
-                    working_tree_clean: true,
+                    working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
                 },
                 WorkspaceGitSnapshot {
@@ -787,7 +789,7 @@ mod workspace_observe {
                     repository_identity: Some("identity".to_owned()),
                     checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("def".to_owned()),
-                    working_tree_clean: false,
+                    working_tree_clean: Some(false),
                     unique_unlanded_commits: Some(false),
                 },
             ]),
@@ -857,7 +859,7 @@ mod workspace_observe {
                     repository_identity: Some("identity".to_owned()),
                     checkout: Some(kanban_domain::WorkspaceCheckout::Detached),
                     head: Some("abc123".to_owned()),
-                    working_tree_clean: true,
+                    working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
                 },
             )]),
@@ -917,6 +919,66 @@ mod workspace_observe {
     }
 
     #[test]
+    fn observing_a_failed_status_reports_unobserved_health() {
+        let harness = harness(Arc::new(ScriptedObserver {
+            snapshots: HashMap::from([(
+                "/workspaces/kanban.unreadable".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
+                    head: Some("def456".to_owned()),
+                    working_tree_clean: None,
+                    unique_unlanded_commits: None,
+                },
+            )]),
+        }));
+        harness.projects.seed(stored_project());
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.unreadable", "key-1"),
+            )
+            .expect("the workspace registers");
+
+        let response = harness
+            .core
+            .command("workspace.observe", &observe(1, "key-2", 1))
+            .expect("the observation applies");
+
+        assert_eq!(
+            response["health"],
+            json!("unobserved"),
+            "a failed status read is neither dirty nor available"
+        );
+        assert_eq!(response["observation"]["working_tree_clean"], json!(null));
+        assert_eq!(
+            response["observation"]["head"],
+            json!("def456"),
+            "the facts that did read survive the failed status"
+        );
+        assert_eq!(
+            response["reuse"]["reusable"],
+            json!(false),
+            "an unreadable tree is never reusable capacity"
+        );
+        assert_eq!(response["reuse"]["clean"], json!(false));
+        let (_, timeline) = harness.workspaces.snapshot();
+        let failed: Vec<_> = timeline
+            .iter()
+            .filter(|row| row.detail().get("action") == Some(&json!("health_changed")))
+            .collect();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].detail().get("to"), Some(&json!("unobserved")));
+        assert_eq!(
+            failed[0].detail().get("working_tree_clean"),
+            Some(&json!(null)),
+            "the timeline records the absent verdict, never a default"
+        );
+    }
+
+    #[test]
     fn observing_reports_the_reuse_verdict_with_every_condition() {
         let harness = harness(Arc::new(ScriptedObserver {
             snapshots: HashMap::from([(
@@ -928,7 +990,7 @@ mod workspace_observe {
                         "feature".to_owned(),
                     )),
                     head: Some("def456".to_owned()),
-                    working_tree_clean: true,
+                    working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(true),
                 },
             )]),
@@ -975,7 +1037,7 @@ mod workspace_observe {
                         "feature".to_owned(),
                     )),
                     head: Some("abc123".to_owned()),
-                    working_tree_clean: true,
+                    working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
                 },
             )]),
@@ -1033,7 +1095,7 @@ mod workspace_observe {
                     repository_identity: Some("identity".to_owned()),
                     checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("abc".to_owned()),
-                    working_tree_clean: false,
+                    working_tree_clean: Some(false),
                     unique_unlanded_commits: Some(false),
                 },
             )]),
@@ -1117,7 +1179,7 @@ mod workspace_retire {
                         "feature".to_owned(),
                     )),
                     head: Some("abc".to_owned()),
-                    working_tree_clean: true,
+                    working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
                 },
             )]),

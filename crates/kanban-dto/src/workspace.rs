@@ -4,7 +4,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The closed health vocabulary as every client sees it.
+/// The closed health vocabulary as every client sees it. The
+/// `unobserved` state means the last git status read could not
+/// complete: the tree claims neither clean nor dirty (KAN-T99).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceHealthDto {
@@ -13,6 +15,7 @@ pub enum WorkspaceHealthDto {
     Dirty,
     Missing,
     Retired,
+    Unobserved,
 }
 
 impl WorkspaceHealthDto {
@@ -24,6 +27,7 @@ impl WorkspaceHealthDto {
             Self::Dirty => "dirty",
             Self::Missing => "missing",
             Self::Retired => "retired",
+            Self::Unobserved => "unobserved",
         }
     }
 }
@@ -56,6 +60,8 @@ pub struct WorkspaceObservationDto {
     pub checkout: Option<WorkspaceCheckoutDto>,
     pub branch: Option<String>,
     pub head: Option<String>,
+    /// Whether the working tree is clean. Absent when no status read
+    /// completed — a failed observation, never a clean verdict.
     pub working_tree_clean: Option<bool>,
     /// Whether the Workspace holds unique unlanded commits; absent
     /// when the observer could not decide.
@@ -279,6 +285,40 @@ mod tests {
                 serde_json::from_value(wire).expect("the checkout decodes");
             assert_eq!(decoded, checkout);
         }
+    }
+
+    #[test]
+    fn workspace_record_round_trips_an_unobserved_health() {
+        let record = WorkspaceRecord {
+            id: 1,
+            project_id: 2,
+            path: "/workspaces/core".to_owned(),
+            is_seed: false,
+            health: super::WorkspaceHealthDto::Unobserved,
+            observation: super::WorkspaceObservationDto {
+                repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckoutDto::Branch),
+                branch: Some("feature".to_owned()),
+                head: Some("abc".to_owned()),
+                working_tree_clean: None,
+                unique_unlanded_commits: None,
+                lane_assignment: None,
+            },
+            reuse: super::WorkspaceReuseDto {
+                reusable: false,
+                clean: false,
+                unassigned: true,
+                free_of_unlanded_commits: false,
+            },
+            version: 3,
+        };
+
+        let encoded = serde_json::to_value(&record).expect("the record encodes");
+
+        assert_eq!(encoded["health"], json!("unobserved"));
+        assert_eq!(encoded["observation"]["working_tree_clean"], json!(null));
+        let decoded: WorkspaceRecord = serde_json::from_value(encoded).expect("the record decodes");
+        assert_eq!(decoded, record);
     }
 
     #[test]

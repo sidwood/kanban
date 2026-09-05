@@ -531,7 +531,7 @@ export type TimelineScope = 'global' | {
   project: number;
 };
 export type WorkspaceCheckoutDto = 'branch' | 'detached';
-export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired';
+export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired' | 'unobserved';
 export type WorkspaceListQuery = {
   project_id: number;
 };

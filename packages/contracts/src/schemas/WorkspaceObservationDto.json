@@ -57,6 +57,7 @@
       ]
     },
     "working_tree_clean": {
+      "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
       "type": [
         "boolean",
         "null"

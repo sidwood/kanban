@@ -288,7 +288,11 @@ impl HerdrObserverHandle {
     /// captured snapshot is appended only once the subscription is
     /// live (KAN-T78-AC2, KAN-T78-AC3).
     fn observe_live(&self, live_once: &mut bool) -> bool {
-        let mut client = match SessionClient::connect(self.mapping.clone(), &self.socket_root) {
+        // Open carries no request traffic: the socket duplicate — the
+        // only handle a stop can shut down — is registered before the
+        // snapshot handshake blocks, so stopping this thread is always
+        // possible, even mid-handshake.
+        let mut client = match SessionClient::open(self.mapping.clone(), &self.socket_root) {
             Ok(client) => client,
             Err(error) => {
                 self.mark_connected(false, Some(error.to_string()));
@@ -457,8 +461,9 @@ pub fn production_socket_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use kanban_app::{HerdrDiagnostics, TimelineStore};
     use kanban_dto::{TimelineEventKind, TimelineQuery, TimelineScope};
@@ -816,6 +821,7 @@ mod tests {
                 "seed_workspace": "/workspaces/wave.seed",
                 "default_branch": "main",
                 "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
             }),
         );
         thread::sleep(Duration::from_millis(200));
@@ -846,6 +852,123 @@ mod tests {
             answer["events"].as_array().map(Vec::len),
             Some(1),
             "no snapshot lands after the archive stops observation"
+        );
+
+        core.shutdown();
+    }
+
+    /// Sleep in small steps until `condition` holds or `limit`
+    /// elapses, reporting whether the condition was met.
+    fn soon_enough(limit: Duration, mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        condition()
+    }
+
+    /// Run `action` on a helper thread and report whether it finished
+    /// within `limit`: a stop that could hang forever fails the test
+    /// instead of hanging it.
+    fn bounded_within(limit: Duration, action: impl FnOnce() + Send + 'static) -> bool {
+        let finished = Arc::new(AtomicBool::new(false));
+        let flag = finished.clone();
+        thread::spawn(move || {
+            action();
+            flag.store(true, Ordering::SeqCst);
+        });
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if finished.load(Ordering::SeqCst) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn shutdown_during_the_snapshot_handshake_is_bounded() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_silent_handshake(),
+        );
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_backoff(database, socket_root, fast_backoff());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        assert!(
+            soon_enough(Duration::from_secs(2), || fixture.requests_seen() >= 1),
+            "the observer reaches the handshake it blocks on"
+        );
+
+        assert!(
+            bounded_within(Duration::from_secs(5), move || observer.shutdown()),
+            "shutdown interrupts the blocked handshake instead of hanging on its join"
+        );
+    }
+
+    #[test]
+    fn archiving_through_dispatch_cannot_deadlock() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default().with_silent_handshake(),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
+            }),
+        );
+        assert!(
+            soon_enough(Duration::from_secs(2), || fixture.requests_seen() >= 1),
+            "the observer blocks on the handshake before the archive dispatches"
+        );
+
+        // The archive must return even though its observer is blocked
+        // on the handshake read: the release joins outside the write
+        // span and the registered duplicate interrupts the read.
+        assert!(
+            bounded_within(Duration::from_secs(5), move || {
+                client.command(
+                    "project.archive",
+                    json!({
+                        "mutation": { "optimistic_version": 1, "idempotency_key": "archive-wave" },
+                        "project_id": 1,
+                    }),
+                );
+            }),
+            "the archive returns instead of deadlocking on its observer"
+        );
+
+        let mut after = crate::test_client::Client::connect(core.socket_path());
+        let listed = after.query("project.list");
+        assert_eq!(
+            listed["projects"][0]["archived"],
+            json!(true),
+            "the archive that returned also landed"
         );
 
         core.shutdown();

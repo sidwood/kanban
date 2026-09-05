@@ -17,6 +17,7 @@ use crate::protocol::{HerdrRequest, HerdrResponse, Snapshot};
 pub struct ScriptedSession {
     root: PathBuf,
     socket_path: PathBuf,
+    requests: Arc<AtomicUsize>,
     server: JoinHandle<()>,
 }
 
@@ -86,6 +87,8 @@ impl ScriptedSession {
         let product_workspace = product_workspace.to_owned();
         let session_name = session.as_name().unwrap_or("default").to_owned();
         let accept_connections = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let served_requests = requests.clone();
         let server = thread::Builder::new()
             .name(format!("herdr-fixture-{session_name}"))
             .spawn(move || {
@@ -98,6 +101,7 @@ impl ScriptedSession {
                         herdr_workspace.clone(),
                         script.clone(),
                         index,
+                        &served_requests,
                     );
                 }
             })
@@ -105,6 +109,7 @@ impl ScriptedSession {
         Self {
             root: root.to_path_buf(),
             socket_path,
+            requests,
             server,
         }
     }
@@ -117,6 +122,13 @@ impl ScriptedSession {
     /// The injected Herdr config root, shared by default and named sessions.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// How many request lines the session has read across every
+    /// connection: one counted request proves the client wrote it and
+    /// is now blocked waiting for an answer.
+    pub fn requests_seen(&self) -> usize {
+        self.requests.load(Ordering::Relaxed)
     }
 }
 
@@ -136,6 +148,7 @@ pub struct SessionScript {
     prompt_accepted: bool,
     subscribe_error: Option<String>,
     close_after_events: bool,
+    silent: bool,
 }
 
 impl SessionScript {
@@ -172,6 +185,14 @@ impl SessionScript {
         self.close_after_events = true;
         self
     }
+
+    /// Read every request and answer none, so a client is blocked on
+    /// its first response — the snapshot handshake — for as long as
+    /// the test wants.
+    pub fn with_silent_handshake(mut self) -> Self {
+        self.silent = true;
+        self
+    }
 }
 
 fn serve_connection(
@@ -181,6 +202,7 @@ fn serve_connection(
     herdr_workspace: Option<String>,
     script: Arc<SessionScript>,
     connection_index: usize,
+    requests: &Arc<AtomicUsize>,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
     let mut writer = stream;
@@ -191,6 +213,10 @@ fn serve_connection(
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
             break;
+        }
+        requests.fetch_add(1, Ordering::Relaxed);
+        if script.silent {
+            continue;
         }
         let request: HerdrRequest = match serde_json::from_str(line.trim()) {
             Ok(request) => request,

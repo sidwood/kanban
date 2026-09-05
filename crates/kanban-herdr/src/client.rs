@@ -38,10 +38,13 @@ pub struct SessionClient {
 }
 
 impl SessionClient {
-    /// Connect to the session this mapping resolves to under
-    /// `socket_root` and verify the workspace mapping through an
-    /// initial snapshot.
-    pub fn connect(mapping: SessionMapping, socket_root: &Path) -> Result<Self, HerdrError> {
+    /// Connect to one named session under `socket_root` with no
+    /// request traffic: the snapshot handshake belongs to the caller.
+    /// A caller that must stay interruptible can register its socket
+    /// duplicate before the first blocking read (see
+    /// [`SessionClient::duplicate_socket`]); `connect` performs the
+    /// handshake up front instead.
+    pub fn open(mapping: SessionMapping, socket_root: &Path) -> Result<Self, HerdrError> {
         let path = session_socket_in(socket_root, mapping.session())?;
         if !path.exists() {
             return Err(HerdrError::SocketMissing {
@@ -56,12 +59,18 @@ impl SessionClient {
             path: path.display().to_string(),
             source: source.to_string(),
         })?);
-        let mut client = Self {
+        Ok(Self {
             mapping,
             socket_path: path,
             reader,
             stream,
-        };
+        })
+    }
+
+    /// Connect to one named session under `socket_root` and verify the
+    /// workspace mapping through an initial snapshot.
+    pub fn connect(mapping: SessionMapping, socket_root: &Path) -> Result<Self, HerdrError> {
+        let mut client = Self::open(mapping, socket_root)?;
         let snapshot = client.snapshot()?;
         client.mapping.verify_snapshot(&snapshot)?;
         Ok(client)

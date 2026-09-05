@@ -68,3 +68,25 @@ fn snapshot_refuses_a_herdr_workspace_mismatch() {
         "a snapshot serving a different Herdr workspace must refuse connection"
     );
 }
+
+#[test]
+fn open_leaves_the_snapshot_handshake_to_the_caller() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let _fixture = ScriptedSession::bind(
+        dir.path(),
+        "kanban-main",
+        "/workspaces/kanban.seed",
+        SessionScript::default(),
+    );
+    let mapping = named_mapping("kanban-main", "/workspaces/kanban.seed");
+    let mut client = SessionClient::open(mapping, dir.path()).expect("the session socket opens");
+
+    let snapshot = client
+        .snapshot()
+        .expect("the caller-driven handshake answers");
+    client
+        .mapping()
+        .verify_snapshot(&snapshot)
+        .expect("the mapping verifies");
+    assert_eq!(snapshot.session, "kanban-main");
+}

@@ -1,7 +1,7 @@
 //! The per-session Herdr socket client (DR-HB-12).
 
 use std::collections::VecDeque;
-use std::io::{BufReader, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,6 +12,10 @@ use crate::error::HerdrError;
 use crate::paths::session_socket_in;
 use crate::protocol::{HerdrRequest, HerdrResponse, Snapshot};
 use crate::session::SessionMapping;
+
+/// How long one request round-trip may block before the observer
+/// treats the session as unresponsive (DR-HB-11).
+pub const SESSION_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A wait request sent to one session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +39,6 @@ pub struct PromptRequest {
 pub struct SessionClient {
     mapping: SessionMapping,
     socket_path: PathBuf,
-    reader: BufReader<UnixStream>,
     stream: UnixStream,
     /// Bytes of a response line that has only partly arrived, carried
     /// across a bounded read so a timeout cannot lose them.
@@ -44,6 +47,8 @@ pub struct SessionClient {
     /// held for the next [`SessionClient::read_event`] so the stream
     /// keeps its order while requests proceed.
     queued_events: VecDeque<Value>,
+    /// The request deadline restored after a bounded event read.
+    io_timeout: Duration,
 }
 
 impl SessionClient {
@@ -54,6 +59,16 @@ impl SessionClient {
     /// [`SessionClient::duplicate_socket`]); `connect` performs the
     /// handshake up front instead.
     pub fn open(mapping: SessionMapping, socket_root: &Path) -> Result<Self, HerdrError> {
+        Self::open_with_io_timeout(mapping, socket_root, SESSION_IO_TIMEOUT)
+    }
+
+    /// Connect with an explicit request I/O deadline, for tests that
+    /// need a shorter window than production observation.
+    pub fn open_with_io_timeout(
+        mapping: SessionMapping,
+        socket_root: &Path,
+        io_timeout: Duration,
+    ) -> Result<Self, HerdrError> {
         let path = session_socket_in(socket_root, mapping.session())?;
         if !path.exists() {
             return Err(HerdrError::SocketMissing {
@@ -64,17 +79,14 @@ impl SessionClient {
             path: path.display().to_string(),
             source: source.to_string(),
         })?;
-        let reader = BufReader::new(stream.try_clone().map_err(|source| HerdrError::Connect {
-            path: path.display().to_string(),
-            source: source.to_string(),
-        })?);
+        apply_io_deadline(&stream, io_timeout)?;
         Ok(Self {
             mapping,
             socket_path: path,
-            reader,
             stream,
             pending: Vec::new(),
             queued_events: VecDeque::new(),
+            io_timeout,
         })
     }
 
@@ -112,9 +124,9 @@ impl SessionClient {
     /// lost. The socket blocks without a deadline again once this
     /// returns.
     pub fn read_event_within(&mut self, window: Duration) -> Result<Value, HerdrError> {
-        let _ = self.stream.set_read_timeout(Some(window));
+        apply_io_deadline(&self.stream, window)?;
         let response = self.read_event();
-        let _ = self.stream.set_read_timeout(None);
+        apply_io_deadline(&self.stream, self.io_timeout)?;
         response
     }
 
@@ -215,7 +227,7 @@ impl SessionClient {
             // bounded read that finds none leaves the part already
             // arrived in `pending` for the next call.
             let mut chunk = [0u8; 512];
-            let read = self.reader.read(&mut chunk).map_err(|error| {
+            let read = self.stream.read(&mut chunk).map_err(|error| {
                 if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) {
                     HerdrError::TimedOut
                 } else {
@@ -228,4 +240,14 @@ impl SessionClient {
             self.pending.extend_from_slice(&chunk[..read]);
         }
     }
+}
+
+fn apply_io_deadline(stream: &UnixStream, deadline: Duration) -> Result<(), HerdrError> {
+    stream
+        .set_read_timeout(Some(deadline))
+        .map_err(|error| HerdrError::Read(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(deadline))
+        .map_err(|error| HerdrError::Write(error.to_string()))?;
+    Ok(())
 }

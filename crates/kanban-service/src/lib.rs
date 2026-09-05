@@ -248,6 +248,7 @@ pub(crate) fn serve_with_herdr_sessions(
                 std::time::Duration::from_millis(40),
             ),
             settle: std::time::Duration::from_millis(50),
+            io_timeout: std::time::Duration::from_millis(100),
         },
     )?;
     let logs =

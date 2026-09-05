@@ -26,8 +26,8 @@ use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, Tim
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
 use kanban_herdr::{
-    HerdrError, PollingFallback, Reconciler, ReconciliationPlan, SessionClient, SessionMapping,
-    SnapshotDifference,
+    HerdrError, PollingFallback, Reconciler, ReconciliationPlan, SESSION_IO_TIMEOUT, SessionClient,
+    SessionMapping, SnapshotDifference,
 };
 use kanban_storage::{Database, SqliteHerdrSettingsStore};
 use serde_json::{Value, json};
@@ -98,14 +98,18 @@ pub struct ObservationTuning {
     pub backoff: BackoffPolicy,
     /// How long a live subscription must hold before it is settled.
     pub settle: Duration,
+    /// How long each Herdr request round-trip may block.
+    pub io_timeout: Duration,
 }
 
 impl ObservationTuning {
     /// The production tuning: one-second backoff doubling to a minute,
-    /// settled after five seconds of a held subscription.
+    /// settled after five seconds of a held subscription, with a
+    /// five-second request I/O deadline.
     pub const PRODUCTION: Self = Self {
         backoff: BackoffPolicy::PRODUCTION,
         settle: Duration::from_secs(5),
+        io_timeout: SESSION_IO_TIMEOUT,
     };
 }
 
@@ -163,6 +167,7 @@ pub struct HerdrObserver {
     sessions: Mutex<HashMap<u64, Observation>>,
     backoff: BackoffPolicy,
     settle: Duration,
+    io_timeout: Duration,
 }
 
 impl HerdrObserver {
@@ -203,6 +208,7 @@ impl HerdrObserver {
             sessions: Mutex::new(HashMap::new()),
             backoff: tuning.backoff,
             settle: tuning.settle,
+            io_timeout: tuning.io_timeout,
         })
     }
 
@@ -254,6 +260,7 @@ impl HerdrObserver {
             socket: socket.clone(),
             backoff: self.backoff,
             settle: self.settle,
+            io_timeout: self.io_timeout,
         };
         let thread_name = session
             .as_name()
@@ -360,6 +367,7 @@ struct HerdrObserverHandle {
     socket: Arc<Mutex<Option<UnixStream>>>,
     backoff: BackoffPolicy,
     settle: Duration,
+    io_timeout: Duration,
 }
 
 impl HerdrObserverHandle {
@@ -413,7 +421,11 @@ impl HerdrObserverHandle {
         // only handle a stop can shut down — is registered before the
         // snapshot handshake blocks, so stopping this thread is always
         // possible, even mid-handshake.
-        let mut client = match SessionClient::open(self.mapping.clone(), &self.socket_root) {
+        let mut client = match SessionClient::open_with_io_timeout(
+            self.mapping.clone(),
+            &self.socket_root,
+            self.io_timeout,
+        ) {
             Ok(client) => client,
             Err(error) => {
                 self.mark_connected(false, Some(error.to_string()));
@@ -844,6 +856,7 @@ mod tests {
         ObservationTuning {
             backoff: fast_backoff(),
             settle: Duration::from_millis(100),
+            io_timeout: Duration::from_millis(100),
         }
     }
 
@@ -1164,6 +1177,66 @@ mod tests {
     }
 
     #[test]
+    fn unresponsive_server_timeout_updates_diagnostics_and_reconnects() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_silent_handshake()
+                .with_reconnect_script(SessionScript::default()),
+        );
+        let database = migrated_database(&dir);
+        let tuning = ObservationTuning {
+            backoff: BackoffPolicy::new(Duration::from_millis(500), Duration::from_millis(500)),
+            settle: Duration::from_millis(100),
+            io_timeout: Duration::from_millis(100),
+        };
+        let observer = HerdrObserver::with_observation(database.clone(), socket_root, tuning);
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        let diagnostics = LiveHerdrDiagnostics::new(&observer);
+
+        assert!(
+            soon_enough(Duration::from_secs(2), || {
+                let state = diagnostics.for_project(
+                    1,
+                    Some("kanban-main"),
+                    "/workspaces/kanban.seed",
+                    "kanban.seed",
+                );
+                !state.connected
+                    && state
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|error| error.contains("window"))
+            }),
+            "the timeout failure is reported through diagnostics before reconnect"
+        );
+        assert!(
+            soon_enough(Duration::from_secs(3), || {
+                let state = diagnostics.for_project(
+                    1,
+                    Some("kanban-main"),
+                    "/workspaces/kanban.seed",
+                    "kanban.seed",
+                );
+                state.connected && state.last_error.is_none()
+            }),
+            "the bounded reconnect path restores a live subscription"
+        );
+        assert!(
+            soon_enough(Duration::from_secs(2), || telemetry_details(&database)
+                .len()
+                == 1),
+            "only the reconnect snapshot lands after the timeout cycle"
+        );
+
+        observer.shutdown();
+    }
+
+    #[test]
     fn observer_appends_no_rows_when_subscription_never_succeeds() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let socket_root = dir.path().join("sessions");
@@ -1258,6 +1331,7 @@ mod tests {
             ObservationTuning {
                 backoff: fast_backoff(),
                 settle: Duration::from_millis(500),
+                io_timeout: Duration::from_millis(100),
             },
         );
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);

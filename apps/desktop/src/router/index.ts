@@ -5,6 +5,7 @@ import PlanningView from '../views/PlanningView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import HerdrSettingsView from '../views/HerdrSettingsView.vue'
 import WorkspacesView from '../views/WorkspacesView.vue'
+import SpecEditorView from '../views/SpecEditorView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,7 @@ const router = createRouter({
     { path: '/register', name: 'register', component: RegisterView },
     { path: '/settings/herdr', name: 'herdr-settings', component: HerdrSettingsView },
     { path: '/planning', name: 'planning', component: PlanningView },
+    { path: '/planning/specs', name: 'planning-specs', component: SpecEditorView },
     { path: '/projects/:projectId/workspaces', name: 'workspaces', component: WorkspacesView },
   ],
 })

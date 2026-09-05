@@ -437,6 +437,17 @@ impl Project {
         number
     }
 
+    /// Mint the next Plan, Spec, or Ticket number. Archived is
+    /// terminal, so an archived Project refuses every mint.
+    pub fn mint_number(&mut self, kind: NumberKind) -> Result<u64, ProjectError> {
+        if self.state == ProjectState::Archived {
+            return Err(ProjectError::ArchivedIsTerminal);
+        }
+        let number = self.counters.next(kind);
+        self.version += 1;
+        Ok(number)
+    }
+
     /// Archive an active Project. Archived is terminal, so a second
     /// archive is refused rather than absorbed.
     pub fn archive(&mut self) -> Result<(), ProjectError> {
@@ -887,6 +898,68 @@ mod project_lifecycle {
         project.archive().expect("the first archive applies");
 
         assert_eq!(project.archive(), Err(ProjectError::AlreadyArchived));
+        assert_eq!(project.version(), 2, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn minting_through_the_aggregate_stays_monotonic_across_restore() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+
+        assert_eq!(
+            project.mint_number(NumberKind::Plan).expect("active mints"),
+            1
+        );
+        assert_eq!(
+            project.mint_number(NumberKind::Spec).expect("active mints"),
+            1
+        );
+        assert_eq!(
+            project
+                .mint_number(NumberKind::Ticket)
+                .expect("active mints"),
+            1
+        );
+
+        let mut reloaded = Project::restore(
+            project.id(),
+            project.registration().clone(),
+            project.state(),
+            project.counters(),
+            project.version(),
+        );
+
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Plan)
+                .expect("active mints"),
+            2,
+            "the Plan counter resumes past the last minted number"
+        );
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Spec)
+                .expect("active mints"),
+            2,
+            "the Spec counter resumes past the last minted number"
+        );
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Ticket)
+                .expect("active mints"),
+            2,
+            "the Ticket counter resumes past the last minted number"
+        );
+    }
+
+    #[test]
+    fn minting_on_an_archived_project_is_refused() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+        project.archive().expect("active archives");
+
+        assert_eq!(
+            project.mint_number(NumberKind::Plan),
+            Err(ProjectError::ArchivedIsTerminal)
+        );
         assert_eq!(project.version(), 2, "the refusal changed nothing");
     }
 

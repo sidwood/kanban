@@ -248,8 +248,7 @@ fn append_timeline(
 mod project_repository {
     use kanban_app::{InitiativeStore, ProjectStore, TimelineEnvelope};
     use kanban_domain::{
-        InitiativeId, InitiativeName, NumberKind, Project, ProjectCounters, ProjectId,
-        ProjectRegistration, ProjectState,
+        InitiativeId, InitiativeName, NumberKind, Project, ProjectId, ProjectRegistration,
     };
     use kanban_dto::{
         ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
@@ -319,6 +318,63 @@ mod project_repository {
     /// The archive envelope for one Project.
     fn archived(id: ProjectId) -> TimelineEnvelope {
         transition(id, "archived", json!({}))
+    }
+
+    /// The envelope for persisting minted counters.
+    fn counters_saved(id: ProjectId) -> TimelineEnvelope {
+        transition(id, "counters_saved", json!({}))
+    }
+
+    /// Mint counters through the aggregate, saving after every mint so
+    /// optimistic versions stay aligned with storage.
+    fn mint_counters(
+        store: &SqliteProjectStore,
+        project: &mut Project,
+        plan: u64,
+        spec: u64,
+        ticket: u64,
+    ) {
+        for _ in 0..plan {
+            project
+                .mint_number(NumberKind::Plan)
+                .expect("active mints a Plan number");
+            store
+                .save(project, counters_saved(project.id()))
+                .expect("the counters persist");
+        }
+        for _ in 0..spec {
+            project
+                .mint_number(NumberKind::Spec)
+                .expect("active mints a Spec number");
+            store
+                .save(project, counters_saved(project.id()))
+                .expect("the counters persist");
+        }
+        for _ in 0..ticket {
+            project
+                .mint_number(NumberKind::Ticket)
+                .expect("active mints a Ticket number");
+            store
+                .save(project, counters_saved(project.id()))
+                .expect("the counters persist");
+        }
+    }
+
+    /// Mint one number, persist it, and reload the aggregate from storage.
+    fn mint_save_reload(
+        store: &SqliteProjectStore,
+        project: &mut Project,
+        kind: NumberKind,
+    ) -> u64 {
+        let number = project.mint_number(kind).expect("active mints");
+        store
+            .save(project, counters_saved(project.id()))
+            .expect("the counters persist");
+        *project = store
+            .find(project.id())
+            .expect("the find serves")
+            .expect("the Project exists");
+        number
     }
 
     /// One stored row's binding facts: the session name, the target
@@ -623,24 +679,74 @@ mod project_repository {
     }
 
     #[test]
-    fn archiving_preserves_the_minted_counters() {
+    fn durable_counters_stay_monotonic_across_reload() {
         let (_dir, database, store) = store();
-        store
+        let mut project = store
             .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
-        // Stand in for the later slices that mint numbers: the stored
-        // counters move, the aggregate rehydrates them, then the
-        // Project archives.
-        database
-            .connection()
-            .execute(
-                "UPDATE projects SET plan_counter = 3, spec_counter = 1, ticket_counter = 7 \
-                 WHERE id = 1",
-                [],
-            )
-            .expect("the counters advance");
+
+        assert_eq!(mint_save_reload(&store, &mut project, NumberKind::Plan), 1);
+        assert_eq!(mint_save_reload(&store, &mut project, NumberKind::Spec), 1);
+        assert_eq!(
+            mint_save_reload(&store, &mut project, NumberKind::Ticket),
+            1
+        );
+
+        let mut reloaded = store
+            .find(project.id())
+            .expect("the find serves")
+            .expect("the Project exists");
+        assert_eq!(reloaded.counters().last(NumberKind::Plan), 1);
+        assert_eq!(reloaded.counters().last(NumberKind::Spec), 1);
+        assert_eq!(reloaded.counters().last(NumberKind::Ticket), 1);
+
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Plan)
+                .expect("active mints"),
+            2,
+            "the Plan counter resumes past the last stored number"
+        );
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Spec)
+                .expect("active mints"),
+            2,
+            "the Spec counter resumes past the last stored number"
+        );
+        assert_eq!(
+            reloaded
+                .mint_number(NumberKind::Ticket)
+                .expect("active mints"),
+            2,
+            "the Ticket counter resumes past the last stored number"
+        );
+        assert_eq!(
+            database
+                .connection()
+                .query_row(
+                    "SELECT plan_counter, spec_counter, ticket_counter FROM projects WHERE id = 1",
+                    [],
+                    |row| Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?
+                    )),
+                )
+                .expect("the stored counters are readable"),
+            (1, 1, 1)
+        );
+    }
+
+    #[test]
+    fn archiving_preserves_the_minted_counters() {
+        let (_dir, _database, store) = store();
         let mut project = store
-            .find(ProjectId::new(1))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+        mint_counters(&store, &mut project, 3, 1, 7);
+        project = store
+            .find(project.id())
             .expect("the find serves")
             .expect("the Project exists");
         project.archive().expect("active archives");
@@ -662,24 +768,14 @@ mod project_repository {
     #[test]
     fn saving_persists_the_counters_the_aggregate_holds() {
         let (_dir, _database, store) = store();
-        let created = store
+        let mut project = store
             .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
-        // Stand in for the later slices that mint numbers: the
-        // aggregate rehydrates, mints in memory, and saves, so the row
-        // must take the aggregate's counters rather than keep stale
-        // ones a reload would mint again.
-        let mut minted = Project::restore(
-            created.id(),
-            created.registration().clone(),
-            ProjectState::Active,
-            ProjectCounters::restore(4, 2, 6),
-            created.version(),
-        );
-        minted.archive().expect("active archives");
+        mint_counters(&store, &mut project, 4, 2, 6);
+        project.archive().expect("active archives");
 
         store
-            .save(&minted, archived(minted.id()))
+            .save(&project, archived(project.id()))
             .expect("the save lands");
 
         let found = store

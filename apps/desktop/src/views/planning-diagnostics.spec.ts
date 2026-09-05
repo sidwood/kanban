@@ -119,10 +119,10 @@ function harness(answers: Record<string, unknown> = {}) {
   return { transport, ...state }
 }
 
-async function mountView(transport: ShellTransport) {
+async function mountView(transport: ShellTransport, pinia = createPinia()) {
   const wrapper = mount(PlanningView, {
     global: {
-      plugins: [createPinia()],
+      plugins: [pinia],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })
@@ -212,6 +212,86 @@ describe('PlanningView diagnostics', () => {
     expect(wrapper.find('[data-testid="plan-diagnostics-profile-0"]').text()).toBe(
       'Profile reference ghost-profile resolves to no catalogue entry.',
     )
+  })
+
+  it('re-reads the retained graph when the view returns', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const state = harness()
+    const first = await mountView(state.transport, pinia)
+    await first.find('[data-testid="plan-row-1"]').trigger('click')
+    await flushPromises()
+    first.unmount()
+
+    // A Spec content edit moved the answer under the same graph key.
+    state.answers['plan.diagnostics'] = {
+      cycles: [],
+      coverage_gaps: [],
+      invalid_profiles: [],
+      blocking: false,
+    } satisfies PlanDiagnosticsResponse
+    const second = await mountView(state.transport, pinia)
+    await flushPromises()
+
+    const queries = diagnosticQueries(state.operations).map((entry) => entry.request)
+    expect(queries).toEqual([
+      { plan_id: 1, version: null },
+      { plan_id: 1, version: null },
+    ])
+    expect(second.find('[data-testid="plan-diagnostics-clear"]').exists()).toBe(true)
+    expect(second.find('[data-testid="plan-diagnostics-blocking"]').exists()).toBe(false)
+  })
+
+  it('re-reads a retained cross-project selection when the view returns', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    // The picker lands on CORE, but the Plan left open belongs to a
+    // second Project, whose list CORE no longer holds.
+    const other = { ...project, id: 5, code: 'WRK', name: 'Worker' }
+    const theirs = { ...draft, id: 9, project_id: 5, number: 3 }
+    const operations: Array<{ kind: 'query' | 'command'; name: string; request: unknown }> = []
+    let coreListsPlans = true
+    const transport = {
+      query: (name: string, request: unknown) => {
+        operations.push({ kind: 'query', name, request })
+        if (name === 'project.list') {
+          return Promise.resolve({ projects: [project, other] } satisfies ProjectListResponse)
+        }
+        if (name === 'plan.list') {
+          return Promise.resolve({
+            plans: coreListsPlans ? [theirs] : [],
+          } satisfies PlanListResponse)
+        }
+        if (name === 'plan.get') {
+          return Promise.resolve({ plan: theirs, versions: [] } satisfies PlanGetResponse)
+        }
+        return Promise.resolve(blocked)
+      },
+      command: (name: string, request: unknown) => {
+        operations.push({ kind: 'command', name, request })
+        return Promise.resolve(theirs)
+      },
+      subscribe: () => () => undefined,
+      onConnectionChange: () => () => undefined,
+    } as unknown as ShellTransport
+
+    const first = await mountView(transport, pinia)
+    await first.find('[data-testid="plan-row-9"]').trigger('click')
+    await flushPromises()
+    first.unmount()
+    coreListsPlans = false
+    const second = await mountView(transport, pinia)
+    await flushPromises()
+
+    const queries = diagnosticQueries(operations).map((entry) => entry.request)
+    expect(queries).toEqual([
+      { plan_id: 9, version: null },
+      { plan_id: 9, version: null },
+    ])
+    expect(
+      second.find('[data-testid="plan-editor"]').exists(),
+      'the vanished selection leaves no graph on display',
+    ).toBe(false)
   })
 
   it('reports a clear graph without blocking diagnostics', async () => {

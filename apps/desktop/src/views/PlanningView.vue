@@ -138,16 +138,22 @@ const displayedGraphKey = computed(
 )
 
 // The diagnostics follow the graph on display: re-read them whenever
-// that key changes, and forget them when no Plan is open
-// (KAN-S3-US7).
-watch(displayedGraphKey, () => {
-  const planId = editor.selectedPlan?.id ?? null
-  if (transport && planId !== null) {
-    void diagnostics.refresh(transport, planId, editor.selectedVersion)
-  } else {
-    diagnostics.clear()
-  }
-})
+// that key changes and at mount — a Spec content edit or a return
+// from another view leaves the retained selection's diagnostics
+// stale even though the displayed graph key never changed — and
+// forget them when no Plan is open (KAN-S3-US7).
+watch(
+  displayedGraphKey,
+  () => {
+    const planId = editor.selectedPlan?.id ?? null
+    if (transport && planId !== null) {
+      void diagnostics.refresh(transport, planId, editor.selectedVersion)
+    } else {
+      diagnostics.clear()
+    }
+  },
+  { immediate: true },
+)
 
 // Whether the graph on display carries a blocking diagnostic.
 const blocking = computed(() => diagnostics.report?.blocking ?? false)

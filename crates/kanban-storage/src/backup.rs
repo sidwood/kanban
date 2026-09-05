@@ -1590,7 +1590,7 @@ mod backup_restore {
     use super::{BackupOptions, BackupRetentionPolicy, BackupStore};
     use crate::db::Database;
     use crate::evidence::SqliteEvidenceStore;
-    use crate::migrations::AllowAllMigrations;
+    use crate::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
     use crate::paths::{attachments_dir, config_file_name, database_file_name};
     use crate::test_support::scratch_database;
 
@@ -1668,7 +1668,7 @@ mod backup_restore {
         assert!(paths.iter().any(|path| *path == database_file_name()));
         assert!(paths.iter().any(|path| path.starts_with("attachments/")));
         assert!(paths.iter().any(|path| *path == config_file_name()));
-        assert_eq!(manifest.schema_version, 10);
+        assert_eq!(manifest.schema_version, LATEST_SCHEMA_VERSION);
     }
 
     #[test]
@@ -1953,7 +1953,7 @@ mod backup_restore {
 
         assert!(
             store
-                .verified_record_for(10)
+                .verified_record_for(LATEST_SCHEMA_VERSION)
                 .expect("records read")
                 .is_some(),
             "the surviving bundle keeps a verified record"
@@ -1982,7 +1982,7 @@ mod backup_restore {
         store.create(&database, &options).expect("second backup");
 
         let record = store
-            .verified_record_for(10)
+            .verified_record_for(LATEST_SCHEMA_VERSION)
             .expect("record reads")
             .expect("verified record exists");
         let bundle_path = crate::paths::backups_dir(dir.path()).join(&record.bundle_id);
@@ -1991,7 +1991,7 @@ mod backup_restore {
         std::fs::remove_dir_all(&bundle_path).expect("bundle removed manually");
         assert!(
             store
-                .verified_record_for(10)
+                .verified_record_for(LATEST_SCHEMA_VERSION)
                 .expect("record reads")
                 .is_none(),
             "a missing bundle must not satisfy migration"
@@ -2398,6 +2398,7 @@ mod migration_requires_backup {
     use super::{BackupOptions, BackupRetentionPolicy, BackupStore, VerifiedBackupHook};
     use crate::db::Database;
     use crate::error::StorageError;
+    use crate::migrations::LATEST_SCHEMA_VERSION;
     use crate::test_support::scratch_database;
 
     fn database_at_schema(version: i64) -> (tempfile::TempDir, Database, BackupStore) {
@@ -2452,7 +2453,7 @@ mod migration_requires_backup {
                 row.get(0)
             })
             .expect("schema version reads");
-        assert_eq!(version, 10);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let _ = dir;
     }
 
@@ -2479,7 +2480,7 @@ mod migration_requires_backup {
                 row.get(0)
             })
             .expect("schema version reads");
-        assert_eq!(version, 10);
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
         let _ = dir;
     }
 

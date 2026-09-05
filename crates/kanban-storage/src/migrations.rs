@@ -121,6 +121,12 @@ const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// The version a fully migrated database reports: the last entry in
+/// `MIGRATIONS`. Callers that must name the current schema derive it
+/// here rather than repeating the number, so adding a migration
+/// cannot leave a stale expectation behind.
+pub const LATEST_SCHEMA_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
 /// Applies every pending migration, newest last, and refuses any
 /// history this build does not recognise.
 pub(crate) fn run(

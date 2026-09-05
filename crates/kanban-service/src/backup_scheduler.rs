@@ -176,9 +176,8 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant, SystemTime};
 
-    use kanban_storage::{
-        BackupRetentionPolicy, BackupStore, Database, migrations::AllowAllMigrations,
-    };
+    use kanban_storage::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
+    use kanban_storage::{BackupRetentionPolicy, BackupStore, Database};
     use tempfile::TempDir;
 
     use super::{
@@ -260,7 +259,7 @@ mod tests {
         let store = BackupStore::new(dir.path().to_path_buf());
         assert!(
             store
-                .verified_record_for(10)
+                .verified_record_for(LATEST_SCHEMA_VERSION)
                 .expect("record reads")
                 .is_some()
         );

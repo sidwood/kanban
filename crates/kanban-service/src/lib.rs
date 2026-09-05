@@ -21,8 +21,8 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteWorkspaceStore,
-    SqliteSpecStore, VerifiedBackupHook, load_backup_settings,
+    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteWorkspaceStore,
+    VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 

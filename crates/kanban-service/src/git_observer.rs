@@ -144,14 +144,18 @@ fn working_tree_clean(workspace_path: &str) -> bool {
 
 /// Decide whether the Workspace holds commits the repository's HEAD
 /// lacks (DR-LW-06): unique unlanded work that would be lost with the
-/// clone. Work can sit on any ref the Workspace holds, not only its
-/// HEAD, so the count walks them all. Landed means reachable from the
-/// repository HEAD, so the count runs in the Workspace with the
-/// repository's object store attached read-only as an alternate — a
-/// hardlinked local clone does not carry commits the repository
-/// gained after the clone. The read never mutates either path; an
-/// undecidable answer is `None`, which reuse evaluation treats as
-/// unlanded.
+/// clone. Work can sit on any local branch or a detached HEAD, not
+/// only the checked-out branch, so the count walks local branches and
+/// HEAD. Remote-tracking and tool-managed refs (refs/remotes,
+/// refs/codex checkpoints) are deliberately out of scope: they name
+/// commits the Workspace never authored, and counting them would
+/// leave a clean zero-work Workspace permanently non-reusable.
+/// Landed means reachable from the repository HEAD, so the count
+/// runs in the Workspace with the repository's object store
+/// attached read-only as an alternate — a hardlinked local clone
+/// does not carry commits the repository gained after the clone.
+/// The read never mutates either path; an undecidable answer is
+/// `None`, which reuse evaluation treats as unlanded.
 fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Option<bool> {
     let repository_head = git_output(repository_path, &["rev-parse", "HEAD"])?;
     let repository_objects = repository_objects(repository_path)?;
@@ -163,7 +167,8 @@ fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Optio
             workspace_path,
             "rev-list",
             "--count",
-            "--all",
+            "--branches",
+            "HEAD",
             "--not",
             &repository_head,
         ])
@@ -419,6 +424,137 @@ mod tests {
             snapshot.unique_unlanded_commits,
             Some(true),
             "commits on a non-HEAD ref must report as unlanded even at divergent HEAD"
+        );
+    }
+
+    #[test]
+    fn remote_divergence_does_not_report_unlanded() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let upstream = dir.path().join("upstream");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, upstream.to_str().unwrap()],
+        );
+        git(&upstream, &["switch", "-c", "feature"]);
+        fs::write(upstream.join("feature.md"), "remote work\n")
+            .expect("the remote change is written");
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "-m", "remote work"]);
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        // The clone's origin holds a branch the seed never landed; the
+        // fetch leaves that work only on a remote-tracking ref.
+        git(
+            &workspace,
+            &["remote", "set-url", "origin", upstream.to_str().unwrap()],
+        );
+        git(&workspace, &["fetch", "origin"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(false),
+            "remote-tracking refs must not make a zero-work clone non-reusable"
+        );
+    }
+
+    #[test]
+    fn codex_checkpoint_refs_do_not_report_unlanded() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        // A tool checkpoints a commit under refs/codex and rewinds the
+        // branch; the checkpoint names work no local branch holds.
+        fs::write(workspace.join("checkpoint.md"), "checkpoint\n")
+            .expect("the checkpoint change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "checkpoint work"]);
+        git(
+            &workspace,
+            &["update-ref", "refs/codex/checkpoints/run-1", "HEAD"],
+        );
+        git(&workspace, &["reset", "--hard", "origin/main"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(false),
+            "tool-managed refs must not make a zero-work clone non-reusable"
+        );
+    }
+
+    #[test]
+    fn detached_head_work_reports_unlanded() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        // Work left on a detached HEAD is lost with the clone even
+        // though no branch names it.
+        git(&workspace, &["switch", "--detach"]);
+        fs::write(workspace.join("detached.md"), "detached work\n")
+            .expect("the detached change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "detached work"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(true),
+            "commits only reachable from a detached HEAD must report as unlanded"
         );
     }
 

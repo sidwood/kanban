@@ -21,6 +21,9 @@ pub enum HerdrError {
     WorkspaceMismatch { expected: String, observed: String },
     /// The subscription ended before the wait completed.
     Disconnected,
+    /// A bounded read found nothing waiting inside its window; the
+    /// connection is still open and a partially arrived line is kept.
+    TimedOut,
     /// The session name is not one safe path segment.
     InvalidSessionName,
 }
@@ -44,6 +47,7 @@ impl fmt::Display for HerdrError {
                 "the Herdr workspace `{observed}` does not map to the product workspace `{expected}`"
             ),
             Self::Disconnected => write!(f, "the Herdr session disconnected"),
+            Self::TimedOut => write!(f, "no Herdr frame arrived inside the window"),
             Self::InvalidSessionName => {
                 write!(f, "a Herdr session name must be one safe path segment")
             }

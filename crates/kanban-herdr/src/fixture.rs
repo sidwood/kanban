@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -148,6 +149,8 @@ pub struct SessionScript {
     prompt_accepted: bool,
     subscribe_error: Option<String>,
     close_after_events: bool,
+    hold_before_close: Option<Duration>,
+    flap: bool,
     silent: bool,
 }
 
@@ -183,6 +186,22 @@ impl SessionScript {
     /// open like a settled session.
     pub fn close_after_events(mut self) -> Self {
         self.close_after_events = true;
+        self
+    }
+
+    /// Hold the first connection open for `hold` after subscribing —
+    /// long enough for a live subscription to settle — then close it;
+    /// later connections stay open like a healthy session.
+    pub fn close_after_hold(mut self, hold: Duration) -> Self {
+        self.hold_before_close = Some(hold);
+        self
+    }
+
+    /// Drop every connection the moment it subscribes, so a test
+    /// observes a session that is live and gone at once, over and
+    /// over.
+    pub fn with_flapping_subscriptions(mut self) -> Self {
+        self.flap = true;
         self
     }
 
@@ -275,6 +294,11 @@ fn serve_connection(
         }
 
         if subscribed {
+            if script.flap {
+                // Subscribe succeeded, then the session drops at once:
+                // a live subscription that cannot settle.
+                return;
+            }
             while event_index < script.events.len() {
                 let event = script.events[event_index].clone();
                 event_index += 1;
@@ -283,6 +307,12 @@ fn serve_connection(
                 }
             }
             if script.close_after_events && connection_index == 0 {
+                return;
+            }
+            if let Some(hold) = script.hold_before_close
+                && connection_index == 0
+            {
+                thread::sleep(hold);
                 return;
             }
         }

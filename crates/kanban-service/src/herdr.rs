@@ -9,12 +9,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, TimelineEnvelope};
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
-use kanban_herdr::{SessionClient, SessionMapping};
+use kanban_herdr::{HerdrError, SessionClient, SessionMapping};
 use kanban_storage::Database;
 use serde_json::json;
 
@@ -48,6 +48,7 @@ struct SessionDiagnostics {
     connected: bool,
     last_snapshot_at: Option<String>,
     last_error: Option<String>,
+    consecutive_failures: u32,
 }
 
 /// How failed attempts space out: the base delay doubles with each
@@ -69,6 +70,29 @@ impl BackoffPolicy {
     pub const fn new(base: Duration, max: Duration) -> Self {
         Self { base, max }
     }
+}
+
+/// How one observer redials and when a live subscription counts as
+/// settled: only a subscription that holds for the settle window
+/// resets the backoff and appends its snapshot, so a session that
+/// flaps — subscribing and dropping at once — is another failed
+/// attempt, never a cycle of resets and reconnect snapshots
+/// (KAN-T78-AC2).
+#[derive(Debug, Clone, Copy)]
+pub struct ObservationTuning {
+    /// The backoff failed attempts follow.
+    pub backoff: BackoffPolicy,
+    /// How long a live subscription must hold before it is settled.
+    pub settle: Duration,
+}
+
+impl ObservationTuning {
+    /// The production tuning: one-second backoff doubling to a minute,
+    /// settled after five seconds of a held subscription.
+    pub const PRODUCTION: Self = Self {
+        backoff: BackoffPolicy::PRODUCTION,
+        settle: Duration::from_secs(5),
+    };
 }
 
 /// Cap the doubling shift so it cannot overflow the base.
@@ -110,12 +134,13 @@ pub struct HerdrObserver {
     diagnostics: Arc<Mutex<HashMap<u64, SessionDiagnostics>>>,
     sessions: Mutex<HashMap<u64, Observation>>,
     backoff: BackoffPolicy,
+    settle: Duration,
 }
 
 impl HerdrObserver {
     /// Create an observer rooted at `socket_root`.
     pub fn new(database: Arc<Database>, socket_root: PathBuf) -> Arc<Self> {
-        Self::with_backoff(database, socket_root, BackoffPolicy::PRODUCTION)
+        Self::with_observation(database, socket_root, ObservationTuning::PRODUCTION)
     }
 
     /// Create an observer whose failed attempts follow `backoff`.
@@ -124,21 +149,32 @@ impl HerdrObserver {
         socket_root: PathBuf,
         backoff: BackoffPolicy,
     ) -> Arc<Self> {
+        Self::with_observation(
+            database,
+            socket_root,
+            ObservationTuning {
+                backoff,
+                ..ObservationTuning::PRODUCTION
+            },
+        )
+    }
+
+    /// Create an observer following one `tuning`: failed attempts
+    /// space out by its backoff, and a live subscription counts as
+    /// settled only after its settle window.
+    pub fn with_observation(
+        database: Arc<Database>,
+        socket_root: PathBuf,
+        tuning: ObservationTuning,
+    ) -> Arc<Self> {
         Arc::new(Self {
             socket_root,
             database,
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
             sessions: Mutex::new(HashMap::new()),
-            backoff,
+            backoff: tuning.backoff,
+            settle: tuning.settle,
         })
-    }
-
-    /// Start observing every active Project through its per-session
-    /// socket. Snapshots on startup are appended as telemetry events.
-    pub fn start(database: Arc<Database>, projects: &[Project], socket_root: PathBuf) -> Arc<Self> {
-        let observer = Self::new(database, socket_root);
-        observer.observe_projects(projects);
-        observer
     }
 
     /// Start observing every active Project in `projects`.
@@ -187,6 +223,7 @@ impl HerdrObserver {
             stop: stop.clone(),
             socket: socket.clone(),
             backoff: self.backoff,
+            settle: self.settle,
         };
         let thread_name = session
             .as_name()
@@ -209,6 +246,17 @@ impl HerdrObserver {
     /// Whether this observer still owns one Project's session.
     pub fn is_observing(&self, project_id: u64) -> bool {
         self.sessions.lock().unwrap().contains_key(&project_id)
+    }
+
+    /// Consecutive failed attempts one Project's observation is
+    /// backing off, for diagnostics (KAN-T78-AC2).
+    pub fn consecutive_failures(&self, project_id: u64) -> u32 {
+        self.diagnostics
+            .lock()
+            .unwrap()
+            .get(&project_id)
+            .map(|entry| entry.consecutive_failures)
+            .unwrap_or(0)
     }
 
     /// Stop observing one Project, release its socket and database
@@ -257,6 +305,7 @@ struct HerdrObserverHandle {
     stop: Arc<AtomicBool>,
     socket: Arc<Mutex<Option<UnixStream>>>,
     backoff: BackoffPolicy,
+    settle: Duration,
 }
 
 impl HerdrObserverHandle {
@@ -265,16 +314,25 @@ impl HerdrObserverHandle {
         let mut live_once = false;
         while !self.stopped() {
             if self.observe_live(&mut live_once) {
-                // A session that was live and ended is the first
-                // failure of the next cycle, not a reset.
+                // A settled session that ended is the first failure of
+                // the next cycle, not a reset.
                 failures = 1;
             } else {
                 failures = failures.saturating_add(1);
             }
+            self.note_failures(failures);
             if self.stopped() {
                 break;
             }
             thread::park_timeout(backoff_delay(self.backoff, failures));
+        }
+    }
+
+    /// Publish the cycle's failure count, so the settled-live rule is
+    /// observable per Project (KAN-T78-AC2).
+    fn note_failures(&self, failures: u32) {
+        if let Some(entry) = self.diagnostics.lock().unwrap().get_mut(&self.project_id) {
+            entry.consecutive_failures = failures;
         }
     }
 
@@ -283,10 +341,11 @@ impl HerdrObserverHandle {
     }
 
     /// Connect, subscribe, and observe the live subscription. Returns
-    /// whether the subscription went live: a failed connection or
-    /// subscription reports through diagnostics alone, and the
-    /// captured snapshot is appended only once the subscription is
-    /// live (KAN-T78-AC2, KAN-T78-AC3).
+    /// whether the subscription settled and then ended: a failed
+    /// connection, subscription, or settle window reports through
+    /// diagnostics alone, and the captured snapshot is appended only
+    /// once the subscription has held past the settle window
+    /// (KAN-T78-AC2, KAN-T78-AC3).
     fn observe_live(&self, live_once: &mut bool) -> bool {
         // Open carries no request traffic: the socket duplicate — the
         // only handle a stop can shut down — is registered before the
@@ -312,7 +371,7 @@ impl HerdrObserverHandle {
             return false;
         }
         // Capture before subscribing so no push event can overtake
-        // the capture; the append below is gated on the subscription.
+        // the capture; the append below is gated on the settle window.
         let snapshot = match client.snapshot() {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -329,9 +388,17 @@ impl HerdrObserverHandle {
             self.mark_connected(false, Some(error.to_string()));
             return false;
         }
+        self.mark_connected(true, None);
+        // Only a subscription that holds for the settle window counts
+        // as the live session: one that drops inside the window is
+        // another failed attempt, so it neither resets the backoff nor
+        // lands its snapshot (KAN-T78-AC2).
+        if self.stopped() || !self.settles(&mut client) {
+            self.mark_connected(false, Some("disconnected".to_owned()));
+            return false;
+        }
         let reason = if *live_once { "reconnect" } else { "startup" };
         *live_once = true;
-        self.mark_connected(true, None);
         match self.append_snapshot(&snapshot, reason) {
             Ok(()) => self.record_snapshot(snapshot.captured_at),
             Err(error) => self.mark_error(error),
@@ -343,6 +410,31 @@ impl HerdrObserverHandle {
             }
         }
         true
+    }
+
+    /// Wait out the settle window against the live subscription: a
+    /// subscription still answering — pushing events or sitting quiet —
+    /// when the window closes is settled, while one whose connection
+    /// ends inside it is not (KAN-T78-AC2).
+    fn settles(&self, client: &mut SessionClient) -> bool {
+        let deadline = Instant::now() + self.settle;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return true;
+            }
+            match client.read_event_within(remaining) {
+                // A pushed event proves the subscription live; the
+                // window still has to be waited out.
+                Ok(_) => continue,
+                // Silence held to the deadline is as settled as
+                // traffic.
+                Err(HerdrError::TimedOut) => return true,
+                // The connection ended inside the window: a flap, not
+                // a live session.
+                Err(_) => return false,
+            }
+        }
     }
 
     /// Append one captured snapshot as a telemetry event.
@@ -472,7 +564,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        BackoffPolicy, HerdrObserver, LiveHerdrDiagnostics, backoff_delay, production_socket_root,
+        BackoffPolicy, HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, backoff_delay,
+        production_socket_root,
     };
     use crate::timeline::StorageTimelineStore;
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
@@ -507,6 +600,14 @@ mod tests {
         BackoffPolicy::new(Duration::from_millis(10), Duration::from_millis(40))
     }
 
+    /// A fast tuning so lifecycle tests settle within milliseconds.
+    fn fast_observation() -> ObservationTuning {
+        ObservationTuning {
+            backoff: fast_backoff(),
+            settle: Duration::from_millis(100),
+        }
+    }
+
     fn telemetry_details(database: &Arc<Database>) -> Vec<serde_json::Value> {
         let timeline = StorageTimelineStore::new(database.clone());
         timeline
@@ -534,12 +635,10 @@ mod tests {
             SessionScript::default(),
         );
         let database = migrated_database(&dir);
-        let observer = HerdrObserver::start(
-            database.clone(),
-            &[project(Some("kanban-main"), "/workspaces/kanban.seed")],
-            socket_root,
-        );
-        thread::sleep(Duration::from_millis(200));
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(300));
         let details = telemetry_details(&database);
         assert_eq!(details.len(), 1);
         assert_eq!(details[0]["event"], json!("snapshot"));
@@ -564,11 +663,9 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the migrations apply");
         let database = Arc::new(database);
-        let _observer = HerdrObserver::start(
-            database.clone(),
-            &[project(None, "/workspaces/kanban.seed")],
-            socket_root,
-        );
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(None, "/workspaces/kanban.seed")]);
         thread::sleep(Duration::from_millis(200));
         let timeline = StorageTimelineStore::new(database);
         let events = timeline
@@ -586,6 +683,7 @@ mod tests {
             "the default session serves the sessionless Project"
         );
         assert_eq!(events[0].detail["event"], json!("snapshot"));
+        observer.shutdown();
     }
 
     #[test]
@@ -624,9 +722,10 @@ mod tests {
             SessionScript::default(),
         );
         let database = migrated_database(&dir);
-        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(300));
         assert!(observer.is_observing(1));
         assert_eq!(telemetry_details(&database).len(), 1);
 
@@ -731,14 +830,18 @@ mod tests {
             &socket_root,
             "kanban-main",
             "/workspaces/kanban.seed",
+            // The first connection settles — held past the settle
+            // window — before it closes, so the second connection is a
+            // genuine reconnect of a live session.
             SessionScript::default()
                 .with_events(vec![json!({ "kind": "role.output", "text": "working" })])
-                .close_after_events(),
+                .close_after_hold(Duration::from_millis(300)),
         );
         let database = migrated_database(&dir);
-        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
-        thread::sleep(Duration::from_millis(300));
+        thread::sleep(Duration::from_millis(800));
 
         let reasons: Vec<_> = telemetry_details(&database)
             .iter()
@@ -747,7 +850,46 @@ mod tests {
         assert_eq!(
             reasons,
             vec![json!("startup"), json!("reconnect")],
-            "the reconnect snapshot lands after the second live subscription, and only after it"
+            "the reconnect snapshot lands after the second settled subscription, and only after it"
+        );
+
+        observer.shutdown();
+    }
+
+    #[test]
+    fn flapping_subscriptions_neither_reset_backoff_nor_append() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_flapping_subscriptions(),
+        );
+        let database = migrated_database(&dir);
+        // A settle window far beyond any flap, so no cycle can settle.
+        let observer = HerdrObserver::with_observation(
+            database.clone(),
+            socket_root,
+            ObservationTuning {
+                backoff: fast_backoff(),
+                settle: Duration::from_millis(500),
+            },
+        );
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(1200));
+
+        assert!(
+            observer.is_observing(1),
+            "flapping subscriptions keep observing under backoff"
+        );
+        assert!(
+            telemetry_details(&database).len() <= 1,
+            "a subscription that never settles appends no snapshot per cycle"
+        );
+        assert!(
+            observer.consecutive_failures(1) >= 3,
+            "flapping is a run of failures, not a reset per cycle"
         );
 
         observer.shutdown();

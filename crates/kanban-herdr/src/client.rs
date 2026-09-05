@@ -1,8 +1,9 @@
 //! The per-session Herdr socket client (DR-HB-12).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -35,6 +36,9 @@ pub struct SessionClient {
     socket_path: PathBuf,
     reader: BufReader<UnixStream>,
     stream: UnixStream,
+    /// Bytes of a response line that has only partly arrived, carried
+    /// across a bounded read so a timeout cannot lose them.
+    pending: Vec<u8>,
 }
 
 impl SessionClient {
@@ -64,6 +68,7 @@ impl SessionClient {
             socket_path: path,
             reader,
             stream,
+            pending: Vec::new(),
         })
     }
 
@@ -92,6 +97,19 @@ impl SessionClient {
                 path: self.socket_path.display().to_string(),
                 source: source.to_string(),
             })
+    }
+
+    /// Read one push event, bounding the wait at `window`: no frame
+    /// inside the window reports [`HerdrError::TimedOut`] with the
+    /// connection still open, and a line that is only partly arrived
+    /// when the window ends is kept for the next read, so nothing is
+    /// lost. The socket blocks without a deadline again once this
+    /// returns.
+    pub fn read_event_within(&mut self, window: Duration) -> Result<Value, HerdrError> {
+        let _ = self.stream.set_read_timeout(Some(window));
+        let response = self.read_event();
+        let _ = self.stream.set_read_timeout(None);
+        response
     }
 
     /// Capture the full session state.
@@ -164,13 +182,32 @@ impl SessionClient {
     }
 
     fn read_response(&mut self) -> Result<HerdrResponse, HerdrError> {
-        let mut line = String::new();
-        self.reader
-            .read_line(&mut line)
-            .map_err(|error| HerdrError::Read(error.to_string()))?;
-        if line.trim().is_empty() {
-            return Err(HerdrError::Disconnected);
+        loop {
+            if let Some(newline) = self.pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = self.pending.drain(..=newline).collect();
+                let text = std::str::from_utf8(&line)
+                    .map_err(|error| HerdrError::Decode(error.to_string()))?;
+                if text.trim().is_empty() {
+                    return Err(HerdrError::Disconnected);
+                }
+                return serde_json::from_str(text.trim())
+                    .map_err(|error| HerdrError::Decode(error.to_string()));
+            }
+            // The line is incomplete, so more bytes must arrive; a
+            // bounded read that finds none leaves the part already
+            // arrived in `pending` for the next call.
+            let mut chunk = [0u8; 512];
+            let read = self.reader.read(&mut chunk).map_err(|error| {
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) {
+                    HerdrError::TimedOut
+                } else {
+                    HerdrError::Read(error.to_string())
+                }
+            })?;
+            if read == 0 {
+                return Err(HerdrError::Disconnected);
+            }
+            self.pending.extend_from_slice(&chunk[..read]);
         }
-        serde_json::from_str(line.trim()).map_err(|error| HerdrError::Decode(error.to_string()))
     }
 }

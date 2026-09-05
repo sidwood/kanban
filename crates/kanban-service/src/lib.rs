@@ -26,7 +26,7 @@ use kanban_storage::{
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
-use herdr::{HerdrObserver, LiveHerdrDiagnostics, production_socket_root};
+use herdr::{HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, production_socket_root};
 use timeline::StorageTimelineStore;
 
 use backup_scheduler::BackupScheduler;
@@ -94,12 +94,14 @@ fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
 }
 
 /// Wire the production application core around a prepared database
-/// and the event sink owned by its transport.
+/// and the event sink owned by its transport. Observation follows
+/// `observation`.
 fn assemble_core(
     data_dir: &Path,
     database: Database,
     events: Arc<dyn EventSink>,
     herdr_socket_root: PathBuf,
+    observation: ObservationTuning,
 ) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
@@ -121,7 +123,7 @@ fn assemble_core(
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
-    let herdr = HerdrObserver::new(database.clone(), herdr_socket_root);
+    let herdr = HerdrObserver::with_observation(database.clone(), herdr_socket_root, observation);
     core.register_initiatives(initiative_store.clone())?;
     let projects = project_store.clone();
     core.register_projects(
@@ -162,8 +164,13 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let (database, core, herdr) =
-        assemble_core(data_dir, database, broker, production_socket_root())?;
+    let (database, core, herdr) = assemble_core(
+        data_dir,
+        database,
+        broker,
+        production_socket_root(),
+        ObservationTuning::PRODUCTION,
+    )?;
     let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
@@ -182,7 +189,21 @@ pub(crate) fn serve_with_herdr_sessions(
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let (database, core, herdr) = assemble_core(data_dir, database, broker, herdr_socket_root)?;
+    // Observation tuned fast, so core-level tests settle and redial
+    // within their own budgets.
+    let (database, core, herdr) = assemble_core(
+        data_dir,
+        database,
+        broker,
+        herdr_socket_root,
+        ObservationTuning {
+            backoff: herdr::BackoffPolicy::new(
+                std::time::Duration::from_millis(10),
+                std::time::Duration::from_millis(40),
+            ),
+            settle: std::time::Duration::from_millis(50),
+        },
+    )?;
     let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
@@ -248,7 +269,7 @@ mod tests {
     use kanban_app::{GitObservation, NoopEventSink, assert_registered_matches_exposed_catalogue};
 
     use super::{
-        LocalRepositories, ServiceError, assemble_core, prepare_database, serve,
+        LocalRepositories, ObservationTuning, ServiceError, assemble_core, prepare_database, serve,
         serve_with_herdr_sessions,
     };
     use crate::herdr::production_socket_root;
@@ -283,6 +304,7 @@ mod tests {
             database,
             Arc::new(NoopEventSink),
             production_socket_root(),
+            ObservationTuning::PRODUCTION,
         )
         .expect("the production core wires");
 

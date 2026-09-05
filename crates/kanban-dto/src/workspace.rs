@@ -28,11 +28,32 @@ impl WorkspaceHealthDto {
     }
 }
 
+/// The closed checkout vocabulary as every client sees it: HEAD is
+/// on a branch, or detached. Detached is a state of its own, never a
+/// branch name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceCheckoutDto {
+    Branch,
+    Detached,
+}
+
+impl WorkspaceCheckoutDto {
+    /// The wire name, matching this variant's serialised form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Branch => "branch",
+            Self::Detached => "detached",
+        }
+    }
+}
+
 /// The git facts the core last observed without mutating the clone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceObservationDto {
     pub repository_identity: Option<String>,
+    pub checkout: Option<WorkspaceCheckoutDto>,
     pub branch: Option<String>,
     pub head: Option<String>,
     pub working_tree_clean: Option<bool>,
@@ -117,8 +138,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        WorkspaceHealthDto, WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRecord,
-        WorkspaceRegisterRequest, WorkspaceRetireRequest,
+        WorkspaceCheckoutDto, WorkspaceHealthDto, WorkspaceListQuery, WorkspaceObserveRequest,
+        WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -193,6 +214,7 @@ mod tests {
             health: WorkspaceHealthDto::Available,
             observation: super::WorkspaceObservationDto {
                 repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckoutDto::Branch),
                 branch: Some("main".to_owned()),
                 head: Some("abc".to_owned()),
                 working_tree_clean: Some(true),
@@ -215,6 +237,44 @@ mod tests {
     }
 
     #[test]
+    fn workspace_record_round_trips_a_detached_checkout() {
+        let record = WorkspaceRecord {
+            id: 1,
+            project_id: 2,
+            path: "/workspaces/core".to_owned(),
+            is_seed: false,
+            health: WorkspaceHealthDto::Available,
+            observation: super::WorkspaceObservationDto {
+                repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckoutDto::Detached),
+                branch: None,
+                head: Some("abc".to_owned()),
+                working_tree_clean: Some(true),
+                lane_assignment: None,
+            },
+            version: 3,
+        };
+
+        let encoded = serde_json::to_value(&record).expect("the record encodes");
+
+        assert_eq!(encoded["observation"]["checkout"], json!("detached"));
+        assert_eq!(encoded["observation"]["branch"], json!(null));
+        let decoded: WorkspaceRecord = serde_json::from_value(encoded).expect("the record decodes");
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn workspace_checkout_wire_names_round_trip() {
+        for checkout in [WorkspaceCheckoutDto::Branch, WorkspaceCheckoutDto::Detached] {
+            let wire = serde_json::to_value(checkout).expect("the checkout encodes");
+            assert_eq!(wire, json!(checkout.as_str()));
+            let decoded: WorkspaceCheckoutDto =
+                serde_json::from_value(wire).expect("the checkout decodes");
+            assert_eq!(decoded, checkout);
+        }
+    }
+
+    #[test]
     fn workspace_list_response_is_in_the_schema_registry() {
         let names: Vec<_> = schema_definitions()
             .into_iter()
@@ -222,5 +282,6 @@ mod tests {
             .collect();
 
         assert!(names.contains(&"WorkspaceListResponse"));
+        assert!(names.contains(&"WorkspaceCheckoutDto"));
     }
 }

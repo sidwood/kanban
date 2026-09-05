@@ -52,9 +52,9 @@ use crate::timeline::{
     TimelineQueryResponse, TimelineScope,
 };
 use crate::workspace::{
-    WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
-    WorkspaceReuseDto,
+    WorkspaceCheckoutDto, WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObservationDto, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest, WorkspaceReuseDto,
 };
 
 /// Every DTO schema exported to `packages/contracts`.
@@ -205,6 +205,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TimelineQuery", schema_for!(TimelineQuery)),
         ("TimelineQueryResponse", schema_for!(TimelineQueryResponse)),
         ("TimelineScope", schema_for!(TimelineScope)),
+        ("WorkspaceCheckoutDto", schema_for!(WorkspaceCheckoutDto)),
         ("WorkspaceHealthDto", schema_for!(WorkspaceHealthDto)),
         ("WorkspaceListQuery", schema_for!(WorkspaceListQuery)),
         ("WorkspaceListResponse", schema_for!(WorkspaceListResponse)),

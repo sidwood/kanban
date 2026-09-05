@@ -143,7 +143,14 @@ async function submitObserve(id: number) {
           Seed
         </span>
         <span
-          v-if="workspace.observation.branch"
+          v-if="workspace.observation.checkout === 'detached'"
+          :data-testid="`workspace-detached-${workspace.id}`"
+          class="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600"
+        >
+          detached
+        </span>
+        <span
+          v-else-if="workspace.observation.branch"
           class="text-xs text-slate-500"
         >
           {{ workspace.observation.branch }}

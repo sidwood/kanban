@@ -73,9 +73,9 @@ pub use timeline::{
     TimelineQueryResponse, TimelineScope,
 };
 pub use workspace::{
-    WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
-    WorkspaceReuseDto,
+    WorkspaceCheckoutDto, WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObservationDto, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest, WorkspaceReuseDto,
 };
 
 #[cfg(test)]
@@ -218,6 +218,7 @@ mod tests {
                 "TimelineQuery",
                 "TimelineQueryResponse",
                 "TimelineScope",
+                "WorkspaceCheckoutDto",
                 "WorkspaceHealthDto",
                 "WorkspaceListQuery",
                 "WorkspaceListResponse",

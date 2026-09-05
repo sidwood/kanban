@@ -35,6 +35,7 @@ function workspace(overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
     health: 'available',
     observation: {
       repository_identity: 'identity',
+      checkout: 'branch',
       branch: 'main',
       head: 'abc123',
       working_tree_clean: true,
@@ -100,6 +101,27 @@ describe('WorkspacesView', () => {
     expect(wrapper.find('[data-testid="workspace-path-2"]').text()).toBe('/workspaces/kanban.feature')
     expect(wrapper.find('[data-testid="workspace-health-2"]').text()).toBe('dirty')
     expect(wrapper.find('[data-testid="workspace-seed-1"]').exists()).toBe(true)
+  })
+
+  it('renders a detached checkout as the closed state, never a branch', async () => {
+    const { wrapper } = await mounted([
+      workspace({
+        id: 3,
+        path: '/workspaces/kanban.detached',
+        is_seed: false,
+        observation: {
+          repository_identity: 'identity',
+          checkout: 'detached',
+          branch: null,
+          head: 'abc123',
+          working_tree_clean: true,
+          lane_assignment: null,
+        },
+      }),
+    ])
+
+    expect(wrapper.find('[data-testid="workspace-detached-3"]').text()).toBe('detached')
+    expect(wrapper.text()).not.toContain('HEAD')
   })
 
   it('registers a Workspace path for the Project', async () => {

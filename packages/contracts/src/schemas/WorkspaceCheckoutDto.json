@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed checkout vocabulary as every client sees it: HEAD is on a branch, or detached. Detached is a state of its own, never a branch name.",
+  "enum": [
+    "branch",
+    "detached"
+  ],
+  "title": "WorkspaceCheckoutDto",
+  "type": "string"
+}

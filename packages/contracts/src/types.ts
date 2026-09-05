@@ -447,6 +447,7 @@ export type TimelineQueryResponse = {
 export type TimelineScope = 'global' | {
   project: number;
 };
+export type WorkspaceCheckoutDto = 'branch' | 'detached';
 export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired';
 export type WorkspaceListQuery = {
   project_id: number;
@@ -456,6 +457,7 @@ export type WorkspaceListResponse = {
 };
 export type WorkspaceObservationDto = {
   branch?: string | null;
+  checkout?: WorkspaceCheckoutDto | null;
   head?: string | null;
   lane_assignment?: number | null;
   repository_identity?: string | null;

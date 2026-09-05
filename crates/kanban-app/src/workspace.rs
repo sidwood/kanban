@@ -9,9 +9,10 @@ use kanban_domain::{
     ProjectId, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceRegistration,
 };
 use kanban_dto::{
-    ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceHealthDto,
-    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest, WorkspaceReuseDto,
+    ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceCheckoutDto,
+    WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    WorkspaceReuseDto,
 };
 use serde_json::{Value, json};
 
@@ -346,27 +347,26 @@ fn load_workspace(store: &Arc<dyn WorkspaceStore>, id: u64) -> Result<Workspace,
         .ok_or_else(|| ApiError::not_found(&format!("workspace {id}")))
 }
 
-/// The wire name of the closed checkout state, for timeline facts.
-fn checkout_name(checkout: Option<&WorkspaceCheckout>) -> Option<&'static str> {
-    checkout.map(|checkout| match checkout {
-        WorkspaceCheckout::Branch(_) => "branch",
-        WorkspaceCheckout::Detached => "detached",
-    })
-}
-
 fn observation_facts(workspace: &Workspace) -> Value {
     let observation = workspace.observation();
     json!({
         "path": workspace.registration().path(),
         "health": workspace.health().as_str(),
         "repository_identity": observation.repository_identity(),
-        "checkout": checkout_name(observation.checkout()),
+        "checkout": observation.checkout().map(checkout_dto).map(WorkspaceCheckoutDto::as_str),
         "branch": observation.branch(),
         "head": observation.head(),
         "working_tree_clean": observation.working_tree_clean(),
         "unique_unlanded_commits": observation.unique_unlanded_commits(),
         "lane_assignment": observation.lane_assignment(),
     })
+}
+
+fn checkout_dto(checkout: &WorkspaceCheckout) -> WorkspaceCheckoutDto {
+    match checkout {
+        WorkspaceCheckout::Branch(_) => WorkspaceCheckoutDto::Branch,
+        WorkspaceCheckout::Detached => WorkspaceCheckoutDto::Detached,
+    }
 }
 
 fn record_of(workspace: &Workspace) -> WorkspaceRecord {
@@ -379,6 +379,7 @@ fn record_of(workspace: &Workspace) -> WorkspaceRecord {
         health: health_dto(workspace.health()),
         observation: WorkspaceObservationDto {
             repository_identity: observation.repository_identity().map(str::to_owned),
+            checkout: observation.checkout().map(checkout_dto),
             branch: observation.branch().map(str::to_owned),
             head: observation.head().map(str::to_owned),
             working_tree_clean: observation.working_tree_clean(),

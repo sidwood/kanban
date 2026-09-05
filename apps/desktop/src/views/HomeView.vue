@@ -1,18 +1,39 @@
 <script setup lang="ts">
 // The boot surface: everything the operator sees before the board
 // views land, bound to connection state from the generated client.
-import { computed, inject, onMounted } from 'vue'
+// Selecting a Project mounts its timeline and rulings under the
+// numeric identity the core resolves (KAN-S2-US1, KAN-T79).
+import { computed, inject, onMounted, ref, watch } from 'vue'
+import RulingsSurface from '../components/RulingsSurface.vue'
+import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useConnectionStore } from '../stores/connection'
+import { useProjectRegisterStore } from '../stores/project-register'
 
 const transport = inject(kanbanTransportKey)
 const connection = useConnectionStore()
+const projects = useProjectRegisterStore()
+const selectedProjectId = ref<number | null>(null)
+
+const timelineScope = computed(() =>
+  selectedProjectId.value === null ? null : { project: selectedProjectId.value },
+)
 
 onMounted(() => {
   if (transport) {
     void connection.boot(transport)
   }
 })
+
+watch(
+  () => connection.phase,
+  (phase) => {
+    if (phase === 'connected' && transport) {
+      void projects.refresh(transport)
+    }
+  },
+  { immediate: true },
+)
 
 const status = computed(() => {
   switch (connection.phase) {
@@ -84,15 +105,46 @@ const eventStream = computed(() =>
     </div>
     <section
       v-if="connection.phase === 'connected'"
-      data-testid="timeline-unselected"
-      class="mt-6 w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-4 text-center shadow-sm"
+      class="mt-6 flex w-full max-w-2xl flex-col gap-6"
     >
-      <h2 class="text-lg font-semibold text-slate-900">
-        Activity timeline
-      </h2>
-      <p class="mt-2 text-sm text-slate-500">
-        Select a Project or entity to view its history.
-      </p>
+      <label class="flex flex-col gap-1 text-sm text-slate-600">
+        Project
+        <select
+          v-model="selectedProjectId"
+          data-testid="home-project-select"
+          aria-label="Project"
+          class="rounded border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option :value="null">
+            Select a Project
+          </option>
+          <option
+            v-for="entry in projects.projects"
+            :key="entry.id"
+            :value="entry.id"
+          >
+            {{ entry.code }} — {{ entry.name }}{{ entry.archived ? ' (archived)' : '' }}
+          </option>
+        </select>
+      </label>
+
+      <section
+        v-if="selectedProjectId === null"
+        data-testid="timeline-unselected"
+        class="rounded-lg border border-slate-200 bg-white p-4 text-center shadow-sm"
+      >
+        <h2 class="text-lg font-semibold text-slate-900">
+          Activity timeline
+        </h2>
+        <p class="mt-2 text-sm text-slate-500">
+          Select a Project or entity to view its history.
+        </p>
+      </section>
+
+      <template v-else-if="timelineScope">
+        <TimelineSurface :scope="timelineScope" />
+        <RulingsSurface :project-id="selectedProjectId" />
+      </template>
     </section>
   </main>
 </template>

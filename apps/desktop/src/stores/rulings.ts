@@ -37,10 +37,11 @@ export const useRulingsStore = defineStore('rulings', {
       try {
         const client = new KanbanClient(transport)
         const [rulings, deferrals] = await Promise.all([
-          client.queryRulingList({
-            project_id: this.projectId,
-            entity: this.entity ?? undefined,
-          }),
+          client.queryRulingList(
+            this.entity
+              ? { project_id: this.projectId, entity: this.entity }
+              : { project_id: this.projectId },
+          ),
           client.queryDeferralList({
             project_id: this.projectId,
           }),

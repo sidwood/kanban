@@ -20,8 +20,8 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
 use crate::timeline::TimelineEnvelope;
 
@@ -231,7 +231,11 @@ impl CommandHandler for CreatePlan {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanCreateRequest = parse_payload(&command.payload)?;
         let mut project = self
             .0
@@ -253,7 +257,7 @@ impl CommandHandler for CreatePlan {
                 json!({ "project_id": identity.value(), "number": number }),
             )
         })?;
-        announce(events, "plan.created", &plan);
+        announce(effects, "plan.created", &plan);
         encode_record(&plan)
     }
 }
@@ -272,7 +276,11 @@ impl CommandHandler for AddSpec {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanSpecAddRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let spec = self.0.authored_spec(&project, request.spec_number)?;
@@ -306,7 +314,11 @@ impl CommandHandler for RemoveSpec {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanSpecRemoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let spec = self.0.authored_spec(&project, request.spec_number)?;
@@ -340,7 +352,11 @@ impl CommandHandler for MoveSpec {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanSpecMoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let spec = self.0.authored_spec(&project, request.spec_number)?;
@@ -389,7 +405,11 @@ impl CommandHandler for AddEdge {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanEdgeAddRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let from = self.0.authored_spec(&project, request.from_spec)?;
@@ -423,7 +443,11 @@ impl CommandHandler for RemoveEdge {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: PlanEdgeRemoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let from = self.0.authored_spec(&project, request.from_spec)?;
@@ -457,7 +481,11 @@ impl CommandHandler for ActivatePlan {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: kanban_dto::PlanActivateRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let frozen = plan.activate().map_err(refuse)?;
@@ -475,7 +503,7 @@ impl CommandHandler for ActivatePlan {
                 }),
             ),
         )?;
-        announce(events, "plan.activated", &plan);
+        announce(effects, "plan.activated", &plan);
         encode_record(&plan)
     }
 }
@@ -494,7 +522,11 @@ impl CommandHandler for ReplanPlan {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: kanban_dto::PlanReplanRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         let superseded = plan
@@ -513,7 +545,7 @@ impl CommandHandler for ReplanPlan {
                 json!({ "reserved_version": reserved, "superseded_version": superseded }),
             ),
         )?;
-        announce(events, "plan.replanned", &plan);
+        announce(effects, "plan.replanned", &plan);
         encode_record(&plan)
     }
 }
@@ -532,7 +564,11 @@ impl CommandHandler for CompletePlan {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: kanban_dto::PlanCompleteRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         plan.complete().map_err(refuse)?;
@@ -541,7 +577,7 @@ impl CommandHandler for CompletePlan {
             None,
             transition(project.id(), plan.id(), "completed", json!({})),
         )?;
-        announce(events, "plan.completed", &plan);
+        announce(effects, "plan.completed", &plan);
         encode_record(&plan)
     }
 }
@@ -560,7 +596,11 @@ impl CommandHandler for CancelPlan {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: kanban_dto::PlanCancelRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         plan.cancel().map_err(refuse)?;
@@ -569,7 +609,7 @@ impl CommandHandler for CancelPlan {
             None,
             transition(project.id(), plan.id(), "cancelled", json!({})),
         )?;
-        announce(events, "plan.cancelled", &plan);
+        announce(effects, "plan.cancelled", &plan);
         encode_record(&plan)
     }
 }
@@ -588,7 +628,11 @@ impl CommandHandler for ArchivePlan {
         Ok(self.0.open(request.plan_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: kanban_dto::PlanArchiveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
         plan.archive().map_err(refuse)?;
@@ -597,7 +641,7 @@ impl CommandHandler for ArchivePlan {
             None,
             transition(project.id(), plan.id(), "archived", json!({})),
         )?;
-        announce(events, "plan.archived", &plan);
+        announce(effects, "plan.archived", &plan);
         encode_record(&plan)
     }
 }
@@ -723,8 +767,8 @@ fn encode_record(plan: &Plan) -> Result<Value, ApiError> {
 /// record the command returns. Shape edits announce nothing live: the
 /// editor that drives them holds the response, while lifecycle
 /// changes interest every surface.
-fn announce(events: &dyn EventSink, name: &str, plan: &Plan) {
-    emit_catalogued(events, event_descriptor(name), &record_of(plan));
+fn announce(effects: &dyn CommandEffects, name: &str, plan: &Plan) {
+    emit_catalogued(effects, event_descriptor(name), &record_of(plan));
 }
 
 #[cfg(test)]

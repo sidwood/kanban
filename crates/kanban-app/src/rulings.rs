@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineFacts;
 
 /// The storage port ruling commands call through.
@@ -64,7 +64,11 @@ impl CommandHandler for RecordRuling {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: RulingRecordRequest = parse_payload(&command.payload)?;
         let summary = RulingSummary::new(&request.summary)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
@@ -78,7 +82,7 @@ impl CommandHandler for RecordRuling {
                 facts: json!({ "summary": ruling_summary(&draft) }),
             },
         )?;
-        announce(events, event_descriptor("ruling.recorded"), &ruling);
+        announce(effects, event_descriptor("ruling.recorded"), &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -98,7 +102,11 @@ impl CommandHandler for SupersedeRuling {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: RulingSupersedeRequest = parse_payload(&command.payload)?;
         let original = load(self.store.as_ref(), &request.project_id, request.ruling_id)?;
         let summary = RulingSummary::new(&request.summary)
@@ -114,7 +122,7 @@ impl CommandHandler for SupersedeRuling {
                 }),
             },
         )?;
-        announce(events, event_descriptor("ruling.superseded"), &ruling);
+        announce(effects, event_descriptor("ruling.superseded"), &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -170,12 +178,12 @@ fn encode_record(ruling: &Ruling) -> RulingRecord {
 }
 
 fn announce(
-    events: &dyn EventSink,
+    effects: &dyn CommandEffects,
     event: &crate::event_catalog::EventDescriptor,
     ruling: &Ruling,
 ) {
     emit_catalogued(
-        events,
+        effects,
         event,
         &RulingIdentity {
             id: ruling.id().value(),
@@ -192,8 +200,7 @@ mod tests {
 
     use super::{ListRulings, RecordRuling, RulingStore, SupersedeRuling, TimelineFacts};
     use crate::dispatch::QueryHandler;
-    use crate::events::NoopEventSink;
-    use crate::mutation::{CommandHandler, ParsedCommand};
+    use crate::mutation::{CommandHandler, NoopCommandEffects, ParsedCommand};
     use kanban_domain::{Ruling, RulingDraft, RulingId};
 
     #[derive(Default)]
@@ -279,7 +286,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "ruling:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("recording succeeds");
 
@@ -330,7 +337,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "ruling:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("original lands");
         let replacement = supersede
@@ -347,7 +354,7 @@ mod tests {
                     idempotency_key: "key-2".to_owned(),
                     fingerprint: "ruling:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("supersession lands");
 
@@ -379,7 +386,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "ruling:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect_err("unknown rulings are refused");
 

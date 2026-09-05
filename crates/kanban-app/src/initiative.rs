@@ -15,8 +15,8 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
 
 /// The storage port Initiative commands call through. Implementations
@@ -103,14 +103,18 @@ impl CommandHandler for CreateInitiative {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: InitiativeCreateRequest = parse_payload(&command.payload)?;
         let name = InitiativeName::new(&request.name)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let initiative = self.store.create(&name, &|id| {
             transition(id, "created", json!({ "name": name.as_str() }))
         })?;
-        announce(events, event_descriptor("initiative.created"), &initiative);
+        announce(effects, event_descriptor("initiative.created"), &initiative);
         encode_record(&initiative)
     }
 }
@@ -132,7 +136,11 @@ impl CommandHandler for RenameInitiative {
         Ok(initiative.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: InitiativeRenameRequest = parse_payload(&command.payload)?;
         let mut initiative = load(&self.store, request.initiative_id)?;
         let name = InitiativeName::new(&request.name)
@@ -149,7 +157,7 @@ impl CommandHandler for RenameInitiative {
                 json!({ "from": previous, "to": initiative.name() }),
             ),
         )?;
-        announce(events, event_descriptor("initiative.renamed"), &initiative);
+        announce(effects, event_descriptor("initiative.renamed"), &initiative);
         encode_record(&initiative)
     }
 }
@@ -171,7 +179,11 @@ impl CommandHandler for ArchiveInitiative {
         Ok(initiative.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: InitiativeArchiveRequest = parse_payload(&command.payload)?;
         let mut initiative = load(&self.store, request.initiative_id)?;
         initiative
@@ -181,7 +193,11 @@ impl CommandHandler for ArchiveInitiative {
             &initiative,
             transition(initiative.id(), "archived", json!({})),
         )?;
-        announce(events, event_descriptor("initiative.archived"), &initiative);
+        announce(
+            effects,
+            event_descriptor("initiative.archived"),
+            &initiative,
+        );
         encode_record(&initiative)
     }
 }
@@ -228,11 +244,11 @@ fn encode_record(initiative: &Initiative) -> Result<Value, ApiError> {
 /// Publish the change on the live event stream, matching the
 /// durable timeline append.
 fn announce(
-    events: &dyn EventSink,
+    effects: &dyn CommandEffects,
     event: &crate::event_catalog::EventDescriptor,
     initiative: &Initiative,
 ) {
-    emit_catalogued(events, event, &record_of(initiative));
+    emit_catalogued(effects, event, &record_of(initiative));
 }
 
 #[cfg(test)]

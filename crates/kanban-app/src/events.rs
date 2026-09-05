@@ -15,7 +15,11 @@ pub trait EventSink: Send + Sync {
 }
 
 /// Publish one catalogued live event with a typed payload.
-pub fn emit_catalogued(sink: &dyn EventSink, event: &EventDescriptor, payload: &impl Serialize) {
+pub fn emit_catalogued<S: EventSink + ?Sized>(
+    sink: &S,
+    event: &EventDescriptor,
+    payload: &impl Serialize,
+) {
     let payload = serde_json::to_value(payload).expect("catalogued payload serialises");
     sink.emit(event.name, payload);
 }

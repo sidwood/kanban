@@ -153,7 +153,7 @@ impl CommandHandler for UpdateHerdrSettings {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn crate::EventSink,
+        _effects: &dyn crate::CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: HerdrSettingsUpdateRequest = parse_payload(&command.payload)?;
         validate_settings(&request)?;
@@ -192,7 +192,7 @@ impl CommandHandler for UpdateHerdrDefaults {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn crate::EventSink,
+        _effects: &dyn crate::CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: HerdrDefaultsUpdateRequest = parse_payload(&command.payload)?;
         if request.reconciliation_interval_secs == 0 {
@@ -243,7 +243,7 @@ mod tests {
     use crate::dispatch::QueryHandler;
     use crate::mutation::CommandHandler;
     use crate::project::ProjectStore;
-    use crate::{NoopEventSink, TimelineEnvelope};
+    use crate::{NoopCommandEffects, TimelineEnvelope};
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
     use kanban_dto::{
         ApiError, HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
@@ -515,7 +515,7 @@ mod tests {
         });
         let command = handler.parse(&payload).expect("the command parses");
         let updated = handler
-            .apply(&command, &NoopEventSink)
+            .apply(&command, &NoopCommandEffects)
             .expect("the update lands");
         assert_eq!(updated["polling_fallback_enabled"], json!(true));
         assert_eq!(updated["version"], json!(2));
@@ -535,7 +535,7 @@ mod tests {
         });
         let command = handler.parse(&payload).expect("the command parses");
         let updated = handler
-            .apply(&command, &NoopEventSink)
+            .apply(&command, &NoopCommandEffects)
             .expect("defaults update");
         assert_eq!(updated["reconciliation_interval_secs"], json!(900));
     }

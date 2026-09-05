@@ -4,8 +4,8 @@
 use std::sync::{Arc, Mutex};
 
 use kanban_app::{
-    CommandHandler, Core, EventSink, MemoryIdempotencyStore, OperationDescriptor, OperationKind,
-    ParsedCommand, QueryHandler, exposed_operations,
+    CommandEffects, CommandHandler, Core, MemoryIdempotencyStore, OperationDescriptor,
+    OperationKind, ParsedCommand, QueryHandler, exposed_operations,
 };
 use kanban_desktop_lib::Shell;
 use kanban_desktop_lib::commands::{forward_command_value, forward_query_value, install_link};
@@ -83,7 +83,7 @@ impl CommandHandler for RecordingCommand {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn EventSink,
+        _effects: &dyn CommandEffects,
     ) -> Result<Value, kanban_dto::ApiError> {
         self.recorder.push(self.operation, &command.payload);
         Ok(json!({}))

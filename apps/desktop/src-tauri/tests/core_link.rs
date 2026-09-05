@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kanban_app::{
-    CommandHandler, Core, EventSink, MemoryIdempotencyStore, OperationDescriptor, OperationKind,
-    ParsedCommand, parse_payload,
+    CommandEffects, CommandHandler, Core, MemoryIdempotencyStore, OperationDescriptor,
+    OperationKind, ParsedCommand, parse_payload,
 };
 use kanban_desktop_lib::core_link::{CoreLink, REQUEST_TIMEOUT, forward_events};
 use kanban_dto::{ApiError, ErrorCode, EventEnvelope, MutationContext};
@@ -81,13 +81,17 @@ impl CommandHandler for Counter {
         Ok(*self.version.lock().expect("the version lock is sound"))
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: BumpRequest = parse_payload(&command.payload)?;
         let mut value = self.value.lock().expect("the value lock is sound");
         let mut version = self.version.lock().expect("the version lock is sound");
         *value += request.step;
         *version += 1;
-        events.emit("counter.bumped", json!({ "to": *value }));
+        effects.emit("counter.bumped", json!({ "to": *value }));
         Ok(json!({ "value": *value, "version": *version }))
     }
 }

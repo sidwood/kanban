@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineFacts;
 
 /// The storage port deferral commands call through.
@@ -64,7 +64,11 @@ impl CommandHandler for RecordDeferral {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: DeferralRecordRequest = parse_payload(&command.payload)?;
         let reason = DeferralReason::new(&request.reason)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
@@ -80,7 +84,7 @@ impl CommandHandler for RecordDeferral {
                 }),
             },
         )?;
-        announce(events, event_descriptor("deferral.recorded"), &deferral);
+        announce(effects, event_descriptor("deferral.recorded"), &deferral);
         serde_json::to_value(encode_record(&deferral))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -100,7 +104,11 @@ impl CommandHandler for SupersedeDeferral {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: DeferralSupersedeRequest = parse_payload(&command.payload)?;
         let original = load(
             self.store.as_ref(),
@@ -121,7 +129,7 @@ impl CommandHandler for SupersedeDeferral {
                 }),
             },
         )?;
-        announce(events, event_descriptor("deferral.superseded"), &deferral);
+        announce(effects, event_descriptor("deferral.superseded"), &deferral);
         serde_json::to_value(encode_record(&deferral))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -164,12 +172,12 @@ fn encode_record(deferral: &Deferral) -> DeferralRecord {
 }
 
 fn announce(
-    events: &dyn EventSink,
+    effects: &dyn CommandEffects,
     event: &crate::event_catalog::EventDescriptor,
     deferral: &Deferral,
 ) {
     emit_catalogued(
-        events,
+        effects,
         event,
         &DeferralIdentity {
             id: deferral.id().value(),
@@ -186,8 +194,7 @@ mod tests {
 
     use super::{DeferralStore, ListDeferrals, RecordDeferral, SupersedeDeferral, TimelineFacts};
     use crate::dispatch::QueryHandler;
-    use crate::events::NoopEventSink;
-    use crate::mutation::{CommandHandler, ParsedCommand};
+    use crate::mutation::{CommandHandler, NoopCommandEffects, ParsedCommand};
     use kanban_domain::{Deferral, DeferralDraft, DeferralId};
 
     #[derive(Default)]
@@ -270,7 +277,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "deferral:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("recording succeeds");
 
@@ -322,7 +329,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "deferral:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("original lands");
         let replacement = supersede
@@ -339,7 +346,7 @@ mod tests {
                     idempotency_key: "key-2".to_owned(),
                     fingerprint: "deferral:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect("supersession lands");
 
@@ -371,7 +378,7 @@ mod tests {
                     idempotency_key: "key-1".to_owned(),
                     fingerprint: "deferral:{}".to_owned(),
                 },
-                &NoopEventSink,
+                &NoopCommandEffects,
             )
             .expect_err("unknown deferrals are refused");
 

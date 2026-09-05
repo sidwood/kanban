@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 
 /// The storage port Comment commands call through.
 pub trait CommentStore: Send + Sync {
@@ -77,12 +77,16 @@ impl CommandHandler for CreateComment {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
         let text = parse_text(&request.text)?;
         let target = parse_target(&request.target)?;
         let comment = self.store.create(&request.project_id, &target, &text)?;
-        announce(events, event_descriptor("comment.created"), &comment);
+        announce(effects, event_descriptor("comment.created"), &comment);
         encode_record(&comment)
     }
 }
@@ -104,7 +108,11 @@ impl CommandHandler for EditComment {
         Ok(comment.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CommentEditRequest = parse_payload(&command.payload)?;
         let text = parse_text(&request.text)?;
         let mut comment = load(&self.store, request.comment_id)?;
@@ -112,7 +120,7 @@ impl CommandHandler for EditComment {
             .edit(text)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store.save(&comment)?;
-        announce(events, event_descriptor("comment.edited"), &comment);
+        announce(effects, event_descriptor("comment.edited"), &comment);
         encode_record(&comment)
     }
 }
@@ -167,11 +175,11 @@ fn encode_record(comment: &Comment) -> Result<Value, ApiError> {
 }
 
 fn announce(
-    events: &dyn EventSink,
+    effects: &dyn CommandEffects,
     event: &crate::event_catalog::EventDescriptor,
     comment: &Comment,
 ) {
-    emit_catalogued(events, event, &record_of(comment));
+    emit_catalogued(effects, event, &record_of(comment));
 }
 
 #[cfg(test)]

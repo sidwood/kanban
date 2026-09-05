@@ -36,7 +36,8 @@ pub use initiative::InitiativeStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{
-    CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
+    CommandEffects, CommandHandler, IdempotencyStore, MutationSpan, NoopCommandEffects,
+    ParsedCommand, PostCommitEffect, RecordedOutcome, parse_payload,
 };
 pub use plan::PlanStore;
 pub use project::{GitObservation, ProjectStore, duplicate_code_error};

@@ -166,6 +166,32 @@ impl MutationSpan for MemoryMutationSpan<'_> {
     }
 }
 
+/// One effect a command defers until its mutation commits.
+pub type PostCommitEffect = Box<dyn FnOnce() + Send>;
+
+/// What `apply` reports alongside its response: the events the
+/// applied change announces, plus effects that must not run while the
+/// mutation's durable span is still open. A span that never commits
+/// discards the effects with it, so a failed commit leaves nothing
+/// they would have started.
+pub trait CommandEffects: EventSink {
+    /// Run `effect` once the command's mutation has committed.
+    fn after_commit(&self, effect: PostCommitEffect);
+}
+
+/// [`CommandEffects`] that discards everything, for exercising
+/// handlers directly without the dispatcher.
+#[derive(Debug, Default)]
+pub struct NoopCommandEffects;
+
+impl EventSink for NoopCommandEffects {
+    fn emit(&self, _event_type: &str, _payload: Value) {}
+}
+
+impl CommandEffects for NoopCommandEffects {
+    fn after_commit(&self, _effect: PostCommitEffect) {}
+}
+
 /// A catalogued command's handler. The dispatcher runs the guard
 /// around `current_version` and `apply`; `parse` supplies the guard's
 /// inputs and must validate the payload through `parse_payload` so
@@ -176,7 +202,13 @@ pub trait CommandHandler: Send + Sync {
     /// The aggregate's current version, or [`ApiError::not_found`].
     fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError>;
     /// Apply the mutation. Runs at most once per idempotency key.
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError>;
+    /// Everything that must outlive the write span — events and
+    /// post-commit effects alike — is reported through `effects`.
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError>;
 }
 
 #[cfg(test)]

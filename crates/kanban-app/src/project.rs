@@ -19,10 +19,10 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::{EventDescriptor, event_descriptor};
-use crate::events::{EventSink, emit_catalogued};
+use crate::events::emit_catalogued;
 use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
 use crate::initiative::InitiativeStore;
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
 
 /// The git observation port: how registration confirms a target is a
@@ -140,7 +140,11 @@ impl CommandHandler for RegisterProject {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: ProjectRegisterRequest = parse_payload(&command.payload)?;
         let registration = ProjectRegistration::new(
             &request.code,
@@ -184,8 +188,12 @@ impl CommandHandler for RegisterProject {
         })?;
         self.herdr_settings
             .seed_project_settings(project.id().value())?;
-        self.herdr_observer.observe(&project);
-        announce(events, event_descriptor("project.registered"), &project);
+        // Observation starts only for a Project that committed: the
+        // effect is discarded with the span when the commit fails.
+        let observed = project.clone();
+        let observer = self.herdr_observer.clone();
+        effects.after_commit(Box::new(move || observer.observe(&observed)));
+        announce(effects, event_descriptor("project.registered"), &project);
         encode_record(&project)
     }
 }
@@ -208,7 +216,11 @@ impl CommandHandler for ArchiveProject {
         Ok(project.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: ProjectArchiveRequest = parse_payload(&command.payload)?;
         let mut project = load(&self.store, request.project_id)?;
         project
@@ -216,10 +228,14 @@ impl CommandHandler for ArchiveProject {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store
             .save(&project, transition(project.id(), "archived", json!({})))?;
-        // The archive landed, so the session it anchored stops being
-        // observed: the owner releases its socket and thread.
-        self.herdr_observer.stop_observing(project.id().value());
-        announce(events, event_descriptor("project.archived"), &project);
+        // The release waits for the commit: joining the observer
+        // inside the write span could block forever on the connection
+        // the span holds, and an archive that never commits must
+        // leave its session observed.
+        let archived = project.id().value();
+        let observer = self.herdr_observer.clone();
+        effects.after_commit(Box::new(move || observer.stop_observing(archived)));
+        announce(effects, event_descriptor("project.archived"), &project);
         encode_record(&project)
     }
 }
@@ -276,8 +292,8 @@ fn encode_record(project: &Project) -> Result<Value, ApiError> {
 
 /// Publish the change on the live event stream as exactly the record
 /// the command returns, matching the durable timeline append.
-fn announce(events: &dyn EventSink, event: &EventDescriptor, project: &Project) {
-    emit_catalogued(events, event, &record_of(project));
+fn announce(effects: &dyn CommandEffects, event: &EventDescriptor, project: &Project) {
+    emit_catalogued(effects, event, &record_of(project));
 }
 
 #[cfg(test)]
@@ -298,7 +314,7 @@ pub(crate) mod testing {
     use crate::events::EventSink;
     use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
     use crate::initiative::InitiativeStore;
-    use crate::mutation::MemoryIdempotencyStore;
+    use crate::mutation::{IdempotencyStore, MemoryIdempotencyStore};
     use crate::timeline::TimelineEnvelope;
 
     /// The git observation the tests steer: a fixed set of known
@@ -615,14 +631,21 @@ pub(crate) mod testing {
         events: Arc<dyn EventSink>,
         herdr: Arc<dyn HerdrProjectObserver>,
     ) -> Harness {
+        harness_with_idempotency(git, events, herdr, Arc::new(MemoryIdempotencyStore::new()))
+    }
+
+    /// A core whose idempotency store the test supplies, so a double
+    /// can watch what has committed or refuse every commit.
+    pub(super) fn harness_with_idempotency(
+        git: KnownRepositories,
+        events: Arc<dyn EventSink>,
+        herdr: Arc<dyn HerdrProjectObserver>,
+        idempotency: Arc<dyn IdempotencyStore>,
+    ) -> Harness {
         let projects = Arc::new(MemoryProjectStore::default());
         let initiatives = Arc::new(MemoryInitiatives::default());
         let herdr_settings = Arc::new(MemoryHerdrSettings::default());
-        let mut core = Core::new(
-            exposed_operations(),
-            Arc::new(MemoryIdempotencyStore::new()),
-            events,
-        );
+        let mut core = Core::new(exposed_operations(), idempotency, events);
         core.register_initiatives(initiatives.clone())
             .expect("the initiative operations register");
         core.register_projects(
@@ -1099,15 +1122,23 @@ mod project_registration {
 
 #[cfg(test)]
 mod project_lifecycle {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
+    use kanban_domain::Project;
     use kanban_dto::{
-        ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
+        ApiError, ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+        TimelineScope,
     };
     use serde_json::json;
 
     use super::testing::{
-        RecordingHerdrObserver, archive, harness, harness_with_herdr, registering, stored_project,
+        KnownRepositories, RecordingHerdrObserver, archive, harness, harness_with_herdr,
+        harness_with_idempotency, registering, stored_project,
+    };
+    use crate::events::NoopEventSink;
+    use crate::herdr::HerdrProjectObserver;
+    use crate::mutation::{
+        IdempotencyStore, MemoryIdempotencyStore, MutationSpan, RecordedOutcome,
     };
 
     #[test]
@@ -1132,6 +1163,126 @@ mod project_lifecycle {
             *calls,
             vec![("observe", 1), ("stop", 1)],
             "registration starts observation and the landed archive releases it"
+        );
+    }
+
+    /// An idempotency store whose span cannot commit, standing in
+    /// for a database that refuses the write.
+    struct RefusingIdempotencyStore;
+
+    impl IdempotencyStore for RefusingIdempotencyStore {
+        fn recorded(&self, _key: &str) -> Result<Option<RecordedOutcome>, ApiError> {
+            Ok(None)
+        }
+
+        fn begin(&self) -> Result<Box<dyn MutationSpan + '_>, ApiError> {
+            Ok(Box::new(RefusingSpan))
+        }
+    }
+
+    struct RefusingSpan;
+
+    impl MutationSpan for RefusingSpan {
+        fn commit(self: Box<Self>, _key: &str, _outcome: RecordedOutcome) -> Result<(), ApiError> {
+            Err(ApiError::internal("the outcome could not be recorded"))
+        }
+    }
+
+    #[test]
+    fn a_failed_commit_starts_no_observer_and_stops_none() {
+        let observer = Arc::new(RecordingHerdrObserver::default());
+        let harness = harness_with_idempotency(
+            KnownRepositories {
+                repositories: vec!["/repositories/kanban".to_owned()],
+            },
+            Arc::new(NoopEventSink),
+            observer.clone(),
+            Arc::new(RefusingIdempotencyStore),
+        );
+
+        let refused = harness
+            .core
+            .command(
+                "project.register",
+                &registering("CORE", "kanban-main", "key-1"),
+            )
+            .expect_err("the registration cannot commit");
+        assert_eq!(refused.code, ErrorCode::Internal);
+
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+        let refused = harness
+            .core
+            .command("project.archive", &archive(1, "key-2", 1))
+            .expect_err("the archive cannot commit");
+        assert_eq!(refused.code, ErrorCode::Internal);
+
+        let calls = observer.calls.lock().expect("the recorder lock is sound");
+        assert!(
+            calls.is_empty(),
+            "a mutation that never commits starts no observer and stops none"
+        );
+    }
+
+    /// The observer double for the commit boundary: at the moment of
+    /// each release it records whether the archive's outcome was
+    /// already recorded, which is the boundary the release must not
+    /// cross while the write span is still open.
+    struct BoundaryProbeObserver {
+        outcomes: Arc<MemoryIdempotencyStore>,
+        releases: Arc<Mutex<Vec<bool>>>,
+    }
+
+    impl HerdrProjectObserver for BoundaryProbeObserver {
+        fn observe(&self, _project: &Project) {}
+
+        fn stop_observing(&self, _project_id: u64) {
+            let committed = self
+                .outcomes
+                .recorded("archive-key")
+                .expect("the idempotency store serves")
+                .is_some();
+            self.releases
+                .lock()
+                .expect("the boundary lock is sound")
+                .push(committed);
+        }
+    }
+
+    #[test]
+    fn the_observer_is_released_only_after_the_archive_commits() {
+        let outcomes = Arc::new(MemoryIdempotencyStore::new());
+        let releases = Arc::new(Mutex::new(Vec::new()));
+        let observer = Arc::new(BoundaryProbeObserver {
+            outcomes: outcomes.clone(),
+            releases: releases.clone(),
+        });
+        let harness = harness_with_idempotency(
+            KnownRepositories {
+                repositories: vec!["/repositories/kanban".to_owned()],
+            },
+            Arc::new(NoopEventSink),
+            observer,
+            outcomes,
+        );
+        harness
+            .core
+            .command(
+                "project.register",
+                &registering("CORE", "kanban-main", "key-1"),
+            )
+            .expect("the registration applies");
+
+        harness
+            .core
+            .command("project.archive", &archive(1, "archive-key", 1))
+            .expect("the archive applies");
+
+        assert_eq!(
+            *releases.lock().expect("the boundary lock is sound"),
+            vec![true],
+            "the observer is released only once the archive's outcome is recorded"
         );
     }
 

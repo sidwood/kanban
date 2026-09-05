@@ -489,7 +489,7 @@ mod tests {
     use crate::error::TransportError;
     use crate::frame::{FrameKind, RequestFrame, ResponseFrame};
     use kanban_app::{
-        CommandHandler, Core, EventSink, MemoryIdempotencyStore, OperationDescriptor,
+        CommandEffects, CommandHandler, Core, MemoryIdempotencyStore, OperationDescriptor,
         OperationKind, ParsedCommand, parse_payload,
     };
     use kanban_dto::{ApiError, ErrorCode, EventEnvelope, MutationContext};
@@ -548,7 +548,7 @@ mod tests {
         fn apply(
             &self,
             command: &ParsedCommand,
-            events: &dyn EventSink,
+            effects: &dyn CommandEffects,
         ) -> Result<Value, ApiError> {
             let request: BumpRequest = parse_payload(&command.payload)?;
             debug_assert_eq!(
@@ -559,7 +559,7 @@ mod tests {
             let mut version = self.version.lock().expect("the version lock is sound");
             *value += request.step;
             *version += 1;
-            events.emit("counter.bumped", json!({ "to": *value }));
+            effects.emit("counter.bumped", json!({ "to": *value }));
             Ok(json!({ "value": *value, "version": *version }))
         }
     }
@@ -582,14 +582,14 @@ mod tests {
         fn apply(
             &self,
             command: &ParsedCommand,
-            events: &dyn EventSink,
+            effects: &dyn CommandEffects,
         ) -> Result<Value, ApiError> {
             let request: PadRequest = parse_payload(&command.payload)?;
             debug_assert_eq!(
                 request.mutation.optimistic_version, command.optimistic_version,
                 "the typed DTO and the lift agree on the mutation context"
             );
-            events.emit(
+            effects.emit(
                 "counter.padded",
                 json!({ "pad": "x".repeat(request.bytes) }),
             );

@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::dispatch::{Core, RegistrationError};
 use crate::event_catalog::event_descriptor;
-use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::events::emit_catalogued;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::{TimelineEnvelope, TimelineFacts};
 
 /// Filter for listing evidence within one Project.
@@ -90,7 +90,11 @@ impl CommandHandler for AttachEvidence {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: EvidenceAttachRequest = parse_payload(&command.payload)?;
         let project_id = parse_project_id(&request.project_id)?;
         let (entity_kind, entity_id) = parse_subject(&request.entity_kind, &request.entity_id)?;
@@ -155,7 +159,7 @@ impl CommandHandler for AttachEvidence {
                 )?
             }
         };
-        announce(events, "evidence.attached", &item);
+        announce(effects, "evidence.attached", &item);
         encode_record(&item)
     }
 }
@@ -175,7 +179,11 @@ impl CommandHandler for ListEvidence {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: EvidenceListRequest = parse_payload(&command.payload)?;
         let project_id = parse_project_id(&request.project_id)?;
         let entity_kind = request
@@ -212,7 +220,7 @@ impl CommandHandler for ListEvidence {
             }),
         )?;
         let items = self.store.list(&filter, envelope)?;
-        announce_list(events, &project_id, items.len());
+        announce_list(effects, &project_id, items.len());
         let response = EvidenceListResponse {
             evidence: items.iter().map(record_of).collect(),
         };
@@ -279,13 +287,13 @@ fn encode_record(item: &EvidenceItem) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(item)).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
-fn announce(events: &dyn EventSink, kind: &str, item: &EvidenceItem) {
-    emit_catalogued(events, event_descriptor(kind), &record_of(item));
+fn announce(effects: &dyn CommandEffects, kind: &str, item: &EvidenceItem) {
+    emit_catalogued(effects, event_descriptor(kind), &record_of(item));
 }
 
-fn announce_list(events: &dyn EventSink, project_id: &str, count: usize) {
+fn announce_list(effects: &dyn CommandEffects, project_id: &str, count: usize) {
     emit_catalogued(
-        events,
+        effects,
         event_descriptor("evidence.listed"),
         &EvidenceListSummary {
             project_id: project_id.to_owned(),

@@ -10,7 +10,9 @@ use serde_json::Value;
 
 use crate::catalog::{OperationDescriptor, OperationKind};
 use crate::events::EventSink;
-use crate::mutation::{CommandHandler, IdempotencyStore, RecordedOutcome};
+use crate::mutation::{
+    CommandEffects, CommandHandler, IdempotencyStore, PostCommitEffect, RecordedOutcome,
+};
 
 /// A catalogued query's handler.
 pub trait QueryHandler: Send + Sync {
@@ -172,7 +174,7 @@ impl Core {
         // The mutation belongs to the span: an apply that fails, or
         // an outcome that cannot be recorded, discards both together.
         let span = self.idempotency.begin()?;
-        let announced = PendingEvents::default();
+        let announced = PendingEffects::default();
         let response = handler.apply(&command, &announced)?;
         span.commit(
             &command.idempotency_key,
@@ -198,16 +200,18 @@ impl Core {
     }
 }
 
-/// Holds one command's events until its mutation commits. Handlers
-/// announce as they apply, but a span that never commits leaves no
-/// mutation to announce, so the guard releases the events only once
-/// the commit has landed.
+/// Holds one command's announcements until its mutation commits.
+/// Handlers announce events and defer post-commit effects as they
+/// apply, but a span that never commits leaves no mutation to
+/// announce and nothing the effects may start, so the guard releases
+/// the events and runs the effects only once the commit has landed.
 #[derive(Default)]
-struct PendingEvents {
+struct PendingEffects {
     events: Mutex<Vec<(String, Value)>>,
+    effects: Mutex<Vec<PostCommitEffect>>,
 }
 
-impl EventSink for PendingEvents {
+impl EventSink for PendingEffects {
     fn emit(&self, event_type: &str, payload: Value) {
         self.events
             .lock()
@@ -216,9 +220,19 @@ impl EventSink for PendingEvents {
     }
 }
 
-impl PendingEvents {
+impl CommandEffects for PendingEffects {
+    fn after_commit(&self, effect: PostCommitEffect) {
+        self.effects
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(effect);
+    }
+}
+
+impl PendingEffects {
     /// Publish everything the command announced, in the order it was
-    /// announced.
+    /// announced, then run the effects it deferred to the commit:
+    /// nothing the command started outlives a span that never landed.
     fn release(self, sink: &dyn EventSink) {
         for (event_type, payload) in self
             .events
@@ -226,6 +240,13 @@ impl PendingEvents {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
         {
             sink.emit(&event_type, payload);
+        }
+        for effect in self
+            .effects
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            effect();
         }
     }
 }
@@ -257,7 +278,8 @@ mod tests {
     use crate::catalog::{OperationDescriptor, OperationKind, exposed_operations};
     use crate::events::{EventSink, NoopEventSink};
     use crate::mutation::{
-        CommandHandler, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome, parse_payload,
+        CommandEffects, CommandHandler, IdempotencyStore, MemoryIdempotencyStore, ParsedCommand,
+        RecordedOutcome, parse_payload,
     };
 
     const TEST_CATALOG: &[OperationDescriptor] = &[OperationDescriptor {
@@ -321,7 +343,7 @@ mod tests {
         fn apply(
             &self,
             command: &ParsedCommand,
-            events: &dyn EventSink,
+            effects: &dyn CommandEffects,
         ) -> Result<Value, ApiError> {
             let request: BumpRequest = parse_payload(&command.payload)?;
             debug_assert_eq!(
@@ -332,7 +354,7 @@ mod tests {
             state.value += request.step;
             state.version += 1;
             state.applies += 1;
-            events.emit("counter.bumped", json!({ "to": state.value }));
+            effects.emit("counter.bumped", json!({ "to": state.value }));
             Ok(json!({ "value": state.value, "version": state.version }))
         }
     }
@@ -683,6 +705,86 @@ mod tests {
                 .expect("the recorder lock is sound")
                 .is_empty(),
             "no subscriber may hear about a mutation that did not commit"
+        );
+    }
+
+    /// A command that defers one post-commit effect recording, at the
+    /// moment the effect runs, how many events the live sink had
+    /// already published.
+    struct Deferring {
+        ran: Arc<Mutex<Vec<usize>>>,
+        sink: Arc<RecordingSink>,
+    }
+
+    impl CommandHandler for Deferring {
+        fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+            parse_payload::<BumpRequest>(payload)?;
+            ParsedCommand::lift("counter", payload)
+        }
+
+        fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+            Ok(0)
+        }
+
+        fn apply(
+            &self,
+            command: &ParsedCommand,
+            effects: &dyn CommandEffects,
+        ) -> Result<Value, ApiError> {
+            let request: BumpRequest = parse_payload(&command.payload)?;
+            effects.emit("counter.bumped", json!({ "to": request.step }));
+            let ran = self.ran.clone();
+            let sink = self.sink.clone();
+            effects.after_commit(Box::new(move || {
+                let depth = sink
+                    .events
+                    .lock()
+                    .expect("the recorder lock is sound")
+                    .len();
+                ran.lock().expect("the recorder lock is sound").push(depth);
+            }));
+            Ok(json!({ "step": request.step }))
+        }
+    }
+
+    /// A core serving `counter.bump` through [`Deferring`] over
+    /// `idempotency`, plus the log its effect writes.
+    fn deferring_core(idempotency: Arc<dyn IdempotencyStore>) -> (Core, Arc<Mutex<Vec<usize>>>) {
+        let sink = Arc::new(RecordingSink::default());
+        let handler = Arc::new(Deferring {
+            ran: Arc::new(Mutex::new(Vec::new())),
+            sink: sink.clone(),
+        });
+        let mut core = Core::new(TEST_CATALOG, idempotency, sink);
+        core.register_command("counter.bump", handler.clone())
+            .expect("the test command registers");
+        (core, handler.ran.clone())
+    }
+
+    #[test]
+    fn post_commit_effects_run_after_the_events_of_a_landed_commit() {
+        let (core, ran) = deferring_core(Arc::new(MemoryIdempotencyStore::new()));
+
+        core.command("counter.bump", &bump(1, "key-1", 0))
+            .expect("the command applies");
+
+        assert_eq!(
+            *ran.lock().expect("the recorder lock is sound"),
+            vec![1],
+            "the effect runs once the commit lands, after the command's own event"
+        );
+    }
+
+    #[test]
+    fn a_command_that_cannot_commit_runs_no_post_commit_effects() {
+        let (core, ran) = deferring_core(Arc::new(RefusingIdempotencyStore));
+
+        core.command("counter.bump", &bump(1, "key-1", 0))
+            .expect_err("the outcome cannot be recorded");
+
+        assert!(
+            ran.lock().expect("the recorder lock is sound").is_empty(),
+            "no effect may run for a mutation that did not commit"
         );
     }
 

@@ -611,7 +611,12 @@ mod tests {
 
         assert!(
             snapshot_with_lock.present,
-            "observation must not contend on index.lock for mtime-dirty tracked files"
+            "mtime-dirty workspaces must stay observable under a held index.lock"
+        );
+        assert!(
+            snapshot_with_lock.working_tree_clean,
+            "git status must complete and report a clean tree under a held \
+             index.lock for mtime-dirty tracked files"
         );
 
         drop(lock_file);

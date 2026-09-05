@@ -169,6 +169,7 @@ impl Core {
                 specs: context.specs.clone(),
             }),
         )?;
+        self.register_coverage_check(context.specs.clone(), context.projects.clone())?;
         Ok(())
     }
 }

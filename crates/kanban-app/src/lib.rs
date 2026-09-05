@@ -4,6 +4,7 @@
 pub mod catalog;
 pub mod comment;
 pub mod contracts_gen;
+pub mod coverage;
 pub mod deferrals;
 pub mod dispatch;
 pub mod event_catalog;

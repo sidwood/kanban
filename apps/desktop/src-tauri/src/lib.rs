@@ -26,11 +26,12 @@ use kanban_dto::{
     PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    SpecContentUpdateRequest, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
-    SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
-    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
-    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
+    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
+    SpecVersionRecord, SpecVersionSupersedeRequest, TimelineQuery, TimelineQueryResponse,
+    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
+    WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -466,6 +467,18 @@ async fn spec_version_get(
 }
 
 #[tauri::command]
+async fn spec_coverage_check(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecCoverageCheckQuery,
+) -> Result<SpecCoverageCheckResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec coverage check", |shell| {
+        forward_query(shell, "spec.coverage.check", "spec coverage check", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: TimelineQuery,
@@ -746,6 +759,7 @@ shell_handlers::shell_handler_catalogue! {
     spec_list,
     spec_get,
     spec_version_get,
+    spec_coverage_check,
     timeline_query,
     comment_create,
     comment_edit,

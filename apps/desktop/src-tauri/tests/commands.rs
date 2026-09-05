@@ -19,8 +19,8 @@ use kanban_dto::{
     PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
+    RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCoverageCheckQuery,
+    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
     TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
@@ -193,6 +193,16 @@ fn sample_request(schema: &str) -> Value {
         "SpecListQuery" => json!({ "project_id": 1 }),
         "SpecGetQuery" => json!({ "spec_id": 1 }),
         "SpecVersionGetQuery" => json!({ "spec_id": 1, "number": 1 }),
+        "SpecCoverageCheckQuery" => json!({
+            "spec_id": 1,
+            "version": 1,
+            "criteria": [
+                {
+                    "outcome": "Every criterion links to one or more User Stories.",
+                    "stories": ["CORE-S3-US6"],
+                }
+            ],
+        }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -534,6 +544,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "SpecVersionGetQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionGetQuery>,
+        >(envelope)
+        .is_err(),
+        "SpecCoverageCheckQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecCoverageCheckQuery>,
         >(envelope)
         .is_err(),
         "WorkspaceRegisterRequest" => serde_json::from_value::<

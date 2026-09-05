@@ -260,6 +260,13 @@ define_exposed_catalogue! {
         mcp: "spec_version_get",
         description: "Read one content version, superseded versions included, as Ticket pins resolve.",
     },
+    "spec.coverage.check" => {
+        kind: Query,
+        request: "SpecCoverageCheckQuery",
+        response: "SpecCoverageCheckResponse",
+        mcp: "spec_coverage_check",
+        description: "Check one Spec version's story coverage against proposed criteria; the executable gate refuses uncovered stories.",
+    },
     "timeline.query" => {
         kind: Query,
         request: "TimelineQuery",

@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod comment;
 pub mod contracts_gen;
 pub mod coverage;
+pub mod deadlines;
 pub mod deferrals;
 pub mod dispatch;
 pub mod event_catalog;
@@ -30,6 +31,9 @@ pub use catalog::{
     assert_registered_matches_exposed_catalogue, exposed_operations,
 };
 pub use comment::CommentStore;
+pub use deadlines::{
+    DeadlineConfig, DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,
+};
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use event_catalog::{EventDescriptor, exposed_events};

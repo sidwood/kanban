@@ -108,6 +108,12 @@ const eventStream = computed(() =>
       >
         Create Tickets
       </RouterLink>
+      <RouterLink
+        to="/planning/dependencies"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Wire Dependencies
+      </RouterLink>
     </div>
     <section
       v-if="connection.phase === 'connected'"

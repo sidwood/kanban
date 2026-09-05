@@ -446,6 +446,50 @@ mod workspace_store {
     }
 
     #[test]
+    fn a_failed_observation_round_trips_as_unobserved() {
+        let (_dir, _database, store) = store();
+        let mut workspace = store
+            .create(&registration("/workspaces/core.unreadable"), &|id| {
+                transition(id, "registered")
+            })
+            .expect("the workspace registers");
+
+        workspace
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some(WorkspaceCheckout::Branch("feature".to_owned())),
+                Some("def456".to_owned()),
+                None,
+                Some(false),
+            )
+            .expect("the observation applies");
+        store
+            .save(&workspace, transition(workspace.id(), "observed"))
+            .expect("the observation persists");
+
+        let restored = store
+            .find(workspace.id())
+            .expect("the workspace loads")
+            .expect("the workspace exists");
+        assert_eq!(
+            restored.health(),
+            WorkspaceHealth::Unobserved,
+            "a failed status read persists as the unobserved health"
+        );
+        assert_eq!(restored.observation().working_tree_clean(), None);
+        assert_eq!(
+            restored.observation().head(),
+            Some("def456"),
+            "the facts that did read survive persistence"
+        );
+        assert!(
+            !restored.reuse_evaluation().reusable(),
+            "an unreadable tree never restores as reuse capacity"
+        );
+    }
+
+    #[test]
     fn an_available_row_without_a_clean_verdict_is_refused() {
         let (_dir, database, store) = store();
         let id = seed_raw_row(&database, "/workspaces/core.stale", "available", None);

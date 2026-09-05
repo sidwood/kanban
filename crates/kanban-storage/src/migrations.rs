@@ -154,6 +154,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "tickets",
         sql: include_str!("../migrations/0020_tickets.sql"),
     },
+    Migration {
+        version: 21,
+        name: "workspace unobserved health",
+        sql: include_str!("../migrations/0021_workspace_unobserved_health.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -398,7 +403,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
                 ]
             }
         );
@@ -422,7 +427,7 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
             ]
         );
         for table in [
@@ -497,7 +502,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 20, "one event per applied migration");
+        assert_eq!(events.len(), 21, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -598,6 +603,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[19].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 20, "name": "tickets" })
         );
+        assert_eq!(events[20].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[20].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 21, "name": "workspace unobserved health" })
+        );
     }
 
     #[test]
@@ -622,7 +632,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21]
             }
         );
         let present: i64 = database
@@ -686,7 +696,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20]
+                applied: vec![19, 20, 21]
             }
         );
         let rewritten = database
@@ -720,6 +730,102 @@ mod tests {
     }
 
     #[test]
+    fn migration_0021_normalises_health_rows_without_a_verdict() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 20).expect("the pre-0021 schema applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_workspace, herdr_session, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban.seed', 'kanban-main', 0, 1)",
+                [],
+            )
+            .expect("the fixture Project lands");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO workspaces (project_id, path, health, working_tree_clean, version)
+                 VALUES (1, '/workspaces/clone.stale', 'available', NULL, 4);
+                 INSERT INTO workspaces (project_id, path, health, working_tree_clean, version)
+                 VALUES (1, '/workspaces/clone.dirty', 'dirty', 0, 4);
+                 INSERT INTO workspaces (project_id, path, health, working_tree_clean, version)
+                 VALUES (1, '/workspaces/clone.fresh', 'available', 1, 4);",
+            )
+            .expect("the pre-upgrade Workspaces land");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the upgrade applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![21] });
+        let conn = database.connection();
+        let stale: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT health, working_tree_clean FROM workspaces
+                 WHERE path = '/workspaces/clone.stale'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the stale row is readable");
+        assert_eq!(
+            stale,
+            ("unobserved".to_owned(), None),
+            "a health asserting a verdict the record lacks becomes unobserved, never clean"
+        );
+        let dirty: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT health, working_tree_clean FROM workspaces
+                 WHERE path = '/workspaces/clone.dirty'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the dirty row is readable");
+        assert_eq!(
+            dirty,
+            ("dirty".to_owned(), Some(0)),
+            "a recorded dirty verdict is untouched"
+        );
+        let fresh: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT health, working_tree_clean FROM workspaces
+                 WHERE path = '/workspaces/clone.fresh'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the fresh row is readable");
+        assert_eq!(
+            fresh,
+            ("available".to_owned(), Some(1)),
+            "a recorded clean verdict is untouched"
+        );
+
+        // The rebuilt table accepts the new state, keeps identities
+        // monotonic, and still refuses deletes.
+        conn.execute(
+            "INSERT INTO workspaces (project_id, path, health, version)
+             VALUES (1, '/workspaces/clone.new', 'unobserved', 1)",
+            [],
+        )
+        .expect("the rebuilt table accepts the unobserved health");
+        assert_eq!(
+            conn.last_insert_rowid(),
+            4,
+            "carried identities are never reused"
+        );
+        assert!(
+            conn.execute(
+                "DELETE FROM workspaces WHERE path = '/workspaces/clone.stale'",
+                []
+            )
+            .is_err(),
+            "the delete refusal returns with the rebuilt table"
+        );
+    }
+
+    #[test]
     fn migrate_from_version_thirteen_adds_the_unlanded_guard() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 13).expect("the older schema applies");
@@ -744,7 +850,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21]
             }
         );
         let after: i64 = database
@@ -810,7 +916,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20]
+                applied: vec![15, 16, 17, 18, 19, 20, 21]
             }
         );
         let conn = database.connection();
@@ -1067,6 +1173,10 @@ mod tests {
                     version: 20,
                     name: "tickets",
                 },
+                PendingMigration {
+                    version: 21,
+                    name: "workspace unobserved health",
+                },
             ]]
         );
     }
@@ -1107,11 +1217,11 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0019 apply");
+            .expect("migrations 0010 through 0021 apply");
 
         assert_eq!(
             report.applied,
-            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
         );
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
@@ -1182,7 +1292,10 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0018 applies");
 
-        assert_eq!(report.applied, vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+        assert_eq!(
+            report.applied,
+            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)
              VALUES ('kan', 'Reconsider', 1)",

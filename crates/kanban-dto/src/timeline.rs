@@ -68,6 +68,7 @@ pub enum TimelineEntityKind {
     Comment,
     Workspace,
     Lane,
+    Profile,
 }
 
 impl TimelineEntityKind {
@@ -86,6 +87,7 @@ impl TimelineEntityKind {
         Self::Comment,
         Self::Workspace,
         Self::Lane,
+        Self::Profile,
     ];
 
     /// The wire name, matching this kind's serialised form.
@@ -103,6 +105,7 @@ impl TimelineEntityKind {
             Self::Comment => "comment",
             Self::Workspace => "workspace",
             Self::Lane => "lane",
+            Self::Profile => "profile",
         }
     }
 

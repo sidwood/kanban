@@ -459,12 +459,27 @@ pub struct TicketBugFactsRequest {
     pub evidence_ids: Vec<u64>,
 }
 
+/// Request payload for the `ticket.assign` command: the Ticket's
+/// assignment names one catalogue entry by reference, and an unknown
+/// name is rejected (DR-EP-03).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketAssignRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being assigned.
+    pub ticket_id: u64,
+    /// The Execution Profile the assignment names, by its catalogue
+    /// name.
+    pub profile: String,
+}
+
 /// The Ticket record as every client sees it: the Project it belongs
 /// to, the number that Project minted, the kind whose schema it
-/// carries, and the kind-specific fields — a title for Bugs and
-/// Tasks, a slice and criteria for Implementations, the Bug body for
-/// a Bug, and for Tasks the subtype, mode, completion criteria, and
-/// optional timing.
+/// carries, the kind-specific fields — a title for Bugs and Tasks, a
+/// slice and criteria for Implementations, the Bug body for a Bug,
+/// and for Tasks the subtype, mode, completion criteria, and optional
+/// timing — and the Execution Profile the assignment names, if it
+/// carries one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketRecord {
@@ -504,6 +519,10 @@ pub struct TicketRecord {
     pub scheduled_for: Option<String>,
     /// The Task's due date, if it carries one; RFC 3339 in UTC.
     pub due: Option<String>,
+    /// The Execution Profile this Ticket's assignment names, by its
+    /// catalogue name. The reference keeps its name through every
+    /// later catalogue change (DR-EP-05).
+    pub profile: Option<String>,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
 }
@@ -696,7 +715,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+        TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
         TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
         TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
         TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
@@ -773,6 +792,7 @@ mod tests {
             completion: Vec::new(),
             scheduled_for: None,
             due: None,
+            profile: None,
             version: 1,
         }
     }
@@ -944,12 +964,20 @@ mod tests {
                 "completion": [],
                 "scheduled_for": null,
                 "due": null,
+                "profile": null,
                 "version": 1,
             })
         );
         let decoded: TicketRecord =
             serde_json::from_value(encoded).expect("the record deserialises");
         assert_eq!(decoded, record());
+
+        let assigned = TicketRecord {
+            profile: Some("standard".to_owned()),
+            ..record()
+        };
+        let encoded = serde_json::to_value(&assigned).expect("the record serialises");
+        assert_eq!(encoded["profile"], json!("standard"));
 
         let bug = TicketRecord {
             kind: TicketKind::Bug,
@@ -1054,6 +1082,11 @@ mod tests {
             "completion": ["The register archive is restorable."],
             "scheduled_for": "2026-10-01T00:00:00Z",
             "due": "2026-09-30T17:00:00Z",
+        }));
+        round_trips::<TicketAssignRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "profile": "standard",
         }));
 
         let list: TicketListQuery =
@@ -1231,6 +1264,7 @@ mod tests {
             "TicketBugRecord",
             "TaskMode",
             "TaskSubtype",
+            "TicketAssignRequest",
             "TicketCreateRequest",
             "TicketCriterion",
             "TicketDependenciesQuery",

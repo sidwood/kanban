@@ -86,7 +86,8 @@
         "evidence",
         "comment",
         "workspace",
-        "lane"
+        "lane",
+        "profile"
       ],
       "type": "string"
     },

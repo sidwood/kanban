@@ -10,6 +10,7 @@ use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
 use crate::lane::LaneRecord;
 use crate::plan::PlanRecord;
+use crate::profile::ProfileRecord;
 use crate::project::ProjectRecord;
 use crate::spec::SpecRecord;
 use crate::ticket::TicketRecord;
@@ -159,6 +160,22 @@ define_live_event_catalogue! {
     TicketCreated @ "ticket.created" => {
         payload: "TicketRecord",
         description: "A Ticket was created under its kind's schema.",
+    },
+    TicketAssigned @ "ticket.assigned" => {
+        payload: "TicketRecord",
+        description: "A Ticket's assignment named an Execution Profile.",
+    },
+    ProfileDefined @ "profile.defined" => {
+        payload: "ProfileRecord",
+        description: "An Execution Profile was defined in the catalogue.",
+    },
+    ProfileUpdated @ "profile.updated" => {
+        payload: "ProfileRecord",
+        description: "An Execution Profile's definition was replaced under its name.",
+    },
+    ProfileRetired @ "profile.retired" => {
+        payload: "ProfileRecord",
+        description: "An Execution Profile was retired. The entry is preserved, never deleted.",
     },
     CommentCreated @ "comment.created" => {
         payload: "CommentRecord",
@@ -319,6 +336,22 @@ pub enum LiveEvent {
         sequence: u64,
         payload: Box<TicketRecord>,
     },
+    TicketAssigned {
+        sequence: u64,
+        payload: TicketRecord,
+    },
+    ProfileDefined {
+        sequence: u64,
+        payload: ProfileRecord,
+    },
+    ProfileUpdated {
+        sequence: u64,
+        payload: ProfileRecord,
+    },
+    ProfileRetired {
+        sequence: u64,
+        payload: ProfileRecord,
+    },
     CommentCreated {
         sequence: u64,
         payload: CommentRecord,
@@ -406,6 +439,10 @@ impl LiveEvent {
             Self::SpecVersionSuperseded { .. } => LiveEventName::SpecVersionSuperseded,
             Self::SpecExecutionMoved { .. } => LiveEventName::SpecExecutionMoved,
             Self::TicketCreated { .. } => LiveEventName::TicketCreated,
+            Self::TicketAssigned { .. } => LiveEventName::TicketAssigned,
+            Self::ProfileDefined { .. } => LiveEventName::ProfileDefined,
+            Self::ProfileUpdated { .. } => LiveEventName::ProfileUpdated,
+            Self::ProfileRetired { .. } => LiveEventName::ProfileRetired,
             Self::CommentCreated { .. } => LiveEventName::CommentCreated,
             Self::CommentEdited { .. } => LiveEventName::CommentEdited,
             Self::RulingRecorded { .. } => LiveEventName::RulingRecorded,
@@ -445,6 +482,10 @@ impl LiveEvent {
             | Self::SpecVersionSuperseded { sequence, .. }
             | Self::SpecExecutionMoved { sequence, .. }
             | Self::TicketCreated { sequence, .. }
+            | Self::TicketAssigned { sequence, .. }
+            | Self::ProfileDefined { sequence, .. }
+            | Self::ProfileUpdated { sequence, .. }
+            | Self::ProfileRetired { sequence, .. }
             | Self::CommentCreated { sequence, .. }
             | Self::CommentEdited { sequence, .. }
             | Self::RulingRecorded { sequence, .. }
@@ -578,6 +619,22 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::TicketCreated => LiveEvent::TicketCreated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketAssigned => LiveEvent::TicketAssigned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProfileDefined => LiveEvent::ProfileDefined {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProfileUpdated => LiveEvent::ProfileUpdated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProfileRetired => LiveEvent::ProfileRetired {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -786,6 +843,60 @@ mod tests {
             LiveEventName::parse("project.archived"),
             Ok(LiveEventName::ProjectArchived),
             "both Project events are catalogued"
+        );
+    }
+
+    #[test]
+    fn catalogued_profile_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 6,
+            event_type: "profile.defined".to_owned(),
+            payload: json!({
+                "name": "standard",
+                "harness": "claude-code",
+                "model": "opus",
+                "effort": "high",
+                "usage_pool": "operator",
+                "fallback": null,
+                "retired": false,
+                "version": 1,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::ProfileDefined {
+                sequence: 6,
+                payload: ProfileRecord {
+                    name: "standard".to_owned(),
+                    harness: "claude-code".to_owned(),
+                    model: "opus".to_owned(),
+                    effort: "high".to_owned(),
+                    usage_pool: "operator".to_owned(),
+                    fallback: None,
+                    retired: false,
+                    version: 1,
+                },
+            }
+        );
+        assert_eq!(
+            LiveEventName::parse("profile.updated")
+                .expect("the name parses")
+                .as_str(),
+            "profile.updated"
+        );
+        assert_eq!(
+            LiveEventName::parse("profile.retired")
+                .expect("the name parses")
+                .as_str(),
+            "profile.retired"
+        );
+        assert_eq!(
+            LiveEventName::parse("ticket.assigned")
+                .expect("the name parses")
+                .as_str(),
+            "ticket.assigned"
         );
     }
 

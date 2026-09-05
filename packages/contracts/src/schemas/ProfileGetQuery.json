@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `profile.get` query.",
+  "properties": {
+    "name": {
+      "description": "The entry being read.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "ProfileGetQuery",
+  "type": "object"
+}

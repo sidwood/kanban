@@ -18,6 +18,7 @@ pub const ENTITY_KINDS: &[&str] = &[
     "comment",
     "workspace",
     "lane",
+    "profile",
 ];
 
 /// Whether `kind` is a known timeline entity kind.

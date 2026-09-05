@@ -91,6 +91,12 @@ const eventStream = computed(() =>
         Herdr settings
       </RouterLink>
       <RouterLink
+        to="/settings/profiles"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Execution profiles
+      </RouterLink>
+      <RouterLink
         to="/planning"
         class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
       >

@@ -68,6 +68,13 @@ use kanban_dto::{
     PlanSpecAddRequest,
     PlanSpecMoveRequest,
     PlanSpecRemoveRequest,
+    ProfileDefineRequest,
+    ProfileGetQuery,
+    ProfileListQuery,
+    ProfileListResponse,
+    ProfileRecord,
+    ProfileRetireRequest,
+    ProfileUpdateRequest,
     ProjectArchiveRequest,
     ProjectListQuery,
     ProjectListResponse,
@@ -93,6 +100,7 @@ use kanban_dto::{
     SpecVersionGetQuery,
     SpecVersionRecord,
     SpecVersionSupersedeRequest,
+    TicketAssignRequest,
     TicketBlockerAddRequest,
     TicketBlockerRemoveRequest,
     TicketBugFactsRequest,
@@ -110,8 +118,12 @@ use kanban_dto::{
     TicketRecord,
     TimelineQuery,
     TimelineQueryResponse,
-    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
-    WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    WorkspaceListQuery,
+    WorkspaceListResponse,
+    WorkspaceObserveRequest,
+    WorkspaceRecord,
+    WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -771,6 +783,84 @@ async fn ticket_readiness(
 }
 
 #[tauri::command]
+async fn ticket_assign(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketAssignRequest>(request)?;
+    run_blocking(shell, "ticket assign", |shell| {
+        forward_command(shell, "ticket.assign", "assigned Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_define(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProfileRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProfileDefineRequest>(request)?;
+    run_blocking(shell, "profile define", |shell| {
+        forward_command(shell, "profile.define", "defined profile", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_update(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProfileRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProfileUpdateRequest>(request)?;
+    run_blocking(shell, "profile update", |shell| {
+        forward_command(shell, "profile.update", "updated profile", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_retire(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProfileRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProfileRetireRequest>(request)?;
+    run_blocking(shell, "profile retire", |shell| {
+        forward_command(shell, "profile.retire", "retired profile", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProfileListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProfileListQuery>(request)?;
+    run_blocking(shell, "profile list", |shell| {
+        forward_query(shell, "profile.list", "profile list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProfileRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProfileGetQuery>(request)?;
+    run_blocking(shell, "profile get", |shell| {
+        forward_query(shell, "profile.get", "profile get", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1196,6 +1286,12 @@ shell_handlers::shell_handler_catalogue! {
     ticket_blocker_remove,
     ticket_dependencies,
     ticket_readiness,
+    ticket_assign,
+    profile_define,
+    profile_update,
+    profile_retire,
+    profile_list,
+    profile_get,
     timeline_query,
     comment_create,
     comment_edit,

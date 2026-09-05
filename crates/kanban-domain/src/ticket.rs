@@ -32,6 +32,7 @@ use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
 use crate::evidence::EvidenceId;
 
 use crate::plan::SpecNumber;
+use crate::profile::ProfileName;
 use crate::project::ProjectId;
 use crate::spec::SpecId;
 use crate::timeline_time::stored_format;
@@ -514,6 +515,9 @@ pub enum TicketError {
         /// The raw value that named no instant.
         value: String,
     },
+    /// A terminal Ticket — cancelled or superseded — accepts no
+    /// further changes.
+    Terminal,
 }
 
 /// Why an Occurrence Snapshot was refused.
@@ -569,6 +573,7 @@ impl fmt::Display for TicketError {
             Self::MalformedTiming { field, value } => {
                 write!(f, "a Task {field} must be an RFC 3339 instant: `{value}`")
             }
+            Self::Terminal => write!(f, "a terminal Ticket accepts no further changes"),
         }
     }
 }
@@ -1179,10 +1184,11 @@ impl TicketBody {
 }
 
 /// One Ticket aggregate: the Project it belongs to, the number that
-/// Project minted for it, its priority, its lifecycle state, and the
-/// kind-specific body. The version counts applied changes: creation
-/// lands at 1 and every later legal change bumps it, so a stored
-/// version is all a caller needs for optimistic checks.
+/// Project minted for it, its priority, its lifecycle state, the
+/// kind-specific body, and the Execution Profile its assignment names
+/// by reference (DR-EP-03). The version counts applied changes:
+/// creation lands at 1 and every later legal change bumps it, so a
+/// stored version is all a caller needs for optimistic checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ticket {
     id: TicketId,
@@ -1191,14 +1197,15 @@ pub struct Ticket {
     priority: Priority,
     state: TicketState,
     body: TicketBody,
+    profile: Option<ProfileName>,
     version: u64,
 }
 
 impl Ticket {
     /// A fresh Ticket: created into draft, at version 1, carrying its
-    /// kind's schema. The body's own constructors hold the
-    /// kind-specific rules; a body rehydrated from storage passes
-    /// through unchanged.
+    /// kind's schema and no assignment. The body's own constructors
+    /// hold the kind-specific rules; a body rehydrated from storage
+    /// passes through unchanged.
     pub fn new(
         id: TicketId,
         project: ProjectId,
@@ -1213,11 +1220,13 @@ impl Ticket {
             priority,
             state: TicketState::Draft,
             body,
+            profile: None,
             version: 1,
         }
     }
 
     /// Rehydrate a stored Ticket exactly as it was recorded.
+    #[allow(clippy::too_many_arguments)]
     pub fn restore(
         id: TicketId,
         project: ProjectId,
@@ -1225,6 +1234,7 @@ impl Ticket {
         priority: Priority,
         state: TicketState,
         body: TicketBody,
+        profile: Option<ProfileName>,
         version: u64,
     ) -> Self {
         Self {
@@ -1234,6 +1244,7 @@ impl Ticket {
             priority,
             state,
             body,
+            profile,
             version,
         }
     }
@@ -1378,6 +1389,26 @@ impl Ticket {
             TicketBody::Task(task) => task.timing().due(),
             _ => None,
         }
+    }
+
+    /// The Execution Profile this Ticket's assignment names, if it
+    /// carries one. The reference keeps its name through every later
+    /// catalogue change (DR-EP-05).
+    pub fn profile(&self) -> Option<&ProfileName> {
+        self.profile.as_ref()
+    }
+
+    /// Assign this Ticket to the Execution Profile `name` references.
+    /// A terminal Ticket — cancelled or superseded — accepts no
+    /// further changes; whether the name resolves to a catalogue
+    /// entry is the catalogue's rule, not the Ticket's.
+    pub fn assign(&mut self, name: ProfileName) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        self.profile = Some(name);
+        self.version += 1;
+        Ok(())
     }
 
     /// The number of applied changes, for optimistic version checks.
@@ -1666,6 +1697,7 @@ mod ticket_kinds {
                 ],
             )
             .expect("the fixture body validates"),
+            Some(crate::profile::ProfileName::new("standard").expect("the name validates")),
             7,
         );
 
@@ -1677,7 +1709,49 @@ mod ticket_kinds {
         assert_eq!(ticket.state(), TicketState::Active);
         assert_eq!(ticket.spec(), Some(SpecId::new(6)));
         assert_eq!(ticket.criteria()[1].stories(), [story(3, 2)].as_slice());
+        assert_eq!(ticket.profile().map(|name| name.as_str()), Some("standard"));
         assert_eq!(ticket.version(), 7);
+    }
+
+    #[test]
+    fn an_assignment_names_a_profile_and_bumps_the_version() {
+        let mut ticket = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug("Landing drops the integration branch", None)
+                .expect("the fixture body validates"),
+        );
+        assert_eq!(
+            ticket.profile(),
+            None,
+            "a fresh Ticket carries no assignment"
+        );
+
+        let named = crate::profile::ProfileName::new("standard").expect("the name validates");
+        ticket.assign(named).expect("an open Ticket assigns");
+
+        assert_eq!(ticket.profile().map(|name| name.as_str()), Some("standard"));
+        assert_eq!(ticket.version(), 2);
+    }
+
+    #[test]
+    fn a_terminal_ticket_accepts_no_assignment() {
+        let mut ticket = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug("Landing drops the integration branch", None)
+                .expect("the fixture body validates"),
+        );
+        ticket.state = TicketState::Cancelled;
+
+        let named = crate::profile::ProfileName::new("standard").expect("the name validates");
+        assert_eq!(ticket.assign(named), Err(TicketError::Terminal));
+        assert_eq!(ticket.profile(), None, "the refusal changed nothing");
+        assert_eq!(ticket.version(), 1, "the refusal changed nothing");
     }
 }
 

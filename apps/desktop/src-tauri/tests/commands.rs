@@ -50,6 +50,11 @@ use kanban_dto::{
     PlanSpecAddRequest,
     PlanSpecMoveRequest,
     PlanSpecRemoveRequest,
+    ProfileDefineRequest,
+    ProfileGetQuery,
+    ProfileListQuery,
+    ProfileRetireRequest,
+    ProfileUpdateRequest,
     ProjectArchiveRequest,
     ProjectListQuery,
     ProjectRegisterRequest,
@@ -67,6 +72,7 @@ use kanban_dto::{
     SpecVersionApproveRequest,
     SpecVersionGetQuery,
     SpecVersionSupersedeRequest,
+    TicketAssignRequest,
     TicketBlockerAddRequest,
     TicketBlockerRemoveRequest,
     TicketBugFactsRequest,
@@ -334,6 +340,29 @@ fn sample_request(schema: &str) -> Value {
         }
         "TicketDependenciesQuery" => json!({ "ticket_id": 2 }),
         "TicketReadinessQuery" => json!({ "ticket_id": 2 }),
+        "TicketAssignRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "profile": "standard" })
+        }
+        "ProfileDefineRequest" => json!({
+            "mutation": mutation,
+            "name": "standard",
+            "harness": "claude-code",
+            "model": "opus",
+            "effort": "high",
+            "usage_pool": "operator",
+        }),
+        "ProfileUpdateRequest" => json!({
+            "mutation": mutation,
+            "name": "standard",
+            "harness": "claude-code",
+            "model": "sonnet",
+            "effort": "medium",
+            "usage_pool": "operator",
+            "fallback": "nightly",
+        }),
+        "ProfileRetireRequest" => json!({ "mutation": mutation, "name": "standard" }),
+        "ProfileListQuery" => json!({}),
+        "ProfileGetQuery" => json!({ "name": "standard" }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -603,6 +632,12 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<TicketDependenciesQuery>(request).is_err()
         }
         "TicketReadinessQuery" => decode_invoke_args::<TicketReadinessQuery>(request).is_err(),
+        "TicketAssignRequest" => decode_invoke_args::<TicketAssignRequest>(request).is_err(),
+        "ProfileDefineRequest" => decode_invoke_args::<ProfileDefineRequest>(request).is_err(),
+        "ProfileUpdateRequest" => decode_invoke_args::<ProfileUpdateRequest>(request).is_err(),
+        "ProfileRetireRequest" => decode_invoke_args::<ProfileRetireRequest>(request).is_err(),
+        "ProfileListQuery" => decode_invoke_args::<ProfileListQuery>(request).is_err(),
+        "ProfileGetQuery" => decode_invoke_args::<ProfileGetQuery>(request).is_err(),
         "WorkspaceRegisterRequest" => {
             decode_invoke_args::<WorkspaceRegisterRequest>(request).is_err()
         }

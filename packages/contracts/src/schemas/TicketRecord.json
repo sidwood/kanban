@@ -453,7 +453,7 @@
       "type": "object"
     }
   },
-  "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+  "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
   "properties": {
     "bug": {
       "anyOf": [
@@ -525,6 +525,13 @@
         }
       ],
       "description": "The Ticket's priority (DR-LC-12)."
+    },
+    "profile": {
+      "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "project_id": {
       "description": "The Project this Ticket belongs to.",

@@ -13,7 +13,8 @@
     "evidence",
     "comment",
     "workspace",
-    "lane"
+    "lane",
+    "profile"
   ],
   "title": "TimelineEntityKind",
   "type": "string"

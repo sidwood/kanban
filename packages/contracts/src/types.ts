@@ -258,7 +258,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -367,6 +367,45 @@ export type PlanVersionRecord = {
   edges: PlanEdge[];
   number: number;
   spec_numbers: number[];
+};
+export type ProfileDefineRequest = {
+  effort: string;
+  fallback?: string | null;
+  harness: string;
+  model: string;
+  mutation: MutationContext;
+  name: string;
+  usage_pool: string;
+};
+export type ProfileGetQuery = {
+  name: string;
+};
+export type ProfileListQuery = Record<string, never>;
+export type ProfileListResponse = {
+  profiles: ProfileRecord[];
+};
+export type ProfileRecord = {
+  effort: string;
+  fallback?: string | null;
+  harness: string;
+  model: string;
+  name: string;
+  retired: boolean;
+  usage_pool: string;
+  version: number;
+};
+export type ProfileRetireRequest = {
+  mutation: MutationContext;
+  name: string;
+};
+export type ProfileUpdateRequest = {
+  effort: string;
+  fallback?: string | null;
+  harness: string;
+  model: string;
+  mutation: MutationContext;
+  name: string;
+  usage_pool: string;
 };
 export type ProjectArchiveRequest = {
   mutation: MutationContext;
@@ -526,6 +565,11 @@ export type SpecVersionSupersedeRequest = {
 };
 export type TaskMode = 'human' | 'agent';
 export type TaskSubtype = 'operational' | 'investigative' | 'administrative' | 'research' | 'prototype' | 'migration' | 'manual';
+export type TicketAssignRequest = {
+  mutation: MutationContext;
+  profile: string;
+  ticket_id: number;
+};
 export type TicketBlockerAddRequest = {
   description: string;
   mutation: MutationContext;
@@ -669,6 +713,7 @@ export type TicketRecord = {
   mode?: TaskMode | null;
   number: number;
   priority: TicketPriority;
+  profile?: string | null;
   project_id: number;
   scheduled_for?: string | null;
   slice?: string | null;
@@ -683,7 +728,7 @@ export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready'
 export type TicketVerificationStep = {
   command: string;
 };
-export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace' | 'lane';
+export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace' | 'lane' | 'profile';
 export type TimelineEntityRef = {
   id: string;
   kind: TimelineEntityKind;

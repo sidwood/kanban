@@ -27,6 +27,7 @@ function record(overrides: Partial<TicketRecord> = {}): TicketRecord {
     completion: [],
     scheduled_for: null,
     due: null,
+    profile: null,
     version: 1,
     ...overrides,
   }

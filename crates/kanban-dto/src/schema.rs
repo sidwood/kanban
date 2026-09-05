@@ -47,6 +47,10 @@ use crate::plan::{
     PlanInvalidProfile, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
 };
+use crate::profile::{
+    ProfileDefineRequest, ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord,
+    ProfileRetireRequest, ProfileUpdateRequest,
+};
 use crate::project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
@@ -61,7 +65,7 @@ use crate::spec::{
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
 use crate::ticket::{
-    TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+    TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
     TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
     TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
@@ -194,6 +198,13 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("PlanSpecRemoveRequest", schema_for!(PlanSpecRemoveRequest)),
         ("PlanState", schema_for!(PlanState)),
         ("PlanVersionRecord", schema_for!(PlanVersionRecord)),
+        ("ProfileDefineRequest", schema_for!(ProfileDefineRequest)),
+        ("ProfileGetQuery", schema_for!(ProfileGetQuery)),
+        ("ProfileListQuery", schema_for!(ProfileListQuery)),
+        ("ProfileListResponse", schema_for!(ProfileListResponse)),
+        ("ProfileRecord", schema_for!(ProfileRecord)),
+        ("ProfileRetireRequest", schema_for!(ProfileRetireRequest)),
+        ("ProfileUpdateRequest", schema_for!(ProfileUpdateRequest)),
         ("SpecContent", schema_for!(SpecContent)),
         ("SpecContentState", schema_for!(SpecContentState)),
         (
@@ -234,6 +245,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TicketBugRecord", schema_for!(TicketBugRecord)),
         ("TaskMode", schema_for!(TaskMode)),
         ("TaskSubtype", schema_for!(TaskSubtype)),
+        ("TicketAssignRequest", schema_for!(TicketAssignRequest)),
         ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
         ("TicketCriterion", schema_for!(TicketCriterion)),
         (

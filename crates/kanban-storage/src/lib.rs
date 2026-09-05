@@ -16,6 +16,7 @@ pub mod lanes;
 pub mod migrations;
 pub mod paths;
 pub mod plan;
+pub mod profiles;
 pub mod projects;
 pub mod rulings;
 pub mod spec;
@@ -48,6 +49,7 @@ pub use migrations::{
 };
 pub use paths::{attachments_dir, backups_dir, config_file_name, database_path, managed_data_dir};
 pub use plan::SqlitePlanStore;
+pub use profiles::SqliteProfileStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;
 pub use spec::SqliteSpecStore;

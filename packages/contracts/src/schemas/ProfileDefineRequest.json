@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `profile.define` command: one new named entry carrying the closed schema's five decisions.",
+  "properties": {
+    "effort": {
+      "description": "The effort.",
+      "type": "string"
+    },
+    "fallback": {
+      "description": "The fallback policy, as the profile another entry names; a profile with no fallback policy omits the field.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "harness": {
+      "description": "The harness family.",
+      "type": "string"
+    },
+    "model": {
+      "description": "The model family.",
+      "type": "string"
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "name": {
+      "description": "The name the entry is defined under; unique and immutable.",
+      "type": "string"
+    },
+    "usage_pool": {
+      "description": "The usage pool.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "effort",
+    "harness",
+    "model",
+    "mutation",
+    "name",
+    "usage_pool"
+  ],
+  "title": "ProfileDefineRequest",
+  "type": "object"
+}

@@ -33,7 +33,7 @@ use crate::timeline::insert_event;
 const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
                               slice, criteria, actual_behaviour, reporter_evidence, \
                               bug_qualification, bug_facts, subtype, mode, completion, \
-                              scheduled_for, due, version";
+                              scheduled_for, due, profile, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -144,8 +144,9 @@ impl TicketStore for SqliteTicketStore {
                 "UPDATE tickets
                  SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
                      criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
-                     bug_qualification = ?10, bug_facts = ?11, version = ?12
-                 WHERE id = ?1 AND version = ?13",
+                     bug_qualification = ?10, bug_facts = ?11, profile = ?12,
+                     version = ?13
+                 WHERE id = ?1 AND version = ?14",
                 params![
                     ticket.id().value() as i64,
                     stored.priority,
@@ -158,6 +159,7 @@ impl TicketStore for SqliteTicketStore {
                     stored.reporter_evidence,
                     stored.bug_qualification,
                     stored.bug_facts,
+                    ticket.profile().map(|name| name.as_str()),
                     ticket.version() as i64,
                     preceding_version as i64,
                 ],
@@ -225,6 +227,7 @@ struct LoadedTicket {
     completion: String,
     scheduled_for: Option<String>,
     due: Option<String>,
+    profile: Option<String>,
     version: u64,
 }
 
@@ -250,7 +253,8 @@ fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
         completion: row.get::<_, String>(16)?,
         scheduled_for: row.get::<_, Option<String>>(17)?,
         due: row.get::<_, Option<String>>(18)?,
-        version: row.get::<_, i64>(19)?.unsigned_abs(),
+        profile: row.get::<_, Option<String>>(19)?,
+        version: row.get::<_, i64>(20)?.unsigned_abs(),
     })
 }
 
@@ -309,6 +313,11 @@ impl LoadedTicket {
             Priority::parse(&self.priority).ok_or_else(corrupt)?,
             TicketState::parse(&self.state).ok_or_else(corrupt)?,
             body,
+            self.profile
+                .as_deref()
+                .map(kanban_domain::ProfileName::new)
+                .transpose()
+                .map_err(|_| corrupt())?,
             self.version,
         ))
     }
@@ -705,7 +714,7 @@ fn append_timeline(
 
 #[cfg(test)]
 mod tests {
-    use kanban_app::{ProjectStore, SpecStore, TicketStore, TimelineEnvelope};
+    use kanban_app::{ProfileStore, ProjectStore, SpecStore, TicketStore, TimelineEnvelope};
     use kanban_domain::{
         NumberKind, Priority, Project, ProjectCounters, ProjectId, ProjectRegistration,
         ProjectState, SpecContent, SpecId, SpecNumber, TicketBody, TicketId, TicketNumber,
@@ -1352,6 +1361,72 @@ mod tests {
                 .is_empty(),
             "another Project's Tickets stay out"
         );
+    }
+
+    #[test]
+    fn saving_lands_an_assignment_with_its_timeline_append() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        // The assignment is a stored name guarded at the schema
+        // level, so the named entry exists before the reference.
+        let profile = kanban_domain::ExecutionProfile::define(
+            kanban_domain::ProfileName::new("standard").expect("the fixture name validates"),
+            kanban_domain::ProfileDefinition::new("claude-code", "opus", "high", "operator", None)
+                .expect("the fixture definition validates"),
+        )
+        .expect("the fixture entry validates");
+        crate::profiles::SqliteProfileStore::new(&database)
+            .define(
+                &profile,
+                &kanban_app::TimelineEnvelope::global(
+                    kanban_dto::TimelineEventKind::Transition,
+                    Some(kanban_dto::TimelineEntityRef {
+                        kind: kanban_dto::TimelineEntityKind::Profile,
+                        id: profile.name().as_str().to_owned(),
+                    }),
+                    serde_json::json!({ "action": "defined", "name": profile.name().as_str() }),
+                ),
+            )
+            .expect("the named entry lands");
+        let ticket = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &TicketBody::bug("Landing drops the integration branch", None)
+                .expect("the fixture body validates"),
+        );
+        let timeline_before = ticket_timeline(&database).len();
+
+        let mut assigned = ticket.clone();
+        assigned
+            .assign(
+                kanban_domain::ProfileName::new("standard").expect("the fixture name validates"),
+            )
+            .expect("the assignment applies");
+        store
+            .save(
+                &assigned,
+                &transition(assigned.id(), "assigned", json!({ "profile": "standard" })),
+            )
+            .expect("the save lands");
+
+        let found = store
+            .find(assigned.id())
+            .expect("the find serves")
+            .expect("the Ticket exists");
+        assert_eq!(found, assigned);
+        assert_eq!(found.profile().map(|name| name.as_str()), Some("standard"));
+        assert_eq!(found.version(), 2);
+        assert_eq!(
+            ticket_timeline(&database).len(),
+            timeline_before + 1,
+            "the assignment appends exactly one timeline row"
+        );
+
+        let error = store
+            .save(&assigned, transition(assigned.id(), "assigned", json!({})))
+            .expect_err("the spent version is refused");
+        assert_eq!(error.code, ErrorCode::StaleVersion);
     }
 
     #[test]

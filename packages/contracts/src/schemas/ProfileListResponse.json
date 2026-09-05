@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ProfileRecord": {
+      "additionalProperties": false,
+      "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entry's immutable identity.",
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+          "type": "boolean"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "retired",
+        "usage_pool",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `profile.list` query.",
+  "properties": {
+    "profiles": {
+      "description": "Every catalogue entry, retired ones included.",
+      "items": {
+        "$ref": "#/definitions/ProfileRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "profiles"
+  ],
+  "title": "ProfileListResponse",
+  "type": "object"
+}

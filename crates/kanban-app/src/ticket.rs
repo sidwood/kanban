@@ -59,9 +59,10 @@ pub trait TicketStore: Send + Sync {
     ) -> Result<Ticket, ApiError>;
     /// Load one Ticket, if it exists.
     fn find(&self, id: TicketId) -> Result<Option<Ticket>, ApiError>;
-    /// Persist the applied Ticket — its lifecycle state, priority, and
-    /// kind-specific body — with the timeline envelope, all in one
-    /// write, guarded by the version the aggregate moved from.
+    /// Persist the applied Ticket — its lifecycle state, priority,
+    /// kind-specific body, and Execution Profile assignment — with the
+    /// timeline envelope, all in one write, guarded by the version the
+    /// aggregate moved from.
     fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError>;
     /// Every Ticket of one Project in id order, terminal lifecycle
     /// states included.
@@ -717,7 +718,7 @@ fn state_of(state: DomainState) -> TicketState {
 
 /// The DTO record for one Ticket. Story links render with the
 /// Project's code, the full `CORE-S3-US6` form.
-fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
+pub(crate) fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
     TicketRecord {
         id: ticket.id().value(),
         project_id: ticket.project().value(),
@@ -743,6 +744,7 @@ fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
             .collect(),
         scheduled_for: ticket.scheduled_for().map(str::to_owned),
         due: ticket.due().map(str::to_owned),
+        profile: ticket.profile().map(|name| name.as_str().to_owned()),
         version: ticket.version(),
     }
 }
@@ -850,14 +852,20 @@ pub(crate) mod testing {
 
         fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError> {
             let mut state = self.state.lock().expect("the memory ticket lock is sound");
-            let row = state
-                .tickets
-                .iter_mut()
-                .find(|row| row.id() == ticket.id())
-                .ok_or_else(|| ApiError::not_found(&format!("ticket {}", ticket.id())))?;
-            *row = ticket.clone();
-            state.timeline.push(envelope);
-            Ok(())
+            let preceding = ticket.version() - 1;
+            let index = state.tickets.iter().position(|row| row.id() == ticket.id());
+            match index {
+                Some(index) if state.tickets[index].version() == preceding => {
+                    state.tickets[index] = ticket.clone();
+                    state.timeline.push(envelope);
+                    Ok(())
+                }
+                Some(index) => Err(ApiError::stale_version(
+                    preceding,
+                    state.tickets[index].version(),
+                )),
+                None => Err(ApiError::not_found(&format!("ticket {}", ticket.id()))),
+            }
         }
 
         fn list(&self, project: ProjectId) -> Result<Vec<Ticket>, ApiError> {
@@ -1280,6 +1288,7 @@ mod ticket_create {
                 "completion": [],
                 "scheduled_for": null,
                 "due": null,
+                "profile": null,
                 "version": 1,
             })
         );

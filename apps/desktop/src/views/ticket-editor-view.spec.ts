@@ -54,6 +54,7 @@ const tickets = [
     completion: [],
     scheduled_for: null,
     due: null,
+    profile: null,
     version: 1,
   },
   {
@@ -79,6 +80,7 @@ const tickets = [
     completion: [],
     scheduled_for: null,
     due: null,
+    profile: null,
     version: 1,
   },
   {
@@ -98,6 +100,7 @@ const tickets = [
     completion: ['The register moves.'],
     scheduled_for: '2026-10-01T00:00:00.000Z',
     due: null,
+    profile: null,
     version: 1,
   },
 ] satisfies TicketRecord[]

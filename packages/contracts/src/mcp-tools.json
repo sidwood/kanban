@@ -5352,7 +5352,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -5424,6 +5424,13 @@
             }
           ],
           "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "The Project this Ticket belongs to.",
@@ -6145,7 +6152,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -6217,6 +6224,13 @@
             }
           ],
           "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "The Project this Ticket belongs to.",
@@ -6862,7 +6876,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -6934,6 +6948,13 @@
             }
           ],
           "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "The Project this Ticket belongs to.",
@@ -7353,7 +7374,7 @@
         },
         "TicketRecord": {
           "additionalProperties": false,
-          "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+          "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
           "properties": {
             "bug": {
               "anyOf": [
@@ -7425,6 +7446,13 @@
                 }
               ],
               "description": "The Ticket's priority (DR-LC-12)."
+            },
+            "profile": {
+              "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "project_id": {
               "description": "The Project this Ticket belongs to.",
@@ -8131,7 +8159,7 @@
           "type": "object"
         }
       },
-      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing.",
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
       "properties": {
         "bug": {
           "anyOf": [
@@ -8203,6 +8231,13 @@
             }
           ],
           "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "description": "The Project this Ticket belongs to.",
@@ -9747,6 +9782,1183 @@
     }
   },
   {
+    "description": "Assign a Ticket to an Execution Profile by name; an unknown name is rejected.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ticket.assign` command: the Ticket's assignment names one catalogue entry by reference, and an unknown name is rejected (DR-EP-03).",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "profile": {
+          "description": "The Execution Profile the assignment names, by its catalogue name.",
+          "type": "string"
+        },
+        "ticket_id": {
+          "description": "The Ticket being assigned.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "profile",
+        "ticket_id"
+      ],
+      "title": "TicketAssignRequest",
+      "type": "object"
+    },
+    "name": "ticket_assign",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketBugQualification": {
+          "additionalProperties": false,
+          "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
+          "properties": {
+            "affected_scope": {
+              "description": "What the defect affects.",
+              "type": "string"
+            },
+            "criteria": {
+              "description": "The story-linked Acceptance Criteria, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketCriterion"
+              },
+              "type": "array"
+            },
+            "environment": {
+              "description": "Where the defect occurs.",
+              "type": "string"
+            },
+            "expected_behaviour": {
+              "description": "The behaviour that should have happened.",
+              "type": "string"
+            },
+            "frequency": {
+              "description": "How often the defect occurs.",
+              "type": "string"
+            },
+            "reproduction": {
+              "description": "The reproduction steps or the failing test demonstrating the defect.",
+              "type": "string"
+            },
+            "risk": {
+              "description": "What the defect puts at risk.",
+              "type": "string"
+            },
+            "severity": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketSeverity"
+                }
+              ],
+              "description": "The severity qualification assigned (DR-LC-13)."
+            },
+            "verification_steps": {
+              "description": "The Verification Steps, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketVerificationStep"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "affected_scope",
+            "criteria",
+            "environment",
+            "expected_behaviour",
+            "frequency",
+            "reproduction",
+            "risk",
+            "severity",
+            "verification_steps"
+          ],
+          "type": "object"
+        },
+        "TicketBugRecord": {
+          "additionalProperties": false,
+          "description": "The Bug-specific body of a Ticket record: the quick-capture facts, the qualification once one exists, and the vendor-neutral collections the Bug carries (DR-TK-08 to DR-TK-10).",
+          "properties": {
+            "actual_behaviour": {
+              "description": "What the Bug records happening, as the reporter stated it.",
+              "type": "string"
+            },
+            "evidence_ids": {
+              "description": "The identities of the Evidence Items this Bug carries (DR-TK-10).",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "external_references": {
+              "description": "The External References, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketExternalReference"
+              },
+              "type": "array"
+            },
+            "occurrence_snapshots": {
+              "description": "The Occurrence Snapshots, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketOccurrenceSnapshot"
+              },
+              "type": "array"
+            },
+            "qualification": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TicketBugQualification"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The complete qualification, once one exists (DR-TK-09)."
+            },
+            "reporter_evidence": {
+              "description": "The evidence the reporter holds, as the reporter stated it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "actual_behaviour",
+            "evidence_ids",
+            "external_references",
+            "occurrence_snapshots",
+            "reporter_evidence"
+          ],
+          "type": "object"
+        },
+        "TicketCriterion": {
+          "additionalProperties": false,
+          "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+          "properties": {
+            "outcome": {
+              "description": "The observable outcome the criterion states.",
+              "type": "string"
+            },
+            "stories": {
+              "description": "The User Stories the criterion claims.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "outcome",
+            "stories"
+          ],
+          "type": "object"
+        },
+        "TicketExternalReference": {
+          "additionalProperties": false,
+          "description": "One vendor-neutral External Reference a Bug carries (DR-TK-10): a URI naming an outside link, with an optional label.",
+          "properties": {
+            "label": {
+              "description": "The reference's label, when it carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri": {
+              "description": "The referenced URI.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "uri"
+          ],
+          "type": "object"
+        },
+        "TicketKind": {
+          "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+          "oneOf": [
+            {
+              "description": "A small vertical product slice of exactly one Spec.",
+              "enum": [
+                "implementation"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A record of incorrect behaviour, with qualification evidence.",
+              "enum": [
+                "bug"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bounded operational, investigative, or administrative work.",
+              "enum": [
+                "task"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketOccurrenceSnapshot": {
+          "additionalProperties": false,
+          "description": "One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339 moment one occurrence was observed and what was seen then.",
+          "properties": {
+            "observation": {
+              "description": "What was observed at that moment.",
+              "type": "string"
+            },
+            "observed_at": {
+              "description": "The observed moment, RFC 3339.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "observation",
+            "observed_at"
+          ],
+          "type": "object"
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketSeverity": {
+          "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+          "oneOf": [
+            {
+              "description": "Data loss, secret exposure, or unauthorised execution.",
+              "enum": [
+                "critical"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A failed approved criterion or workflow invariant.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Usable behaviour, wrongly shaped.",
+              "enum": [
+                "medium"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Cosmetic or local clarity.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketState": {
+          "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+          "oneOf": [
+            {
+              "description": "Newly created; not yet qualified or planned.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Deliberately set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Waiting on something outside the Ticket.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Qualified but unavailable until activation.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Free to execute when capacity allows.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Executing.",
+              "enum": [
+                "active"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Under review.",
+              "enum": [
+                "in_review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Review approved, waiting to land.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landing through the Seed Workspace.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landed in full.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: will not execute.",
+              "enum": [
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: replaced by a reassignment Ticket.",
+              "enum": [
+                "superseded"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketVerificationStep": {
+          "additionalProperties": false,
+          "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+          "properties": {
+            "command": {
+              "description": "The command as it runs.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
+      "properties": {
+        "bug": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TicketBugRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Bug body, if this Ticket carries one."
+        },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "criteria": {
+          "description": "The Implementation's story-linked criteria; empty for every other kind.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketKind"
+            }
+          ],
+          "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
+        },
+        "number": {
+          "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "priority": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketPriority"
+            }
+          ],
+          "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Ticket belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slice": {
+          "description": "The Implementation slice description, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec_id": {
+          "description": "The Spec this Ticket attaches to, if it attaches to one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketState"
+            }
+          ],
+          "description": "The lifecycle state (DR-LC-01)."
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
+        "title": {
+          "description": "The Bug or Task title, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "completion",
+        "criteria",
+        "id",
+        "kind",
+        "number",
+        "priority",
+        "project_id",
+        "state",
+        "version"
+      ],
+      "title": "TicketRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Define one named Execution Profile carrying harness, model, effort, usage pool, and fallback policy.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `profile.define` command: one new named entry carrying the closed schema's five decisions.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names; a profile with no fallback policy omits the field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The name the entry is defined under; unique and immutable.",
+          "type": "string"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "mutation",
+        "name",
+        "usage_pool"
+      ],
+      "title": "ProfileDefineRequest",
+      "type": "object"
+    },
+    "name": "profile_define",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entry's immutable identity.",
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+          "type": "boolean"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "retired",
+        "usage_pool",
+        "version"
+      ],
+      "title": "ProfileRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Replace one entry's definition under its own name; names are immutable.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `profile.update` command: the definition of one named entry, replaced wholesale under the same name.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The entry being updated; names are never renamed.",
+          "type": "string"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "mutation",
+        "name",
+        "usage_pool"
+      ],
+      "title": "ProfileUpdateRequest",
+      "type": "object"
+    },
+    "name": "profile_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entry's immutable identity.",
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+          "type": "boolean"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "retired",
+        "usage_pool",
+        "version"
+      ],
+      "title": "ProfileRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Retire one entry. Retirement is terminal and preserves every recorded fact.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `profile.retire` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "description": "The entry being retired. Retirement is terminal and preserves every recorded fact.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "name"
+      ],
+      "title": "ProfileRetireRequest",
+      "type": "object"
+    },
+    "name": "profile_retire",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entry's immutable identity.",
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+          "type": "boolean"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "retired",
+        "usage_pool",
+        "version"
+      ],
+      "title": "ProfileRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Execution Profile, retired ones included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `profile.list` query.",
+      "title": "ProfileListQuery",
+      "type": "object"
+    },
+    "name": "profile_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ProfileRecord": {
+          "additionalProperties": false,
+          "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+          "properties": {
+            "effort": {
+              "description": "The effort.",
+              "type": "string"
+            },
+            "fallback": {
+              "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "harness": {
+              "description": "The harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The entry's immutable identity.",
+              "type": "string"
+            },
+            "retired": {
+              "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+              "type": "boolean"
+            },
+            "usage_pool": {
+              "description": "The usage pool.",
+              "type": "string"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "retired",
+            "usage_pool",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `profile.list` query.",
+      "properties": {
+        "profiles": {
+          "description": "Every catalogue entry, retired ones included.",
+          "items": {
+            "$ref": "#/definitions/ProfileRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "profiles"
+      ],
+      "title": "ProfileListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one Execution Profile by name.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `profile.get` query.",
+      "properties": {
+        "name": {
+          "description": "The entry being read.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ProfileGetQuery",
+      "type": "object"
+    },
+    "name": "profile_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The profile record as every client sees it: the closed schema's five decisions under the entry's immutable name, with the entry's lifecycle state for the assignable surface.",
+      "properties": {
+        "effort": {
+          "description": "The effort.",
+          "type": "string"
+        },
+        "fallback": {
+          "description": "The fallback policy, as the profile another entry names, if the entry carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entry's immutable identity.",
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the entry is retired: terminal, preserved, and no longer assignable.",
+          "type": "boolean"
+        },
+        "usage_pool": {
+          "description": "The usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "retired",
+        "usage_pool",
+        "version"
+      ],
+      "title": "ProfileRecord",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -9766,7 +10978,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -9892,7 +11105,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10050,7 +11264,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10124,7 +11339,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10259,7 +11475,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10434,7 +11651,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10521,7 +11739,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10594,7 +11813,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10742,7 +11962,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10837,7 +12058,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },
@@ -10955,7 +12177,8 @@
             "evidence",
             "comment",
             "workspace",
-            "lane"
+            "lane",
+            "profile"
           ],
           "type": "string"
         },

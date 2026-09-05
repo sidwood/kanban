@@ -10,6 +10,7 @@ pub mod herdr;
 pub mod initiative;
 pub mod lane;
 pub mod plan;
+pub mod profile;
 pub mod project;
 pub mod ruling;
 pub mod spec;
@@ -43,6 +44,9 @@ pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
 pub use plan::{
     DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
     SpecNumber, SpecNumberError,
+};
+pub use profile::{
+    ExecutionProfile, ProfileCatalogue, ProfileDefinition, ProfileError, ProfileName, ProfileState,
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,

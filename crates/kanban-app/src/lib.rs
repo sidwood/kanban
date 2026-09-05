@@ -19,6 +19,7 @@ pub mod initiative;
 pub mod lane;
 pub mod mutation;
 pub mod plan;
+pub mod profile;
 pub mod project;
 pub mod rulings;
 pub mod spec;
@@ -57,6 +58,7 @@ pub use mutation::{
     ParsedCommand, PostCommitEffect, RecordedOutcome, parse_payload,
 };
 pub use plan::PlanStore;
+pub use profile::{ProfileStore, duplicate_profile_name_error};
 pub use project::{GitObservation, ProjectStore, duplicate_code_error};
 pub use rulings::{RulingStore, already_superseded_ruling_error};
 pub use spec::SpecStore;

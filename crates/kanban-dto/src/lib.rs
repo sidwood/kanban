@@ -15,6 +15,7 @@ pub mod initiative;
 pub mod lane;
 pub mod mutation;
 pub mod plan;
+pub mod profile;
 pub mod project;
 pub mod ruling;
 pub mod schema;
@@ -72,6 +73,10 @@ pub use plan::{
     PlanInvalidProfile, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
 };
+pub use profile::{
+    ProfileDefineRequest, ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord,
+    ProfileRetireRequest, ProfileUpdateRequest,
+};
 pub use project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
@@ -87,7 +92,7 @@ pub use spec::{
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
 pub use ticket::{
-    TaskMode, TaskSubtype, TicketBlockerAddRequest, TicketBlockerRecord,
+    TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
     TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
     TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
@@ -221,6 +226,13 @@ mod tests {
                 "PlanSpecRemoveRequest",
                 "PlanState",
                 "PlanVersionRecord",
+                "ProfileDefineRequest",
+                "ProfileGetQuery",
+                "ProfileListQuery",
+                "ProfileListResponse",
+                "ProfileRecord",
+                "ProfileRetireRequest",
+                "ProfileUpdateRequest",
                 "SpecContent",
                 "SpecContentState",
                 "SpecContentUpdateRequest",
@@ -243,6 +255,7 @@ mod tests {
                 "TicketBugRecord",
                 "TaskMode",
                 "TaskSubtype",
+                "TicketAssignRequest",
                 "TicketCreateRequest",
                 "TicketCriterion",
                 "TicketDependencyAddRequest",

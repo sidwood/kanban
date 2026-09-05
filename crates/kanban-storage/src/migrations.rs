@@ -179,6 +179,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "lanes",
         sql: include_str!("../migrations/0025_lanes.sql"),
     },
+    Migration {
+        version: 26,
+        name: "execution profiles",
+        sql: include_str!("../migrations/0026_execution_profiles.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -424,7 +429,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24, 25
+                    23, 24, 25, 26
                 ]
             }
         );
@@ -449,7 +454,7 @@ mod tests {
             versions,
             vec![
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24, 25
+                24, 25, 26
             ]
         );
         for table in [
@@ -479,6 +484,7 @@ mod tests {
             "ticket_dependencies",
             "ticket_blockers",
             "supersession_duplicate_quarantine",
+            "execution_profiles",
         ] {
             let present: i64 = database
                 .connection()
@@ -527,7 +533,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 25, "one event per applied migration");
+        assert_eq!(events.len(), 26, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -653,6 +659,93 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[24].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 25, "name": "lanes" })
         );
+        assert_eq!(events[25].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[25].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 26, "name": "execution profiles" })
+        );
+    }
+
+    #[test]
+    fn migration_0026_adds_the_profile_catalogue_and_the_ticket_reference() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 25).expect("the pre-profile schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'execution_profiles'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(before, 0, "version twenty-five holds no catalogue");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0026 applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![26] });
+        let conn = database.connection();
+        // Names are unique, values are never blank, and nothing is
+        // deleted; the fallback and the Ticket assignment are stored
+        // names guarded at the schema level.
+        conn.execute(
+            "INSERT INTO execution_profiles (name, harness, model, effort, usage_pool, version)
+             VALUES ('standard', 'claude-code', 'opus', 'high', 'operator', 1)",
+            [],
+        )
+        .expect("a complete entry lands");
+        assert!(
+            conn.execute(
+                "INSERT INTO execution_profiles (name, harness, model, effort, usage_pool, version)
+                 VALUES ('standard', 'claude-code', 'opus', 'high', 'operator', 1)",
+                [],
+            )
+            .is_err(),
+            "names are unique"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO execution_profiles (name, harness, model, effort, usage_pool, version)
+                 VALUES ('nightly', '  ', 'haiku', 'medium', 'operator', 1)",
+                [],
+            )
+            .is_err(),
+            "a blank decision is refused"
+        );
+        conn.execute(
+            "INSERT INTO execution_profiles
+                 (name, harness, model, effort, usage_pool, fallback, version)
+             VALUES ('nightly', 'claude-code', 'haiku', 'medium', 'operator', 'standard', 1)",
+            [],
+        )
+        .expect("a named fallback lands");
+        assert!(
+            conn.execute(
+                "INSERT INTO execution_profiles
+                     (name, harness, model, effort, usage_pool, fallback, version)
+                 VALUES ('ghost', 'claude-code', 'haiku', 'medium', 'operator', 'missing', 1)",
+                [],
+            )
+            .is_err(),
+            "a fallback names a catalogue entry or nothing"
+        );
+        assert!(
+            conn.execute("DELETE FROM execution_profiles WHERE name = 'standard'", [])
+                .is_err(),
+            "catalogue entries are retired, never deleted"
+        );
+        let ticket_profile: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('tickets') WHERE name = 'profile'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the tickets table is readable");
+        assert_eq!(
+            ticket_profile, 1,
+            "Tickets gain the assignment reference as a stored name"
+        );
     }
 
     #[test]
@@ -677,7 +770,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
             }
         );
         let present: i64 = database
@@ -786,7 +879,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21, 22, 23, 24, 25]
+                applied: vec![19, 20, 21, 22, 23, 24, 25, 26]
             }
         );
         let rewritten = database
@@ -853,7 +946,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23, 24]
+                applied: vec![21, 22, 23, 24, 26]
             }
         );
         let conn = database.connection();
@@ -945,7 +1038,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
             }
         );
         let after: i64 = database
@@ -1011,7 +1104,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
             }
         );
         let conn = database.connection();
@@ -1288,6 +1381,10 @@ mod tests {
                     version: 25,
                     name: "lanes",
                 },
+                PendingMigration {
+                    version: 26,
+                    name: "execution profiles",
+                },
             ]]
         );
     }
@@ -1328,12 +1425,12 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0025 apply");
+            .expect("migrations 0010 through 0026 apply");
 
         assert_eq!(
             report.applied,
             vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
@@ -1407,7 +1504,9 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+            vec![
+                11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
+            ]
         );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)

@@ -51,7 +51,19 @@ pub(crate) fn canonicalise_repository_anchor_at(raw: &str, cwd: &Path) -> Result
 }
 
 fn canonicalise_repository_anchor(raw: &str) -> Result<String, ApiError> {
-    let cwd = std::env::current_dir().map_err(|error| ApiError::internal(&error.to_string()))?;
+    if Path::new(raw.trim()).is_absolute() {
+        // An absolute anchor carries its own base, so the process cwd is
+        // neither read nor needed and a deleted cwd cannot fail (or
+        // stall) registration. The empty base is never joined because
+        // the anchor is absolute.
+        return canonicalise_repository_anchor_at(raw, Path::new(""));
+    }
+    let cwd = std::env::current_dir().map_err(|error| {
+        ApiError::internal(&format!(
+            "the process working directory could not be resolved to anchor the relative target repository `{}`: {error}",
+            raw.trim()
+        ))
+    })?;
     canonicalise_repository_anchor_at(raw, &cwd)
 }
 
@@ -1249,6 +1261,140 @@ mod repository_anchor {
             .expect_err("a blank anchor is refused");
 
         assert_eq!(error.message, "a Project target repository cannot be blank");
+    }
+}
+
+#[cfg(test)]
+mod repository_anchor_deleted_cwd {
+    //! Registration must not read the process working directory for an
+    //! anchor that is already absolute, so a deleted cwd cannot fail it
+    //! (KAN-T83). A deleted cwd is process-global state no shared test
+    //! may mutate, so each scenario runs in an isolated child process
+    //! that deletes its own cwd and reports through its exit status.
+
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use kanban_dto::ErrorCode;
+    use tempfile::TempDir;
+
+    use super::canonicalise_repository_anchor;
+
+    /// Selects the scenario the isolated child process runs.
+    const SCENARIO: &str = "KAN_T83_CHILD_SCENARIO";
+    /// Carries the absolute path of the cwd the child deletes.
+    const DELETED_CWD: &str = "KAN_T83_DELETED_CWD";
+    /// Carries the repository anchor the child canonicalises.
+    const ANCHOR: &str = "KAN_T83_ANCHOR";
+
+    fn scratch_repository() -> (TempDir, String) {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = dir.path().join("kanban");
+        std::fs::create_dir_all(&repository).expect("the repository directory is created");
+        let absolute = repository
+            .canonicalize()
+            .expect("the repository path canonicalises")
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned();
+        (dir, absolute)
+    }
+
+    /// The cwd the child deletes must live under `/tmp`: a deleted cwd
+    /// there fails `current_dir` immediately, while one under the
+    /// per-user cache tree stalls the kernel's path search for about a
+    /// minute per lookup on macOS.
+    fn deletable_cwd() -> TempDir {
+        tempfile::Builder::new()
+            .prefix("kan-t83-deleted-cwd-")
+            .tempdir_in("/tmp")
+            .expect("a deletable cwd under /tmp is available")
+    }
+
+    fn run_child(scenario: &str, anchor: &str) -> std::process::Output {
+        let gone = deletable_cwd();
+        Command::new(std::env::current_exe().expect("the test binary can be re-run"))
+            .args([
+                "--exact",
+                "project::repository_anchor_deleted_cwd::child_scenario",
+            ])
+            .env(SCENARIO, scenario)
+            .env(DELETED_CWD, gone.path())
+            .env(ANCHOR, anchor)
+            .current_dir(gone.path())
+            .output()
+            .expect("the isolated child process runs")
+    }
+
+    fn report(output: &std::process::Output) -> String {
+        format!(
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+
+    #[test]
+    fn absolute_anchor_survives_a_deleted_process_cwd() {
+        let (_tree, absolute) = scratch_repository();
+
+        let output = run_child("absolute", &absolute);
+
+        assert!(
+            output.status.success(),
+            "an absolute anchor registers without reading the cwd\n{}",
+            report(&output)
+        );
+    }
+
+    #[test]
+    fn relative_anchor_is_refused_when_the_cwd_cannot_resolve() {
+        let output = run_child("relative", "./kanban");
+
+        assert!(
+            output.status.success(),
+            "a relative anchor fails explicitly without a cwd\n{}",
+            report(&output)
+        );
+    }
+
+    /// Runs one scenario in this test binary, selected by `SCENARIO`.
+    /// A shared run reaches it directly and returns: only the isolated
+    /// child carries the scenario environment.
+    #[test]
+    fn child_scenario() {
+        let Ok(scenario) = std::env::var(SCENARIO) else {
+            return;
+        };
+        let deleted = PathBuf::from(std::env::var(DELETED_CWD).expect("the child cwd is passed"));
+        let anchor = std::env::var(ANCHOR).expect("the anchor is passed");
+        std::fs::remove_dir(&deleted).expect("the child deletes its own cwd");
+        assert!(
+            std::env::current_dir().is_err(),
+            "the scenario needs a cwd that no longer resolves"
+        );
+        match scenario.as_str() {
+            "absolute" => {
+                let canonical = canonicalise_repository_anchor(&anchor)
+                    .expect("an absolute anchor does not read the process cwd");
+                assert_eq!(canonical, anchor, "the canonical anchor is unchanged");
+            }
+            "relative" => {
+                let error = canonicalise_repository_anchor(&anchor)
+                    .expect_err("a relative anchor is refused without a resolvable cwd");
+                assert_eq!(
+                    error.code,
+                    ErrorCode::Internal,
+                    "an unresolvable cwd is a server-side failure"
+                );
+                assert!(
+                    error.message.contains("working directory"),
+                    "the refusal names the cwd it cannot resolve: `{}`",
+                    error.message
+                );
+            }
+            other => panic!("unknown scenario `{other}`"),
+        }
     }
 }
 

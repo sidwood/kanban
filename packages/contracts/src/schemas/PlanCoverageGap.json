@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One member Spec's coverage gap against the Plan: the User Stories its scope claims that no criterion claims yet (DR-PS-14).",
+  "properties": {
+    "claims_no_stories": {
+      "description": "The version's story section names no User Story at all: an empty scope admits no coverage, so no Ticket graph could ever cover this Spec.",
+      "type": "boolean"
+    },
+    "spec_number": {
+      "description": "The member Spec whose stories stay uncovered.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "uncovered": {
+      "description": "Every uncovered User Story, full identities in scope order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "claims_no_stories",
+    "spec_number",
+    "uncovered"
+  ],
+  "title": "PlanCoverageGap",
+  "type": "object"
+}

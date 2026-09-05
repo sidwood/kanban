@@ -219,9 +219,27 @@ export type PlanCompleteRequest = {
   mutation: MutationContext;
   plan_id: number;
 };
+export type PlanCoverageGap = {
+  claims_no_stories: boolean;
+  spec_number: number;
+  uncovered: string[];
+};
 export type PlanCreateRequest = {
   mutation: MutationContext;
   project_id: number;
+};
+export type PlanCycle = {
+  spec_numbers: number[];
+};
+export type PlanDiagnosticsQuery = {
+  plan_id: number;
+  version?: number | null;
+};
+export type PlanDiagnosticsResponse = {
+  blocking: boolean;
+  coverage_gaps: PlanCoverageGap[];
+  cycles: PlanCycle[];
+  invalid_profiles: PlanInvalidProfile[];
 };
 export type PlanEdge = {
   from_spec: number;
@@ -245,6 +263,9 @@ export type PlanGetQuery = {
 export type PlanGetResponse = {
   plan: PlanRecord;
   versions: PlanVersionRecord[];
+};
+export type PlanInvalidProfile = {
+  reference: string;
 };
 export type PlanListQuery = {
   project_id: number;

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One dependency cycle the planning diagnostics report: a group of member Specs mutually reachable through the Plan's dependency edges, so no execution order exists among them (DR-PS-18).",
+  "properties": {
+    "spec_numbers": {
+      "description": "The ring's member Spec numbers, ascending.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "spec_numbers"
+  ],
+  "title": "PlanCycle",
+  "type": "object"
+}

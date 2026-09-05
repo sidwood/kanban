@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "PlanCoverageGap": {
+      "additionalProperties": false,
+      "description": "One member Spec's coverage gap against the Plan: the User Stories its scope claims that no criterion claims yet (DR-PS-14).",
+      "properties": {
+        "claims_no_stories": {
+          "description": "The version's story section names no User Story at all: an empty scope admits no coverage, so no Ticket graph could ever cover this Spec.",
+          "type": "boolean"
+        },
+        "spec_number": {
+          "description": "The member Spec whose stories stay uncovered.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "uncovered": {
+          "description": "Every uncovered User Story, full identities in scope order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "claims_no_stories",
+        "spec_number",
+        "uncovered"
+      ],
+      "type": "object"
+    },
+    "PlanCycle": {
+      "additionalProperties": false,
+      "description": "One dependency cycle the planning diagnostics report: a group of member Specs mutually reachable through the Plan's dependency edges, so no execution order exists among them (DR-PS-18).",
+      "properties": {
+        "spec_numbers": {
+          "description": "The ring's member Spec numbers, ascending.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "spec_numbers"
+      ],
+      "type": "object"
+    },
+    "PlanInvalidProfile": {
+      "additionalProperties": false,
+      "description": "One profile reference that resolves to no catalogue entry. This is the invalid-profile diagnostics interface of DR-PS-18: the execution profile catalogue feeds the entries (KAN-S7, T38), so the list rides empty until the catalogue exists.",
+      "properties": {
+        "reference": {
+          "description": "The referenced profile identity, as written where it was referenced.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `plan.diagnostics` query: the blocking diagnostics of one graph (DR-PS-18).",
+  "properties": {
+    "blocking": {
+      "description": "Whether any diagnostic blocks the Plan's Ticket graph from becoming executable: a cycle, a coverage gap, or an invalid profile reference.",
+      "type": "boolean"
+    },
+    "coverage_gaps": {
+      "description": "One entry per member Spec whose stories stay uncovered; the story-to-criterion-to-Ticket coverage matrix completes the picture with graph approval (T23).",
+      "items": {
+        "$ref": "#/definitions/PlanCoverageGap"
+      },
+      "type": "array"
+    },
+    "cycles": {
+      "description": "Every dependency cycle the diagnosed graph holds.",
+      "items": {
+        "$ref": "#/definitions/PlanCycle"
+      },
+      "type": "array"
+    },
+    "invalid_profiles": {
+      "description": "Profile references resolving to no catalogue entry; the catalogue feeds this list (KAN-S7, T38).",
+      "items": {
+        "$ref": "#/definitions/PlanInvalidProfile"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "blocking",
+    "coverage_gaps",
+    "cycles",
+    "invalid_profiles"
+  ],
+  "title": "PlanDiagnosticsResponse",
+  "type": "object"
+}

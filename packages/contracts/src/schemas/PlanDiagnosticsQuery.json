@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `plan.diagnostics` query.",
+  "properties": {
+    "plan_id": {
+      "description": "The Plan whose graph is diagnosed.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "The frozen version whose graph is diagnosed; when `null` the working shape on display is read instead.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "plan_id"
+  ],
+  "title": "PlanDiagnosticsQuery",
+  "type": "object"
+}

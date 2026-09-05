@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One profile reference that resolves to no catalogue entry. This is the invalid-profile diagnostics interface of DR-PS-18: the execution profile catalogue feeds the entries (KAN-S7, T38), so the list rides empty until the catalogue exists.",
+  "properties": {
+    "reference": {
+      "description": "The referenced profile identity, as written where it was referenced.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reference"
+  ],
+  "title": "PlanInvalidProfile",
+  "type": "object"
+}

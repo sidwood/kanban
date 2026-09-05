@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketBlockerRecord": {
+      "additionalProperties": false,
+      "description": "One recorded external blocker as every client sees it (DR-DE-04).",
+      "properties": {
+        "description": {
+          "description": "The unregistered work, in prose.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket waiting on the described work.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "ticket_id"
+      ],
+      "type": "object"
+    },
+    "TicketDependencyRecord": {
+      "additionalProperties": false,
+      "description": "One registered dependency as every client sees it: the blocking Ticket, the Project it belongs to, the number that Project minted for it, and its lifecycle state.",
+      "properties": {
+        "from_number": {
+          "description": "The number the blocking Ticket's Project minted for it; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "from_project_id": {
+          "description": "The Project the blocking Ticket belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "from_state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketState"
+            }
+          ],
+          "description": "The blocking Ticket's lifecycle state."
+        },
+        "from_ticket_id": {
+          "description": "The blocking Ticket: it must land first (DR-DE-02).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_number",
+        "from_project_id",
+        "from_state",
+        "from_ticket_id"
+      ],
+      "type": "object"
+    },
+    "TicketState": {
+      "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+      "oneOf": [
+        {
+          "description": "Newly created; not yet qualified or planned.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deliberately set aside.",
+          "enum": [
+            "parked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Waiting on something outside the Ticket.",
+          "enum": [
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Qualified but unavailable until activation.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Free to execute when capacity allows.",
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Executing.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Under review.",
+          "enum": [
+            "in_review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Review approved, waiting to land.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landing through the Seed Workspace.",
+          "enum": [
+            "landing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landed in full.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: will not execute.",
+          "enum": [
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: replaced by a reassignment Ticket.",
+          "enum": [
+            "superseded"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `ticket.dependencies` query and for every dependency and blocker command: the registered dependencies one Ticket waits on, its explicit external blockers, and the Ticket's aggregate version after the change.",
+  "properties": {
+    "blockers": {
+      "description": "The Ticket's explicit external blockers, in recording order.",
+      "items": {
+        "$ref": "#/definitions/TicketBlockerRecord"
+      },
+      "type": "array"
+    },
+    "dependencies": {
+      "description": "The registered dependencies the Ticket waits on, in registration order.",
+      "items": {
+        "$ref": "#/definitions/TicketDependencyRecord"
+      },
+      "type": "array"
+    },
+    "ticket_id": {
+      "description": "The Ticket the dependencies belong to.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "The Ticket's aggregate version, for optimistic checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blockers",
+    "dependencies",
+    "ticket_id",
+    "version"
+  ],
+  "title": "TicketDependenciesResponse",
+  "type": "object"
+}

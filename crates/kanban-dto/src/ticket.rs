@@ -259,13 +259,173 @@ pub struct TicketGetQuery {
     pub ticket_id: u64,
 }
 
+/// Request payload for the `ticket.dependency.add` command: the
+/// blocking Ticket must land before the waiting Ticket may begin
+/// (DR-DE-02). Both endpoints must name registered Tickets; work no
+/// Ticket carries is recorded with `ticket.blocker.add` instead
+/// (DR-DE-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketDependencyAddRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket that must land first.
+    pub from_ticket: u64,
+    /// The Ticket that waits on `from_ticket`.
+    pub to_ticket: u64,
+}
+
+/// Request payload for the `ticket.dependency.remove` command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketDependencyRemoveRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket that must land first.
+    pub from_ticket: u64,
+    /// The Ticket that waits on `from_ticket`.
+    pub to_ticket: u64,
+}
+
+/// Request payload for the `ticket.blocker.add` command: one explicit
+/// external blocker, naming the unregistered work a Ticket waits on
+/// in prose (DR-DE-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBlockerAddRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket waiting on the described work.
+    pub ticket_id: u64,
+    /// The unregistered work, in prose.
+    pub description: String,
+}
+
+/// Request payload for the `ticket.blocker.remove` command: removing
+/// an external blocker is the explicit operator action that clears
+/// it (DR-DE-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBlockerRemoveRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket the blocker was recorded against.
+    pub ticket_id: u64,
+    /// The recorded blocker being removed.
+    pub blocker_id: u64,
+}
+
+/// One registered dependency as every client sees it: the blocking
+/// Ticket, the Project it belongs to, the number that Project minted
+/// for it, and its lifecycle state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketDependencyRecord {
+    /// The blocking Ticket: it must land first (DR-DE-02).
+    pub from_ticket_id: u64,
+    /// The Project the blocking Ticket belongs to.
+    pub from_project_id: u64,
+    /// The number the blocking Ticket's Project minted for it;
+    /// rendered with the Project's code, for example `CORE-T17`.
+    pub from_number: u64,
+    /// The blocking Ticket's lifecycle state.
+    pub from_state: TicketState,
+}
+
+/// One recorded external blocker as every client sees it
+/// (DR-DE-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBlockerRecord {
+    /// The immutable, storage-assigned identity.
+    pub id: u64,
+    /// The Ticket waiting on the described work.
+    pub ticket_id: u64,
+    /// The unregistered work, in prose.
+    pub description: String,
+}
+
+/// Request payload for the `ticket.dependencies` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketDependenciesQuery {
+    /// The Ticket whose dependencies and blockers are read.
+    pub ticket_id: u64,
+}
+
+/// Response payload for the `ticket.dependencies` query and for
+/// every dependency and blocker command: the registered
+/// dependencies one Ticket waits on, its explicit external blockers,
+/// and the Ticket's aggregate version after the change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketDependenciesResponse {
+    /// The Ticket the dependencies belong to.
+    pub ticket_id: u64,
+    /// The Ticket's aggregate version, for optimistic checks.
+    pub version: u64,
+    /// The registered dependencies the Ticket waits on, in
+    /// registration order.
+    pub dependencies: Vec<TicketDependencyRecord>,
+    /// The Ticket's explicit external blockers, in recording order.
+    pub blockers: Vec<TicketBlockerRecord>,
+}
+
+/// Request payload for the `ticket.readiness` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketReadinessQuery {
+    /// The Ticket whose readiness is computed.
+    pub ticket_id: u64,
+}
+
+/// What still holds one Ticket back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum TicketReadinessBlocker {
+    /// A registered dependency whose blocker has not landed.
+    Ticket {
+        /// The blocking Ticket: it must land first (DR-DE-02).
+        from_ticket_id: u64,
+        /// The Project the blocking Ticket belongs to.
+        from_project_id: u64,
+        /// The number the blocking Ticket's Project minted for it.
+        from_number: u64,
+        /// The blocking Ticket's lifecycle state.
+        from_state: TicketState,
+    },
+    /// An explicit external blocker (DR-DE-04).
+    External {
+        /// The recorded blocker.
+        blocker_id: u64,
+        /// The unregistered work, in prose.
+        description: String,
+    },
+}
+
+/// Response payload for the `ticket.readiness` query: the computed
+/// readiness projection of one Ticket's dependencies and external
+/// blockers (DR-DE-03). The projection never mutates state; dispatch
+/// consumes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketReadinessResponse {
+    /// The Ticket the readiness was computed for.
+    pub ticket_id: u64,
+    /// The Ticket's own lifecycle state, for context.
+    pub state: TicketState,
+    /// Whether nothing holds the Ticket back.
+    pub ready: bool,
+    /// What holds the Ticket back, dependencies first, then external
+    /// blockers.
+    pub blocked_by: Vec<TicketReadinessBlocker>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        TicketCreateRequest, TicketCriterion, TicketGetQuery, TicketKind, TicketListQuery,
-        TicketListResponse, TicketPriority, TicketRecord, TicketState,
+        TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
+        TicketCreateRequest, TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
+        TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
+        TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse, TicketPriority,
+        TicketReadinessBlocker, TicketReadinessResponse, TicketRecord, TicketState,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -422,11 +582,131 @@ mod tests {
             serde_json::from_value(json!({ "ticket_id": 6 })).expect("the get query decodes");
         assert_eq!(get, TicketGetQuery { ticket_id: 6 });
 
+        round_trips::<TicketDependencyAddRequest>(json!({
+            "mutation": context(),
+            "from_ticket": 3,
+            "to_ticket": 9,
+        }));
+        round_trips::<TicketDependencyRemoveRequest>(json!({
+            "mutation": context(),
+            "from_ticket": 3,
+            "to_ticket": 9,
+        }));
+        round_trips::<TicketBlockerAddRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 9,
+            "description": "The vendor SDK 4 upgrade",
+        }));
+        round_trips::<TicketBlockerRemoveRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 9,
+            "blocker_id": 4,
+        }));
+
+        let dependencies: TicketDependenciesQuery =
+            serde_json::from_value(json!({ "ticket_id": 9 }))
+                .expect("the dependencies query decodes");
+        assert_eq!(dependencies, TicketDependenciesQuery { ticket_id: 9 });
+
         let response = TicketListResponse {
             tickets: vec![record()],
         };
         let encoded = serde_json::to_value(&response).expect("the response serialises");
         assert_eq!(encoded["tickets"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn the_dependency_and_readiness_records_round_trip() {
+        let dependency = TicketDependencyRecord {
+            from_ticket_id: 3,
+            from_project_id: 2,
+            from_number: 17,
+            from_state: TicketState::Active,
+        };
+        let blocker = TicketBlockerRecord {
+            id: 4,
+            ticket_id: 9,
+            description: "The vendor SDK 4 upgrade".to_owned(),
+        };
+        let dependencies = TicketDependenciesResponse {
+            ticket_id: 9,
+            version: 5,
+            dependencies: vec![dependency],
+            blockers: vec![blocker.clone()],
+        };
+
+        let encoded = serde_json::to_value(&dependencies).expect("the response serialises");
+        assert_eq!(
+            encoded,
+            json!({
+                "ticket_id": 9,
+                "version": 5,
+                "dependencies": [{
+                    "from_ticket_id": 3,
+                    "from_project_id": 2,
+                    "from_number": 17,
+                    "from_state": "active",
+                }],
+                "blockers": [{
+                    "id": 4,
+                    "ticket_id": 9,
+                    "description": "The vendor SDK 4 upgrade",
+                }],
+            })
+        );
+        let decoded: TicketDependenciesResponse =
+            serde_json::from_value(encoded).expect("the response deserialises");
+        assert_eq!(decoded, dependencies);
+        assert!(
+            serde_json::from_value::<TicketDependenciesResponse>(
+                serde_json::json!({ "ticket_id": 9, "version": 5, "dependencies": [], "blockers": [], "surprise": true })
+            )
+            .is_err(),
+            "unknown fields are rejected"
+        );
+
+        let readiness = TicketReadinessResponse {
+            ticket_id: 9,
+            state: TicketState::Draft,
+            ready: false,
+            blocked_by: vec![
+                TicketReadinessBlocker::Ticket {
+                    from_ticket_id: dependency.from_ticket_id,
+                    from_project_id: dependency.from_project_id,
+                    from_number: dependency.from_number,
+                    from_state: dependency.from_state,
+                },
+                TicketReadinessBlocker::External {
+                    blocker_id: blocker.id,
+                    description: blocker.description.clone(),
+                },
+            ],
+        };
+
+        let encoded = serde_json::to_value(&readiness).expect("the readiness serialises");
+        assert_eq!(
+            encoded,
+            json!({
+                "ticket_id": 9,
+                "state": "draft",
+                "ready": false,
+                "blocked_by": [
+                    { "Ticket": {
+                        "from_ticket_id": 3,
+                        "from_project_id": 2,
+                        "from_number": 17,
+                        "from_state": "active",
+                    }},
+                    { "External": {
+                        "blocker_id": 4,
+                        "description": "The vendor SDK 4 upgrade",
+                    }},
+                ],
+            })
+        );
+        let decoded: TicketReadinessResponse =
+            serde_json::from_value(encoded).expect("the readiness deserialises");
+        assert_eq!(decoded, readiness);
     }
 
     /// One request wire form decodes typed, re-encodes identically,
@@ -460,13 +740,24 @@ mod tests {
     #[test]
     fn every_ticket_schema_rejects_unknown_fields() {
         for name in [
+            "TicketBlockerAddRequest",
+            "TicketBlockerRecord",
+            "TicketBlockerRemoveRequest",
             "TicketCreateRequest",
             "TicketCriterion",
+            "TicketDependencyAddRequest",
+            "TicketDependencyRecord",
+            "TicketDependencyRemoveRequest",
+            "TicketDependenciesQuery",
+            "TicketDependenciesResponse",
             "TicketGetQuery",
             "TicketKind",
             "TicketListQuery",
             "TicketListResponse",
             "TicketPriority",
+            "TicketReadinessBlocker",
+            "TicketReadinessQuery",
+            "TicketReadinessResponse",
             "TicketRecord",
             "TicketState",
         ] {

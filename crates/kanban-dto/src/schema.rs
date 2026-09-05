@@ -53,8 +53,12 @@ use crate::spec::{
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
 use crate::ticket::{
-    TicketCreateRequest, TicketCriterion, TicketGetQuery, TicketKind, TicketListQuery,
-    TicketListResponse, TicketPriority, TicketRecord, TicketState,
+    TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest, TicketCreateRequest,
+    TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
+    TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
+    TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse, TicketPriority,
+    TicketReadinessBlocker, TicketReadinessQuery, TicketReadinessResponse, TicketRecord,
+    TicketState,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -204,13 +208,51 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
         ("TicketCriterion", schema_for!(TicketCriterion)),
+        (
+            "TicketDependencyAddRequest",
+            schema_for!(TicketDependencyAddRequest),
+        ),
+        (
+            "TicketDependencyRecord",
+            schema_for!(TicketDependencyRecord),
+        ),
+        (
+            "TicketDependencyRemoveRequest",
+            schema_for!(TicketDependencyRemoveRequest),
+        ),
+        (
+            "TicketDependenciesQuery",
+            schema_for!(TicketDependenciesQuery),
+        ),
+        (
+            "TicketDependenciesResponse",
+            schema_for!(TicketDependenciesResponse),
+        ),
         ("TicketGetQuery", schema_for!(TicketGetQuery)),
         ("TicketKind", schema_for!(TicketKind)),
         ("TicketListQuery", schema_for!(TicketListQuery)),
         ("TicketListResponse", schema_for!(TicketListResponse)),
         ("TicketPriority", schema_for!(TicketPriority)),
+        (
+            "TicketReadinessBlocker",
+            schema_for!(TicketReadinessBlocker),
+        ),
+        ("TicketReadinessQuery", schema_for!(TicketReadinessQuery)),
+        (
+            "TicketReadinessResponse",
+            schema_for!(TicketReadinessResponse),
+        ),
         ("TicketRecord", schema_for!(TicketRecord)),
         ("TicketState", schema_for!(TicketState)),
+        (
+            "TicketBlockerAddRequest",
+            schema_for!(TicketBlockerAddRequest),
+        ),
+        ("TicketBlockerRecord", schema_for!(TicketBlockerRecord)),
+        (
+            "TicketBlockerRemoveRequest",
+            schema_for!(TicketBlockerRemoveRequest),
+        ),
         ("ProjectArchiveRequest", schema_for!(ProjectArchiveRequest)),
         ("ProjectCounters", schema_for!(ProjectCounters)),
         ("ProjectListQuery", schema_for!(ProjectListQuery)),

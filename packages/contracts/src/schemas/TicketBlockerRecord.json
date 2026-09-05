@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One recorded external blocker as every client sees it (DR-DE-04).",
+  "properties": {
+    "description": {
+      "description": "The unregistered work, in prose.",
+      "type": "string"
+    },
+    "id": {
+      "description": "The immutable, storage-assigned identity.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ticket_id": {
+      "description": "The Ticket waiting on the described work.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "description",
+    "id",
+    "ticket_id"
+  ],
+  "title": "TicketBlockerRecord",
+  "type": "object"
+}

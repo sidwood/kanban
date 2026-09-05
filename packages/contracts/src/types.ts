@@ -464,6 +464,21 @@ export type SpecVersionSupersedeRequest = {
   spec_id: number;
   version: number;
 };
+export type TicketBlockerAddRequest = {
+  description: string;
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type TicketBlockerRecord = {
+  description: string;
+  id: number;
+  ticket_id: number;
+};
+export type TicketBlockerRemoveRequest = {
+  blocker_id: number;
+  mutation: MutationContext;
+  ticket_id: number;
+};
 export type TicketCreateRequest = {
   criteria?: TicketCriterion[] | null;
   kind: TicketKind;
@@ -478,6 +493,31 @@ export type TicketCriterion = {
   outcome: string;
   stories: string[];
 };
+export type TicketDependenciesQuery = {
+  ticket_id: number;
+};
+export type TicketDependenciesResponse = {
+  blockers: TicketBlockerRecord[];
+  dependencies: TicketDependencyRecord[];
+  ticket_id: number;
+  version: number;
+};
+export type TicketDependencyAddRequest = {
+  from_ticket: number;
+  mutation: MutationContext;
+  to_ticket: number;
+};
+export type TicketDependencyRecord = {
+  from_number: number;
+  from_project_id: number;
+  from_state: TicketState;
+  from_ticket_id: number;
+};
+export type TicketDependencyRemoveRequest = {
+  from_ticket: number;
+  mutation: MutationContext;
+  to_ticket: number;
+};
 export type TicketGetQuery = {
   ticket_id: number;
 };
@@ -489,6 +529,28 @@ export type TicketListResponse = {
   tickets: TicketRecord[];
 };
 export type TicketPriority = 'urgent' | 'high' | 'normal' | 'low';
+export type TicketReadinessBlocker = {
+  Ticket: {
+    from_number: number;
+    from_project_id: number;
+    from_state: TicketState;
+    from_ticket_id: number;
+  };
+} | {
+  External: {
+    blocker_id: number;
+    description: string;
+  };
+};
+export type TicketReadinessQuery = {
+  ticket_id: number;
+};
+export type TicketReadinessResponse = {
+  blocked_by: TicketReadinessBlocker[];
+  ready: boolean;
+  state: TicketState;
+  ticket_id: number;
+};
 export type TicketRecord = {
   criteria: TicketCriterion[];
   id: number;

@@ -7,6 +7,7 @@ pub mod contracts_gen;
 pub mod coverage;
 pub mod deadlines;
 pub mod deferrals;
+pub mod dependency;
 pub mod diagnostics;
 pub mod dispatch;
 pub mod event_catalog;
@@ -36,6 +37,7 @@ pub use deadlines::{
     DeadlineConfig, DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,
 };
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
+pub use dependency::DependencyStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};

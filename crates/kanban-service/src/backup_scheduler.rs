@@ -185,7 +185,7 @@ mod tests {
         run_due_backup, run_scheduled_backup_if_due, save_scheduler_state, scheduler_loop_sleep,
         scheduler_state_path, sleep_until_due,
     };
-    use crate::serve;
+    use crate::test_client::boot;
 
     fn open_migrated_database(dir: &TempDir) -> Database {
         let mut database =
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn production_serve_wires_daily_backup_scheduler() {
         let dir = TempDir::new().expect("scratch directory");
-        let core = serve(dir.path()).expect("core serves");
+        let core = boot(&dir);
         core.shutdown();
     }
 

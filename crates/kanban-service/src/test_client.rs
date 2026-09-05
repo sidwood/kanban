@@ -9,11 +9,14 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use crate::{CoreProcess, serve};
+use crate::{CoreProcess, serve_with_herdr_sessions};
 
-/// Boot the core against a scratch data directory.
+/// Boot the core against a scratch data directory with an isolated
+/// Herdr socket root.
 pub(crate) fn boot(dir: &TempDir) -> CoreProcess {
-    serve(dir.path()).expect("the core boots on a scratch data directory")
+    let herdr_socket_root = dir.path().join("herdr-sessions");
+    serve_with_herdr_sessions(dir.path(), herdr_socket_root)
+        .expect("the core boots on a scratch data directory")
 }
 
 /// One line-based client, mirroring what every real client does.

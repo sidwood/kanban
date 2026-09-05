@@ -73,6 +73,12 @@ impl CoreProcess {
         self.server.socket_path()
     }
 
+    /// The Herdr socket root this core dials.
+    #[cfg(test)]
+    pub(crate) fn herdr_socket_root(&self) -> &Path {
+        self.herdr.socket_root()
+    }
+
     /// Stop serving, stop every Herdr observer, and close the
     /// database.
     pub fn shutdown(self) {
@@ -302,6 +308,39 @@ mod tests {
             & 0o777
     }
 
+    /// KAN-T82-AC1: test boots inject an isolated Herdr socket root
+    /// and never default to the Operator's live session directory.
+    #[test]
+    fn test_boot_never_selects_the_production_herdr_socket_root() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let root = core.herdr_socket_root();
+        assert!(
+            root.starts_with(dir.path()),
+            "tests must inject an isolated socket root under the scratch directory"
+        );
+        assert_ne!(
+            root,
+            production_socket_root().as_path(),
+            "tests must never default to the production Herdr directory"
+        );
+        core.shutdown();
+    }
+
+    /// KAN-T82-AC2: only the managed production serve path selects
+    /// the installed Herdr session directory.
+    #[test]
+    fn production_serve_selects_the_production_herdr_socket_root() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = serve(dir.path()).expect("the production core boots");
+        assert_eq!(
+            core.herdr_socket_root(),
+            production_socket_root().as_path(),
+            "the managed production entry point supplies the production root"
+        );
+        core.shutdown();
+    }
+
     #[test]
     fn registered_catalogue_matches_the_exposed_catalogue() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -310,7 +349,7 @@ mod tests {
             dir.path(),
             database,
             Arc::new(NoopEventSink),
-            production_socket_root(),
+            dir.path().join("herdr-sessions"),
             ObservationTuning::PRODUCTION,
         )
         .expect("the production core wires");
@@ -373,7 +412,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let core = boot(&dir);
 
-        let refusal = serve(dir.path());
+        let refusal = serve_with_herdr_sessions(dir.path(), dir.path().join("herdr-sessions"));
         assert!(
             matches!(
                 refusal,

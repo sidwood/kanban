@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
+#[cfg(test)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -270,6 +272,12 @@ impl HerdrObserver {
         };
         end_observation(observation);
         self.diagnostics.lock().unwrap().remove(&project_id);
+    }
+
+    /// The Herdr socket root this observer dials.
+    #[cfg(test)]
+    pub(crate) fn socket_root(&self) -> &Path {
+        &self.socket_root
     }
 
     /// Stop every owned observer and join every thread: shutdown

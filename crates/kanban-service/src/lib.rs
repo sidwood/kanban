@@ -4,6 +4,7 @@
 
 pub mod git_observer;
 pub mod herdr;
+mod backup_scheduler;
 pub mod timeline;
 
 #[cfg(test)]
@@ -18,10 +19,10 @@ use kanban_app::{
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
-    AllowAllMigrations, BackupRetentionPolicy, BackupStore, Database, RetentionPolicy,
-    SqliteCommentStore, SqliteDeferralStore, SqliteEvidenceStore, SqliteHerdrSettingsStore,
-    SqliteIdempotencyStore, SqliteInitiativeStore, SqlitePlanStore, SqliteProjectStore,
-    SqliteRulingStore, SqliteWorkspaceStore, VerifiedBackupHook,
+    AllowAllMigrations, BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
+    SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteWorkspaceStore,
+    VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -29,15 +30,13 @@ use herdr::{HerdrObserver, LiveHerdrDiagnostics, production_socket_root};
 use timeline::StorageTimelineStore;
 
 use git_observer::LocalWorkspaceGitObserver;
+use backup_scheduler::BackupScheduler;
 
 /// How many replay outcomes the core keeps. A retry follows its
 /// original within seconds and the Operator drives one window, so a
 /// five-figure bound covers every retry that could still arrive
 /// while keeping the table small enough to ignore.
 const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound is not zero");
-
-/// How many dated backup bundles the core keeps before pruning.
-const RETAINED_BACKUPS: NonZeroU32 = NonZeroU32::new(7).expect("seven is not zero");
 
 /// The service's git observation: a target is a Git repository when
 /// its path holds a `.git` entry, a directory for a normal clone or a
@@ -58,6 +57,7 @@ pub struct CoreProcess {
     database: Arc<Database>,
     server: ServerHandle,
     _herdr: Arc<HerdrObserver>,
+    _backup_scheduler: BackupScheduler,
 }
 
 impl CoreProcess {
@@ -79,11 +79,8 @@ fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
     std::fs::create_dir_all(data_dir).map_err(|source| ServiceError::DataDir { source })?;
     let mut database = Database::open(&data_dir.join(database_file_name()))?;
     let store = BackupStore::new(data_dir.to_path_buf());
-    let hook = VerifiedBackupHook::create_before_migrate(
-        &store,
-        &database,
-        BackupRetentionPolicy::keep_most_recent(RETAINED_BACKUPS),
-    );
+    let settings = load_backup_settings(data_dir);
+    let hook = VerifiedBackupHook::create_before_migrate(&store, &database, settings.retention);
     database.migrate(&hook)?;
     Ok(database)
 }
@@ -157,11 +154,13 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let broker = server.broker();
     let (database, core, herdr) =
         assemble_core(data_dir, database, broker, production_socket_root())?;
+    let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
         database,
         server,
         _herdr: herdr,
+        _backup_scheduler: backup_scheduler,
     })
 }
 
@@ -174,11 +173,13 @@ pub(crate) fn serve_with_herdr_sessions(
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
     let (database, core, herdr) = assemble_core(data_dir, database, broker, herdr_socket_root)?;
+    let backup_scheduler = BackupScheduler::spawn(data_dir.to_path_buf(), database.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
         database,
         server,
         _herdr: herdr,
+        _backup_scheduler: backup_scheduler,
     })
 }
 

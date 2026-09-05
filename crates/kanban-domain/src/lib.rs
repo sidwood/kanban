@@ -34,7 +34,7 @@ pub use initiative::{
 };
 pub use plan::{
     DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
-    SpecNumber, SpecNumberError, cycles_in,
+    SpecNumber, SpecNumberError,
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,

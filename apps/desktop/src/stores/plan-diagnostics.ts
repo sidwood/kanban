@@ -17,7 +17,8 @@ export const usePlanDiagnosticsStore = defineStore('plan-diagnostics', {
   }),
   actions: {
     // Read the diagnostics of one Plan's graph: a null version reads
-    // the working shape, a number the frozen version on display.
+    // the working shape, a number the frozen version on display. A
+    // refused read leaves no stale report on display.
     async refresh(
       transport: ShellTransport,
       planId: number,
@@ -31,6 +32,8 @@ export const usePlanDiagnosticsStore = defineStore('plan-diagnostics', {
         this.loaded = true
         this.error = null
       } catch (failure) {
+        this.report = null
+        this.loaded = false
         this.error = asApiError(failure).message
       }
     },

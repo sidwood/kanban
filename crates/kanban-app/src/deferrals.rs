@@ -17,12 +17,20 @@ use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_paylo
 use crate::project::{ProjectStore, resolve_project};
 use crate::timeline::TimelineFacts;
 
+/// The stable refusal when a deferral already has a successor, so every
+/// store refuses duplicate supersession with one voice.
+pub fn already_superseded_deferral_error(deferral_id: u64) -> ApiError {
+    ApiError::invalid_request(&format!("deferral {deferral_id} already has a successor"))
+}
+
 /// The storage port deferral commands call through.
 pub trait DeferralStore: Send + Sync {
     /// Insert one immutable deferral and its timeline append.
     fn insert(&self, draft: &DeferralDraft, facts: TimelineFacts) -> Result<Deferral, ApiError>;
     /// Load one deferral, if it exists in the project.
     fn find(&self, project_id: u64, id: DeferralId) -> Result<Option<Deferral>, ApiError>;
+    /// Whether another deferral in the project already supersedes `id`.
+    fn has_successor(&self, project_id: u64, id: DeferralId) -> Result<bool, ApiError>;
     /// List every deferral for a project, superseded originals included.
     fn list(&self, query: &DeferralListQuery) -> Result<Vec<Deferral>, ApiError>;
 }
@@ -123,6 +131,12 @@ impl CommandHandler for SupersedeDeferral {
             project.id().value(),
             request.deferral_id,
         )?;
+        if self
+            .store
+            .has_successor(project.id().value(), original.id())?
+        {
+            return Err(already_superseded_deferral_error(original.id().value()));
+        }
         let reason = DeferralReason::new(&request.reason)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let draft = original.supersede(reason);
@@ -243,6 +257,13 @@ mod tests {
                 .iter()
                 .find(|deferral| deferral.project_id() == project_id && deferral.id() == id)
                 .cloned())
+        }
+
+        fn has_successor(&self, project_id: u64, id: DeferralId) -> Result<bool, ApiError> {
+            let deferrals = self.deferrals.lock().expect("lock is sound");
+            Ok(deferrals.iter().any(|deferral| {
+                deferral.project_id() == project_id && deferral.supersedes() == Some(id)
+            }))
         }
 
         fn list(&self, query: &DeferralListQuery) -> Result<Vec<Deferral>, ApiError> {
@@ -383,6 +404,77 @@ mod tests {
         assert_eq!(deferrals.len(), 2);
         assert_eq!(deferrals[0]["reason"], json!("Cosmetic only"));
         assert_eq!(deferrals[1]["reason"], json!("Accepted risk"));
+    }
+
+    #[test]
+    fn superseding_a_deferral_that_already_has_a_successor_is_refused() {
+        let store = Arc::new(MemoryDeferralStore::default());
+        let record = RecordDeferral {
+            store: store.clone(),
+            projects: projects(),
+        };
+        let supersede = SupersedeDeferral {
+            store: store.clone(),
+            projects: projects(),
+        };
+        let original = record
+            .apply(
+                &ParsedCommand {
+                    aggregate: "deferral".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "finding_id": "finding-1",
+                        "reason": "Cosmetic only",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-1".to_owned(),
+                    fingerprint: "deferral:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect("original lands");
+        supersede
+            .apply(
+                &ParsedCommand {
+                    aggregate: "deferral".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "deferral_id": original["id"],
+                        "reason": "Accepted risk",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-2".to_owned(),
+                    fingerprint: "deferral:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect("first supersession lands");
+        let error = supersede
+            .apply(
+                &ParsedCommand {
+                    aggregate: "deferral".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "deferral_id": original["id"],
+                        "reason": "Reopened",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-3".to_owned(),
+                    fingerprint: "deferral:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect_err("a second supersession is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already has a successor"),
+            "the refusal should name the invariant: {}",
+            error.message
+        );
     }
 
     #[test]

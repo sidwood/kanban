@@ -139,6 +139,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "project timeline identity",
         sql: include_str!("../migrations/0017_project_timeline_identity.sql"),
     },
+    Migration {
+        version: 18,
+        name: "supersession unique",
+        sql: include_str!("../migrations/0018_supersession_unique.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -354,7 +359,9 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+                applied: vec![
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+                ]
             }
         );
         assert_eq!(
@@ -376,7 +383,9 @@ mod tests {
             .expect("versions decode");
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
         );
         for table in [
             "audit_events",
@@ -448,7 +457,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 17, "one event per applied migration");
+        assert_eq!(events.len(), 18, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -534,6 +543,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[16].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 17, "name": "project timeline identity" })
         );
+        assert_eq!(events[17].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[17].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 18, "name": "supersession unique" })
+        );
     }
 
     #[test]
@@ -558,7 +572,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17]
+                applied: vec![13, 14, 15, 16, 17, 18]
             }
         );
         let present: i64 = database
@@ -611,7 +625,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17]
+                applied: vec![14, 15, 16, 17, 18]
             }
         );
         let after: i64 = database
@@ -677,7 +691,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17]
+                applied: vec![15, 16, 17, 18]
             }
         );
         let conn = database.connection();
@@ -922,6 +936,10 @@ mod tests {
                     version: 17,
                     name: "project timeline identity",
                 },
+                PendingMigration {
+                    version: 18,
+                    name: "supersession unique",
+                },
             ]]
         );
     }
@@ -962,9 +980,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0017 apply");
+            .expect("migrations 0010 through 0018 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16, 17]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(
@@ -1008,6 +1026,135 @@ mod tests {
         assert_eq!(
             count, 0,
             "a fresh database creates tables but seeds settings only at registration"
+        );
+    }
+
+    #[test]
+    fn migration_0011_enforces_one_successor_per_ruling_on_upgraded_stores() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
+        {
+            let conn = database.connection();
+            conn.execute(
+                "INSERT INTO rulings (project_id, summary) VALUES ('kan', 'Hold')",
+                [],
+            )
+            .expect("the original ruling lands");
+            conn.execute(
+                "INSERT INTO rulings (project_id, summary, supersedes_id)
+                 VALUES ('kan', 'Proceed', 1)",
+                [],
+            )
+            .expect("the first successor lands");
+        }
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0011 applies");
+
+        assert_eq!(report.applied, vec![11, 12, 13, 14, 15, 16, 17, 18]);
+        let outcome = database.connection().execute(
+            "INSERT INTO rulings (project_id, summary, supersedes_id)
+             VALUES ('kan', 'Reconsider', 1)",
+            [],
+        );
+        let error = outcome.expect_err("a second successor is refused after upgrade");
+        assert!(
+            error.to_string().contains("UNIQUE constraint failed"),
+            "the schema should enforce one successor: {error}"
+        );
+    }
+
+    #[test]
+    fn migration_0011_enforces_one_successor_per_deferral_on_upgraded_stores() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
+        {
+            let conn = database.connection();
+            conn.execute(
+                "INSERT INTO deferrals (project_id, finding_id, reason)
+                 VALUES ('kan', 'finding-1', 'Cosmetic only')",
+                [],
+            )
+            .expect("the original deferral lands");
+            conn.execute(
+                "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+                 VALUES ('kan', 'finding-1', 'Accepted risk', 1)",
+                [],
+            )
+            .expect("the first successor lands");
+        }
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0011 applies");
+
+        let outcome = database.connection().execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+             VALUES ('kan', 'finding-1', 'Reopened', 1)",
+            [],
+        );
+        let error = outcome.expect_err("a second successor is refused after upgrade");
+        assert!(
+            error.to_string().contains("UNIQUE constraint failed"),
+            "the schema should enforce one successor: {error}"
+        );
+    }
+
+    #[test]
+    fn fresh_stores_enforce_one_successor_per_ruling_and_deferral() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO rulings (project_id, summary) VALUES ('kan', 'Hold')",
+            [],
+        )
+        .expect("the original ruling lands");
+        conn.execute(
+            "INSERT INTO rulings (project_id, summary, supersedes_id)
+             VALUES ('kan', 'Proceed', 1)",
+            [],
+        )
+        .expect("the first successor lands");
+        let ruling_outcome = conn.execute(
+            "INSERT INTO rulings (project_id, summary, supersedes_id)
+             VALUES ('kan', 'Reconsider', 1)",
+            [],
+        );
+        let ruling_error = ruling_outcome.expect_err("a second ruling successor is refused");
+        assert!(
+            ruling_error
+                .to_string()
+                .contains("UNIQUE constraint failed"),
+            "fresh stores should enforce one ruling successor: {ruling_error}"
+        );
+
+        conn.execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason)
+             VALUES ('kan', 'finding-1', 'Cosmetic only')",
+            [],
+        )
+        .expect("the original deferral lands");
+        conn.execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+             VALUES ('kan', 'finding-1', 'Accepted risk', 1)",
+            [],
+        )
+        .expect("the first deferral successor lands");
+        let deferral_outcome = conn.execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+             VALUES ('kan', 'finding-1', 'Reopened', 1)",
+            [],
+        );
+        let deferral_error = deferral_outcome.expect_err("a second deferral successor is refused");
+        assert!(
+            deferral_error
+                .to_string()
+                .contains("UNIQUE constraint failed"),
+            "fresh stores should enforce one deferral successor: {deferral_error}"
         );
     }
 

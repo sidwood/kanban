@@ -17,12 +17,20 @@ use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_paylo
 use crate::project::{ProjectStore, resolve_project};
 use crate::timeline::TimelineFacts;
 
+/// The stable refusal when a ruling already has a successor, so every
+/// store refuses duplicate supersession with one voice.
+pub fn already_superseded_ruling_error(ruling_id: u64) -> ApiError {
+    ApiError::invalid_request(&format!("ruling {ruling_id} already has a successor"))
+}
+
 /// The storage port ruling commands call through.
 pub trait RulingStore: Send + Sync {
     /// Insert one immutable ruling and its timeline append.
     fn insert(&self, draft: &RulingDraft, facts: TimelineFacts) -> Result<Ruling, ApiError>;
     /// Load one ruling, if it exists in the project.
     fn find(&self, project_id: u64, id: RulingId) -> Result<Option<Ruling>, ApiError>;
+    /// Whether another ruling in the project already supersedes `id`.
+    fn has_successor(&self, project_id: u64, id: RulingId) -> Result<bool, ApiError>;
     /// List every ruling for a project, superseded originals included.
     fn list(&self, query: &RulingListQuery) -> Result<Vec<Ruling>, ApiError>;
 }
@@ -116,6 +124,12 @@ impl CommandHandler for SupersedeRuling {
         let request: RulingSupersedeRequest = parse_payload(&command.payload)?;
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let original = load(self.store.as_ref(), project.id().value(), request.ruling_id)?;
+        if self
+            .store
+            .has_successor(project.id().value(), original.id())?
+        {
+            return Err(already_superseded_ruling_error(original.id().value()));
+        }
         let summary = RulingSummary::new(&request.summary)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let draft = original.supersede(summary);
@@ -247,6 +261,13 @@ mod tests {
                 .iter()
                 .find(|ruling| ruling.project_id() == project_id && ruling.id() == id)
                 .cloned())
+        }
+
+        fn has_successor(&self, project_id: u64, id: RulingId) -> Result<bool, ApiError> {
+            let rulings = self.rulings.lock().expect("lock is sound");
+            Ok(rulings
+                .iter()
+                .any(|ruling| ruling.project_id() == project_id && ruling.supersedes() == Some(id)))
         }
 
         fn list(&self, query: &RulingListQuery) -> Result<Vec<Ruling>, ApiError> {
@@ -390,6 +411,76 @@ mod tests {
         assert_eq!(rulings.len(), 2);
         assert_eq!(rulings[0]["summary"], json!("Hold"));
         assert_eq!(rulings[1]["summary"], json!("Proceed"));
+    }
+
+    #[test]
+    fn superseding_a_ruling_that_already_has_a_successor_is_refused() {
+        let store = Arc::new(MemoryRulingStore::default());
+        let record = RecordRuling {
+            store: store.clone(),
+            projects: projects(),
+        };
+        let supersede = SupersedeRuling {
+            store: store.clone(),
+            projects: projects(),
+        };
+        let original = record
+            .apply(
+                &ParsedCommand {
+                    aggregate: "ruling".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "summary": "Hold",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-1".to_owned(),
+                    fingerprint: "ruling:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect("original lands");
+        supersede
+            .apply(
+                &ParsedCommand {
+                    aggregate: "ruling".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "ruling_id": original["id"],
+                        "summary": "Proceed",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-2".to_owned(),
+                    fingerprint: "ruling:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect("first supersession lands");
+        let error = supersede
+            .apply(
+                &ParsedCommand {
+                    aggregate: "ruling".to_owned(),
+                    payload: json!({
+                        "mutation": mutation(),
+                        "project_id": 1,
+                        "ruling_id": original["id"],
+                        "summary": "Reconsider",
+                    }),
+                    optimistic_version: 0,
+                    idempotency_key: "key-3".to_owned(),
+                    fingerprint: "ruling:{}".to_owned(),
+                },
+                &NoopCommandEffects,
+            )
+            .expect_err("a second supersession is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already has a successor"),
+            "the refusal should name the invariant: {}",
+            error.message
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The SQLite implementation of the ruling storage port.
 
-use kanban_app::{RulingStore, TimelineEnvelope, TimelineFacts};
+use kanban_app::{RulingStore, TimelineEnvelope, TimelineFacts, already_superseded_ruling_error};
 use kanban_domain::{Ruling, RulingDraft, RulingEntityRef, RulingId, RulingSummary};
 use kanban_dto::{ApiError, RulingListQuery, TimelineEntityKind, TimelineEntityRef};
 use rusqlite::params;
@@ -31,6 +31,11 @@ impl RulingStore for SqliteRulingStore {
     fn insert(&self, draft: &RulingDraft, facts: TimelineFacts) -> Result<Ruling, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
+        if let Some(supersedes) = draft.supersedes {
+            if has_successor(&span, draft.project_id, supersedes)? {
+                return Err(already_superseded_ruling_error(supersedes.value()));
+            }
+        }
         let (entity_kind, entity_id) = entity_parts(&draft.entity);
         span.execute(
             "INSERT INTO rulings (project_id, entity_kind, entity_id, summary, supersedes_id)
@@ -76,6 +81,11 @@ impl RulingStore for SqliteRulingStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(ApiError::internal(&error.to_string())),
         }
+    }
+
+    fn has_successor(&self, project_id: u64, id: RulingId) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        has_successor(&conn, project_id, id)
     }
 
     fn list(&self, query: &RulingListQuery) -> Result<Vec<Ruling>, ApiError> {
@@ -174,6 +184,23 @@ fn recorded_at(conn: &rusqlite::Connection, id: RulingId) -> Result<String, ApiE
         |row| row.get(0),
     )
     .map_err(internal)
+}
+
+fn has_successor(
+    conn: &rusqlite::Connection,
+    project_id: u64,
+    id: RulingId,
+) -> Result<bool, ApiError> {
+    let present: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM rulings
+             WHERE project_id = ?1 AND supersedes_id = ?2
+             LIMIT 1",
+            params![project_id.to_string(), id.value() as i64],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(present.is_some())
 }
 
 /// Report a SQLite failure the caller cannot act on.
@@ -339,6 +366,39 @@ mod tests {
         assert!(
             error.to_string().contains("append-only"),
             "the refusal should say append-only, got: {error}"
+        );
+    }
+
+    #[test]
+    fn inserting_a_second_successor_for_the_same_ruling_fails() {
+        let (_dir, _database, store) = store();
+        let original = store
+            .insert(
+                &draft(1, "Hold", None, None),
+                append(json!({ "summary": "Hold" })),
+            )
+            .expect("the original lands");
+        store
+            .insert(
+                &draft(1, "Proceed", None, Some(original.id())),
+                append(json!({ "summary": "Proceed", "supersedes_id": original.id().value() })),
+            )
+            .expect("the first successor lands");
+        let error = store
+            .insert(
+                &draft(1, "Reconsider", None, Some(original.id())),
+                append(json!({
+                    "summary": "Reconsider",
+                    "supersedes_id": original.id().value(),
+                })),
+            )
+            .expect_err("a second successor is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already has a successor"),
+            "the refusal should name the invariant: {}",
+            error.message
         );
     }
 

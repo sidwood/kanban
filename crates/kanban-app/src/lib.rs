@@ -27,7 +27,7 @@ pub use catalog::{
     assert_registered_matches_exposed_catalogue, exposed_operations,
 };
 pub use comment::CommentStore;
-pub use deferrals::DeferralStore;
+pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};
@@ -44,7 +44,7 @@ pub use mutation::{
 };
 pub use plan::PlanStore;
 pub use project::{GitObservation, ProjectStore, duplicate_code_error};
-pub use rulings::RulingStore;
+pub use rulings::{RulingStore, already_superseded_ruling_error};
 pub use spec::SpecStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,

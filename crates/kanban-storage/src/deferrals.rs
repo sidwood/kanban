@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use kanban_app::{DeferralStore, TimelineEnvelope, TimelineFacts};
+use kanban_app::{
+    DeferralStore, TimelineEnvelope, TimelineFacts, already_superseded_deferral_error,
+};
 use kanban_domain::{Deferral, DeferralDraft, DeferralId, DeferralReason};
 use kanban_dto::{ApiError, DeferralListQuery, TimelineEntityKind, TimelineEntityRef};
 use rusqlite::params;
@@ -33,6 +35,11 @@ impl DeferralStore for SqliteDeferralStore {
     fn insert(&self, draft: &DeferralDraft, facts: TimelineFacts) -> Result<Deferral, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
+        if let Some(supersedes) = draft.supersedes {
+            if has_successor(&span, draft.project_id, supersedes)? {
+                return Err(already_superseded_deferral_error(supersedes.value()));
+            }
+        }
         span.execute(
             "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
                  VALUES (?1, ?2, ?3, ?4)",
@@ -76,6 +83,11 @@ impl DeferralStore for SqliteDeferralStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(error) => Err(ApiError::internal(&error.to_string())),
         }
+    }
+
+    fn has_successor(&self, project_id: u64, id: DeferralId) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        has_successor(&conn, project_id, id)
     }
 
     fn list(&self, query: &DeferralListQuery) -> Result<Vec<Deferral>, ApiError> {
@@ -140,6 +152,23 @@ fn recorded_at(conn: &rusqlite::Connection, id: DeferralId) -> Result<String, Ap
         |row| row.get(0),
     )
     .map_err(internal)
+}
+
+fn has_successor(
+    conn: &rusqlite::Connection,
+    project_id: u64,
+    id: DeferralId,
+) -> Result<bool, ApiError> {
+    let present: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM deferrals
+             WHERE project_id = ?1 AND supersedes_id = ?2
+             LIMIT 1",
+            params![project_id.to_string(), id.value() as i64],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(present.is_some())
 }
 
 /// Report a SQLite failure the caller cannot act on.
@@ -298,6 +327,42 @@ mod tests {
         assert!(
             error.to_string().contains("append-only"),
             "the refusal should say append-only, got: {error}"
+        );
+    }
+
+    #[test]
+    fn inserting_a_second_successor_for_the_same_deferral_fails() {
+        let (_dir, _database, store) = store();
+        let original = store
+            .insert(
+                &draft(1, "finding-1", "Cosmetic only", None),
+                append(json!({ "reason": "Cosmetic only" })),
+            )
+            .expect("the original lands");
+        store
+            .insert(
+                &draft(1, "finding-1", "Accepted risk", Some(original.id())),
+                append(json!({
+                    "reason": "Accepted risk",
+                    "supersedes_id": original.id().value(),
+                })),
+            )
+            .expect("the first successor lands");
+        let error = store
+            .insert(
+                &draft(1, "finding-1", "Reopened", Some(original.id())),
+                append(json!({
+                    "reason": "Reopened",
+                    "supersedes_id": original.id().value(),
+                })),
+            )
+            .expect_err("a second successor is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already has a successor"),
+            "the refusal should name the invariant: {}",
+            error.message
         );
     }
 

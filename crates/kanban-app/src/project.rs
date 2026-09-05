@@ -1149,7 +1149,7 @@ mod project_lifecycle {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 
@@ -1204,7 +1204,7 @@ mod project_lifecycle {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect_err("the registration cannot commit");
         assert_eq!(refused.code, ErrorCode::Internal);
@@ -1270,7 +1270,7 @@ mod project_lifecycle {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 

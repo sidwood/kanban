@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
 use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::plan::PlanStore;
 use crate::project::ProjectStore;
 use crate::timeline::TimelineEnvelope;
@@ -188,7 +188,11 @@ impl CommandHandler for CreateSpec {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecCreateRequest = parse_payload(&command.payload)?;
         let mut project = self
             .0
@@ -231,7 +235,11 @@ impl CommandHandler for UpdateContent {
         Ok(self.0.open(request.spec_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecContentUpdateRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
         let content = content_of(&request.content)?;
@@ -267,7 +275,11 @@ impl CommandHandler for ApproveVersion {
         Ok(self.0.open(request.spec_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecVersionApproveRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
         let approved = spec.approve_version().map_err(refuse)?;
@@ -299,7 +311,11 @@ impl CommandHandler for SupersedeVersion {
         Ok(self.0.open(request.spec_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecVersionSupersedeRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
         spec.supersede_version(request.version).map_err(refuse)?;
@@ -331,7 +347,11 @@ impl CommandHandler for JoinPlan {
         Ok(self.0.open(request.spec_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecPlanJoinRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
         let plan = self
@@ -385,7 +405,11 @@ impl CommandHandler for MoveExecution {
         Ok(self.0.open(request.spec_id)?.1.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: SpecExecutionMoveRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
         let from = spec.execution();

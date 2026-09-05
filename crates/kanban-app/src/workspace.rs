@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::{EventDescriptor, event_descriptor};
 use crate::events::{EventSink, emit_catalogued};
-use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
 use crate::timeline::TimelineEnvelope;
 
@@ -165,7 +165,11 @@ impl CommandHandler for RegisterWorkspace {
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: WorkspaceRegisterRequest = parse_payload(&command.payload)?;
         let project_id = ProjectId::new(request.project_id);
         let project = load_project(&self.projects, project_id)?;
@@ -212,7 +216,11 @@ impl CommandHandler for ObserveWorkspace {
         Ok(workspace.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: WorkspaceObserveRequest = parse_payload(&command.payload)?;
         let mut workspace = load_workspace(&self.store, request.workspace_id)?;
         let project_id = workspace.registration().project_id();
@@ -270,7 +278,11 @@ impl CommandHandler for RetireWorkspace {
         Ok(workspace.version())
     }
 
-    fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: WorkspaceRetireRequest = parse_payload(&command.payload)?;
         let mut workspace = load_workspace(&self.store, request.workspace_id)?;
         let project_id = workspace.registration().project_id();

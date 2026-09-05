@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Why one proposed Acceptance Criterion was refused.",
+  "oneOf": [
+    {
+      "description": "The outcome states nothing.",
+      "enum": [
+        "no_outcome"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "No User Story is linked (DR-PS-13).",
+      "enum": [
+        "unlinked"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The outcome is a technical command (DR-PS-15).",
+      "enum": [
+        "technical_command"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "A story link names no User Story of this form.",
+      "enum": [
+        "malformed_story"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "A story link names another Project's story.",
+      "enum": [
+        "foreign_story"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "CriterionRefusal"
+}

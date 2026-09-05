@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One proposed Acceptance Criterion: an observable outcome and the User Stories it claims, named like `CORE-S3-US6`.",
+  "properties": {
+    "outcome": {
+      "description": "The observable outcome the criterion states.",
+      "type": "string"
+    },
+    "stories": {
+      "description": "The User Stories the criterion claims, one full identity each.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "outcome",
+    "stories"
+  ],
+  "title": "CoverageCriterionProposal",
+  "type": "object"
+}

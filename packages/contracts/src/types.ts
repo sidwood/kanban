@@ -43,6 +43,11 @@ export type CommentRevisionsResponse = {
   comment: CommentRecord;
   revisions: CommentRevisionRecord[];
 };
+export type CoverageCriterionProposal = {
+  outcome: string;
+  stories: string[];
+};
+export type CriterionRefusal = 'no_outcome' | 'unlinked' | 'technical_command' | 'malformed_story' | 'foreign_story';
 export type DeferralIdentity = {
   id: number;
 };
@@ -317,6 +322,10 @@ export type ProjectRegisterRequest = {
   repository: string;
   seed_workspace: string;
 };
+export type RefusedCriterion = {
+  outcome: string;
+  reason: CriterionRefusal;
+};
 export type RulingIdentity = {
   id: number;
 };
@@ -363,6 +372,17 @@ export type SpecContentUpdateRequest = {
   content: SpecContent;
   mutation: MutationContext;
   spec_id: number;
+};
+export type SpecCoverageCheckQuery = {
+  criteria: CoverageCriterionProposal[];
+  spec_id: number;
+  version: number;
+};
+export type SpecCoverageCheckResponse = {
+  executable: boolean;
+  refused: RefusedCriterion[];
+  scope: string[];
+  uncovered: string[];
 };
 export type SpecCreateRequest = {
   content: SpecContent;

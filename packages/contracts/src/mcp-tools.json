@@ -4259,6 +4259,172 @@
     }
   },
   {
+    "description": "Check one Spec version's story coverage against proposed criteria; the executable gate refuses uncovered stories.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CoverageCriterionProposal": {
+          "additionalProperties": false,
+          "description": "One proposed Acceptance Criterion: an observable outcome and the User Stories it claims, named like `CORE-S3-US6`.",
+          "properties": {
+            "outcome": {
+              "description": "The observable outcome the criterion states.",
+              "type": "string"
+            },
+            "stories": {
+              "description": "The User Stories the criterion claims, one full identity each.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "outcome",
+            "stories"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.coverage.check` query.",
+      "properties": {
+        "criteria": {
+          "description": "The proposed criteria of the Ticket graph, every ticket's criteria together.",
+          "items": {
+            "$ref": "#/definitions/CoverageCriterionProposal"
+          },
+          "type": "array"
+        },
+        "spec_id": {
+          "description": "The Spec whose pinned version defines the story scope.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The content version the Ticket graph would deliver.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "criteria",
+        "spec_id",
+        "version"
+      ],
+      "title": "SpecCoverageCheckQuery",
+      "type": "object"
+    },
+    "name": "spec_coverage_check",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionRefusal": {
+          "description": "Why one proposed Acceptance Criterion was refused.",
+          "oneOf": [
+            {
+              "description": "The outcome states nothing.",
+              "enum": [
+                "no_outcome"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "No User Story is linked (DR-PS-13).",
+              "enum": [
+                "unlinked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The outcome is a technical command (DR-PS-15).",
+              "enum": [
+                "technical_command"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A story link names no User Story of this form.",
+              "enum": [
+                "malformed_story"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A story link names another Project's story.",
+              "enum": [
+                "foreign_story"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "RefusedCriterion": {
+          "additionalProperties": false,
+          "description": "One refused proposal with the rule it broke.",
+          "properties": {
+            "outcome": {
+              "description": "The refused proposal's outcome text.",
+              "type": "string"
+            },
+            "reason": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/CriterionRefusal"
+                }
+              ],
+              "description": "Why the domain rules refused it."
+            }
+          },
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `spec.coverage.check` query.",
+      "properties": {
+        "executable": {
+          "description": "Whether the executable gate passes: no uncovered story and no refused proposal.",
+          "type": "boolean"
+        },
+        "refused": {
+          "description": "The proposals the domain rules refused, in proposal order.",
+          "items": {
+            "$ref": "#/definitions/RefusedCriterion"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "description": "Every User Story the pinned version claims, full identities in scope order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "uncovered": {
+          "description": "The stories no criterion claims, in scope order (DR-PS-14).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "executable",
+        "refused",
+        "scope",
+        "uncovered"
+      ],
+      "title": "SpecCoverageCheckResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

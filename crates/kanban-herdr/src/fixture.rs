@@ -144,6 +144,7 @@ impl Drop for ScriptedSession {
 #[derive(Debug, Clone, Default)]
 pub struct SessionScript {
     events: Vec<Value>,
+    snapshot_states: Vec<Value>,
     delay_before_events: Option<Duration>,
     wait_met: bool,
     wait_detail: Value,
@@ -159,6 +160,15 @@ impl SessionScript {
     /// Push events delivered after subscribe.
     pub fn with_events(mut self, events: Vec<Value>) -> Self {
         self.events = events;
+        self
+    }
+
+    /// Successive full-session states served to snapshot requests on
+    /// one connection: the first request captures the first state, the
+    /// next captures the second, and the final state repeats, so a
+    /// test can script what reconciliation finds between captures.
+    pub fn with_snapshot_states(mut self, states: Vec<Value>) -> Self {
+        self.snapshot_states = states;
         self
     }
 
@@ -236,6 +246,7 @@ fn serve_connection(
     let mut writer = stream;
     let mut subscribed = false;
     let mut event_index = 0;
+    let mut snapshot_index = 0;
 
     loop {
         let mut line = String::new();
@@ -260,11 +271,20 @@ fn serve_connection(
         };
 
         let response = match request {
-            HerdrRequest::Snapshot => HerdrResponse::Snapshot(snapshot(
-                session_name,
-                product_workspace,
-                herdr_workspace.as_deref(),
-            )),
+            HerdrRequest::Snapshot => {
+                let state = script
+                    .snapshot_states
+                    .get(snapshot_index.min(script.snapshot_states.len().saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "roles": [] }));
+                snapshot_index += 1;
+                HerdrResponse::Snapshot(snapshot_with_state(
+                    session_name,
+                    product_workspace,
+                    herdr_workspace.as_deref(),
+                    state,
+                ))
+            }
             HerdrRequest::Subscribe => {
                 if let Some(message) = &script.subscribe_error {
                     HerdrResponse::Error {
@@ -331,10 +351,11 @@ fn serve_connection(
     }
 }
 
-fn snapshot(
+fn snapshot_with_state(
     session_name: &str,
     product_workspace: &str,
     herdr_workspace: Option<&str>,
+    state: Value,
 ) -> Snapshot {
     Snapshot {
         session: session_name.to_owned(),
@@ -346,7 +367,7 @@ fn snapshot(
                 .unwrap_or(product_workspace)
                 .to_owned()
         }),
-        state: json!({ "roles": [] }),
+        state,
         captured_at: "2026-09-05T04:46:00Z".to_owned(),
     }
 }

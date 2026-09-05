@@ -144,20 +144,17 @@ fn working_tree_clean(workspace_path: &str) -> bool {
 
 /// Decide whether the Workspace holds commits the repository's HEAD
 /// lacks (DR-LW-06): unique unlanded work that would be lost with the
-/// clone. Landed means reachable from the repository HEAD, so the
-/// count runs in the Workspace with the repository's object store
-/// attached read-only as an alternate — a hardlinked local clone does
-/// not carry commits the repository gained after the clone. The read
-/// never mutates either path; an undecidable answer is `None`, which
-/// reuse evaluation treats as unlanded.
+/// clone. Work can sit on any ref the Workspace holds, not only its
+/// HEAD, so the count walks them all. Landed means reachable from the
+/// repository HEAD, so the count runs in the Workspace with the
+/// repository's object store attached read-only as an alternate — a
+/// hardlinked local clone does not carry commits the repository
+/// gained after the clone. The read never mutates either path; an
+/// undecidable answer is `None`, which reuse evaluation treats as
+/// unlanded.
 fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Option<bool> {
     let repository_head = git_output(repository_path, &["rev-parse", "HEAD"])?;
-    let workspace_head = git_output(workspace_path, &["rev-parse", "HEAD"])?;
-    if repository_head == workspace_head {
-        return Some(false);
-    }
     let repository_objects = repository_objects(repository_path)?;
-    let range = format!("{repository_head}..{workspace_head}");
     let output = Command::new("git")
         .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects)
         .args([
@@ -166,7 +163,9 @@ fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Optio
             workspace_path,
             "rev-list",
             "--count",
-            &range,
+            "--all",
+            "--not",
+            &repository_head,
         ])
         .output()
         .ok()?;
@@ -337,6 +336,89 @@ mod tests {
             snapshot.unique_unlanded_commits,
             Some(false),
             "work the seed merged is landed even when the merge commit exists only there"
+        );
+    }
+
+    #[test]
+    fn unique_work_on_another_ref_reports_unlanded_at_equal_head() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        // Work left on a side branch is lost with the clone even while
+        // HEAD matches the seed.
+        git(&workspace, &["switch", "-c", "topic"]);
+        fs::write(workspace.join("topic.md"), "side branch\n")
+            .expect("the side branch change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "side work"]);
+        git(&workspace, &["switch", "-"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(true),
+            "commits on a non-HEAD ref must report as unlanded even at equal HEAD"
+        );
+    }
+
+    #[test]
+    fn unique_work_on_another_ref_reports_unlanded_at_divergent_head() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        git(&workspace, &["switch", "-c", "topic"]);
+        fs::write(workspace.join("topic.md"), "side branch\n")
+            .expect("the side branch change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "side work"]);
+        git(&workspace, &["switch", "-"]);
+        // The seed advances independently of the side branch work.
+        fs::write(Path::new(&repository).join("advance.md"), "seed work\n")
+            .expect("the seed change is written");
+        git(Path::new(&repository), &["add", "."]);
+        git(Path::new(&repository), &["commit", "-m", "seed advance"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(true),
+            "commits on a non-HEAD ref must report as unlanded even at divergent HEAD"
         );
     }
 

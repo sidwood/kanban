@@ -246,3 +246,96 @@ fn deadline_signals_default_to_the_global_deadlines() {
     assert_eq!(defaults.stall(), Duration::from_secs(3_600));
     assert_eq!(defaults.missing_result(), Duration::from_secs(7_200));
 }
+
+#[test]
+fn deadline_signals_retire_a_role_the_snapshot_no_longer_lists() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_event(at(0), &output("ghost"));
+    monitor.observe_event(at(0), &output("reviewer"));
+
+    monitor.observe_snapshot(at(700), &json!({ "roles": [{ "name": "reviewer" }] }));
+
+    let signals = monitor.evaluate(1, at(100_000));
+    let roles: Vec<&str> = signals
+        .iter()
+        .map(|signal| signal.detail["role"].as_str().expect("the role is named"))
+        .collect();
+    assert_eq!(
+        roles,
+        vec!["reviewer"],
+        "a role absent from the authoritative capture is nobody's deadline"
+    );
+}
+
+#[test]
+fn deadline_signals_retire_a_result_recovered_by_a_snapshot() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_event(at(0), &output("implementer"));
+    monitor.observe_event(at(100), &settled("implementer"));
+
+    monitor.observe_snapshot(
+        at(800),
+        &json!({ "roles": [{ "name": "implementer", "result": "done" }] }),
+    );
+
+    assert!(
+        monitor.evaluate(5, at(800 + 100_000)).is_empty(),
+        "a result the capture reports retires the missing-result deadline for good"
+    );
+}
+
+#[test]
+fn deadline_signals_retire_an_exit_a_snapshot_reports() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_event(at(0), &output("implementer"));
+
+    monitor.observe_snapshot(
+        at(700),
+        &json!({ "roles": [{ "name": "implementer", "exited": true }] }),
+    );
+
+    assert!(
+        monitor.evaluate(5, at(700 + 100_000)).is_empty(),
+        "an exit the capture reports retires every deadline the role faced"
+    );
+}
+
+#[test]
+fn deadline_signals_keep_listed_roles_on_their_observed_anchors() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_event(at(0), &output("implementer"));
+
+    monitor.observe_snapshot(at(700), &json!({ "roles": [{ "name": "implementer" }] }));
+
+    let signals = monitor.evaluate(2, at(700));
+    assert_eq!(
+        signals[0].detail["breached_after_secs"],
+        json!(700),
+        "a capture proves the role exists, not that it worked: the stall still runs from the last observed activity"
+    );
+}
+
+#[test]
+fn deadline_signals_do_not_watch_roles_known_only_from_a_snapshot() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_snapshot(at(0), &json!({ "roles": [{ "name": "stranger" }] }));
+
+    assert!(
+        monitor.evaluate(1, at(100_000)).is_empty(),
+        "a role no push event ever named raises nothing"
+    );
+}
+
+#[test]
+fn deadline_signals_leave_roles_be_when_the_state_has_no_role_list() {
+    let mut monitor = deadlines(600, 1_200);
+    monitor.observe_event(at(0), &output("implementer"));
+
+    monitor.observe_snapshot(at(700), &json!({ "tabs": 7 }));
+
+    assert_eq!(
+        monitor.evaluate(3, at(700)).len(),
+        1,
+        "state without a roles array is not authoritative about roles"
+    );
+}

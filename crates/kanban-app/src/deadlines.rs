@@ -5,7 +5,7 @@
 //! workflow transition (DR-HB-04) — and the consumer that persists
 //! them as Attention items lands in KAN-S11.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
 use kanban_dto::{HerdrGlobalDefaults, HerdrProjectSettings};
@@ -144,6 +144,41 @@ impl DeadlineMonitor {
         }
     }
 
+    /// Reconcile the watched roles against one authoritative capture
+    /// of session state, taken at `at`: a role the capture's `roles`
+    /// list no longer names retires, and so does a listed role whose
+    /// entry reports `result` (any non-null value) or `exited`
+    /// (true). Push events swallowed by a disconnected gap cannot be
+    /// replayed — the subscription carries no resume cursor — so this
+    /// is how a result, an exit, or a disappearance that landed while
+    /// disconnected retires a pending deadline instead of
+    /// phantom-breaching forever. A listed role keeps its observed
+    /// anchors, because a capture proves existence, not activity, and
+    /// a role no push event ever named is not watched. State without
+    /// a `roles` array is not authoritative about roles and changes
+    /// nothing.
+    pub fn observe_snapshot(&mut self, at: SystemTime, state: &Value) {
+        let Some(entries) = state.get("roles").and_then(Value::as_array) else {
+            return;
+        };
+        let present: HashSet<&str> = entries.iter().filter_map(snapshot_role).collect();
+        self.roles.retain(|role, _| present.contains(role.as_str()));
+        for entry in entries {
+            let Some(role) = snapshot_role(entry) else {
+                continue;
+            };
+            let Some(tracked) = self.roles.get_mut(role) else {
+                continue;
+            };
+            if entry.get("result").is_some_and(|value| !value.is_null()) {
+                tracked.result_at = Some(at);
+            }
+            if entry.get("exited").and_then(Value::as_bool) == Some(true) {
+                tracked.exited_at = Some(at);
+            }
+        }
+    }
+
     /// Every attention signal breached at `now`, one per role and
     /// deadline, in role order.
     pub fn evaluate(&self, project_id: u64, now: SystemTime) -> Vec<AttentionSignal> {
@@ -205,6 +240,19 @@ fn secs_since(now: SystemTime, anchor: SystemTime) -> u64 {
     now.duration_since(anchor)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0)
+}
+
+/// The role one snapshot entry names: a bare string, or an object
+/// carrying its name in `name`.
+fn snapshot_role(entry: &Value) -> Option<&str> {
+    match entry {
+        Value::String(role) => Some(role.as_str()),
+        Value::Object(object) => match object.get("name") {
+            Some(Value::String(role)) => Some(role.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Whole seconds from the Unix epoch, for signal detail.

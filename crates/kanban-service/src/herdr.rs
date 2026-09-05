@@ -366,8 +366,11 @@ impl HerdrObserverHandle {
     fn run(self) {
         let mut failures = 0u32;
         let mut live_once = false;
-        // The monitor outlives every redial: roles observed before a
-        // disconnect stay watched once the session returns.
+        // The monitor outlives every redial — roles observed before a
+        // disconnect stay watched once the session returns — and every
+        // settled capture reconciles it, so roles that finished,
+        // exited, or disappeared inside the gap retire instead of
+        // breaching forever.
         let mut deadlines = DeadlineMonitor::new(self.session_tuning().1);
         while !self.stopped() {
             if self.observe_live(&mut live_once, &mut deadlines) {
@@ -462,9 +465,17 @@ impl HerdrObserverHandle {
         // The settled snapshot is also reconciliation's first
         // baseline: the first whole-session comparison waits a full
         // cadence beyond it (DR-HB-09).
+        let now = SystemTime::now();
         let (plan, deadline_config) = self.session_tuning();
         deadlines.retune(deadline_config);
-        let mut reconciler = Reconciler::seeded_with(plan, &snapshot, SystemTime::now());
+        let mut reconciler = Reconciler::seeded_with(plan, &snapshot, now);
+        // The settled capture is as authoritative for the deadlines
+        // as it is for the baseline: the push events a disconnected
+        // gap swallowed cannot be replayed, so this is the path that
+        // retires a role that finished, exited, or disappeared while
+        // the subscription was down — before the first post-reconnect
+        // evaluation can report a phantom breach.
+        deadlines.observe_snapshot(now, &snapshot.state);
         match self.append_snapshot(&snapshot, reason) {
             Ok(()) => self.record_snapshot(snapshot.captured_at),
             Err(error) => self.mark_error(error),
@@ -525,23 +536,29 @@ impl HerdrObserverHandle {
         }
     }
 
-    /// Capture full session state through the live subscription and
-    /// append the difference it reports, if any (DR-HB-09, DR-HB-10).
-    /// Returns `None` when the capture failed and the subscription
-    /// cycle must end so the observer redials.
+    /// Capture full session state through the live subscription,
+    /// append the difference it reports, if any (DR-HB-09, DR-HB-10),
+    /// and reconcile the deadlines with the authoritative capture the
+    /// same way a settled reconnect does. Returns `None` when the
+    /// capture failed and the subscription cycle must end so the
+    /// observer redials.
     fn capture_session(
         &self,
         reconciler: &mut Reconciler,
         client: &mut SessionClient,
         deadlines: &mut DeadlineMonitor,
     ) -> Option<()> {
-        match reconciler.reconcile(SystemTime::now(), client) {
-            Ok(Some(difference)) => self.append_reconciliation(&difference),
-            Ok(None) => {}
+        let snapshot = match client.snapshot() {
+            Ok(snapshot) => snapshot,
             Err(error) => {
                 self.mark_connected(false, Some(error.to_string()));
                 return None;
             }
+        };
+        let now = SystemTime::now();
+        deadlines.observe_snapshot(now, &snapshot.state);
+        if let Some(difference) = reconciler.adopt(now, snapshot) {
+            self.append_reconciliation(&difference);
         }
         // Each capture retunes the cadence and the deadlines, so
         // interval, fallback, and deadline changes land at the next
@@ -1826,6 +1843,139 @@ mod tests {
                     .any(|signal| signal.reason == STALL_DEADLINE_REASON)
             }),
             "the tightened stall deadline applies to the live observation"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC3, reconnect recovery: the settled capture a
+    /// reconnect takes is authoritative, so a role that disappeared
+    /// inside the disconnected gap retires its deadline instead of
+    /// phantom-breaching forever, while a role the capture still
+    /// lists keeps its genuine breach.
+    #[test]
+    fn roles_that_disappear_across_a_reconnect_retire_their_deadlines() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_events(vec![
+                    json!({ "kind": "role.output", "role": "reviewer", "text": "working" }),
+                    json!({ "kind": "role.output", "role": "ghost", "text": "working" }),
+                ])
+                .close_after_hold(Duration::from_millis(300))
+                .with_reconnect_script(
+                    SessionScript::default()
+                        .with_snapshot_states(vec![json!({ "roles": [{ "name": "reviewer" }] })]),
+                ),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.stall_deadline_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        // The listed role's stall is genuine — quiet since before the
+        // gap — so its signal must survive the reconnect that
+        // retired the disappeared role.
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                observer.attention_signals(1).iter().any(|signal| {
+                    signal.reason == STALL_DEADLINE_REASON
+                        && signal.detail["role"] == json!("reviewer")
+                })
+            }),
+            "the role the reconnect capture still lists keeps its genuine stall signal"
+        );
+        let roles: Vec<_> = observer
+            .attention_signals(1)
+            .into_iter()
+            .map(|signal| signal.detail["role"].clone())
+            .collect();
+        assert!(
+            !roles.contains(&json!("ghost")),
+            "a role that disappeared inside the gap never breaches: {roles:?}"
+        );
+
+        observer.shutdown();
+    }
+
+    /// Reconnect recovery keeps retention honest: a retired phantom
+    /// breach stops re-reporting, so it cannot churn the
+    /// retained-signal buffer and evict a genuine signal. The
+    /// reconnect's delayed result retires the listed role mid-breach,
+    /// then a burst of role-less events drives one evaluation each —
+    /// enough to overflow the whole buffer were the disappeared role
+    /// still breaching.
+    #[test]
+    fn retired_phantom_breaches_cannot_evict_genuine_signals() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_events(vec![
+                    json!({ "kind": "role.output", "role": "reviewer", "text": "working" }),
+                    json!({ "kind": "role.output", "role": "ghost", "text": "working" }),
+                ])
+                .close_after_hold(Duration::from_millis(300))
+                .with_reconnect_script(
+                    SessionScript::default()
+                        .with_snapshot_states(vec![json!({ "roles": [{ "name": "reviewer" }] })])
+                        .with_delayed_events(Duration::from_millis(1_500))
+                        .with_events({
+                            let mut events = vec![json!({
+                                "kind": "role.result",
+                                "role": "reviewer",
+                                "outcome": "done"
+                            })];
+                            events.extend(
+                                (0..300).map(|i| json!({ "kind": "session.heartbeat", "i": i })),
+                            );
+                            events
+                        }),
+                ),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.stall_deadline_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        assert!(
+            soon_enough(Duration::from_secs(10), || {
+                telemetry_details(&database)
+                    .iter()
+                    .filter(|detail| detail["event"] == json!("session.heartbeat"))
+                    .count()
+                    == 300
+            }),
+            "every post-reconnect event was observed, driving an evaluation per event"
+        );
+
+        let roles: Vec<_> = observer
+            .attention_signals(1)
+            .into_iter()
+            .map(|signal| signal.detail["role"].clone())
+            .collect();
+        assert!(
+            !roles.contains(&json!("ghost")),
+            "the disappeared role retired instead of re-breaching per event: {roles:?}"
+        );
+        assert!(
+            roles.contains(&json!("reviewer")),
+            "the genuine breach stays retained past the flood that would have evicted it"
         );
 
         observer.shutdown();

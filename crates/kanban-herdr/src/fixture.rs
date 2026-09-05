@@ -95,12 +95,20 @@ impl ScriptedSession {
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let index = accept_connections.fetch_add(1, Ordering::Relaxed);
+                    let script = if index == 0 {
+                        script.clone()
+                    } else {
+                        script
+                            .reconnect_script
+                            .clone()
+                            .unwrap_or_else(|| script.clone())
+                    };
                     serve_connection(
                         stream,
                         &session_name,
                         &product_workspace,
                         herdr_workspace.clone(),
-                        script.clone(),
+                        script,
                         index,
                         &served_requests,
                     );
@@ -154,6 +162,7 @@ pub struct SessionScript {
     hold_before_close: Option<Duration>,
     flap: bool,
     silent: bool,
+    reconnect_script: Option<Arc<SessionScript>>,
 }
 
 impl SessionScript {
@@ -213,6 +222,16 @@ impl SessionScript {
     /// later connections stay open like a healthy session.
     pub fn close_after_hold(mut self, hold: Duration) -> Self {
         self.hold_before_close = Some(hold);
+        self
+    }
+
+    /// The script every connection after the first serves, so a test
+    /// can script what a reconnect finds: state and events that
+    /// changed across the disconnected gap. Later connections stay
+    /// open like a healthy session regardless of this script's close
+    /// directives.
+    pub fn with_reconnect_script(mut self, script: SessionScript) -> Self {
+        self.reconnect_script = Some(Arc::new(script));
         self
     }
 

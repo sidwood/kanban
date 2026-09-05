@@ -10,6 +10,7 @@ pub mod health;
 pub mod herdr;
 pub mod initiative;
 pub mod mutation;
+pub mod plan;
 pub mod project;
 pub mod ruling;
 pub mod schema;
@@ -44,6 +45,12 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use mutation::MutationContext;
+pub use plan::{
+    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
+    PlanCreateRequest, PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery,
+    PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
+};
 pub use project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
@@ -138,6 +145,25 @@ mod tests {
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
                 "MutationContext",
+                "PlanActivateRequest",
+                "PlanArchiveRequest",
+                "PlanCancelRequest",
+                "PlanCompleteRequest",
+                "PlanCreateRequest",
+                "PlanEdge",
+                "PlanEdgeAddRequest",
+                "PlanEdgeRemoveRequest",
+                "PlanGetQuery",
+                "PlanGetResponse",
+                "PlanListQuery",
+                "PlanListResponse",
+                "PlanRecord",
+                "PlanReplanRequest",
+                "PlanSpecAddRequest",
+                "PlanSpecMoveRequest",
+                "PlanSpecRemoveRequest",
+                "PlanState",
+                "PlanVersionRecord",
                 "ProjectArchiveRequest",
                 "ProjectCounters",
                 "ProjectListQuery",

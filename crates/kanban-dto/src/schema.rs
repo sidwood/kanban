@@ -28,6 +28,12 @@ use crate::initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 use crate::mutation::MutationContext;
+use crate::plan::{
+    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
+    PlanCreateRequest, PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery,
+    PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
+};
 use crate::project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
@@ -108,6 +114,25 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(InitiativeRenameRequest),
         ),
         ("MutationContext", schema_for!(MutationContext)),
+        ("PlanActivateRequest", schema_for!(PlanActivateRequest)),
+        ("PlanArchiveRequest", schema_for!(PlanArchiveRequest)),
+        ("PlanCancelRequest", schema_for!(PlanCancelRequest)),
+        ("PlanCompleteRequest", schema_for!(PlanCompleteRequest)),
+        ("PlanCreateRequest", schema_for!(PlanCreateRequest)),
+        ("PlanEdge", schema_for!(PlanEdge)),
+        ("PlanEdgeAddRequest", schema_for!(PlanEdgeAddRequest)),
+        ("PlanEdgeRemoveRequest", schema_for!(PlanEdgeRemoveRequest)),
+        ("PlanGetQuery", schema_for!(PlanGetQuery)),
+        ("PlanGetResponse", schema_for!(PlanGetResponse)),
+        ("PlanListQuery", schema_for!(PlanListQuery)),
+        ("PlanListResponse", schema_for!(PlanListResponse)),
+        ("PlanRecord", schema_for!(PlanRecord)),
+        ("PlanReplanRequest", schema_for!(PlanReplanRequest)),
+        ("PlanSpecAddRequest", schema_for!(PlanSpecAddRequest)),
+        ("PlanSpecMoveRequest", schema_for!(PlanSpecMoveRequest)),
+        ("PlanSpecRemoveRequest", schema_for!(PlanSpecRemoveRequest)),
+        ("PlanState", schema_for!(PlanState)),
+        ("PlanVersionRecord", schema_for!(PlanVersionRecord)),
         ("ProjectArchiveRequest", schema_for!(ProjectArchiveRequest)),
         ("ProjectCounters", schema_for!(ProjectCounters)),
         ("ProjectListQuery", schema_for!(ProjectListQuery)),

@@ -2,9 +2,9 @@
 //! application core, and the socket transport together and keeps
 //! serving after the desktop UI quits (ADR-0001).
 
+mod backup_scheduler;
 pub mod git_observer;
 pub mod herdr;
-mod backup_scheduler;
 pub mod timeline;
 
 #[cfg(test)]

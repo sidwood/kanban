@@ -8,13 +8,12 @@ use std::sync::Arc;
 use kanban_domain::{Initiative, InitiativeId, InitiativeName};
 use kanban_dto::{
     ApiError, InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, TimelineEntityKind,
-    TimelineEntityRef, TimelineEventKind,
+    InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest, LiveEventName,
+    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
@@ -114,7 +113,7 @@ impl CommandHandler for CreateInitiative {
         let initiative = self.store.create(&name, &|id| {
             transition(id, "created", json!({ "name": name.as_str() }))
         })?;
-        announce(effects, event_descriptor("initiative.created"), &initiative);
+        announce(effects, LiveEventName::InitiativeCreated, &initiative);
         encode_record(&initiative)
     }
 }
@@ -157,7 +156,7 @@ impl CommandHandler for RenameInitiative {
                 json!({ "from": previous, "to": initiative.name() }),
             ),
         )?;
-        announce(effects, event_descriptor("initiative.renamed"), &initiative);
+        announce(effects, LiveEventName::InitiativeRenamed, &initiative);
         encode_record(&initiative)
     }
 }
@@ -193,11 +192,7 @@ impl CommandHandler for ArchiveInitiative {
             &initiative,
             transition(initiative.id(), "archived", json!({})),
         )?;
-        announce(
-            effects,
-            event_descriptor("initiative.archived"),
-            &initiative,
-        );
+        announce(effects, LiveEventName::InitiativeArchived, &initiative);
         encode_record(&initiative)
     }
 }
@@ -243,11 +238,7 @@ fn encode_record(initiative: &Initiative) -> Result<Value, ApiError> {
 
 /// Publish the change on the live event stream, matching the
 /// durable timeline append.
-fn announce(
-    effects: &dyn CommandEffects,
-    event: &crate::event_catalog::EventDescriptor,
-    initiative: &Initiative,
-) {
+fn announce(effects: &dyn CommandEffects, event: LiveEventName, initiative: &Initiative) {
     emit_catalogued(effects, event, &record_of(initiative));
 }
 

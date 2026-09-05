@@ -266,7 +266,7 @@ fn render_event_catalog() -> String {
 
     let mut event_names = Vec::new();
     for event in exposed_events() {
-        event_names.push(format!("  '{}',", event.name));
+        event_names.push(format!("  '{}',", event.name.as_str()));
     }
 
     output.push_str("export const KANBAN_CLIENT_EVENTS = [\n");
@@ -275,7 +275,11 @@ fn render_event_catalog() -> String {
     output.push_str("export type KanbanEventName = (typeof KANBAN_CLIENT_EVENTS)[number];\n\n");
     output.push_str("export type KanbanEventPayloadMap = {\n");
     for event in exposed_events() {
-        output.push_str(&format!("  '{}': {};\n", event.name, event.payload_schema));
+        output.push_str(&format!(
+            "  '{}': {};\n",
+            event.name.as_str(),
+            event.payload_schema
+        ));
     }
     output.push_str("};\n\n");
     output.push_str("export type KanbanLiveEvent = {\n");
@@ -495,9 +499,9 @@ mod tests {
             fs::read_to_string(temp_root.join("src/client.ts")).expect("client exists");
         for event in exposed_events() {
             assert!(
-                client_source.contains(&format!("'{}'", event.name)),
+                client_source.contains(&format!("'{}'", event.name.as_str())),
                 "missing event `{}` in generated client",
-                event.name
+                event.name.as_str()
             );
         }
 

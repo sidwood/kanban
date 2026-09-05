@@ -5,6 +5,7 @@
 //! own timeline inside the same write, no delete exists, and the
 //! execution track never touches a content version.
 
+use kanban_dto::LiveEventName;
 use std::sync::Arc;
 
 use kanban_domain::{
@@ -23,7 +24,6 @@ use kanban_dto::{
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::plan::PlanStore;
@@ -215,7 +215,7 @@ impl CommandHandler for CreateSpec {
                 json!({ "project_id": identity.value(), "number": number.value() }),
             )
         })?;
-        announce(events, "spec.created", &spec);
+        announce(events, LiveEventName::SpecCreated, &spec);
         encode_record(&spec)
     }
 }
@@ -291,7 +291,7 @@ impl CommandHandler for ApproveVersion {
                 json!({ "version": approved }),
             ),
         )?;
-        announce(events, "spec.version.approved", &spec);
+        announce(events, LiveEventName::SpecVersionApproved, &spec);
         encode_record(&spec)
     }
 }
@@ -327,7 +327,7 @@ impl CommandHandler for SupersedeVersion {
                 json!({ "version": request.version }),
             ),
         )?;
-        announce(events, "spec.version.superseded", &spec);
+        announce(events, LiveEventName::SpecVersionSuperseded, &spec);
         encode_record(&spec)
     }
 }
@@ -385,7 +385,7 @@ impl CommandHandler for JoinPlan {
                 json!({ "plan_id": plan.id().value() }),
             ),
         )?;
-        announce(events, "spec.planned", &spec);
+        announce(events, LiveEventName::SpecPlanned, &spec);
         encode_record(&spec)
     }
 }
@@ -426,7 +426,7 @@ impl CommandHandler for MoveExecution {
                 }),
             ),
         )?;
-        announce(events, "spec.execution.moved", &spec);
+        announce(events, LiveEventName::SpecExecutionMoved, &spec);
         encode_record(&spec)
     }
 }
@@ -592,8 +592,8 @@ fn encode_record(spec: &Spec) -> Result<Value, ApiError> {
 /// record the command returns. Content edits announce nothing live:
 /// the editor that drives them holds the response, while lifecycle
 /// changes interest every surface.
-fn announce(events: &dyn EventSink, name: &str, spec: &Spec) {
-    emit_catalogued(events, event_descriptor(name), &record_of(spec));
+fn announce(events: &dyn EventSink, name: LiveEventName, spec: &Spec) {
+    emit_catalogued(events, name, &record_of(spec));
 }
 
 #[cfg(test)]

@@ -7,13 +7,13 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kanban_domain::{CommitIdentity, EvidenceItem, EvidenceKind, RelativePath, is_entity_kind};
 use kanban_dto::{
     ApiError, EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceListSummary, EvidenceRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    EvidenceListSummary, EvidenceRecord, LiveEventName, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::dispatch::{Core, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
@@ -165,7 +165,7 @@ impl CommandHandler for AttachEvidence {
                 )?
             }
         };
-        announce(effects, "evidence.attached", &item);
+        announce(effects, LiveEventName::EvidenceAttached, &item);
         encode_record(&item)
     }
 }
@@ -287,14 +287,14 @@ fn encode_record(item: &EvidenceItem) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(item)).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
-fn announce(effects: &dyn CommandEffects, kind: &str, item: &EvidenceItem) {
-    emit_catalogued(effects, event_descriptor(kind), &record_of(item));
+fn announce(effects: &dyn CommandEffects, kind: LiveEventName, item: &EvidenceItem) {
+    emit_catalogued(effects, kind, &record_of(item));
 }
 
 fn announce_list(effects: &dyn CommandEffects, project_id: u64, count: usize) {
     emit_catalogued(
         effects,
-        event_descriptor("evidence.listed"),
+        LiveEventName::EvidenceListed,
         &EvidenceListSummary { project_id, count },
     );
 }

@@ -7,12 +7,11 @@ use std::sync::Arc;
 use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, TextError};
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse, TimelineEntityKind, TimelineEntityRef,
+    CommentRevisionsResponse, LiveEventName, TimelineEntityKind, TimelineEntityRef,
 };
 use serde_json::Value;
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
@@ -93,7 +92,7 @@ impl CommandHandler for CreateComment {
         let text = parse_text(&request.text)?;
         let target = parse_target(&request.target)?;
         let comment = self.store.create(project.id().value(), &target, &text)?;
-        announce(effects, event_descriptor("comment.created"), &comment);
+        announce(effects, LiveEventName::CommentCreated, &comment);
         encode_record(&comment)
     }
 }
@@ -127,7 +126,7 @@ impl CommandHandler for EditComment {
             .edit(text)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store.save(&comment)?;
-        announce(effects, event_descriptor("comment.edited"), &comment);
+        announce(effects, LiveEventName::CommentEdited, &comment);
         encode_record(&comment)
     }
 }
@@ -181,11 +180,7 @@ fn encode_record(comment: &Comment) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(comment)).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
-fn announce(
-    effects: &dyn CommandEffects,
-    event: &crate::event_catalog::EventDescriptor,
-    comment: &Comment,
-) {
+fn announce(effects: &dyn CommandEffects, event: LiveEventName, comment: &Comment) {
     emit_catalogued(effects, event, &record_of(comment));
 }
 

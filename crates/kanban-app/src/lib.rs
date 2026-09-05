@@ -71,7 +71,7 @@ mod tests {
                 known_schemas.contains(event.payload_schema),
                 "unknown payload schema `{}` for `{}`",
                 event.payload_schema,
-                event.name
+                event.name.as_str()
             );
         }
     }
@@ -84,48 +84,23 @@ mod tests {
             assert!(
                 seen.insert(event.name),
                 "duplicate event name `{}`",
-                event.name
+                event.name.as_str()
             );
         }
     }
 
     #[test]
     fn exposed_events_match_the_live_event_name_catalogue() {
-        let mut names: Vec<_> = exposed_events().iter().map(|event| event.name).collect();
+        let mut names: Vec<_> = exposed_events()
+            .iter()
+            .map(|event| event.name.as_str())
+            .collect();
         names.sort_unstable();
 
-        let mut catalogue: Vec<_> = [
-            kanban_dto::LiveEventName::InitiativeCreated,
-            kanban_dto::LiveEventName::InitiativeRenamed,
-            kanban_dto::LiveEventName::InitiativeArchived,
-            kanban_dto::LiveEventName::ProjectRegistered,
-            kanban_dto::LiveEventName::ProjectArchived,
-            kanban_dto::LiveEventName::PlanCreated,
-            kanban_dto::LiveEventName::PlanActivated,
-            kanban_dto::LiveEventName::PlanReplanned,
-            kanban_dto::LiveEventName::PlanCompleted,
-            kanban_dto::LiveEventName::PlanCancelled,
-            kanban_dto::LiveEventName::PlanArchived,
-            kanban_dto::LiveEventName::SpecCreated,
-            kanban_dto::LiveEventName::SpecPlanned,
-            kanban_dto::LiveEventName::SpecVersionApproved,
-            kanban_dto::LiveEventName::SpecVersionSuperseded,
-            kanban_dto::LiveEventName::SpecExecutionMoved,
-            kanban_dto::LiveEventName::CommentCreated,
-            kanban_dto::LiveEventName::CommentEdited,
-            kanban_dto::LiveEventName::RulingRecorded,
-            kanban_dto::LiveEventName::RulingSuperseded,
-            kanban_dto::LiveEventName::DeferralRecorded,
-            kanban_dto::LiveEventName::DeferralSuperseded,
-            kanban_dto::LiveEventName::EvidenceAttached,
-            kanban_dto::LiveEventName::EvidenceListed,
-            kanban_dto::LiveEventName::WorkspaceRegistered,
-            kanban_dto::LiveEventName::WorkspaceObserved,
-            kanban_dto::LiveEventName::WorkspaceRetired,
-        ]
-        .into_iter()
-        .map(kanban_dto::LiveEventName::as_str)
-        .collect();
+        let mut catalogue: Vec<_> = kanban_dto::LiveEventName::ALL
+            .iter()
+            .map(|name| name.as_str())
+            .collect();
         catalogue.sort_unstable();
 
         assert_eq!(names, catalogue, "the catalogues must agree");

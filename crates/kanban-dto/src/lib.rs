@@ -30,8 +30,8 @@ pub use deferral::{
 pub use error::{ApiError, ErrorCode};
 pub use event::{
     DecodeLiveEventError, DeferralIdentity, EventEnvelope, EvidenceListSummary,
-    InvalidLiveEventPayloadError, LiveEvent, LiveEventName, RulingIdentity, UnknownLiveEventError,
-    decode_live_event,
+    InvalidLiveEventPayloadError, LiveEvent, LiveEventDescriptor, LiveEventName, RulingIdentity,
+    UnknownLiveEventError, decode_live_event, event_descriptor, live_event_catalog,
 };
 pub use evidence::{
     EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,

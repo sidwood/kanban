@@ -5,6 +5,7 @@
 //! commands, every change appends a timeline row on the Project's own
 //! timeline inside the same write, and no delete exists.
 
+use kanban_dto::LiveEventName;
 use std::sync::Arc;
 
 use kanban_domain::{
@@ -19,7 +20,6 @@ use kanban_dto::{
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
@@ -256,7 +256,7 @@ impl CommandHandler for CreatePlan {
                 json!({ "project_id": identity.value(), "number": number }),
             )
         })?;
-        announce(effects, "plan.created", &plan);
+        announce(effects, LiveEventName::PlanCreated, &plan);
         encode_record(&plan)
     }
 }
@@ -502,7 +502,7 @@ impl CommandHandler for ActivatePlan {
                 }),
             ),
         )?;
-        announce(effects, "plan.activated", &plan);
+        announce(effects, LiveEventName::PlanActivated, &plan);
         encode_record(&plan)
     }
 }
@@ -544,7 +544,7 @@ impl CommandHandler for ReplanPlan {
                 json!({ "reserved_version": reserved, "superseded_version": superseded }),
             ),
         )?;
-        announce(effects, "plan.replanned", &plan);
+        announce(effects, LiveEventName::PlanReplanned, &plan);
         encode_record(&plan)
     }
 }
@@ -576,7 +576,7 @@ impl CommandHandler for CompletePlan {
             None,
             transition(project.id(), plan.id(), "completed", json!({})),
         )?;
-        announce(effects, "plan.completed", &plan);
+        announce(effects, LiveEventName::PlanCompleted, &plan);
         encode_record(&plan)
     }
 }
@@ -608,7 +608,7 @@ impl CommandHandler for CancelPlan {
             None,
             transition(project.id(), plan.id(), "cancelled", json!({})),
         )?;
-        announce(effects, "plan.cancelled", &plan);
+        announce(effects, LiveEventName::PlanCancelled, &plan);
         encode_record(&plan)
     }
 }
@@ -640,7 +640,7 @@ impl CommandHandler for ArchivePlan {
             None,
             transition(project.id(), plan.id(), "archived", json!({})),
         )?;
-        announce(effects, "plan.archived", &plan);
+        announce(effects, LiveEventName::PlanArchived, &plan);
         encode_record(&plan)
     }
 }
@@ -766,8 +766,8 @@ fn encode_record(plan: &Plan) -> Result<Value, ApiError> {
 /// record the command returns. Shape edits announce nothing live: the
 /// editor that drives them holds the response, while lifecycle
 /// changes interest every surface.
-fn announce(effects: &dyn CommandEffects, name: &str, plan: &Plan) {
-    emit_catalogued(effects, event_descriptor(name), &record_of(plan));
+fn announce(effects: &dyn CommandEffects, name: LiveEventName, plan: &Plan) {
+    emit_catalogued(effects, name, &record_of(plan));
 }
 
 #[cfg(test)]

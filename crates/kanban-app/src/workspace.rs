@@ -2,6 +2,7 @@
 //! Observation reads git state through the git observer port and never
 //! mutates the repository; health transitions append timeline rows.
 
+use kanban_dto::LiveEventName;
 use std::sync::Arc;
 
 use kanban_domain::{ProjectId, Workspace, WorkspaceHealth, WorkspaceId, WorkspaceRegistration};
@@ -13,7 +14,6 @@ use kanban_dto::{
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::{EventDescriptor, event_descriptor};
 use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
@@ -193,7 +193,7 @@ impl CommandHandler for RegisterWorkspace {
             transition(project_id, id, "registered", facts.clone())
                 .expect("a minted Workspace identity names a Project")
         })?;
-        announce(events, event_descriptor("workspace.registered"), &workspace);
+        announce(events, LiveEventName::WorkspaceRegistered, &workspace);
         encode_record(&workspace)
     }
 }
@@ -254,7 +254,7 @@ impl CommandHandler for ObserveWorkspace {
             )?
         };
         self.store.save(&workspace, envelope)?;
-        announce(events, event_descriptor("workspace.observed"), &workspace);
+        announce(events, LiveEventName::WorkspaceObserved, &workspace);
         encode_record(&workspace)
     }
 }
@@ -306,7 +306,7 @@ impl CommandHandler for RetireWorkspace {
             )?
         };
         self.store.save(&workspace, envelope)?;
-        announce(events, event_descriptor("workspace.retired"), &workspace);
+        announce(events, LiveEventName::WorkspaceRetired, &workspace);
         encode_record(&workspace)
     }
 }
@@ -402,7 +402,7 @@ fn encode_record(workspace: &Workspace) -> Result<Value, ApiError> {
         .map_err(|error| ApiError::internal(&error.to_string()))
 }
 
-fn announce(events: &dyn EventSink, event: &EventDescriptor, workspace: &Workspace) {
+fn announce(events: &dyn EventSink, event: LiveEventName, workspace: &Workspace) {
     emit_catalogued(events, event, &record_of(workspace));
 }
 

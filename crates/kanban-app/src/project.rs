@@ -11,14 +11,13 @@ use std::sync::Arc;
 
 use kanban_domain::{InitiativeId, NumberKind, Project, ProjectId, ProjectRegistration};
 use kanban_dto::{
-    ApiError, ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse,
-    ProjectRecord, ProjectRegisterRequest, TimelineEntityKind, TimelineEntityRef,
-    TimelineEventKind,
+    ApiError, LiveEventName, ProjectArchiveRequest, ProjectCounters, ProjectListQuery,
+    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, TimelineEntityKind,
+    TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::{EventDescriptor, event_descriptor};
 use crate::events::emit_catalogued;
 use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
 use crate::initiative::InitiativeStore;
@@ -192,7 +191,7 @@ impl CommandHandler for RegisterProject {
         let observed = project.clone();
         let observer = self.herdr_observer.clone();
         effects.after_commit(Box::new(move || observer.observe(&observed)));
-        announce(effects, event_descriptor("project.registered"), &project);
+        announce(effects, LiveEventName::ProjectRegistered, &project);
         encode_record(&project)
     }
 }
@@ -234,7 +233,7 @@ impl CommandHandler for ArchiveProject {
         let archived = project.id().value();
         let observer = self.herdr_observer.clone();
         effects.after_commit(Box::new(move || observer.stop_observing(archived)));
-        announce(effects, event_descriptor("project.archived"), &project);
+        announce(effects, LiveEventName::ProjectArchived, &project);
         encode_record(&project)
     }
 }
@@ -300,7 +299,7 @@ fn encode_record(project: &Project) -> Result<Value, ApiError> {
 
 /// Publish the change on the live event stream as exactly the record
 /// the command returns, matching the durable timeline append.
-fn announce(effects: &dyn CommandEffects, event: &EventDescriptor, project: &Project) {
+fn announce(effects: &dyn CommandEffects, event: LiveEventName, project: &Project) {
     emit_catalogued(effects, event, &record_of(project));
 }
 

@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use kanban_domain::{Ruling, RulingDraft, RulingEntityRef, RulingId, RulingSummary};
 use kanban_dto::{
-    ApiError, RulingIdentity, RulingListQuery, RulingListResponse, RulingRecord,
+    ApiError, LiveEventName, RulingIdentity, RulingListQuery, RulingListResponse, RulingRecord,
     RulingRecordRequest, RulingSupersedeRequest, TimelineEntityRef,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
@@ -88,7 +87,7 @@ impl CommandHandler for RecordRuling {
                 facts: json!({ "summary": ruling_summary(&draft) }),
             },
         )?;
-        announce(effects, event_descriptor("ruling.recorded"), &ruling);
+        announce(effects, LiveEventName::RulingRecorded, &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -130,7 +129,7 @@ impl CommandHandler for SupersedeRuling {
                 }),
             },
         )?;
-        announce(effects, event_descriptor("ruling.superseded"), &ruling);
+        announce(effects, LiveEventName::RulingSuperseded, &ruling);
         serde_json::to_value(encode_record(&ruling))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -189,11 +188,7 @@ fn encode_record(ruling: &Ruling) -> RulingRecord {
     }
 }
 
-fn announce(
-    effects: &dyn CommandEffects,
-    event: &crate::event_catalog::EventDescriptor,
-    ruling: &Ruling,
-) {
+fn announce(effects: &dyn CommandEffects, event: LiveEventName, ruling: &Ruling) {
     emit_catalogued(
         effects,
         event,

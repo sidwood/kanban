@@ -1,9 +1,8 @@
 //! The port commands use to publish ordered events.
 
+use kanban_dto::LiveEventName;
 use serde::Serialize;
 use serde_json::Value;
-
-use crate::event_catalog::EventDescriptor;
 
 /// Where commands publish events. The transport's broker implements
 /// this, assigning sequence numbers and delivering to every
@@ -17,11 +16,11 @@ pub trait EventSink: Send + Sync {
 /// Publish one catalogued live event with a typed payload.
 pub fn emit_catalogued<S: EventSink + ?Sized>(
     sink: &S,
-    event: &EventDescriptor,
+    event: LiveEventName,
     payload: &impl Serialize,
 ) {
     let payload = serde_json::to_value(payload).expect("catalogued payload serialises");
-    sink.emit(event.name, payload);
+    sink.emit(event.as_str(), payload);
 }
 
 /// An [`EventSink`] that discards events, for cores that run without
@@ -37,11 +36,10 @@ impl EventSink for NoopEventSink {
 mod tests {
     use std::sync::Mutex;
 
-    use kanban_dto::InitiativeRecord;
+    use kanban_dto::{InitiativeRecord, LiveEventName};
     use serde_json::{Value, json};
 
     use super::{EventSink, emit_catalogued};
-    use crate::event_catalog::exposed_events;
 
     #[derive(Debug, Default)]
     struct RecordingSink {
@@ -60,10 +58,6 @@ mod tests {
     #[test]
     fn catalogued_emits_use_the_descriptor_name() {
         let sink = RecordingSink::default();
-        let event = exposed_events()
-            .iter()
-            .find(|descriptor| descriptor.name == "initiative.created")
-            .expect("the catalogue lists initiative.created");
         let payload = InitiativeRecord {
             id: 1,
             name: "Alpha".to_owned(),
@@ -71,13 +65,13 @@ mod tests {
             version: 1,
         };
 
-        emit_catalogued(&sink, event, &payload);
+        emit_catalogued(&sink, LiveEventName::InitiativeCreated, &payload);
 
         let events = sink.events.lock().expect("the recorder lock is sound");
         assert_eq!(
             *events,
             vec![(
-                "initiative.created".to_owned(),
+                LiveEventName::InitiativeCreated.as_str().to_owned(),
                 json!({
                     "id": 1,
                     "name": "Alpha",

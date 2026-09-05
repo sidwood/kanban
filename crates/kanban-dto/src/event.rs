@@ -13,134 +13,191 @@ use crate::project::ProjectRecord;
 use crate::spec::SpecRecord;
 use crate::workspace::WorkspaceRecord;
 
-/// The closed set of live event names the desktop may consume.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum LiveEventName {
-    #[serde(rename = "initiative.created")]
-    InitiativeCreated,
-    #[serde(rename = "initiative.renamed")]
-    InitiativeRenamed,
-    #[serde(rename = "initiative.archived")]
-    InitiativeArchived,
-    #[serde(rename = "project.registered")]
-    ProjectRegistered,
-    #[serde(rename = "project.archived")]
-    ProjectArchived,
-    #[serde(rename = "plan.created")]
-    PlanCreated,
-    #[serde(rename = "plan.activated")]
-    PlanActivated,
-    #[serde(rename = "plan.replanned")]
-    PlanReplanned,
-    #[serde(rename = "plan.completed")]
-    PlanCompleted,
-    #[serde(rename = "plan.cancelled")]
-    PlanCancelled,
-    #[serde(rename = "plan.archived")]
-    PlanArchived,
-    #[serde(rename = "spec.created")]
-    SpecCreated,
-    #[serde(rename = "spec.planned")]
-    SpecPlanned,
-    #[serde(rename = "spec.version.approved")]
-    SpecVersionApproved,
-    #[serde(rename = "spec.version.superseded")]
-    SpecVersionSuperseded,
-    #[serde(rename = "spec.execution.moved")]
-    SpecExecutionMoved,
-    #[serde(rename = "comment.created")]
-    CommentCreated,
-    #[serde(rename = "comment.edited")]
-    CommentEdited,
-    #[serde(rename = "ruling.recorded")]
-    RulingRecorded,
-    #[serde(rename = "ruling.superseded")]
-    RulingSuperseded,
-    #[serde(rename = "deferral.recorded")]
-    DeferralRecorded,
-    #[serde(rename = "deferral.superseded")]
-    DeferralSuperseded,
-    #[serde(rename = "evidence.attached")]
-    EvidenceAttached,
-    #[serde(rename = "evidence.listed")]
-    EvidenceListed,
-    #[serde(rename = "workspace.registered")]
-    WorkspaceRegistered,
-    #[serde(rename = "workspace.observed")]
-    WorkspaceObserved,
-    #[serde(rename = "workspace.retired")]
-    WorkspaceRetired,
+macro_rules! define_live_event_catalogue {
+    (
+        $(
+            $variant:ident @ $wire:literal => {
+                payload: $payload:literal,
+                description: $description:literal,
+            }
+        ),* $(,)?
+    ) => {
+        /// The closed set of live event names the desktop may consume.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+        pub enum LiveEventName {
+            $(
+                #[serde(rename = $wire)]
+                $variant,
+            )*
+        }
+
+        /// Metadata for one catalogued live event.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct LiveEventDescriptor {
+            pub name: LiveEventName,
+            pub payload_schema: &'static str,
+            pub description: &'static str,
+        }
+
+        impl LiveEventName {
+            /// The wire name every producer and consumer agrees on.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $( Self::$variant => $wire, )*
+                }
+            }
+
+            /// Parse a wire name into the closed catalogue.
+            pub fn parse(name: &str) -> Result<Self, UnknownLiveEventError> {
+                match name {
+                    $( $wire => Ok(Self::$variant), )*
+                    other => Err(UnknownLiveEventError {
+                        event_type: other.to_owned(),
+                    }),
+                }
+            }
+
+            /// Every catalogued live event.
+            pub const ALL: &[Self] = &[$( Self::$variant ),*];
+        }
+
+        /// The authoritative live-event catalogue.
+        pub fn live_event_catalog() -> &'static [LiveEventDescriptor] {
+            &[
+                $(
+                    LiveEventDescriptor {
+                        name: LiveEventName::$variant,
+                        payload_schema: $payload,
+                        description: $description,
+                    },
+                )*
+            ]
+        }
+
+        /// Look up one catalogued live event by typed name.
+        pub fn event_descriptor(name: LiveEventName) -> &'static LiveEventDescriptor {
+            match name {
+                $(
+                    LiveEventName::$variant => &LiveEventDescriptor {
+                        name: LiveEventName::$variant,
+                        payload_schema: $payload,
+                        description: $description,
+                    },
+                )*
+            }
+        }
+    };
 }
 
-impl LiveEventName {
-    /// The wire name every producer and consumer agrees on.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::InitiativeCreated => "initiative.created",
-            Self::InitiativeRenamed => "initiative.renamed",
-            Self::InitiativeArchived => "initiative.archived",
-            Self::ProjectRegistered => "project.registered",
-            Self::ProjectArchived => "project.archived",
-            Self::PlanCreated => "plan.created",
-            Self::PlanActivated => "plan.activated",
-            Self::PlanReplanned => "plan.replanned",
-            Self::PlanCompleted => "plan.completed",
-            Self::PlanCancelled => "plan.cancelled",
-            Self::PlanArchived => "plan.archived",
-            Self::SpecCreated => "spec.created",
-            Self::SpecPlanned => "spec.planned",
-            Self::SpecVersionApproved => "spec.version.approved",
-            Self::SpecVersionSuperseded => "spec.version.superseded",
-            Self::SpecExecutionMoved => "spec.execution.moved",
-            Self::CommentCreated => "comment.created",
-            Self::CommentEdited => "comment.edited",
-            Self::RulingRecorded => "ruling.recorded",
-            Self::RulingSuperseded => "ruling.superseded",
-            Self::DeferralRecorded => "deferral.recorded",
-            Self::DeferralSuperseded => "deferral.superseded",
-            Self::EvidenceAttached => "evidence.attached",
-            Self::EvidenceListed => "evidence.listed",
-            Self::WorkspaceRegistered => "workspace.registered",
-            Self::WorkspaceObserved => "workspace.observed",
-            Self::WorkspaceRetired => "workspace.retired",
-        }
-    }
-
-    /// Parse a wire name into the closed catalogue.
-    pub fn parse(name: &str) -> Result<Self, UnknownLiveEventError> {
-        match name {
-            "initiative.created" => Ok(Self::InitiativeCreated),
-            "initiative.renamed" => Ok(Self::InitiativeRenamed),
-            "initiative.archived" => Ok(Self::InitiativeArchived),
-            "project.registered" => Ok(Self::ProjectRegistered),
-            "project.archived" => Ok(Self::ProjectArchived),
-            "plan.created" => Ok(Self::PlanCreated),
-            "plan.activated" => Ok(Self::PlanActivated),
-            "plan.replanned" => Ok(Self::PlanReplanned),
-            "plan.completed" => Ok(Self::PlanCompleted),
-            "plan.cancelled" => Ok(Self::PlanCancelled),
-            "plan.archived" => Ok(Self::PlanArchived),
-            "spec.created" => Ok(Self::SpecCreated),
-            "spec.planned" => Ok(Self::SpecPlanned),
-            "spec.version.approved" => Ok(Self::SpecVersionApproved),
-            "spec.version.superseded" => Ok(Self::SpecVersionSuperseded),
-            "spec.execution.moved" => Ok(Self::SpecExecutionMoved),
-            "comment.created" => Ok(Self::CommentCreated),
-            "comment.edited" => Ok(Self::CommentEdited),
-            "ruling.recorded" => Ok(Self::RulingRecorded),
-            "ruling.superseded" => Ok(Self::RulingSuperseded),
-            "deferral.recorded" => Ok(Self::DeferralRecorded),
-            "deferral.superseded" => Ok(Self::DeferralSuperseded),
-            "evidence.attached" => Ok(Self::EvidenceAttached),
-            "evidence.listed" => Ok(Self::EvidenceListed),
-            "workspace.registered" => Ok(Self::WorkspaceRegistered),
-            "workspace.observed" => Ok(Self::WorkspaceObserved),
-            "workspace.retired" => Ok(Self::WorkspaceRetired),
-            other => Err(UnknownLiveEventError {
-                event_type: other.to_owned(),
-            }),
-        }
-    }
+define_live_event_catalogue! {
+    InitiativeCreated @ "initiative.created" => {
+        payload: "InitiativeRecord",
+        description: "An Initiative was created.",
+    },
+    InitiativeRenamed @ "initiative.renamed" => {
+        payload: "InitiativeRecord",
+        description: "An Initiative was renamed.",
+    },
+    InitiativeArchived @ "initiative.archived" => {
+        payload: "InitiativeRecord",
+        description: "An Initiative was archived.",
+    },
+    ProjectRegistered @ "project.registered" => {
+        payload: "ProjectRecord",
+        description: "A Project was registered.",
+    },
+    ProjectArchived @ "project.archived" => {
+        payload: "ProjectRecord",
+        description: "A Project was archived.",
+    },
+    PlanCreated @ "plan.created" => {
+        payload: "PlanRecord",
+        description: "A Plan was created.",
+    },
+    PlanActivated @ "plan.activated" => {
+        payload: "PlanRecord",
+        description: "A Plan was activated, freezing a version.",
+    },
+    PlanReplanned @ "plan.replanned" => {
+        payload: "PlanRecord",
+        description: "A Plan was replanned, reserving its replacement version.",
+    },
+    PlanCompleted @ "plan.completed" => {
+        payload: "PlanRecord",
+        description: "A Plan was completed.",
+    },
+    PlanCancelled @ "plan.cancelled" => {
+        payload: "PlanRecord",
+        description: "A Plan was cancelled.",
+    },
+    PlanArchived @ "plan.archived" => {
+        payload: "PlanRecord",
+        description: "A Plan was archived.",
+    },
+    SpecCreated @ "spec.created" => {
+        payload: "SpecRecord",
+        description: "A Spec was authored.",
+    },
+    SpecPlanned @ "spec.planned" => {
+        payload: "SpecRecord",
+        description: "A Spec joined a Plan, planning its execution.",
+    },
+    SpecVersionApproved @ "spec.version.approved" => {
+        payload: "SpecRecord",
+        description: "A Spec content version was approved.",
+    },
+    SpecVersionSuperseded @ "spec.version.superseded" => {
+        payload: "SpecRecord",
+        description: "A Spec content version was superseded.",
+    },
+    SpecExecutionMoved @ "spec.execution.moved" => {
+        payload: "SpecRecord",
+        description: "A Spec's execution moved along its state set.",
+    },
+    CommentCreated @ "comment.created" => {
+        payload: "CommentRecord",
+        description: "A Comment was created.",
+    },
+    CommentEdited @ "comment.edited" => {
+        payload: "CommentRecord",
+        description: "A Comment was edited.",
+    },
+    RulingRecorded @ "ruling.recorded" => {
+        payload: "RulingIdentity",
+        description: "A ruling was recorded.",
+    },
+    RulingSuperseded @ "ruling.superseded" => {
+        payload: "RulingIdentity",
+        description: "A ruling was superseded.",
+    },
+    DeferralRecorded @ "deferral.recorded" => {
+        payload: "DeferralIdentity",
+        description: "A deferral was recorded.",
+    },
+    DeferralSuperseded @ "deferral.superseded" => {
+        payload: "DeferralIdentity",
+        description: "A deferral was superseded.",
+    },
+    EvidenceAttached @ "evidence.attached" => {
+        payload: "EvidenceRecord",
+        description: "Evidence was attached to a subject entity.",
+    },
+    EvidenceListed @ "evidence.listed" => {
+        payload: "EvidenceListSummary",
+        description: "Evidence was listed for a Project.",
+    },
+    WorkspaceRegistered @ "workspace.registered" => {
+        payload: "WorkspaceRecord",
+        description: "A Workspace was registered.",
+    },
+    WorkspaceObserved @ "workspace.observed" => {
+        payload: "WorkspaceRecord",
+        description: "A Workspace was observed and its health updated.",
+    },
+    WorkspaceRetired @ "workspace.retired" => {
+        payload: "WorkspaceRecord",
+        description: "A Workspace was retired. The record is preserved, never deleted.",
+    },
 }
 
 /// The identity carried on ruling live events.
@@ -738,6 +795,16 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn live_event_catalogue_lists_every_variant() {
+        assert_eq!(live_event_catalog().len(), LiveEventName::ALL.len());
+        for name in LiveEventName::ALL {
+            let descriptor = event_descriptor(*name);
+            assert_eq!(descriptor.name, *name);
+            assert_eq!(descriptor.name.as_str(), name.as_str());
+        }
     }
 
     #[test]

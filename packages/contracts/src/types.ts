@@ -190,10 +190,94 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
+};
+export type PlanActivateRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+};
+export type PlanArchiveRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+};
+export type PlanCancelRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+};
+export type PlanCompleteRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+};
+export type PlanCreateRequest = {
+  mutation: MutationContext;
+  project_id: number;
+};
+export type PlanEdge = {
+  from_spec: number;
+  to_spec: number;
+};
+export type PlanEdgeAddRequest = {
+  from_spec: number;
+  mutation: MutationContext;
+  plan_id: number;
+  to_spec: number;
+};
+export type PlanEdgeRemoveRequest = {
+  from_spec: number;
+  mutation: MutationContext;
+  plan_id: number;
+  to_spec: number;
+};
+export type PlanGetQuery = {
+  plan_id: number;
+};
+export type PlanGetResponse = {
+  plan: PlanRecord;
+  versions: PlanVersionRecord[];
+};
+export type PlanListQuery = {
+  project_id: number;
+};
+export type PlanListResponse = {
+  plans: PlanRecord[];
+};
+export type PlanRecord = {
+  edges: PlanEdge[];
+  id: number;
+  number: number;
+  project_id: number;
+  spec_numbers: number[];
+  state: PlanState;
+  version: number;
+};
+export type PlanReplanRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+};
+export type PlanSpecAddRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+  spec_number: number;
+};
+export type PlanSpecMoveRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+  position: number;
+  spec_number: number;
+};
+export type PlanSpecRemoveRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+  spec_number: number;
+};
+export type PlanState = 'draft' | 'active' | 'complete' | 'cancelled' | 'archived';
+export type PlanVersionRecord = {
+  edges: PlanEdge[];
+  number: number;
+  spec_numbers: number[];
 };
 export type ProjectArchiveRequest = {
   mutation: MutationContext;

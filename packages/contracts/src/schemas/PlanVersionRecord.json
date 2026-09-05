@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "PlanEdge": {
+      "additionalProperties": false,
+      "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+      "properties": {
+        "from_spec": {
+          "description": "The Spec that must land first.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_spec": {
+          "description": "The Spec that waits on `from_spec`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_spec",
+        "to_spec"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One frozen Plan version as every client sees it: the Spec membership, display order, and dependency graph exactly as they stood at activation. Immutable once minted.",
+  "properties": {
+    "edges": {
+      "description": "The frozen dependency graph.",
+      "items": {
+        "$ref": "#/definitions/PlanEdge"
+      },
+      "type": "array"
+    },
+    "number": {
+      "description": "The version's number; the first freeze is one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "spec_numbers": {
+      "description": "The frozen display order.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "edges",
+    "number",
+    "spec_numbers"
+  ],
+  "title": "PlanVersionRecord",
+  "type": "object"
+}

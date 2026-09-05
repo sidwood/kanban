@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "PlanEdge": {
+      "additionalProperties": false,
+      "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+      "properties": {
+        "from_spec": {
+          "description": "The Spec that must land first.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_spec": {
+          "description": "The Spec that waits on `from_spec`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_spec",
+        "to_spec"
+      ],
+      "type": "object"
+    },
+    "PlanRecord": {
+      "additionalProperties": false,
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "type": "object"
+    },
+    "PlanState": {
+      "description": "The closed Plan lifecycle vocabulary on the wire.",
+      "enum": [
+        "draft",
+        "active",
+        "complete",
+        "cancelled",
+        "archived"
+      ],
+      "type": "string"
+    },
+    "PlanVersionRecord": {
+      "additionalProperties": false,
+      "description": "One frozen Plan version as every client sees it: the Spec membership, display order, and dependency graph exactly as they stood at activation. Immutable once minted.",
+      "properties": {
+        "edges": {
+          "description": "The frozen dependency graph.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "number": {
+          "description": "The version's number; the first freeze is one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The frozen display order.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "edges",
+        "number",
+        "spec_numbers"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `plan.get` query: the Plan and every frozen version beside it, so prior versions stay queryable.",
+  "properties": {
+    "plan": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PlanRecord"
+        }
+      ],
+      "description": "The Plan's current record."
+    },
+    "versions": {
+      "description": "Every frozen version, oldest first.",
+      "items": {
+        "$ref": "#/definitions/PlanVersionRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "plan",
+    "versions"
+  ],
+  "title": "PlanGetResponse",
+  "type": "object"
+}

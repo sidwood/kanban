@@ -828,6 +828,2026 @@
     }
   },
   {
+    "description": "Create a draft Plan, minting its number from the Project counter.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.create` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "description": "The Project the new Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id"
+      ],
+      "title": "PlanCreateRequest",
+      "type": "object"
+    },
+    "name": "plan_create",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Add a Spec to a draft Plan's membership and display order.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.spec.add` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan gaining a member.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_number": {
+          "description": "The Spec number joining the Plan.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id",
+        "spec_number"
+      ],
+      "title": "PlanSpecAddRequest",
+      "type": "object"
+    },
+    "name": "plan_spec_add",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Remove a Spec from a draft Plan; a Spec carrying edges is refused.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.spec.remove` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan losing a member.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_number": {
+          "description": "The Spec number leaving the Plan.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id",
+        "spec_number"
+      ],
+      "title": "PlanSpecRemoveRequest",
+      "type": "object"
+    },
+    "name": "plan_spec_remove",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Move a Spec within a draft Plan's display order.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.spec.move` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan whose display order changes.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "position": {
+          "description": "The position in the display order the Spec moves to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_number": {
+          "description": "The Spec number moving.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id",
+        "position",
+        "spec_number"
+      ],
+      "title": "PlanSpecMoveRequest",
+      "type": "object"
+    },
+    "name": "plan_spec_move",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Add a dependency edge inside one draft Plan; an edge leaving the Plan is refused.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.edge.add` command.",
+      "properties": {
+        "from_spec": {
+          "description": "The Spec that must land first.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan whose graph gains an edge.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_spec": {
+          "description": "The Spec that waits on `from_spec`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_spec",
+        "mutation",
+        "plan_id",
+        "to_spec"
+      ],
+      "title": "PlanEdgeAddRequest",
+      "type": "object"
+    },
+    "name": "plan_edge_add",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Remove a dependency edge from a draft Plan.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.edge.remove` command.",
+      "properties": {
+        "from_spec": {
+          "description": "The Spec that must land first.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan whose graph loses an edge.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_spec": {
+          "description": "The Spec that waits on `from_spec`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_spec",
+        "mutation",
+        "plan_id",
+        "to_spec"
+      ],
+      "title": "PlanEdgeRemoveRequest",
+      "type": "object"
+    },
+    "name": "plan_edge_remove",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Freeze a draft Plan's membership, order, and graph into an immutable version.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.activate` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan freezing its shape into a version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id"
+      ],
+      "title": "PlanActivateRequest",
+      "type": "object"
+    },
+    "name": "plan_activate",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Reopen an active Plan's draft and reserve its auditable replacement version.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.replan` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan whose replacement version is reserved.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id"
+      ],
+      "title": "PlanReplanRequest",
+      "type": "object"
+    },
+    "name": "plan_replan",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Complete an active Plan. Complete is terminal and off the active surface.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.complete` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan completing.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id"
+      ],
+      "title": "PlanCompleteRequest",
+      "type": "object"
+    },
+    "name": "plan_complete",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Cancel a draft or active Plan. Cancelled is terminal and off the active surface.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.cancel` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan being cancelled.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id"
+      ],
+      "title": "PlanCancelRequest",
+      "type": "object"
+    },
+    "name": "plan_cancel",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Archive a Plan from any open state. Archiving is terminal and preserves every recorded fact.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `plan.archive` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan being archived. Archiving is terminal and preserves every recorded fact.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id"
+      ],
+      "title": "PlanArchiveRequest",
+      "type": "object"
+    },
+    "name": "plan_archive",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges, held separately from the display order.",
+          "items": {
+            "$ref": "#/definitions/PlanEdge"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "number": {
+          "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "description": "The Project this Plan belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_numbers": {
+          "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanState"
+            }
+          ],
+          "description": "The lifecycle state."
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "number",
+        "project_id",
+        "spec_numbers",
+        "state",
+        "version"
+      ],
+      "title": "PlanRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Plan of a Project, terminal states included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `plan.list` query.",
+      "properties": {
+        "project_id": {
+          "description": "The Project whose Plans are listed, terminal states included.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "PlanListQuery",
+      "type": "object"
+    },
+    "name": "plan_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanRecord": {
+          "additionalProperties": false,
+          "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+          "properties": {
+            "edges": {
+              "description": "The dependency edges, held separately from the display order.",
+              "items": {
+                "$ref": "#/definitions/PlanEdge"
+              },
+              "type": "array"
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "number": {
+              "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "description": "The Project this Plan belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec_numbers": {
+              "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "state": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PlanState"
+                }
+              ],
+              "description": "The lifecycle state."
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "edges",
+            "id",
+            "number",
+            "project_id",
+            "spec_numbers",
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "Response payload for the `plan.list` query.",
+      "properties": {
+        "plans": {
+          "description": "Every Plan of the Project, newest last, all states included.",
+          "items": {
+            "$ref": "#/definitions/PlanRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plans"
+      ],
+      "title": "PlanListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one Plan with every frozen version beside it.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `plan.get` query.",
+      "properties": {
+        "plan_id": {
+          "description": "The Plan being read.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_id"
+      ],
+      "title": "PlanGetQuery",
+      "type": "object"
+    },
+    "name": "plan_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "PlanEdge": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+          "properties": {
+            "from_spec": {
+              "description": "The Spec that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_spec": {
+              "description": "The Spec that waits on `from_spec`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_spec",
+            "to_spec"
+          ],
+          "type": "object"
+        },
+        "PlanRecord": {
+          "additionalProperties": false,
+          "description": "The Plan record as every client sees it: the lifecycle state, the working display order, and the working dependency graph.",
+          "properties": {
+            "edges": {
+              "description": "The dependency edges, held separately from the display order.",
+              "items": {
+                "$ref": "#/definitions/PlanEdge"
+              },
+              "type": "array"
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "number": {
+              "description": "The number this Project minted for this Plan; rendered with the Project's code, for example `CORE-P1`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "description": "The Project this Plan belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec_numbers": {
+              "description": "The display order: the member Spec numbers as a per-Plan sequence.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "state": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PlanState"
+                }
+              ],
+              "description": "The lifecycle state."
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "edges",
+            "id",
+            "number",
+            "project_id",
+            "spec_numbers",
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        "PlanState": {
+          "description": "The closed Plan lifecycle vocabulary on the wire.",
+          "enum": [
+            "draft",
+            "active",
+            "complete",
+            "cancelled",
+            "archived"
+          ],
+          "type": "string"
+        },
+        "PlanVersionRecord": {
+          "additionalProperties": false,
+          "description": "One frozen Plan version as every client sees it: the Spec membership, display order, and dependency graph exactly as they stood at activation. Immutable once minted.",
+          "properties": {
+            "edges": {
+              "description": "The frozen dependency graph.",
+              "items": {
+                "$ref": "#/definitions/PlanEdge"
+              },
+              "type": "array"
+            },
+            "number": {
+              "description": "The version's number; the first freeze is one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec_numbers": {
+              "description": "The frozen display order.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "edges",
+            "number",
+            "spec_numbers"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `plan.get` query: the Plan and every frozen version beside it, so prior versions stay queryable.",
+      "properties": {
+        "plan": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PlanRecord"
+            }
+          ],
+          "description": "The Plan's current record."
+        },
+        "versions": {
+          "description": "Every frozen version, oldest first.",
+          "items": {
+            "$ref": "#/definitions/PlanVersionRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan",
+        "versions"
+      ],
+      "title": "PlanGetResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

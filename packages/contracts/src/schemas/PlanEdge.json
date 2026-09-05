@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One dependency edge of a Plan's graph: `from_spec` must land before `to_spec` may begin.",
+  "properties": {
+    "from_spec": {
+      "description": "The Spec that must land first.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "to_spec": {
+      "description": "The Spec that waits on `from_spec`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from_spec",
+    "to_spec"
+  ],
+  "title": "PlanEdge",
+  "type": "object"
+}

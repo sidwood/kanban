@@ -2,6 +2,7 @@
 //! forward-only migrations, and the append-only audit tables.
 
 pub mod audit;
+pub mod backup;
 pub mod comments;
 pub mod db;
 pub mod deferrals;
@@ -21,6 +22,10 @@ pub mod workspaces;
 #[cfg(test)]
 mod test_support;
 
+pub use backup::{
+    BackupManifest, BackupOptions, BackupPreview, BackupRetentionPolicy, BackupStore,
+    VerifiedBackupHook, VerifiedBackupRecord,
+};
 pub use comments::SqliteCommentStore;
 pub use db::Database;
 pub use deferrals::SqliteDeferralStore;
@@ -32,7 +37,7 @@ pub use initiatives::SqliteInitiativeStore;
 pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,
 };
-pub use paths::{attachments_dir, database_path, managed_data_dir};
+pub use paths::{attachments_dir, backups_dir, config_file_name, database_path, managed_data_dir};
 pub use plan::SqlitePlanStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;

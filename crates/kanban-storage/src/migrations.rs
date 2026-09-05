@@ -27,14 +27,15 @@ pub struct PendingMigration {
 }
 
 /// The seam a later slice uses to gate schema change; KAN-T60
-/// makes it refuse to proceed without a verified backup.
+/// refuses to proceed without a verified backup.
 pub trait PreMigrationHook {
     /// Runs once before any pending migration is applied. Returning
     /// an error aborts the run and leaves the schema untouched.
     fn before_migrate(&self, pending: &[PendingMigration]) -> Result<(), StorageError>;
 }
 
-/// The hook used until the verified-backup gate exists (KAN-T60).
+/// Runs migrations without taking a verified backup. Tests and
+/// greenfield installs that pre-seed backups use this.
 pub struct AllowAllMigrations;
 
 impl PreMigrationHook for AllowAllMigrations {

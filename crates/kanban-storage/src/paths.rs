@@ -26,6 +26,16 @@ pub fn attachments_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
     managed_root.join("attachments")
 }
 
+/// The backups directory inside managed application data.
+pub fn backups_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
+    managed_root.join("backups")
+}
+
+/// The operator configuration file inside managed application data.
+pub const fn config_file_name() -> &'static str {
+    "config.json"
+}
+
 /// The path of the single authoritative SQLite database.
 pub fn database_path() -> Result<PathBuf, StorageError> {
     Ok(managed_data_dir()?.join(database_file_name()))

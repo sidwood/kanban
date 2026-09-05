@@ -63,6 +63,54 @@ pub enum StorageError {
         /// Why the input was rejected.
         reason: String,
     },
+    /// A backup bundle could not be read or written.
+    #[error("backup I/O at {path:?} failed: {source}")]
+    BackupIo {
+        /// The path that failed.
+        path: PathBuf,
+        /// The underlying filesystem error.
+        source: std::io::Error,
+    },
+    /// A backup snapshot could not be opened.
+    #[error("opening backup snapshot at {path:?} failed: {source}")]
+    BackupOpen {
+        /// The snapshot path.
+        path: PathBuf,
+        /// The underlying SQLite failure.
+        source: rusqlite::Error,
+    },
+    /// A backup manifest or payload was invalid.
+    #[error("invalid backup bundle: {reason}")]
+    BackupInvalid {
+        /// Why the bundle was rejected.
+        reason: String,
+    },
+    /// A backup file hash did not match its manifest.
+    #[error("backup hash mismatch for {path}: expected {expected}, got {actual}")]
+    BackupHashMismatch {
+        /// The manifest path entry.
+        path: String,
+        /// The hash recorded in the manifest.
+        expected: String,
+        /// The hash recomputed from disk.
+        actual: String,
+    },
+    /// A backup file size did not match its manifest.
+    #[error("backup size mismatch for {path}: expected {expected}, got {actual}")]
+    BackupSizeMismatch {
+        /// The manifest path entry.
+        path: String,
+        /// The size recorded in the manifest.
+        expected: u64,
+        /// The size read from disk.
+        actual: u64,
+    },
+    /// A backup database failed integrity checks.
+    #[error("backup database integrity check failed: {detail}")]
+    BackupIntegrity {
+        /// The integrity check output.
+        detail: String,
+    },
 }
 
 #[cfg(test)]

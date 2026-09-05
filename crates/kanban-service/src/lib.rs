@@ -18,9 +18,10 @@ use kanban_app::{
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
-    AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
-    SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteWorkspaceStore,
+    AllowAllMigrations, BackupRetentionPolicy, BackupStore, Database, RetentionPolicy,
+    SqliteCommentStore, SqliteDeferralStore, SqliteEvidenceStore, SqliteHerdrSettingsStore,
+    SqliteIdempotencyStore, SqliteInitiativeStore, SqlitePlanStore, SqliteProjectStore,
+    SqliteRulingStore, SqliteWorkspaceStore, VerifiedBackupHook,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -34,6 +35,9 @@ use git_observer::LocalWorkspaceGitObserver;
 /// five-figure bound covers every retry that could still arrive
 /// while keeping the table small enough to ignore.
 const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound is not zero");
+
+/// How many dated backup bundles the core keeps before pruning.
+const RETAINED_BACKUPS: NonZeroU32 = NonZeroU32::new(7).expect("seven is not zero");
 
 /// The service's git observation: a target is a Git repository when
 /// its path holds a `.git` entry, a directory for a normal clone or a
@@ -74,9 +78,13 @@ impl CoreProcess {
 fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
     std::fs::create_dir_all(data_dir).map_err(|source| ServiceError::DataDir { source })?;
     let mut database = Database::open(&data_dir.join(database_file_name()))?;
-    // Forward-only from the first boot; the verified-backup hook
-    // arrives with KAN-T60.
-    database.migrate(&AllowAllMigrations)?;
+    let store = BackupStore::new(data_dir.to_path_buf());
+    let hook = VerifiedBackupHook::create_before_migrate(
+        &store,
+        &database,
+        BackupRetentionPolicy::keep_most_recent(RETAINED_BACKUPS),
+    );
+    database.migrate(&hook)?;
     Ok(database)
 }
 

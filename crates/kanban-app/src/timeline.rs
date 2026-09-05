@@ -6,6 +6,7 @@ use kanban_dto::{
     TimelineQueryResponse, TimelineScope,
 };
 
+use kanban_domain::validate_timeline_time_window;
 use serde_json::Value;
 
 use crate::dispatch::QueryHandler;
@@ -131,10 +132,24 @@ impl<S: TimelineStore> TimelineQueryHandler<S> {
 impl<S: TimelineStore + 'static> QueryHandler for TimelineQueryHandler<S> {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query = parse_payload::<TimelineQuery>(payload)?;
+        let query = prepare_timeline_query(query)?;
         let events = self.store.query(&query).map_err(map_timeline_error)?;
         let response = TimelineQueryResponse { events };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
+}
+
+fn prepare_timeline_query(query: TimelineQuery) -> Result<TimelineQuery, ApiError> {
+    let (since, until) =
+        validate_timeline_time_window(query.since.as_deref(), query.until.as_deref())
+            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+    Ok(TimelineQuery {
+        scope: query.scope,
+        entity: query.entity,
+        kinds: query.kinds,
+        since,
+        until,
+    })
 }
 
 fn map_timeline_error(error: TimelineError) -> ApiError {
@@ -236,7 +251,7 @@ mod timeline_query {
                 scope: *envelope.scope(),
                 kind: envelope.kind(),
                 entity: envelope.entity().cloned(),
-                recorded_at: format!("2026-09-04T12:00:{id:02}Z"),
+                recorded_at: format!("2026-09-04T12:00:{id:02}.000000Z"),
                 detail: envelope.detail().clone(),
             });
         }
@@ -335,7 +350,7 @@ mod timeline_query {
                     "scope": { "project": 1 },
                     "kind": "transition",
                     "entity": ticket_entity(),
-                    "recorded_at": "2026-09-04T12:00:01Z",
+                    "recorded_at": "2026-09-04T12:00:01.000000Z",
                     "detail": { "to": "in_progress" },
                 }]
             })
@@ -372,7 +387,7 @@ mod timeline_query {
                     "scope": "global",
                     "kind": "transition",
                     "entity": { "kind": "initiative", "id": "1" },
-                    "recorded_at": "2026-09-04T12:00:01Z",
+                    "recorded_at": "2026-09-04T12:00:01.000000Z",
                     "detail": { "action": "created", "id": 1 },
                 }]
             }),
@@ -414,6 +429,100 @@ mod timeline_query {
             .expect("the core serves timeline queries");
 
         assert_eq!(response, json!({ "events": [] }));
+    }
+
+    #[test]
+    fn timeline_query_rejects_malformed_since_bound() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        let handler = TimelineQueryHandler::new(store);
+
+        let error = handler
+            .handle(&json!({
+                "scope": { "project": 1 },
+                "since": "not-a-timestamp",
+            }))
+            .expect_err("malformed since is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("since"),
+            "the refusal names the bound: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn timeline_query_rejects_malformed_until_bound() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        let handler = TimelineQueryHandler::new(store);
+
+        let error = handler
+            .handle(&json!({
+                "scope": { "project": 1 },
+                "until": "2026/09/04",
+            }))
+            .expect_err("malformed until is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("until"),
+            "the refusal names the bound: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn timeline_query_rejects_reversed_time_window() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        let handler = TimelineQueryHandler::new(store);
+
+        let error = handler
+            .handle(&json!({
+                "scope": { "project": 1 },
+                "since": "2026-09-05T00:00:00Z",
+                "until": "2026-09-04T00:00:00Z",
+            }))
+            .expect_err("reversed window is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("since"),
+            "the refusal names the window: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn timeline_query_normalises_offset_bounds_before_filtering() {
+        let store = std::sync::Arc::new(MemoryTimelineStore::default());
+        store.seed(project_event(
+            TimelineEventKind::Transition,
+            ticket_entity(),
+            json!({ "to": "in_progress" }),
+        ));
+
+        let handler = TimelineQueryHandler::new(store);
+        let response = handler
+            .handle(&json!({
+                "scope": { "project": 1 },
+                "since": "2026-09-04T13:00:00+01:00",
+                "until": "2026-09-04T13:00:02+01:00",
+            }))
+            .expect("offset bounds normalise to UTC");
+
+        assert_eq!(
+            response,
+            json!({
+                "events": [{
+                    "id": 1,
+                    "scope": { "project": 1 },
+                    "kind": "transition",
+                    "entity": ticket_entity(),
+                    "recorded_at": "2026-09-04T12:00:01.000000Z",
+                    "detail": { "to": "in_progress" },
+                }]
+            })
+        );
     }
 
     #[test]

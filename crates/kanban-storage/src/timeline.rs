@@ -150,6 +150,7 @@ fn decode_row(row: &Row<'_>) -> Result<TimelineRow, rusqlite::Error> {
 #[cfg(test)]
 mod query_filters {
     use kanban_app::TimelineEnvelope;
+    use kanban_domain::{TimelineTimeError, validate_timeline_time_window};
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
     use serde_json::json;
 
@@ -320,6 +321,67 @@ mod query_filters {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, "run");
+    }
+
+    #[test]
+    fn query_filters_offset_bounds_after_normalisation() {
+        let database = migrated_database();
+        for (kind, recorded_at) in [
+            ("run", "2026-03-01T00:00:00.000000Z"),
+            ("telemetry", "2026-06-01T00:00:00.000000Z"),
+        ] {
+            database
+                .connection()
+                .execute(
+                    "INSERT INTO timeline_events
+                     (scope, project_id, kind, entity_kind, entity_id, detail, recorded_at)
+                     VALUES ('project', '1', ?1, 'ticket', 'kan-t9', '{}', ?2)",
+                    rusqlite::params![kind, recorded_at],
+                )
+                .expect("fixture row lands");
+        }
+
+        let (since, until) = validate_timeline_time_window(
+            Some("2026-02-01T01:00:00+01:00"),
+            Some("2026-03-01T01:00:00+01:00"),
+        )
+        .expect("offset bounds normalise before storage access");
+
+        let rows = database
+            .query_timeline(&TimelineFilter {
+                since,
+                until,
+                ..TimelineFilter::of(TimelineScope::Project(1))
+            })
+            .expect("normalised bounds filter stored UTC rows");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "run");
+    }
+
+    #[test]
+    fn malformed_bounds_are_refused_before_storage_access() {
+        let error = validate_timeline_time_window(Some("not-a-timestamp"), None)
+            .expect_err("malformed bounds never reach SQLite");
+
+        assert_eq!(
+            error,
+            TimelineTimeError::MalformedBound {
+                label: "since",
+                value: "not-a-timestamp".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn reversed_windows_are_refused_before_storage_access() {
+        let error = validate_timeline_time_window(
+            Some("2026-09-05T00:00:00Z"),
+            Some("2026-09-04T00:00:00Z"),
+        )
+        .expect_err("reversed windows never reach SQLite");
+
+        assert!(matches!(error, TimelineTimeError::ReversedWindow { .. }));
     }
 
     #[test]

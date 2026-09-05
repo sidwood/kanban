@@ -57,6 +57,7 @@
     "strftime",
     "stripspace",
     "subschemas",
+    "subsecond",
     "tempfile",
     "thiserror",
     "timezone",

@@ -12,6 +12,7 @@ pub mod project;
 pub mod ruling;
 pub mod spec;
 pub mod timeline;
+pub mod timeline_time;
 pub mod workspace;
 
 pub use comment::{
@@ -44,6 +45,9 @@ pub use spec::{
     SpecVersion,
 };
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
+pub use timeline_time::{
+    TimelineTimeError, normalise_timeline_bound, validate_timeline_time_window,
+};
 pub use workspace::{
     ReuseEvaluation, ReuseInputs, Workspace, WorkspaceCheckout, WorkspaceHealth,
     WorkspaceHealthInputs, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,

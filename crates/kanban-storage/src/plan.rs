@@ -864,6 +864,100 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_in_frozen_version_numbers_still_mints_past_the_highest() {
+        let (_dir, database, store) = store();
+        let project = seeded_project(&database);
+        let mut plan = shaped_draft(&store, &project);
+        let first = plan.activate().expect("the first freeze lands");
+        store
+            .save(
+                &plan,
+                Some(&first),
+                transition(plan.id(), "activated", json!({ "frozen_version": 1 })),
+            )
+            .expect("the activation lands");
+        // Fabricate the gap an outside writer leaves behind: versions
+        // one and three recorded, two never minted. Inserts stay
+        // legal — the frozen tables are append-only, not write-never.
+        database
+            .connection()
+            .execute(
+                "INSERT INTO plan_versions (plan_id, number)
+                 SELECT ?1, 3 WHERE NOT EXISTS (
+                     SELECT 1 FROM plan_versions WHERE plan_id = ?1 AND number = 3
+                 )",
+                rusqlite::params![plan.id().value() as i64],
+            )
+            .expect("the fabricated gap lands");
+        let mut gapped = store
+            .find(plan.id())
+            .expect("the find serves")
+            .expect("the Plan exists");
+        assert_eq!(
+            gapped
+                .versions()
+                .iter()
+                .map(|version| version.number())
+                .collect::<Vec<_>>(),
+            vec![1, 3],
+            "the fixture holds the gap"
+        );
+
+        let reserved = gapped.replan().expect("the draft reopens");
+        store
+            .save(
+                &gapped,
+                None,
+                transition(
+                    plan.id(),
+                    "replanned",
+                    json!({ "reserved_version": reserved, "superseded_version": 3 }),
+                ),
+            )
+            .expect("the replan lands");
+        gapped.move_spec(spec(2), 0).expect("the shape changes");
+        store
+            .save(
+                &gapped,
+                None,
+                transition(
+                    plan.id(),
+                    "spec_moved",
+                    json!({ "spec_number": 2, "position": 0 }),
+                ),
+            )
+            .expect("the move lands");
+        let replacement = gapped.activate().expect("the replacement freezes");
+        store
+            .save(
+                &gapped,
+                Some(&replacement),
+                transition(
+                    plan.id(),
+                    "activated",
+                    json!({ "frozen_version": replacement.number() }),
+                ),
+            )
+            .expect("the reactivation lands past the gap");
+
+        let found = store
+            .find(plan.id())
+            .expect("the find serves")
+            .expect("the Plan exists");
+        assert_eq!(reserved, 4, "the replacement reserves max(number) + 1");
+        assert_eq!(replacement.number(), 4, "the freeze mints max(number) + 1");
+        assert_eq!(
+            found
+                .versions()
+                .iter()
+                .map(|version| version.number())
+                .collect::<Vec<_>>(),
+            vec![1, 3, 4],
+            "the replacement lands beside the recorded numbers, colliding with none"
+        );
+    }
+
+    #[test]
     fn a_stale_save_is_refused_without_a_timeline_row() {
         let (_dir, database, store) = store();
         let project = seeded_project(&database);

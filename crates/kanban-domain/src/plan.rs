@@ -365,9 +365,16 @@ impl Plan {
     }
 
     /// The number the next freeze will take. Versions are minted
-    /// monotonically and never reused, so this is one past the last.
+    /// monotonically and never reused, so this is one past the
+    /// highest number ever frozen — never one past the count, which
+    /// a gap in the recorded numbers would send backwards into a
+    /// collision.
     pub fn next_version_number(&self) -> u64 {
-        self.versions.len() as u64 + 1
+        self.versions
+            .iter()
+            .map(|version| version.number())
+            .max()
+            .map_or(1, |highest| highest + 1)
     }
 
     /// The number of applied changes, for optimistic version checks.
@@ -935,6 +942,40 @@ mod plan_lifecycle {
         plan.activate().expect("the activation freezes");
         plan.complete().expect("the Plan completes");
         assert_eq!(plan.replan().unwrap_err(), PlanError::RequiresActive);
+    }
+
+    #[test]
+    fn a_gap_in_frozen_numbers_mints_one_past_the_highest() {
+        // Versions one and three with no two: a count would mint
+        // three again and collide with the recorded version.
+        let mut plan = Plan::restore(
+            PlanId::new(1),
+            ProjectId::new(7),
+            1,
+            PlanState::Active,
+            PlanShape::new(
+                vec![spec(1), spec(3), spec(2)],
+                vec![edge(1, 2), edge(3, 2)],
+            ),
+            vec![frozen_shape(1), frozen_shape(3)],
+            9,
+        );
+
+        assert_eq!(plan.next_version_number(), 4);
+        assert_eq!(
+            plan.replan().expect("an active Plan replans"),
+            4,
+            "the replacement reserves one past the highest frozen number"
+        );
+
+        let replacement = plan.activate().expect("the replacement freezes");
+
+        assert_eq!(replacement.number(), 4);
+        assert_eq!(
+            plan.versions(),
+            [frozen_shape(1), frozen_shape(3), frozen_shape(4)].as_slice(),
+            "the minted number never collides with a recorded one"
+        );
     }
 
     #[test]

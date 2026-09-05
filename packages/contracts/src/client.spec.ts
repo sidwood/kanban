@@ -61,6 +61,7 @@ describe('generated client', () => {
       'herdr.defaults.update',
       'workspace.register',
       'workspace.observe',
+      'workspace.retire',
       'workspace.list',
     ])
   })
@@ -93,6 +94,7 @@ describe('generated client', () => {
       'evidence.listed',
       'workspace.registered',
       'workspace.observed',
+      'workspace.retired',
     ])
   })
 

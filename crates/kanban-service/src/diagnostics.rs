@@ -832,6 +832,43 @@ mod tests {
         core.shutdown();
     }
 
+    /// KAN-T112-AC1/AC2: the refusal is itself a fallback message, so
+    /// it must not carry the configuration content that caused it.
+    /// Only the malformed mode can echo anything — an unreadable file
+    /// never gets as far as its bytes — so the planted secret sits
+    /// inside the very text the parser choked on.
+    #[test]
+    fn the_export_refusal_never_echoes_the_configuration_it_could_not_parse() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let planted = "kct_t112_planted_inside_a_broken_config";
+        std::fs::write(
+            dir.path().join("config.json"),
+            format!(r#"{{"mcp_install_token":"{planted}" trailing"#),
+        )
+        .expect("the malformed configuration is written");
+        let core = crate::test_client::boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let refused = client.attempt("query", "diagnostics.export", json!({}));
+
+        let frame = refused.to_string();
+        assert_eq!(refused["error"]["code"], "internal", "the export refuses");
+        for form in crate::redaction::serialized_forms(planted) {
+            assert!(
+                !frame.contains(&form),
+                "the refusal must name the failure without quoting what it read: {frame}"
+            );
+        }
+        assert!(
+            refused["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("configuration")),
+            "the refusal still tells the Operator what to fix: {frame}"
+        );
+
+        core.shutdown();
+    }
+
     /// Fail closed over the boundary too: while the core keeps serving
     /// (health still answers) a configuration that cannot feed the
     /// redactor makes the export refuse, and nothing is created.

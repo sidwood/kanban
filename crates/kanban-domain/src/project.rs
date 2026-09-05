@@ -8,6 +8,7 @@
 //! unique code, and is archived rather than deleted.
 
 use std::fmt;
+use std::path::Path;
 
 use crate::herdr::HerdrSession;
 use crate::herdr::herdr_session_name;
@@ -187,6 +188,8 @@ pub enum RegistrationError {
     Blank(&'static str),
     /// The Herdr session name is not one safe path segment.
     InvalidHerdrSession,
+    /// The target repository path is relative rather than absolute.
+    RelativeRepository,
 }
 
 impl fmt::Display for RegistrationError {
@@ -196,6 +199,9 @@ impl fmt::Display for RegistrationError {
             Self::Blank(field) => write!(f, "a Project {field} cannot be blank"),
             Self::InvalidHerdrSession => {
                 write!(f, "a Herdr session name must be one safe path segment")
+            }
+            Self::RelativeRepository => {
+                write!(f, "a Project target repository must be an absolute path")
             }
         }
     }
@@ -236,7 +242,7 @@ impl ProjectRegistration {
         Ok(Self {
             code: ProjectCode::new(code).map_err(RegistrationError::Code)?,
             name: anchored("name", name)?,
-            repository: anchored("target repository", repository)?,
+            repository: absolute_repository_anchor(repository)?,
             seed_workspace: anchored("Seed Workspace", seed_workspace)?,
             default_branch: anchored("default branch", default_branch)?,
             herdr_workspace: anchored("target Herdr workspace", herdr_workspace)?,
@@ -304,6 +310,16 @@ fn optional_herdr_session(raw: Option<&str>) -> Result<Option<String>, Registrat
         Some(name) => Ok(Some(herdr_session_name(name)?)),
         None => Ok(None),
     }
+}
+
+/// Accept a repository anchor that carries text and names an
+/// absolute path; surrounding whitespace is not part of the field.
+fn absolute_repository_anchor(raw: &str) -> Result<String, RegistrationError> {
+    let trimmed = anchored("target repository", raw)?;
+    if !Path::new(&trimmed).is_absolute() {
+        return Err(RegistrationError::RelativeRepository);
+    }
+    Ok(trimmed)
 }
 
 /// Accept a field that carries at least one non-whitespace
@@ -655,6 +671,24 @@ mod project_registration {
             Some("kanban-main"),
             None,
         )
+    }
+
+    #[test]
+    fn a_registration_refuses_a_relative_repository_anchor() {
+        for relative in ["repo", "./repo", "../repo", "workspaces/kanban"] {
+            let outcome = attempt(
+                "Control plane",
+                relative,
+                "/workspaces/kanban.seed",
+                "main",
+                "kanban.seed",
+            );
+            assert_eq!(
+                outcome,
+                Err(RegistrationError::RelativeRepository),
+                "{relative:?} must not be stored as a repository anchor"
+            );
+        }
     }
 
     #[test]

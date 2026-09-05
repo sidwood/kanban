@@ -557,7 +557,7 @@ mod testing {
         core.register_projects(
             projects.clone(),
             Arc::new(crate::project::testing::KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![crate::project::testing::shared_test_repository().to_owned()],
             }),
             initiatives,
             Arc::new(crate::project::testing::MemoryHerdrSettings::default()),
@@ -577,7 +577,7 @@ mod testing {
         let registration = ProjectRegistration::new(
             "CORE",
             "Control plane",
-            "/repositories/kanban",
+            crate::project::testing::shared_test_repository(),
             "/workspaces/kanban.seed",
             "main",
             "kanban.seed",

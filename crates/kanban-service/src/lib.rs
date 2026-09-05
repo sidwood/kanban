@@ -297,7 +297,12 @@ mod tests {
         let repository = dir.path().join(name);
         std::fs::create_dir_all(repository.join(".git"))
             .expect("the scratch repository is created");
-        repository.to_str().expect("the path is UTF-8").to_owned()
+        repository
+            .canonicalize()
+            .expect("the repository path canonicalises")
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned()
     }
 
     fn mode_of(path: &Path) -> u32 {
@@ -704,13 +709,21 @@ mod tests {
         assert_eq!(sessionless["herdr_session"], json!(null));
         assert_eq!(sessionless["herdr_workspace"], json!("bare.seed"));
         // A target that is not a Git repository never registers.
+        let plain = dir.path().join("not-a-repository");
+        std::fs::create_dir_all(&plain).expect("the plain directory is created");
+        let plain = plain
+            .canonicalize()
+            .expect("the plain path canonicalises")
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned();
         let non_git = client.command_error(
             "project.register",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "register-plain" },
                 "code": "PLAIN",
                 "name": "Plain directory",
-                "repository": dir.path().join("not-a-repository"),
+                "repository": plain,
                 "seed_workspace": "/workspaces/plain.seed",
                 "default_branch": "main",
                 "herdr_session": "plain-main",
@@ -1398,5 +1411,139 @@ mod tests {
         );
 
         rebooted.shutdown();
+    }
+
+    mod repository {
+        use std::path::PathBuf;
+        use std::sync::Mutex;
+
+        use serde_json::json;
+        use tempfile::TempDir;
+
+        use crate::test_client::{Client, boot};
+
+        static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+        fn scratch_repository(dir: &TempDir, name: &str) -> String {
+            let repository = dir.path().join(name);
+            std::fs::create_dir_all(repository.join(".git"))
+                .expect("the scratch repository is created");
+            repository
+                .canonicalize()
+                .expect("the repository path canonicalises")
+                .to_str()
+                .expect("the path is UTF-8")
+                .to_owned()
+        }
+
+        #[test]
+        fn repository_anchor_is_canonicalised_before_validation() {
+            let _guard = CWD_LOCK.lock().expect("the cwd lock is sound");
+            let dir = TempDir::new().expect("a scratch directory is available");
+            let absolute = scratch_repository(&dir, "kanban");
+            let nested = dir.path().join("nested");
+            std::fs::create_dir_all(&nested).expect("the nested directory is created");
+            std::env::set_current_dir(&nested).expect("the cwd moves beside the repository");
+
+            let core = boot(&dir);
+            let mut client = Client::connect(core.socket_path());
+            let registered = client.command(
+                "project.register",
+                json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "register-relative" },
+                    "code": "CORE",
+                    "name": "Control plane",
+                    "repository": "../kanban",
+                    "seed_workspace": "/workspaces/kanban.seed",
+                    "default_branch": "main",
+                    "herdr_session": "kanban-main",
+                    "herdr_workspace": "kanban.seed",
+                }),
+            );
+            assert_eq!(
+                registered["repository"],
+                json!(absolute),
+                "a relative anchor is stored as its absolute path"
+            );
+            assert!(
+                PathBuf::from(registered["repository"].as_str().expect("the path is text"))
+                    .is_absolute(),
+                "the stored anchor must not depend on the registration cwd"
+            );
+
+            core.shutdown();
+        }
+
+        #[test]
+        fn repository_anchor_persists_across_cwd_changes() {
+            let _guard = CWD_LOCK.lock().expect("the cwd lock is sound");
+            let dir = TempDir::new().expect("a scratch directory is available");
+            let absolute = scratch_repository(&dir, "kanban");
+            let nested = dir.path().join("nested");
+            std::fs::create_dir_all(&nested).expect("the nested directory is created");
+            std::env::set_current_dir(&nested).expect("the cwd moves beside the repository");
+
+            let core = boot(&dir);
+            let mut client = Client::connect(core.socket_path());
+            client.command(
+                "project.register",
+                json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "register-relative" },
+                    "code": "CORE",
+                    "name": "Control plane",
+                    "repository": "../kanban",
+                    "seed_workspace": "/workspaces/kanban.seed",
+                    "default_branch": "main",
+                    "herdr_session": "kanban-main",
+                    "herdr_workspace": "kanban.seed",
+                }),
+            );
+            core.shutdown();
+
+            let elsewhere = dir.path().join("elsewhere");
+            std::fs::create_dir_all(&elsewhere).expect("another cwd is created");
+            std::env::set_current_dir(&elsewhere).expect("the cwd moves away from the repository");
+
+            let rebooted = boot(&dir);
+            let mut second = Client::connect(rebooted.socket_path());
+            let listed = second.query("project.list");
+            assert_eq!(
+                listed["projects"][0]["repository"],
+                json!(absolute),
+                "the stored anchor stays stable after the cwd changes"
+            );
+
+            rebooted.shutdown();
+        }
+
+        #[test]
+        fn missing_repository_anchor_is_refused() {
+            let _guard = CWD_LOCK.lock().expect("the cwd lock is sound");
+            let dir = TempDir::new().expect("a scratch directory is available");
+            std::env::set_current_dir(dir.path()).expect("the cwd moves into the scratch tree");
+
+            let core = boot(&dir);
+            let mut client = Client::connect(core.socket_path());
+            let refused = client.command_error(
+                "project.register",
+                json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "register-missing" },
+                    "code": "CORE",
+                    "name": "Control plane",
+                    "repository": "./missing",
+                    "seed_workspace": "/workspaces/kanban.seed",
+                    "default_branch": "main",
+                    "herdr_session": "kanban-main",
+                    "herdr_workspace": "kanban.seed",
+                }),
+            );
+            assert_eq!(refused["code"], json!("invalid_request"));
+            assert_eq!(
+                refused["message"],
+                json!("the target repository at `./missing` does not exist")
+            );
+
+            core.shutdown();
+        }
     }
 }

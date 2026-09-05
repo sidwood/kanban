@@ -7,6 +7,7 @@
 //! change appends a timeline event in the same write, archived is
 //! terminal, and no delete exists.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use kanban_domain::{InitiativeId, NumberKind, Project, ProjectId, ProjectRegistration};
@@ -23,6 +24,36 @@ use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
 use crate::initiative::InitiativeStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
+
+/// Resolve a repository anchor against `cwd`, canonicalise it, and
+/// return the stable absolute path registration stores.
+pub(crate) fn canonicalise_repository_anchor_at(raw: &str, cwd: &Path) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::invalid_request(
+            "a Project target repository cannot be blank",
+        ));
+    }
+    let path = Path::new(trimmed);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    match resolved.canonicalize() {
+        Ok(canonical) => canonical.to_str().map(str::to_owned).ok_or_else(|| {
+            ApiError::invalid_request("the target repository path is not valid UTF-8")
+        }),
+        Err(_) => Err(ApiError::invalid_request(&format!(
+            "the target repository at `{trimmed}` does not exist"
+        ))),
+    }
+}
+
+fn canonicalise_repository_anchor(raw: &str) -> Result<String, ApiError> {
+    let cwd = std::env::current_dir().map_err(|error| ApiError::internal(&error.to_string()))?;
+    canonicalise_repository_anchor_at(raw, &cwd)
+}
 
 /// The git observation port: how registration confirms a target is a
 /// Git repository. The service wires the real filesystem observation;
@@ -144,10 +175,11 @@ impl CommandHandler for RegisterProject {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: ProjectRegisterRequest = parse_payload(&command.payload)?;
+        let repository = canonicalise_repository_anchor(&request.repository)?;
         let registration = ProjectRegistration::new(
             &request.code,
             &request.name,
-            &request.repository,
+            &repository,
             &request.seed_workspace,
             &request.default_branch,
             &request.herdr_workspace,
@@ -323,6 +355,29 @@ pub(crate) mod testing {
     use crate::initiative::InitiativeStore;
     use crate::mutation::{IdempotencyStore, MemoryIdempotencyStore};
     use crate::timeline::TimelineEnvelope;
+
+    /// One scratch Git repository every command-path test shares. The
+    /// directory stays alive for the process so canonicalisation can
+    /// resolve the anchor on disk.
+    pub(crate) fn shared_test_repository() -> &'static str {
+        static FIXTURE: std::sync::OnceLock<(tempfile::TempDir, String)> =
+            std::sync::OnceLock::new();
+        &FIXTURE
+            .get_or_init(|| {
+                let dir = tempfile::TempDir::new().expect("a scratch directory is available");
+                let repository = dir.path().join("kanban");
+                std::fs::create_dir_all(repository.join(".git"))
+                    .expect("the scratch repository is created");
+                let path = repository
+                    .canonicalize()
+                    .expect("the repository path canonicalises")
+                    .to_str()
+                    .expect("the path is UTF-8")
+                    .to_owned();
+                (dir, path)
+            })
+            .1
+    }
 
     /// The git observation the tests steer: a fixed set of known
     /// repositories. An empty set refuses every target.
@@ -603,7 +658,7 @@ pub(crate) mod testing {
     pub(crate) fn harness() -> Harness {
         harness_with_observing(
             KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             Arc::new(crate::events::NoopEventSink),
         )
@@ -626,7 +681,7 @@ pub(crate) mod testing {
     pub(super) fn harness_with_herdr(herdr: Arc<dyn HerdrProjectObserver>) -> Harness {
         harness_with_parts(
             KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             Arc::new(crate::events::NoopEventSink),
             herdr,
@@ -689,7 +744,7 @@ pub(crate) mod testing {
             "mutation": { "optimistic_version": 0, "idempotency_key": key },
             "code": code,
             "name": name,
-            "repository": "/repositories/kanban",
+            "repository": shared_test_repository(),
             "seed_workspace": seed_workspace,
             "default_branch": default_branch,
             "herdr_workspace": herdr_workspace,
@@ -720,7 +775,7 @@ pub(crate) mod testing {
             "id": 1,
             "code": "CORE",
             "name": "Control plane",
-            "repository": "/repositories/kanban",
+            "repository": shared_test_repository(),
             "seed_workspace": "/workspaces/kanban.seed",
             "default_branch": "main",
             "herdr_session": "kanban-main",
@@ -745,7 +800,7 @@ pub(crate) mod testing {
         let registration = ProjectRegistration::new(
             code,
             "Control plane",
-            "/repositories/kanban",
+            shared_test_repository(),
             "/workspaces/kanban.seed",
             "main",
             "kanban.seed",
@@ -782,7 +837,7 @@ mod project_registration {
 
     use super::testing::{
         Harness, KnownRepositories, RecordingSink, harness, harness_with_observing, register,
-        registered, registered_without_session, registering,
+        registered, registered_without_session, registering, shared_test_repository,
     };
     use crate::catalog::exposed_operations;
 
@@ -874,7 +929,10 @@ mod project_registration {
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(
             error.message,
-            "the target repository at `/repositories/kanban` is not a Git repository"
+            format!(
+                "the target repository at `{}` is not a Git repository",
+                shared_test_repository()
+            )
         );
         let (rows, timeline) = harness.projects.snapshot();
         assert!(rows.is_empty(), "no row may be written");
@@ -1074,7 +1132,7 @@ mod project_registration {
                 json!({
                     "code": "CORE",
                     "name": "Control plane",
-                    "repository": "/repositories/kanban",
+                    "repository": shared_test_repository(),
                     "seed_workspace": "/workspaces/kanban.seed",
                     "default_branch": "main",
                     "herdr_workspace": "kanban.seed",
@@ -1093,7 +1151,7 @@ mod project_registration {
         let sink = Arc::new(RecordingSink::default());
         let harness = harness_with_observing(
             KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             sink.clone(),
         );
@@ -1128,6 +1186,73 @@ mod project_registration {
 }
 
 #[cfg(test)]
+mod repository_anchor {
+    use tempfile::TempDir;
+
+    use super::canonicalise_repository_anchor_at;
+
+    #[test]
+    fn canonicalise_resolves_a_relative_path_against_the_cwd() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = dir.path().join("kanban");
+        std::fs::create_dir_all(&repository).expect("the repository directory is created");
+
+        let canonical =
+            canonicalise_repository_anchor_at("./kanban", dir.path()).expect("the path resolves");
+
+        assert_eq!(
+            canonical,
+            repository
+                .canonicalize()
+                .expect("the repository path canonicalises")
+                .to_str()
+                .expect("the path is UTF-8")
+        );
+    }
+
+    #[test]
+    fn canonicalise_preserves_an_absolute_path() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = dir.path().join("kanban");
+        std::fs::create_dir_all(&repository).expect("the repository directory is created");
+        let absolute = repository
+            .canonicalize()
+            .expect("the repository path canonicalises");
+
+        let canonical = canonicalise_repository_anchor_at(
+            absolute.to_str().expect("the path is UTF-8"),
+            dir.path(),
+        )
+        .expect("the absolute path is accepted");
+
+        assert_eq!(canonical, absolute.to_str().expect("the path is UTF-8"));
+    }
+
+    #[test]
+    fn canonicalise_rejects_a_missing_target() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+
+        let error = canonicalise_repository_anchor_at("./missing", dir.path())
+            .expect_err("a missing target is refused");
+
+        assert_eq!(
+            error.message,
+            "the target repository at `./missing` does not exist"
+        );
+    }
+
+    #[test]
+    fn canonicalise_rejects_a_blank_anchor() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+
+        let error = canonicalise_repository_anchor_at("  ", dir.path())
+            .expect_err("a blank anchor is refused");
+
+        assert_eq!(error.message, "a Project target repository cannot be blank");
+    }
+}
+
+#[cfg(test)]
 mod project_lifecycle {
     use std::sync::{Arc, Mutex};
 
@@ -1140,7 +1265,7 @@ mod project_lifecycle {
 
     use super::testing::{
         KnownRepositories, RecordingHerdrObserver, archive, harness, harness_with_herdr,
-        harness_with_idempotency, registering, stored_project,
+        harness_with_idempotency, registering, shared_test_repository, stored_project,
     };
     use crate::events::NoopEventSink;
     use crate::herdr::HerdrProjectObserver;
@@ -1200,7 +1325,7 @@ mod project_lifecycle {
         let observer = Arc::new(RecordingHerdrObserver::default());
         let harness = harness_with_idempotency(
             KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             Arc::new(NoopEventSink),
             observer.clone(),
@@ -1267,7 +1392,7 @@ mod project_lifecycle {
         });
         let harness = harness_with_idempotency(
             KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             Arc::new(NoopEventSink),
             observer,
@@ -1470,7 +1595,7 @@ mod project_lifecycle {
         let sink = std::sync::Arc::new(super::testing::RecordingSink::default());
         let harness = super::testing::harness_with_observing(
             super::testing::KnownRepositories {
-                repositories: vec!["/repositories/kanban".to_owned()],
+                repositories: vec![shared_test_repository().to_owned()],
             },
             sink.clone(),
         );

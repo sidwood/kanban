@@ -115,6 +115,7 @@ describe('WorkspacesView', () => {
           branch: null,
           head: 'abc123',
           working_tree_clean: true,
+          unique_unlanded_commits: false,
           lane_assignment: null,
         },
       }),
@@ -122,6 +123,37 @@ describe('WorkspacesView', () => {
 
     expect(wrapper.find('[data-testid="workspace-detached-3"]').text()).toBe('detached')
     expect(wrapper.text()).not.toContain('HEAD')
+  })
+
+  it('renders observation failure separately from a dirty worktree', async () => {
+    const { wrapper } = await mounted([
+      workspace({ id: 2, path: '/workspaces/kanban.feature', is_seed: false, health: 'dirty' }),
+      workspace({
+        id: 5,
+        path: '/workspaces/kanban.unreadable',
+        is_seed: false,
+        health: 'unobserved',
+        observation: {
+          repository_identity: 'identity',
+          checkout: 'branch',
+          branch: 'feature',
+          head: 'abc123',
+          working_tree_clean: null,
+          unique_unlanded_commits: null,
+          lane_assignment: null,
+        },
+      }),
+    ])
+
+    expect(wrapper.find('[data-testid="workspace-health-2"]').text()).toBe('dirty')
+    expect(
+      wrapper.find('[data-testid="workspace-unobserved-2"]').exists(),
+      'a genuinely dirty worktree is not an observation failure',
+    ).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-health-5"]').text()).toBe('unobserved')
+    expect(wrapper.find('[data-testid="workspace-unobserved-5"]').text()).toBe(
+      'observation failed',
+    )
   })
 
   it('registers a Workspace path for the Project', async () => {

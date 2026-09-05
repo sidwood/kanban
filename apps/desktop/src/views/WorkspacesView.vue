@@ -130,6 +130,14 @@ async function submitObserve(id: number) {
           {{ workspace.health }}
         </span>
         <span
+          v-if="workspace.health === 'unobserved'"
+          :data-testid="`workspace-unobserved-${workspace.id}`"
+          title="git status could not be read; the tree state is unknown"
+          class="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-800"
+        >
+          observation failed
+        </span>
+        <span
           :data-testid="`workspace-path-${workspace.id}`"
           class="font-mono text-sm"
         >

@@ -2,6 +2,7 @@
 //! with schema derivation. Depends on nothing internal.
 
 pub mod comment;
+pub mod coverage;
 pub mod deferral;
 pub mod error;
 pub mod event;
@@ -22,6 +23,10 @@ pub mod workspace;
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
+};
+pub use coverage::{
+    CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
+    SpecCoverageCheckResponse,
 };
 pub use deferral::{
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
@@ -131,6 +136,8 @@ mod tests {
                 "CommentRevisionRecord",
                 "CommentRevisionsQuery",
                 "CommentRevisionsResponse",
+                "CoverageCriterionProposal",
+                "CriterionRefusal",
                 "ErrorCode",
                 "DeferralIdentity",
                 "EventEnvelope",
@@ -206,6 +213,9 @@ mod tests {
                 "DeferralRecordRequest",
                 "DeferralSupersedeRequest",
                 "RulingIdentity",
+                "RefusedCriterion",
+                "SpecCoverageCheckQuery",
+                "SpecCoverageCheckResponse",
                 "RulingListQuery",
                 "RulingListResponse",
                 "RulingRecord",

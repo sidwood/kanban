@@ -5,6 +5,10 @@ use crate::comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
 };
+use crate::coverage::{
+    CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
+    SpecCoverageCheckResponse,
+};
 use crate::deferral::{
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
     DeferralSupersedeRequest,
@@ -70,6 +74,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "CommentRevisionsResponse",
             schema_for!(CommentRevisionsResponse),
         ),
+        (
+            "CoverageCriterionProposal",
+            schema_for!(CoverageCriterionProposal),
+        ),
+        ("CriterionRefusal", schema_for!(CriterionRefusal)),
         ("ErrorCode", schema_for!(ErrorCode)),
         ("DeferralIdentity", schema_for!(DeferralIdentity)),
         ("EventEnvelope", schema_for!(EventEnvelope)),
@@ -190,6 +199,15 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(DeferralSupersedeRequest),
         ),
         ("RulingIdentity", schema_for!(RulingIdentity)),
+        ("RefusedCriterion", schema_for!(RefusedCriterion)),
+        (
+            "SpecCoverageCheckQuery",
+            schema_for!(SpecCoverageCheckQuery),
+        ),
+        (
+            "SpecCoverageCheckResponse",
+            schema_for!(SpecCoverageCheckResponse),
+        ),
         ("RulingListQuery", schema_for!(RulingListQuery)),
         ("RulingListResponse", schema_for!(RulingListResponse)),
         ("RulingRecord", schema_for!(RulingRecord)),

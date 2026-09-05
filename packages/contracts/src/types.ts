@@ -194,7 +194,7 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -439,6 +439,45 @@ export type SpecVersionSupersedeRequest = {
   spec_id: number;
   version: number;
 };
+export type TicketCreateRequest = {
+  criteria?: TicketCriterion[] | null;
+  kind: TicketKind;
+  mutation: MutationContext;
+  priority: TicketPriority;
+  project_id: number;
+  slice?: string | null;
+  spec_id?: number | null;
+  title?: string | null;
+};
+export type TicketCriterion = {
+  outcome: string;
+  stories: string[];
+};
+export type TicketGetQuery = {
+  ticket_id: number;
+};
+export type TicketKind = 'implementation' | 'bug' | 'task';
+export type TicketListQuery = {
+  project_id: number;
+};
+export type TicketListResponse = {
+  tickets: TicketRecord[];
+};
+export type TicketPriority = 'urgent' | 'high' | 'normal' | 'low';
+export type TicketRecord = {
+  criteria: TicketCriterion[];
+  id: number;
+  kind: TicketKind;
+  number: number;
+  priority: TicketPriority;
+  project_id: number;
+  slice?: string | null;
+  spec_id?: number | null;
+  state: TicketState;
+  title?: string | null;
+  version: number;
+};
+export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
 export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace';
 export type TimelineEntityRef = {
   id: string;

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+  "oneOf": [
+    {
+      "description": "A small vertical product slice of exactly one Spec.",
+      "enum": [
+        "implementation"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "A record of incorrect behaviour, with qualification evidence.",
+      "enum": [
+        "bug"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Bounded operational, investigative, or administrative work.",
+      "enum": [
+        "task"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TicketKind"
+}

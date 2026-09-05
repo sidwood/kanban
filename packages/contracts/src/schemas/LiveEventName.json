@@ -18,6 +18,7 @@
     "spec.version.approved",
     "spec.version.superseded",
     "spec.execution.moved",
+    "ticket.created",
     "comment.created",
     "comment.edited",
     "ruling.recorded",

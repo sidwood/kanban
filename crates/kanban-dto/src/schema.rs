@@ -50,6 +50,10 @@ use crate::spec::{
     SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
+use crate::ticket::{
+    TicketCreateRequest, TicketCriterion, TicketGetQuery, TicketKind, TicketListQuery,
+    TicketListResponse, TicketPriority, TicketRecord, TicketState,
+};
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
@@ -180,6 +184,15 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "SpecVersionSupersedeRequest",
             schema_for!(SpecVersionSupersedeRequest),
         ),
+        ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
+        ("TicketCriterion", schema_for!(TicketCriterion)),
+        ("TicketGetQuery", schema_for!(TicketGetQuery)),
+        ("TicketKind", schema_for!(TicketKind)),
+        ("TicketListQuery", schema_for!(TicketListQuery)),
+        ("TicketListResponse", schema_for!(TicketListResponse)),
+        ("TicketPriority", schema_for!(TicketPriority)),
+        ("TicketRecord", schema_for!(TicketRecord)),
+        ("TicketState", schema_for!(TicketState)),
         ("ProjectArchiveRequest", schema_for!(ProjectArchiveRequest)),
         ("ProjectCounters", schema_for!(ProjectCounters)),
         ("ProjectListQuery", schema_for!(ProjectListQuery)),

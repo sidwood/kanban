@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One story-linked criterion an Implementation Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+  "properties": {
+    "outcome": {
+      "description": "The observable outcome the criterion states.",
+      "type": "string"
+    },
+    "stories": {
+      "description": "The User Stories the criterion claims.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "outcome",
+    "stories"
+  ],
+  "title": "TicketCriterion",
+  "type": "object"
+}

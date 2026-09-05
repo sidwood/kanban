@@ -11,6 +11,7 @@ use crate::initiative::InitiativeRecord;
 use crate::plan::PlanRecord;
 use crate::project::ProjectRecord;
 use crate::spec::SpecRecord;
+use crate::ticket::TicketRecord;
 use crate::workspace::WorkspaceRecord;
 
 macro_rules! define_live_event_catalogue {
@@ -154,6 +155,10 @@ define_live_event_catalogue! {
         payload: "SpecRecord",
         description: "A Spec's execution moved along its state set.",
     },
+    TicketCreated @ "ticket.created" => {
+        payload: "TicketRecord",
+        description: "A Ticket was created under its kind's schema.",
+    },
     CommentCreated @ "comment.created" => {
         payload: "CommentRecord",
         description: "A Comment was created.",
@@ -289,6 +294,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: SpecRecord,
     },
+    TicketCreated {
+        sequence: u64,
+        payload: TicketRecord,
+    },
     CommentCreated {
         sequence: u64,
         payload: CommentRecord,
@@ -355,6 +364,7 @@ impl LiveEvent {
             Self::SpecVersionApproved { .. } => LiveEventName::SpecVersionApproved,
             Self::SpecVersionSuperseded { .. } => LiveEventName::SpecVersionSuperseded,
             Self::SpecExecutionMoved { .. } => LiveEventName::SpecExecutionMoved,
+            Self::TicketCreated { .. } => LiveEventName::TicketCreated,
             Self::CommentCreated { .. } => LiveEventName::CommentCreated,
             Self::CommentEdited { .. } => LiveEventName::CommentEdited,
             Self::RulingRecorded { .. } => LiveEventName::RulingRecorded,
@@ -388,6 +398,7 @@ impl LiveEvent {
             | Self::SpecVersionApproved { sequence, .. }
             | Self::SpecVersionSuperseded { sequence, .. }
             | Self::SpecExecutionMoved { sequence, .. }
+            | Self::TicketCreated { sequence, .. }
             | Self::CommentCreated { sequence, .. }
             | Self::CommentEdited { sequence, .. }
             | Self::RulingRecorded { sequence, .. }
@@ -512,6 +523,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::SpecExecutionMoved => LiveEvent::SpecExecutionMoved {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketCreated => LiveEvent::TicketCreated {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

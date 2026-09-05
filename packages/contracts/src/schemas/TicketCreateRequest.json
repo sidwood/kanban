@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TicketCriterion": {
+      "additionalProperties": false,
+      "description": "One story-linked criterion an Implementation Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "properties": {
+        "outcome": {
+          "description": "The observable outcome the criterion states.",
+          "type": "string"
+        },
+        "stories": {
+          "description": "The User Stories the criterion claims.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "stories"
+      ],
+      "type": "object"
+    },
+    "TicketKind": {
+      "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+      "oneOf": [
+        {
+          "description": "A small vertical product slice of exactly one Spec.",
+          "enum": [
+            "implementation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A record of incorrect behaviour, with qualification evidence.",
+          "enum": [
+            "bug"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bounded operational, investigative, or administrative work.",
+          "enum": [
+            "task"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketPriority": {
+      "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+      "oneOf": [
+        {
+          "description": "Ahead of everything else.",
+          "enum": [
+            "urgent"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ahead of normal work.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The everyday order.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Behind normal work.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug or Task names its title and may name a Spec. Fields the kind does not carry are simply absent.",
+  "properties": {
+    "criteria": {
+      "description": "The Implementation's story-linked criteria.",
+      "items": {
+        "$ref": "#/definitions/TicketCriterion"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "kind": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketKind"
+        }
+      ],
+      "description": "The kind whose schema the Ticket carries."
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "priority": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketPriority"
+        }
+      ],
+      "description": "The Ticket's priority (DR-LC-12)."
+    },
+    "project_id": {
+      "description": "The Project the new Ticket belongs to.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "slice": {
+      "description": "The Implementation slice description, naming the behaviour delivered end to end.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spec_id": {
+      "description": "The Spec this Ticket attaches to. An Implementation must name exactly one (DR-TK-02); a Bug or Task may name one or none (DR-TK-03).",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "The Bug or Task title.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "mutation",
+    "priority",
+    "project_id"
+  ],
+  "title": "TicketCreateRequest",
+  "type": "object"
+}

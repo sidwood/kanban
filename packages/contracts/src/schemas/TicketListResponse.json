@@ -1,0 +1,286 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketCriterion": {
+      "additionalProperties": false,
+      "description": "One story-linked criterion an Implementation Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "properties": {
+        "outcome": {
+          "description": "The observable outcome the criterion states.",
+          "type": "string"
+        },
+        "stories": {
+          "description": "The User Stories the criterion claims.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "stories"
+      ],
+      "type": "object"
+    },
+    "TicketKind": {
+      "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+      "oneOf": [
+        {
+          "description": "A small vertical product slice of exactly one Spec.",
+          "enum": [
+            "implementation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A record of incorrect behaviour, with qualification evidence.",
+          "enum": [
+            "bug"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bounded operational, investigative, or administrative work.",
+          "enum": [
+            "task"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketPriority": {
+      "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+      "oneOf": [
+        {
+          "description": "Ahead of everything else.",
+          "enum": [
+            "urgent"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ahead of normal work.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The everyday order.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Behind normal work.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketRecord": {
+      "additionalProperties": false,
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, and the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations.",
+      "properties": {
+        "criteria": {
+          "description": "The Implementation's story-linked criteria; empty for every other kind.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketKind"
+            }
+          ],
+          "description": "The kind whose schema this Ticket carries."
+        },
+        "number": {
+          "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "priority": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketPriority"
+            }
+          ],
+          "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "project_id": {
+          "description": "The Project this Ticket belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "slice": {
+          "description": "The Implementation slice description, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec_id": {
+          "description": "The Spec this Ticket attaches to, if it attaches to one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketState"
+            }
+          ],
+          "description": "The lifecycle state (DR-LC-01)."
+        },
+        "title": {
+          "description": "The Bug or Task title, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "criteria",
+        "id",
+        "kind",
+        "number",
+        "priority",
+        "project_id",
+        "state",
+        "version"
+      ],
+      "type": "object"
+    },
+    "TicketState": {
+      "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+      "oneOf": [
+        {
+          "description": "Newly created; not yet qualified or planned.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deliberately set aside.",
+          "enum": [
+            "parked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Waiting on something outside the Ticket.",
+          "enum": [
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Qualified but unavailable until activation.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Free to execute when capacity allows.",
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Executing.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Under review.",
+          "enum": [
+            "in_review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Review approved, waiting to land.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landing through the Seed Workspace.",
+          "enum": [
+            "landing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landed in full.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: will not execute.",
+          "enum": [
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: replaced by a reassignment Ticket.",
+          "enum": [
+            "superseded"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `ticket.list` query.",
+  "properties": {
+    "tickets": {
+      "description": "Every Ticket of the Project, oldest first, all lifecycle states included.",
+      "items": {
+        "$ref": "#/definitions/TicketRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tickets"
+  ],
+  "title": "TicketListResponse",
+  "type": "object"
+}

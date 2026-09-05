@@ -16,6 +16,7 @@ pub mod project;
 pub mod ruling;
 pub mod schema;
 pub mod spec;
+pub mod ticket;
 pub mod timeline;
 
 pub mod workspace;
@@ -71,6 +72,10 @@ pub use spec::{
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
     SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+};
+pub use ticket::{
+    TicketCreateRequest, TicketCriterion, TicketGetQuery, TicketKind, TicketListQuery,
+    TicketListResponse, TicketPriority, TicketRecord, TicketState,
 };
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -200,6 +205,15 @@ mod tests {
                 "SpecVersionGetQuery",
                 "SpecVersionRecord",
                 "SpecVersionSupersedeRequest",
+                "TicketCreateRequest",
+                "TicketCriterion",
+                "TicketGetQuery",
+                "TicketKind",
+                "TicketListQuery",
+                "TicketListResponse",
+                "TicketPriority",
+                "TicketRecord",
+                "TicketState",
                 "ProjectArchiveRequest",
                 "ProjectCounters",
                 "ProjectListQuery",

@@ -12,6 +12,7 @@ pub mod idempotency;
 pub mod initiatives;
 pub mod migrations;
 pub mod paths;
+pub mod plan;
 pub mod projects;
 pub mod rulings;
 pub mod timeline;
@@ -31,6 +32,7 @@ pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,
 };
 pub use paths::{attachments_dir, database_path, managed_data_dir};
+pub use plan::SqlitePlanStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;
 pub use timeline::{TimelineFilter, TimelineRow};

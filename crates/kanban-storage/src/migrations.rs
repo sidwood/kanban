@@ -103,6 +103,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "herdr_settings",
         sql: include_str!("../migrations/0010_herdr_settings.sql"),
     },
+    Migration {
+        version: 11,
+        name: "plans",
+        sql: include_str!("../migrations/0011_plans.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -254,7 +259,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
             }
         );
         assert_eq!(
@@ -274,7 +279,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -288,6 +293,12 @@ mod tests {
             "projects",
             "herdr_global_defaults",
             "herdr_project_settings",
+            "plans",
+            "plan_specs",
+            "plan_edges",
+            "plan_versions",
+            "plan_version_specs",
+            "plan_version_edges",
         ] {
             let present: i64 = database
                 .connection()
@@ -336,7 +347,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 10, "one event per applied migration");
+        assert_eq!(events.len(), 11, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -381,6 +392,17 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[8].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 9, "name": "projects" })
+        );
+        assert_eq!(events[9].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[9].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 10, "name": "herdr_settings" })
+        );
+        assert_eq!(events[10].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[10].2)
+                .expect("the detail is JSON"),
+            serde_json::json!({ "version": 11, "name": "plans" })
         );
     }
 
@@ -456,6 +478,10 @@ mod tests {
                     version: 10,
                     name: "herdr_settings",
                 },
+                PendingMigration {
+                    version: 11,
+                    name: "plans",
+                },
             ]]
         );
     }
@@ -498,7 +524,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0010 applies");
 
-        assert_eq!(report.applied, vec![10]);
+        assert_eq!(report.applied, vec![10, 11]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

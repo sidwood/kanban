@@ -144,6 +144,7 @@ impl Drop for ScriptedSession {
 #[derive(Debug, Clone, Default)]
 pub struct SessionScript {
     events: Vec<Value>,
+    delay_before_events: Option<Duration>,
     wait_met: bool,
     wait_detail: Value,
     prompt_accepted: bool,
@@ -158,6 +159,14 @@ impl SessionScript {
     /// Push events delivered after subscribe.
     pub fn with_events(mut self, events: Vec<Value>) -> Self {
         self.events = events;
+        self
+    }
+
+    /// Hold the subscription quiet for `delay` before pushing
+    /// events, so a test can place events after an observer's
+    /// settle window.
+    pub fn with_delayed_events(mut self, delay: Duration) -> Self {
+        self.delay_before_events = Some(delay);
         self
     }
 
@@ -298,6 +307,9 @@ fn serve_connection(
                 // Subscribe succeeded, then the session drops at once:
                 // a live subscription that cannot settle.
                 return;
+            }
+            if let Some(delay) = script.delay_before_events {
+                thread::sleep(delay);
             }
             while event_index < script.events.len() {
                 let event = script.events[event_index].clone();

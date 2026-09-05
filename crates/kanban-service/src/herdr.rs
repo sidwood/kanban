@@ -1,6 +1,8 @@
 //! Herdr session observation: connect through each Project's
 //! effective session, snapshot on startup and reconnect, and append
-//! telemetry events (KAN-S8-US1, DR-HB-08, DR-HB-19).
+//! telemetry events (KAN-S8-US1, DR-HB-08, DR-HB-19). Push events
+//! drive normal operation and land through the telemetry
+//! projection (KAN-S8-US2, DR-HB-07).
 
 use std::collections::HashMap;
 use std::net::Shutdown;
@@ -11,12 +13,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use kanban_app::telemetry::{TelemetryProjection, project_herdr_event};
 use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, TimelineEnvelope};
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
 use kanban_herdr::{HerdrError, SessionClient, SessionMapping};
 use kanban_storage::Database;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// Why observation could not start for one Project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -345,7 +348,8 @@ impl HerdrObserverHandle {
     /// connection, subscription, or settle window reports through
     /// diagnostics alone, and the captured snapshot is appended only
     /// once the subscription has held past the settle window
-    /// (KAN-T78-AC2, KAN-T78-AC3).
+    /// (KAN-T78-AC2, KAN-T78-AC3). Every push event read on the way
+    /// lands through the telemetry projection (DR-HB-07).
     fn observe_live(&self, live_once: &mut bool) -> bool {
         // Open carries no request traffic: the socket duplicate — the
         // only handle a stop can shut down — is registered before the
@@ -393,7 +397,8 @@ impl HerdrObserverHandle {
         // as the live session: one that drops inside the window is
         // another failed attempt, so it neither resets the backoff nor
         // lands its snapshot (KAN-T78-AC2).
-        if self.stopped() || !self.settles(&mut client) {
+        let mut windowed = Vec::new();
+        if self.stopped() || !self.settles(&mut client, &mut windowed) {
             self.mark_connected(false, Some("disconnected".to_owned()));
             return false;
         }
@@ -403,20 +408,31 @@ impl HerdrObserverHandle {
             Ok(()) => self.record_snapshot(snapshot.captured_at),
             Err(error) => self.mark_error(error),
         }
+        // The capture precedes every event it raced, so the events
+        // buffered inside the window append after the snapshot row.
+        for event in windowed {
+            self.append_push_event(&event);
+        }
         while !self.stopped() {
-            if client.read_event().is_err() {
-                self.mark_connected(false, Some("disconnected".to_owned()));
-                break;
+            match client.read_event() {
+                Ok(event) => self.append_push_event(&event),
+                Err(_) => {
+                    self.mark_connected(false, Some("disconnected".to_owned()));
+                    break;
+                }
             }
         }
         true
     }
 
-    /// Wait out the settle window against the live subscription: a
-    /// subscription still answering — pushing events or sitting quiet —
-    /// when the window closes is settled, while one whose connection
-    /// ends inside it is not (KAN-T78-AC2).
-    fn settles(&self, client: &mut SessionClient) -> bool {
+    /// Wait out the settle window against the live subscription,
+    /// collecting the events pushed inside it: a subscription still
+    /// answering — pushing events or sitting quiet — when the window
+    /// closes is settled, while one whose connection ends inside it is
+    /// not (KAN-T78-AC2). A failed window drops its events: that
+    /// session never settled, and reconciliation (KAN-T41) is the
+    /// recovery path for what a dropped subscription lost.
+    fn settles(&self, client: &mut SessionClient, windowed: &mut Vec<Value>) -> bool {
         let deadline = Instant::now() + self.settle;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -426,7 +442,7 @@ impl HerdrObserverHandle {
             match client.read_event_within(remaining) {
                 // A pushed event proves the subscription live; the
                 // window still has to be waited out.
-                Ok(_) => continue,
+                Ok(event) => windowed.push(event),
                 // Silence held to the deadline is as settled as
                 // traffic.
                 Err(HerdrError::TimedOut) => return true,
@@ -459,6 +475,23 @@ impl HerdrObserverHandle {
             .append_timeline_event(&envelope)
             .map_err(|error| ObservationError::Timeline(error.to_string()))?;
         Ok(())
+    }
+
+    /// Append one observed push event through the telemetry
+    /// projection (DR-HB-07). The projection can only mint timeline
+    /// rows and attention signals; push events never raise a signal,
+    /// and the signal consumer lands with KAN-T41 and KAN-S11.
+    fn append_push_event(&self, event: &Value) {
+        for projection in project_herdr_event(self.project_id, event) {
+            match projection {
+                TelemetryProjection::Timeline(envelope) => {
+                    if let Err(error) = self.database.append_timeline_event(&envelope) {
+                        self.mark_error(ObservationError::Timeline(error.to_string()));
+                    }
+                }
+                TelemetryProjection::Attention(_) => {}
+            }
+        }
     }
 
     fn mark_connected(&self, connected: bool, last_error: Option<String>) {
@@ -638,6 +671,94 @@ mod tests {
         assert_eq!(details.len(), 1);
         assert_eq!(details[0]["event"], json!("snapshot"));
         assert_eq!(details[0]["reason"], json!("startup"));
+        observer.shutdown();
+    }
+
+    /// KAN-T40-AC1: push events inside the settle window append
+    /// after the snapshot they raced, carrying the payload whole.
+    #[test]
+    fn push_events_inside_the_settle_window_land_after_the_snapshot() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let role_opened = json!({
+            "kind": "role.opened",
+            "role": "implementer",
+            "project": "CORE",
+            "ticket": "KAN-T40",
+            "lane": "in_progress",
+            "reviewer_slot": "primary",
+            "run": "run-1",
+            "harness": "claude-code",
+            "model": "opus-5"
+        });
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_events(vec![
+                role_opened.clone(),
+                json!({ "kind": "role.output", "role": "implementer", "text": "working" }),
+            ]),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(300));
+
+        let details = telemetry_details(&database);
+        assert_eq!(details.len(), 3, "the snapshot and both push events land");
+        assert_eq!(details[0]["event"], json!("snapshot"));
+        assert_eq!(details[0]["reason"], json!("startup"));
+        assert_eq!(details[1]["event"], json!("role.opened"));
+        assert_eq!(details[1]["payload"], role_opened);
+        assert_eq!(
+            details[1]["tab"],
+            json!({
+                "project": "CORE",
+                "ticket": "KAN-T40",
+                "lane": "in_progress",
+                "reviewer_slot": "primary",
+                "run": "run-1",
+                "harness": "claude-code",
+                "model": "opus-5"
+            }),
+            "the role tab metadata rides the row (DR-HB-03)"
+        );
+        assert_eq!(details[2]["event"], json!("role.output"));
+
+        observer.shutdown();
+    }
+
+    /// KAN-T40-AC1: events pushed once the subscription has settled
+    /// keep landing through the steady read loop.
+    #[test]
+    fn push_events_after_the_settle_window_still_land() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_events(vec![json!({ "kind": "role.output", "text": "later" })])
+                // Past the fixture's 100ms settle window, so the row
+                // must arrive through the steady read, not the
+                // settle buffer.
+                .with_delayed_events(Duration::from_millis(250)),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(600));
+
+        let details = telemetry_details(&database);
+        assert_eq!(details.len(), 2);
+        assert_eq!(details[0]["event"], json!("snapshot"));
+        assert_eq!(details[1]["event"], json!("role.output"));
+        assert_eq!(details[1]["payload"]["text"], json!("later"));
+
         observer.shutdown();
     }
 
@@ -840,6 +961,7 @@ mod tests {
 
         let reasons: Vec<_> = telemetry_details(&database)
             .iter()
+            .filter(|detail| detail["event"] == json!("snapshot"))
             .map(|detail| detail["reason"].clone())
             .collect();
         assert_eq!(

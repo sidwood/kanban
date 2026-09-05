@@ -583,9 +583,6 @@ mod workspace_registration {
 #[cfg(test)]
 mod workspace_observe {
     use std::collections::HashMap;
-    use std::fs;
-    use std::path::Path;
-    use std::process::Command;
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
@@ -595,105 +592,9 @@ mod workspace_observe {
         ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
     };
     use serde_json::json;
-    use tempfile::TempDir;
 
     use super::testing::{ScriptedObserver, harness, observe, register, stored_project};
     use super::{WorkspaceGitObserver, WorkspaceGitSnapshot};
-    use crate::dispatch::Core;
-
-    /// Run one git command in `dir` and insist it succeeds.
-    fn git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("git runs");
-        assert!(status.success(), "git {:?} in {}", args, dir.display());
-    }
-
-    /// Initialise a repository with one commit.
-    fn init_repo(dir: &Path) -> String {
-        git(dir, &["init"]);
-        git(dir, &["config", "user.email", "test@example.com"]);
-        git(dir, &["config", "user.name", "Test"]);
-        fs::write(dir.join("README.md"), "seed\n").expect("the seed file is written");
-        git(dir, &["add", "."]);
-        git(dir, &["commit", "-m", "initial"]);
-        dir.to_str().expect("the path is UTF-8").to_owned()
-    }
-
-    /// Resolve the canonical git common directory identity.
-    fn repository_identity(path: &str) -> String {
-        let output = Command::new("git")
-            .args(["-C", path, "rev-parse", "--git-common-dir"])
-            .output()
-            .expect("git common dir reads");
-        assert!(output.status.success());
-        let relative = String::from_utf8(output.stdout).expect("git output is UTF-8");
-        let relative = relative.trim();
-        Path::new(path)
-            .join(relative)
-            .canonicalize()
-            .expect("the common dir resolves")
-            .to_str()
-            .expect("the identity is UTF-8")
-            .to_owned()
-    }
-
-    /// A real git observer for fixture repositories in temp dirs.
-    struct LocalGitObserver;
-
-    impl WorkspaceGitObserver for LocalGitObserver {
-        fn observe(&self, workspace_path: &str, repository_path: &str) -> WorkspaceGitSnapshot {
-            let workspace = Path::new(workspace_path);
-            if !workspace.join(".git").exists() && !workspace.is_dir() {
-                return WorkspaceGitSnapshot {
-                    present: false,
-                    repository_identity: None,
-                    branch: None,
-                    head: None,
-                    working_tree_clean: true,
-                };
-            }
-            let expected = repository_identity(repository_path);
-            let actual = repository_identity(workspace_path);
-            if expected != actual {
-                return WorkspaceGitSnapshot {
-                    present: false,
-                    repository_identity: None,
-                    branch: None,
-                    head: None,
-                    working_tree_clean: true,
-                };
-            }
-            let branch = Command::new("git")
-                .args(["-C", workspace_path, "rev-parse", "--abbrev-ref", "HEAD"])
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|output| String::from_utf8(output.stdout).expect("branch is UTF-8"))
-                .map(|value| value.trim().to_owned());
-            let head = Command::new("git")
-                .args(["-C", workspace_path, "rev-parse", "HEAD"])
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|output| String::from_utf8(output.stdout).expect("head is UTF-8"))
-                .map(|value| value.trim().to_owned());
-            let porcelain = Command::new("git")
-                .args(["-C", workspace_path, "status", "--porcelain"])
-                .output()
-                .expect("status reads");
-            let working_tree_clean = porcelain.stdout.is_empty();
-            WorkspaceGitSnapshot {
-                present: true,
-                repository_identity: Some(actual),
-                branch,
-                head,
-                working_tree_clean,
-            }
-        }
-    }
 
     /// Return successive snapshots for repeated observations.
     struct SteppedObserver {
@@ -712,79 +613,6 @@ mod workspace_observe {
                 steps.remove(0)
             }
         }
-    }
-
-    #[test]
-    fn observing_reads_git_state_without_mutating_the_repository() {
-        let dir = TempDir::new().expect("a scratch directory is available");
-        let repository = init_repo(dir.path());
-        let workspace = dir.path().join("clone");
-        git(
-            Path::new(&repository),
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "feature",
-                workspace.to_str().unwrap(),
-            ],
-        );
-
-        let harness = harness(Arc::new(ScriptedObserver::default()));
-        let registration = kanban_domain::ProjectRegistration::new(
-            "CORE",
-            "Control plane",
-            &repository,
-            workspace.to_str().unwrap(),
-            "main",
-            "kanban-main",
-            None,
-        )
-        .expect("the fixture registration validates");
-        let project = kanban_domain::Project::restore(
-            kanban_domain::ProjectId::new(1),
-            registration,
-            kanban_domain::ProjectState::Active,
-            kanban_domain::ProjectCounters::zeroed(),
-            1,
-        );
-        harness.projects.seed(project);
-
-        let observer = Arc::new(LocalGitObserver);
-        let workspaces = harness.workspaces.clone();
-        let projects = harness.projects.clone();
-        let mut core = Core::new(
-            crate::catalog::exposed_operations(),
-            Arc::new(crate::mutation::MemoryIdempotencyStore::new()),
-            Arc::new(crate::events::NoopEventSink),
-        );
-        core.register_workspaces(workspaces, projects, observer)
-            .expect("workspace operations register");
-
-        let head_before = Command::new("git")
-            .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
-            .output()
-            .expect("head reads");
-
-        core.command(
-            "workspace.register",
-            &register(1, workspace.to_str().unwrap(), "key-1"),
-        )
-        .expect("the workspace registers");
-        let response = core
-            .command("workspace.observe", &observe(1, "key-2", 1))
-            .expect("the observation applies");
-
-        let head_after = Command::new("git")
-            .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
-            .output()
-            .expect("head reads");
-
-        assert_eq!(head_before.stdout, head_after.stdout, "HEAD must not move");
-        assert_eq!(response["health"], json!("available"));
-        assert_eq!(response["observation"]["branch"], json!("feature"));
-        assert!(response["observation"]["head"].as_str().is_some());
-        assert_eq!(response["observation"]["working_tree_clean"], json!(true));
     }
 
     #[test]

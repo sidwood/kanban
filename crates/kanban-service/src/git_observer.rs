@@ -94,3 +94,120 @@ fn repository_identity(path: &str) -> Option<String> {
         .to_str()
         .map(str::to_owned)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    use tempfile::TempDir;
+
+    use super::LocalWorkspaceGitObserver;
+    use kanban_app::WorkspaceGitObserver;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {:?} in {}", args, dir.display());
+    }
+
+    fn init_repo(dir: &Path) -> String {
+        git(dir, &["init"]);
+        git(dir, &["config", "user.email", "test@example.com"]);
+        git(dir, &["config", "user.name", "Test"]);
+        fs::write(dir.join("README.md"), "seed\n").expect("the seed file is written");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "initial"]);
+        dir.to_str().expect("the path is UTF-8").to_owned()
+    }
+
+    #[test]
+    fn branch_clone_observation_is_present() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        git(
+            Path::new(&repository),
+            &["remote", "add", "origin", "https://example.com/kanban.git"],
+        );
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                &Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert!(
+            snapshot.present,
+            "sanctioned branch clones must be observed"
+        );
+        assert_eq!(snapshot.branch, Some("main".to_owned()));
+        assert!(snapshot.head.is_some());
+        assert!(snapshot.working_tree_clean);
+    }
+
+    #[test]
+    fn failed_git_status_is_not_reported_as_clean() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let bin = dir.path().join("bin");
+        fs::create_dir_all(&bin).expect("the wrapper directory is created");
+        let real_git = Command::new("which")
+            .arg("git")
+            .output()
+            .expect("git is on PATH")
+            .stdout;
+        let real_git = String::from_utf8(real_git)
+            .expect("which output is UTF-8")
+            .trim()
+            .to_owned();
+        fs::write(
+            bin.join("git"),
+            format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"-C\" ] && [ \"$3\" = \"status\" ] && [ \"$4\" = \"--porcelain\" ]; then\n\
+                   exit 1\n\
+                 fi\n\
+                 exec \"{real_git}\" \"$@\"\n"
+            ),
+        )
+        .expect("the wrapper is written");
+        let mut permissions = fs::metadata(bin.join("git"))
+            .expect("the wrapper exists")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(bin.join("git"), permissions).expect("the wrapper is executable");
+
+        let path = std::env::var("PATH").expect("PATH is set");
+        // SAFETY: the test owns the environment for this process only.
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", bin.display(), path));
+        }
+
+        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+
+        assert!(snapshot.present);
+        assert!(
+            !snapshot.working_tree_clean,
+            "a failed git status must not report a clean tree"
+        );
+    }
+}

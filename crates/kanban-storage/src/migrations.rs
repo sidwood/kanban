@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
             }
         );
         assert_eq!(
@@ -284,7 +284,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -304,6 +304,7 @@ mod tests {
             "plan_versions",
             "plan_version_specs",
             "plan_version_edges",
+            "workspaces",
         ] {
             let present: i64 = database
                 .connection()
@@ -352,7 +353,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 12, "one event per applied migration");
+        assert_eq!(events.len(), 13, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -412,6 +413,54 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[11].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 12, "name": "plan versions append-only" })
+        );
+        assert_eq!(events[12].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[12].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 13, "name": "workspaces" })
+        );
+    }
+
+    #[test]
+    fn migrate_from_version_twelve_adds_workspaces() {
+        let (_dir, mut database) = scratch_database();
+        crate::migrations::apply_through(&database.connection(), 12)
+            .expect("the older schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspaces'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(before, 0, "version twelve must not create workspaces");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the upgrade applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![13] });
+        let present: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspaces'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(present, 1, "version thirteen creates workspaces");
+        let audited: String = database
+            .connection()
+            .query_row(
+                "SELECT detail FROM audit_events WHERE kind = 'migration.applied' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the audit trail is readable");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
+            serde_json::json!({ "version": 13, "name": "workspaces" })
         );
     }
 
@@ -494,6 +543,10 @@ mod tests {
                 PendingMigration {
                     version: 12,
                     name: "plan versions append-only",
+                },
+                PendingMigration {
+                    version: 13,
+                    name: "workspaces",
                 },
             ]]
         );

@@ -296,7 +296,7 @@ pub enum LiveEvent {
     },
     TicketCreated {
         sequence: u64,
-        payload: TicketRecord,
+        payload: Box<TicketRecord>,
     },
     CommentCreated {
         sequence: u64,

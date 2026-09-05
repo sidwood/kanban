@@ -1,11 +1,11 @@
-//! Ticket payload definitions: the kind, priority, and lifecycle
-//! vocabularies, the per-kind creation payload, and the record every
-//! client sees (KAN-S4-US1, KAN-S4-US2). Each kind sends exactly its
-//! own fields on creation — an Implementation attaches to one Spec
-//! and carries its slice and story-linked criteria; a Bug or Task
-//! carries a title and an optional attachment — and fields a later
-//! slice owns, like Bug qualification, arrive with that slice, never
-//! here early.
+//! Ticket payload definitions: the kind, priority, severity, and
+//! lifecycle vocabularies, the per-kind creation payload, the Bug's
+//! qualification and vendor-neutral facts payloads, and the record
+//! every client sees (KAN-S4-US1 through KAN-S4-US3). Each kind sends
+//! exactly its own fields on creation — an Implementation attaches to
+//! one Spec and carries its slice and story-linked criteria; a Bug
+//! carries its quick-capture facts; a Task carries a title and an
+//! optional attachment.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -156,9 +156,48 @@ impl TicketState {
     }
 }
 
-/// One story-linked criterion an Implementation Ticket claims: an
-/// observable outcome and the User Stories it delivers, named like
-/// `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).
+/// The closed Bug severity vocabulary on the wire (DR-LC-13):
+/// critical, high, medium, low. Severity arrives only inside a
+/// qualification (DR-TK-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketSeverity {
+    /// Data loss, secret exposure, or unauthorised execution.
+    Critical,
+    /// A failed approved criterion or workflow invariant.
+    High,
+    /// Usable behaviour, wrongly shaped.
+    Medium,
+    /// Cosmetic or local clarity.
+    Low,
+}
+
+impl TicketSeverity {
+    /// Every severity, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Critical, Self::High, Self::Medium, Self::Low];
+
+    /// The wire name, matching this severity's serialised form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
+
+    /// The severity `wire` names, or `None` outside the vocabulary.
+    pub fn parse(wire: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|severity| severity.as_str() == wire)
+    }
+}
+
+/// One story-linked criterion a Ticket claims: an observable outcome
+/// and the User Stories it delivers, named like `CORE-S3-US6` or
+/// `S3-US6` (DR-TK-04, DR-PS-13).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketCriterion {
@@ -168,10 +207,92 @@ pub struct TicketCriterion {
     pub stories: Vec<String>,
 }
 
+/// One Verification Step a Ticket claims: the command or scripted
+/// procedure that demonstrates a criterion (DR-PS-15). Commands live
+/// here and never as criteria.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketVerificationStep {
+    /// The command as it runs.
+    pub command: String,
+}
+
+/// One complete Bug qualification (DR-TK-09): the ten facts a Bug
+/// needs before it may leave draft, with the severity qualification
+/// assigned (DR-LC-13). Sent whole; qualification is one act.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBugQualification {
+    /// The behaviour that should have happened.
+    pub expected_behaviour: String,
+    /// The reproduction steps or the failing test demonstrating the
+    /// defect.
+    pub reproduction: String,
+    /// Where the defect occurs.
+    pub environment: String,
+    /// The severity qualification assigned (DR-LC-13).
+    pub severity: TicketSeverity,
+    /// How often the defect occurs.
+    pub frequency: String,
+    /// What the defect affects.
+    pub affected_scope: String,
+    /// What the defect puts at risk.
+    pub risk: String,
+    /// The story-linked Acceptance Criteria, at least one.
+    pub criteria: Vec<TicketCriterion>,
+    /// The Verification Steps, at least one.
+    pub verification_steps: Vec<TicketVerificationStep>,
+}
+
+/// One vendor-neutral External Reference a Bug carries (DR-TK-10): a
+/// URI naming an outside link, with an optional label.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketExternalReference {
+    /// The referenced URI.
+    pub uri: String,
+    /// The reference's label, when it carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339
+/// moment one occurrence was observed and what was seen then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketOccurrenceSnapshot {
+    /// The observed moment, RFC 3339.
+    pub observed_at: String,
+    /// What was observed at that moment.
+    pub observation: String,
+}
+
+/// The Bug-specific body of a Ticket record: the quick-capture facts,
+/// the qualification once one exists, and the vendor-neutral
+/// collections the Bug carries (DR-TK-08 to DR-TK-10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBugRecord {
+    /// What the Bug records happening, as the reporter stated it.
+    pub actual_behaviour: String,
+    /// The evidence the reporter holds, as the reporter stated it.
+    pub reporter_evidence: String,
+    /// The complete qualification, once one exists (DR-TK-09).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualification: Option<TicketBugQualification>,
+    /// The External References, in recording order (DR-TK-10).
+    pub external_references: Vec<TicketExternalReference>,
+    /// The Occurrence Snapshots, in recording order (DR-TK-10).
+    pub occurrence_snapshots: Vec<TicketOccurrenceSnapshot>,
+    /// The identities of the Evidence Items this Bug carries
+    /// (DR-TK-10).
+    pub evidence_ids: Vec<u64>,
+}
+
 /// Request payload for the `ticket.create` command. Each kind sends
 /// exactly its own fields: an Implementation names its Spec, slice,
-/// and criteria; a Bug or Task names its title and may name a Spec.
-/// Fields the kind does not carry are simply absent.
+/// and criteria; a Bug names its quick-capture facts; a Task names
+/// its title. Fields the kind does not carry are simply absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketCreateRequest {
@@ -190,6 +311,12 @@ pub struct TicketCreateRequest {
     /// The Bug or Task title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The Bug's actual behaviour (DR-TK-08); required for a Bug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_behaviour: Option<String>,
+    /// The Bug's reporter evidence (DR-TK-08); required for a Bug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reporter_evidence: Option<String>,
     /// The Implementation slice description, naming the behaviour
     /// delivered end to end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -199,10 +326,40 @@ pub struct TicketCreateRequest {
     pub criteria: Option<Vec<TicketCriterion>>,
 }
 
+/// Request payload for the `ticket.bug.qualify` command: one complete
+/// qualification for one Bug (DR-TK-09), replacing any earlier one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBugQualifyRequest {
+    pub mutation: super::MutationContext,
+    /// The Bug being qualified.
+    pub ticket_id: u64,
+    /// The complete qualification, severity included (DR-LC-13).
+    pub qualification: TicketBugQualification,
+}
+
+/// Request payload for the `ticket.bug.facts` command: the
+/// vendor-neutral collections one Bug carries (DR-TK-10), replaced
+/// whole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketBugFactsRequest {
+    pub mutation: super::MutationContext,
+    /// The Bug carrying the collections.
+    pub ticket_id: u64,
+    /// The External References, in recording order.
+    pub external_references: Vec<TicketExternalReference>,
+    /// The Occurrence Snapshots, in recording order.
+    pub occurrence_snapshots: Vec<TicketOccurrenceSnapshot>,
+    /// The identities of the Evidence Items attached to this Bug.
+    pub evidence_ids: Vec<u64>,
+}
+
 /// The Ticket record as every client sees it: the Project it belongs
 /// to, the number that Project minted, the kind whose schema it
 /// carries, and the kind-specific fields — a title for Bugs and
-/// Tasks, a slice and criteria for Implementations.
+/// Tasks, a slice and criteria for Implementations, and the Bug body
+/// for a Bug.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketRecord {
@@ -229,6 +386,8 @@ pub struct TicketRecord {
     /// The Implementation's story-linked criteria; empty for every
     /// other kind.
     pub criteria: Vec<TicketCriterion>,
+    /// The Bug body, if this Ticket carries one.
+    pub bug: Option<TicketBugRecord>,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
 }
@@ -422,10 +581,12 @@ mod tests {
 
     use super::{
         TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
+        TicketBugFactsRequest, TicketBugQualification, TicketBugQualifyRequest, TicketBugRecord,
         TicketCreateRequest, TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
         TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
-        TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse, TicketPriority,
-        TicketReadinessBlocker, TicketReadinessResponse, TicketRecord, TicketState,
+        TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
+        TicketOccurrenceSnapshot, TicketPriority, TicketReadinessBlocker, TicketReadinessResponse,
+        TicketRecord, TicketSeverity, TicketState, TicketVerificationStep,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -444,6 +605,39 @@ mod tests {
         }
     }
 
+    fn qualification() -> TicketBugQualification {
+        TicketBugQualification {
+            expected_behaviour: "The integration branch survives every landing.".to_owned(),
+            reproduction: "Re land a reviewed change.".to_owned(),
+            environment: "macOS 26.".to_owned(),
+            severity: TicketSeverity::High,
+            frequency: "Every landing.".to_owned(),
+            affected_scope: "Landings.".to_owned(),
+            risk: "Lost review state.".to_owned(),
+            criteria: vec![criterion()],
+            verification_steps: vec![TicketVerificationStep {
+                command: "cargo test -p kanban-domain bug_qualification".to_owned(),
+            }],
+        }
+    }
+
+    fn bug_record() -> TicketBugRecord {
+        TicketBugRecord {
+            actual_behaviour: "The integration branch is dropped.".to_owned(),
+            reporter_evidence: "The landing log names the drop.".to_owned(),
+            qualification: Some(qualification()),
+            external_references: vec![TicketExternalReference {
+                uri: "https://example.invalid/issues/12".to_owned(),
+                label: Some("The report".to_owned()),
+            }],
+            occurrence_snapshots: vec![TicketOccurrenceSnapshot {
+                observed_at: "2026-09-05T07:41:00Z".to_owned(),
+                observation: "The log shows the drop.".to_owned(),
+            }],
+            evidence_ids: vec![2],
+        }
+    }
+
     fn record() -> TicketRecord {
         TicketRecord {
             id: 6,
@@ -456,12 +650,13 @@ mod tests {
             title: None,
             slice: Some("Registration creates Projects end to end".to_owned()),
             criteria: vec![criterion()],
+            bug: None,
             version: 1,
         }
     }
 
     #[test]
-    fn kinds_priorities_and_states_round_trip_through_their_wire_names() {
+    fn kinds_priorities_severities_and_states_round_trip_their_wire_names() {
         for kind in TicketKind::ALL {
             assert_eq!(
                 TicketKind::parse(kind.as_str()),
@@ -490,6 +685,25 @@ mod tests {
             );
         }
         assert_eq!(TicketPriority::parse("ghost"), None);
+
+        for severity in TicketSeverity::ALL {
+            assert_eq!(
+                TicketSeverity::parse(severity.as_str()),
+                Some(*severity),
+                "`{}` must survive the round trip",
+                severity.as_str()
+            );
+            assert_eq!(
+                serde_json::to_value(severity).expect("the severity encodes"),
+                json!(severity.as_str())
+            );
+        }
+        assert_eq!(TicketSeverity::parse("ghost"), None);
+        assert_eq!(
+            TicketSeverity::parse("urgent"),
+            None,
+            "priority is not severity"
+        );
 
         for state in TicketState::ALL {
             assert_eq!(
@@ -528,6 +742,7 @@ mod tests {
                         "stories": ["CORE-S1-US1", "S1-US2"],
                     }
                 ],
+                "bug": null,
                 "version": 1,
             })
         );
@@ -542,6 +757,7 @@ mod tests {
             title: Some("Landing drops the integration branch".to_owned()),
             slice: None,
             criteria: Vec::new(),
+            bug: Some(bug_record()),
             ..record()
         };
         let encoded = serde_json::to_value(&bug).expect("the record serialises");
@@ -551,6 +767,28 @@ mod tests {
         );
         assert_eq!(encoded["spec_id"], json!(null));
         assert_eq!(encoded["criteria"], json!([]));
+        assert_eq!(
+            encoded["bug"]["qualification"]["severity"],
+            json!("high"),
+            "severity arrives only inside a qualification (DR-LC-13)"
+        );
+        assert_eq!(encoded["bug"]["evidence_ids"], json!([2]));
+        let decoded: TicketRecord =
+            serde_json::from_value(encoded).expect("the record deserialises");
+        assert_eq!(decoded, bug);
+
+        let captured = TicketBugRecord {
+            qualification: None,
+            external_references: Vec::new(),
+            occurrence_snapshots: Vec::new(),
+            evidence_ids: Vec::new(),
+            ..bug_record()
+        };
+        let encoded = serde_json::to_value(&captured).expect("the record serialises");
+        assert!(
+            encoded.get("qualification").is_none(),
+            "an absent qualification carries no field at all"
+        );
     }
 
     #[test]
@@ -564,14 +802,36 @@ mod tests {
             "slice": "Registration creates Projects end to end",
             "criteria": [criterion()],
         }));
-        // A Bug sends no slice and no criteria: absence carries no
-        // fields at all.
+        // A quick-captured Bug sends its three capture facts and
+        // nothing else (DR-TK-08).
         round_trips::<TicketCreateRequest>(json!({
             "mutation": context(),
             "project_id": 2,
             "kind": "bug",
             "priority": "normal",
             "title": "Landing drops the integration branch",
+            "actual_behaviour": "The integration branch is dropped.",
+            "reporter_evidence": "The landing log names the drop.",
+        }));
+
+        round_trips::<TicketBugQualifyRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "qualification": qualification(),
+        }));
+        round_trips::<TicketBugFactsRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "external_references": [
+                { "uri": "https://example.invalid/issues/12", "label": "The report" }
+            ],
+            "occurrence_snapshots": [
+                {
+                    "observed_at": "2026-09-05T07:41:00Z",
+                    "observation": "The log shows the drop.",
+                }
+            ],
+            "evidence_ids": [2],
         }));
 
         let list: TicketListQuery =
@@ -743,23 +1003,31 @@ mod tests {
             "TicketBlockerAddRequest",
             "TicketBlockerRecord",
             "TicketBlockerRemoveRequest",
+            "TicketBugFactsRequest",
+            "TicketBugQualification",
+            "TicketBugQualifyRequest",
+            "TicketBugRecord",
             "TicketCreateRequest",
             "TicketCriterion",
+            "TicketDependenciesQuery",
+            "TicketDependenciesResponse",
             "TicketDependencyAddRequest",
             "TicketDependencyRecord",
             "TicketDependencyRemoveRequest",
-            "TicketDependenciesQuery",
-            "TicketDependenciesResponse",
+            "TicketExternalReference",
             "TicketGetQuery",
             "TicketKind",
             "TicketListQuery",
             "TicketListResponse",
+            "TicketOccurrenceSnapshot",
             "TicketPriority",
             "TicketReadinessBlocker",
             "TicketReadinessQuery",
             "TicketReadinessResponse",
             "TicketRecord",
+            "TicketSeverity",
             "TicketState",
+            "TicketVerificationStep",
         ] {
             let schema = schema_of(name);
             let encoded = serde_json::to_string(&schema).expect("the schema serialises");

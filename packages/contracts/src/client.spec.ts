@@ -99,6 +99,7 @@ describe('generated client', () => {
       'spec.list',
       'spec.get',
       'spec.version.get',
+      'spec.coverage.check',
       'timeline.query',
       'comment.create',
       'comment.edit',

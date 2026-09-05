@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use kanban_app::{WorkspaceGitObserver, WorkspaceGitSnapshot};
+use kanban_domain::WorkspaceCheckout;
 
 /// Observe Workspaces through the local `git` binary without mutating
 /// clones (KAN-S6-US1).
@@ -40,12 +41,17 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
                 ..WorkspaceGitSnapshot::default()
             };
         }
-        let branch = git_output(workspace_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        // A detached checkout makes `--abbrev-ref` print the literal
+        // `HEAD`; the domain maps that artifact onto the closed
+        // detached state so it never reaches storage or the UI as a
+        // branch name (KAN-T98).
+        let checkout = git_output(workspace_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .map(|output| WorkspaceCheckout::from_abbrev_ref(&output));
         let head = git_output(workspace_path, &["rev-parse", "HEAD"]);
         WorkspaceGitSnapshot {
             present: true,
             repository_identity: Some(identity),
-            branch,
+            checkout,
             head,
             working_tree_clean: working_tree_clean(workspace_path),
             unique_unlanded_commits: unique_unlanded_commits(workspace_path, repository_path),
@@ -195,6 +201,7 @@ mod tests {
 
     use super::LocalWorkspaceGitObserver;
     use kanban_app::WorkspaceGitObserver;
+    use kanban_domain::WorkspaceCheckout;
 
     fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -651,7 +658,28 @@ mod tests {
             snapshot.present,
             "the transitive bc.source chain must establish membership"
         );
-        assert_eq!(snapshot.branch, Some("main".to_owned()));
+        assert_eq!(
+            snapshot.checkout,
+            Some(WorkspaceCheckout::Branch("main".to_owned()))
+        );
+        assert!(snapshot.head.is_some());
+        assert!(snapshot.working_tree_clean);
+    }
+
+    #[test]
+    fn detached_head_observation_carries_the_closed_state() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        git(Path::new(&repository), &["checkout", "--detach"]);
+
+        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+
+        assert!(snapshot.present, "detached checkouts must be observed");
+        assert_eq!(
+            snapshot.checkout,
+            Some(WorkspaceCheckout::Detached),
+            "a detached HEAD must surface as the closed state, never the branch string `HEAD`"
+        );
         assert!(snapshot.head.is_some());
     }
 

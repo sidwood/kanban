@@ -5,7 +5,9 @@
 use kanban_dto::LiveEventName;
 use std::sync::Arc;
 
-use kanban_domain::{ProjectId, Workspace, WorkspaceHealth, WorkspaceId, WorkspaceRegistration};
+use kanban_domain::{
+    ProjectId, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceRegistration,
+};
 use kanban_dto::{
     ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceHealthDto,
     WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto, WorkspaceObserveRequest,
@@ -20,12 +22,13 @@ use crate::project::ProjectStore;
 use crate::timeline::TimelineEnvelope;
 
 /// The git facts one observation read returns without mutating the
-/// clone.
+/// clone. `checkout` carries the closed state; a detached HEAD never
+/// appears as a branch name.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceGitSnapshot {
     pub present: bool,
     pub repository_identity: Option<String>,
-    pub branch: Option<String>,
+    pub checkout: Option<WorkspaceCheckout>,
     pub head: Option<String>,
     pub working_tree_clean: bool,
     /// Whether the Workspace holds unique unlanded commits; `None`
@@ -232,7 +235,7 @@ impl CommandHandler for ObserveWorkspace {
         let health_change = workspace.observe(
             snapshot.present,
             snapshot.repository_identity,
-            snapshot.branch,
+            snapshot.checkout,
             snapshot.head,
             snapshot.working_tree_clean,
             snapshot.unique_unlanded_commits,
@@ -343,12 +346,21 @@ fn load_workspace(store: &Arc<dyn WorkspaceStore>, id: u64) -> Result<Workspace,
         .ok_or_else(|| ApiError::not_found(&format!("workspace {id}")))
 }
 
+/// The wire name of the closed checkout state, for timeline facts.
+fn checkout_name(checkout: Option<&WorkspaceCheckout>) -> Option<&'static str> {
+    checkout.map(|checkout| match checkout {
+        WorkspaceCheckout::Branch(_) => "branch",
+        WorkspaceCheckout::Detached => "detached",
+    })
+}
+
 fn observation_facts(workspace: &Workspace) -> Value {
     let observation = workspace.observation();
     json!({
         "path": workspace.registration().path(),
         "health": workspace.health().as_str(),
         "repository_identity": observation.repository_identity(),
+        "checkout": checkout_name(observation.checkout()),
         "branch": observation.branch(),
         "head": observation.head(),
         "working_tree_clean": observation.working_tree_clean(),
@@ -518,11 +530,8 @@ mod testing {
                 .cloned()
                 .unwrap_or(WorkspaceGitSnapshot {
                     present: false,
-                    repository_identity: None,
-                    branch: None,
-                    head: None,
                     working_tree_clean: true,
-                    unique_unlanded_commits: None,
+                    ..WorkspaceGitSnapshot::default()
                 })
         }
     }
@@ -679,7 +688,8 @@ mod workspace_observe {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
-        Workspace, WorkspaceHealth, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,
+        Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceObservation,
+        WorkspaceRegistration,
     };
     use kanban_dto::{
         ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
@@ -715,7 +725,7 @@ mod workspace_observe {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("abc".to_owned()),
                     working_tree_clean: true,
                     unique_unlanded_commits: Some(false),
@@ -723,7 +733,7 @@ mod workspace_observe {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("def".to_owned()),
                     working_tree_clean: false,
                     unique_unlanded_commits: Some(false),
@@ -783,6 +793,53 @@ mod workspace_observe {
             })
         );
         assert!(matches!(health_rows[1].0, TimelineScope::Project(_)));
+    }
+
+    #[test]
+    fn observing_a_detached_head_reports_the_closed_state() {
+        let harness = harness(Arc::new(ScriptedObserver {
+            snapshots: HashMap::from([(
+                "/workspaces/kanban.detached".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    checkout: Some(kanban_domain::WorkspaceCheckout::Detached),
+                    head: Some("abc123".to_owned()),
+                    working_tree_clean: true,
+                },
+            )]),
+        }));
+        harness.projects.seed(stored_project());
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.detached", "key-1"),
+            )
+            .expect("the workspace registers");
+
+        let response = harness
+            .core
+            .command("workspace.observe", &observe(1, "key-2", 1))
+            .expect("the observation applies");
+
+        assert_eq!(response["health"], json!("available"));
+        assert_eq!(
+            response["observation"]["branch"],
+            json!(null),
+            "a detached checkout has no branch name"
+        );
+        let (_, timeline) = harness.workspaces.snapshot();
+        let observed: Vec<_> = timeline
+            .iter()
+            .filter(|row| row.detail().get("action") == Some(&json!("health_changed")))
+            .collect();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(
+            observed[0].detail().get("checkout"),
+            Some(&json!("detached")),
+            "timeline facts carry the closed checkout state"
+        );
     }
 
     #[test]
@@ -917,7 +974,7 @@ mod workspace_observe {
                 WorkspaceGitSnapshot {
                     present: true,
                     repository_identity: Some("identity".to_owned()),
-                    branch: Some("feature".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
                     head: Some("abc".to_owned()),
                     working_tree_clean: false,
                     unique_unlanded_commits: Some(false),

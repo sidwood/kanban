@@ -2,7 +2,8 @@
 
 use kanban_app::{TimelineEnvelope, WorkspaceStore, duplicate_path_error};
 use kanban_domain::{
-    ProjectId, Workspace, WorkspaceHealth, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,
+    ProjectId, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceObservation,
+    WorkspaceRegistration,
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
@@ -208,16 +209,22 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
             ));
         }
     };
+    // A `branch` column recorded before KAN-T98 may still hold the
+    // literal `HEAD`; interpreting it here keeps reads truthful until
+    // migration 0019 rewrites the row.
+    let checkout = row
+        .get::<_, Option<String>>(8)?
+        .map(|branch| WorkspaceCheckout::from_abbrev_ref(&branch));
     let mut observation = WorkspaceObservation::empty();
     if row.get::<_, Option<String>>(7)?.is_some()
-        || row.get::<_, Option<String>>(8)?.is_some()
+        || checkout.is_some()
         || row.get::<_, Option<String>>(9)?.is_some()
         || working_tree_clean.is_some()
         || unique_unlanded_commits.is_some()
     {
         observation.apply_git_read(
             row.get(7)?,
-            row.get(8)?,
+            checkout,
             row.get(9)?,
             working_tree_clean.unwrap_or(true),
             unique_unlanded_commits,

@@ -78,6 +78,10 @@ export type DeferralSupersedeRequest = {
   project_id: number;
   reason: string;
 };
+export type DiagnosticsExportQuery = Record<string, never>;
+export type DiagnosticsExportResponse = {
+  bundle_dir: string;
+};
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;

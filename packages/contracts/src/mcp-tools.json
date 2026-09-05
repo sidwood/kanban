@@ -30,6 +30,33 @@
     }
   },
   {
+    "description": "Export one redacted diagnostic bundle of logs, health, and configuration under managed application data.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `diagnostics.export` query.",
+      "title": "DiagnosticsExportQuery",
+      "type": "object"
+    },
+    "name": "diagnostics_export",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Response payload for the `diagnostics.export` query.",
+      "properties": {
+        "bundle_dir": {
+          "description": "The exported bundle directory under managed application data.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundle_dir"
+      ],
+      "title": "DiagnosticsExportResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Create an Initiative folder with a validated name.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Response payload for the `diagnostics.export` query.",
+  "properties": {
+    "bundle_dir": {
+      "description": "The exported bundle directory under managed application data.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundle_dir"
+  ],
+  "title": "DiagnosticsExportResponse",
+  "type": "object"
+}

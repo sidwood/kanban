@@ -11,20 +11,20 @@ use kanban_desktop_lib::Shell;
 use kanban_desktop_lib::commands::{forward_command_value, forward_query_value, install_link};
 use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
-    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListQuery,
-    HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery,
-    HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
-    InitiativeListQuery, InitiativeRenameRequest, MutationContext, PlanActivateRequest,
-    PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest,
-    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
-    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
-    ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCoverageCheckQuery,
-    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
-    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
-    TicketCreateRequest, TicketGetQuery, TicketListQuery, TimelineEntityKind, TimelineEntityRef,
-    TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
-    WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest,
+    EvidenceListQuery, HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
+    HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, MutationContext,
+    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
+    PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery,
+    PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest,
+    ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest, RulingListQuery,
+    RulingRecordRequest, RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest,
+    SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest, SpecVersionGetQuery,
+    SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery, TicketListQuery,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -133,7 +133,9 @@ fn spec_content() -> SpecContent {
 fn sample_request(schema: &str) -> Value {
     let mutation = mutation_for(schema);
     match schema {
-        "HealthQuery" | "InitiativeListQuery" | "ProjectListQuery" => json!({}),
+        "HealthQuery" | "DiagnosticsExportQuery" | "InitiativeListQuery" | "ProjectListQuery" => {
+            json!({})
+        }
         "InitiativeCreateRequest" => json!({ "mutation": mutation, "name": "Alpha" }),
         "InitiativeRenameRequest" => {
             json!({ "mutation": mutation, "initiative_id": 1, "name": "Beta" })
@@ -381,6 +383,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
     let refused = match schema {
         "HealthQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<HealthQuery>,
+        >(envelope)
+        .is_err(),
+        "DiagnosticsExportQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<DiagnosticsExportQuery>,
         >(envelope)
         .is_err(),
         "InitiativeCreateRequest" => serde_json::from_value::<

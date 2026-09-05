@@ -34,6 +34,7 @@ use herdr::{HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, production_s
 use timeline::StorageTimelineStore;
 
 use backup_scheduler::BackupScheduler;
+use diagnostics::DiagnosticsExportHandler;
 use git_observer::LocalWorkspaceGitObserver;
 use logs::{LogLevel, LogRecord, LogWriter};
 
@@ -144,7 +145,8 @@ fn assemble_core(
     ));
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
-    let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
+    let service_version = env!("CARGO_PKG_VERSION");
+    let mut core = Core::with_health(service_version, idempotency_store, events)?;
     let herdr = HerdrObserver::with_observation(database.clone(), herdr_socket_root, observation);
     core.register_initiatives(initiative_store.clone())?;
     let projects = project_store.clone();
@@ -170,6 +172,10 @@ fn assemble_core(
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),
+    )?;
+    core.register_query(
+        "diagnostics.export",
+        Arc::new(DiagnosticsExportHandler::new(data_dir, service_version)),
     )?;
     let projects = project_store.list().map_err(|error| {
         ServiceError::Registration(RegistrationError::Uncatalogued(error.message))

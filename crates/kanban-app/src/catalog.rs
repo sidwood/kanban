@@ -57,6 +57,13 @@ define_exposed_catalogue! {
         mcp: "health_get",
         description: "Return current core health for boot and diagnostics.",
     },
+    "diagnostics.export" => {
+        kind: Query,
+        request: "DiagnosticsExportQuery",
+        response: "DiagnosticsExportResponse",
+        mcp: "diagnostics_export",
+        description: "Export one redacted diagnostic bundle of logs, health, and configuration under managed application data.",
+    },
     "initiative.create" => {
         kind: Command,
         request: "InitiativeCreateRequest",

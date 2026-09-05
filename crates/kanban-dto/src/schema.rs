@@ -13,6 +13,7 @@ use crate::deferral::{
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
     DeferralSupersedeRequest,
 };
+use crate::diagnostics::{DiagnosticsExportQuery, DiagnosticsExportResponse};
 use crate::error::{ApiError, ErrorCode};
 use crate::event::{
     DeferralIdentity, EventEnvelope, EvidenceListSummary, LiveEventName, RulingIdentity,
@@ -84,6 +85,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("CriterionRefusal", schema_for!(CriterionRefusal)),
         ("ErrorCode", schema_for!(ErrorCode)),
         ("DeferralIdentity", schema_for!(DeferralIdentity)),
+        (
+            "DiagnosticsExportQuery",
+            schema_for!(DiagnosticsExportQuery),
+        ),
+        (
+            "DiagnosticsExportResponse",
+            schema_for!(DiagnosticsExportResponse),
+        ),
         ("EventEnvelope", schema_for!(EventEnvelope)),
         ("EvidenceAttachRequest", schema_for!(EvidenceAttachRequest)),
         ("EvidenceKindDto", schema_for!(EvidenceKindDto)),

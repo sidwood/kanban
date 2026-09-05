@@ -14,17 +14,17 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListQuery,
-    EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
-    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
-    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
-    HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
-    InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse,
-    PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest, PlanSpecAddRequest,
-    PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery,
-    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
+    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
+    DiagnosticsExportResponse, EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse,
+    EvidenceRecord, HealthQuery, HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
+    HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
+    HerdrSettingsGetResponse, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
+    InitiativeRenameRequest, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
+    PlanCompleteRequest, PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
+    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
+    ProjectListQuery, ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
@@ -95,6 +95,18 @@ async fn health_get(
     let shell = shell.inner().clone();
     run_blocking(shell, "health", |shell| {
         forward_query(shell, "health.get", "health", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn diagnostics_export(
+    shell: State<'_, Arc<Shell>>,
+    request: DiagnosticsExportQuery,
+) -> Result<DiagnosticsExportResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "diagnostics export", |shell| {
+        forward_query(shell, "diagnostics.export", "diagnostics export", request)
     })
     .await
 }
@@ -767,6 +779,7 @@ async fn workspace_list(
 
 shell_handlers::shell_handler_catalogue! {
     health_get,
+    diagnostics_export,
     initiative_create,
     initiative_rename,
     initiative_archive,

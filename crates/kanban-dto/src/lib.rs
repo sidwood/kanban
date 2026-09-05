@@ -4,6 +4,7 @@
 pub mod comment;
 pub mod coverage;
 pub mod deferral;
+pub mod diagnostics;
 pub mod error;
 pub mod event;
 pub mod evidence;
@@ -33,6 +34,7 @@ pub use deferral::{
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
     DeferralSupersedeRequest,
 };
+pub use diagnostics::{DiagnosticsExportQuery, DiagnosticsExportResponse};
 pub use error::{ApiError, ErrorCode};
 pub use event::{
     DecodeLiveEventError, DeferralIdentity, EventEnvelope, EvidenceListSummary,
@@ -144,6 +146,8 @@ mod tests {
                 "CriterionRefusal",
                 "ErrorCode",
                 "DeferralIdentity",
+                "DiagnosticsExportQuery",
+                "DiagnosticsExportResponse",
                 "EventEnvelope",
                 "EvidenceAttachRequest",
                 "EvidenceKindDto",

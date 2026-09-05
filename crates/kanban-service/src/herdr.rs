@@ -2,7 +2,10 @@
 //! effective session, snapshot on startup and reconnect, and append
 //! telemetry events (KAN-S8-US1, DR-HB-08, DR-HB-19). Push events
 //! drive normal operation and land through the telemetry
-//! projection (KAN-S8-US2, DR-HB-07).
+//! projection (KAN-S8-US2, DR-HB-07), while whole-session
+//! reconciliation compares full state on the Project's cadence and
+//! appends the differences push events may have missed (KAN-S8-US3,
+//! DR-HB-09, DR-HB-10).
 
 use std::collections::HashMap;
 use std::net::Shutdown;
@@ -13,14 +16,17 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use kanban_app::telemetry::{TelemetryProjection, project_herdr_event};
-use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, TimelineEnvelope};
+use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, TimelineEnvelope};
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
-use kanban_herdr::{HerdrError, SessionClient, SessionMapping};
-use kanban_storage::Database;
+use kanban_herdr::{
+    HerdrError, PollingFallback, Reconciler, ReconciliationPlan, SessionClient, SessionMapping,
+    SnapshotDifference,
+};
+use kanban_storage::{Database, SqliteHerdrSettingsStore};
 use serde_json::{Value, json};
 
 /// Why observation could not start for one Project.
@@ -102,6 +108,12 @@ impl ObservationTuning {
 
 /// Cap the doubling shift so it cannot overflow the base.
 const MAX_BACKOFF_SHIFT: u32 = 16;
+
+/// How often the steady read re-reads the Project's Herdr settings
+/// while nothing is due: a quiet session retunes its whole-session
+/// cadence — reconciliation interval or an opted-in polling
+/// fallback — within this window, without waiting for a reconnect.
+const SETTINGS_REFRESH_WINDOW: Duration = Duration::from_secs(1);
 
 /// The delay after `failures` consecutive failed attempts: the base
 /// doubling per failure, bounded by the policy maximum.
@@ -412,6 +424,11 @@ impl HerdrObserverHandle {
         }
         let reason = if *live_once { "reconnect" } else { "startup" };
         *live_once = true;
+        // The settled snapshot is also reconciliation's first
+        // baseline: the first whole-session comparison waits a full
+        // cadence beyond it (DR-HB-09).
+        let mut reconciler =
+            Reconciler::seeded_with(self.reconciliation_plan(), &snapshot, SystemTime::now());
         match self.append_snapshot(&snapshot, reason) {
             Ok(()) => self.record_snapshot(snapshot.captured_at),
             Err(error) => self.mark_error(error),
@@ -422,15 +439,103 @@ impl HerdrObserverHandle {
             self.append_push_event(&event);
         }
         while !self.stopped() {
-            match client.read_event() {
-                Ok(event) => self.append_push_event(&event),
-                Err(_) => {
-                    self.mark_connected(false, Some("disconnected".to_owned()));
-                    break;
-                }
+            if self.observe_once(&mut reconciler, &mut client).is_none() {
+                break;
             }
         }
         true
+    }
+
+    /// One step of the steady observation: wait for the next push
+    /// event or the next whole-session capture, whichever comes
+    /// first, bounded by the settings refresh window so a quiet
+    /// session still retunes its cadence. Returns `None` when the
+    /// subscription ended and the observer must redial.
+    fn observe_once(&self, reconciler: &mut Reconciler, client: &mut SessionClient) -> Option<()> {
+        let window = reconciler
+            .remaining_until(SystemTime::now())
+            .min(SETTINGS_REFRESH_WINDOW);
+        if window.is_zero() {
+            return self.capture_session(reconciler, client);
+        }
+        match client.read_event_within(window) {
+            Ok(event) => {
+                self.append_push_event(&event);
+                Some(())
+            }
+            // The window closed without a frame: the cadence is
+            // re-checked above, and the plan is retuned so settings
+            // changes apply without a reconnect (DR-HB-11).
+            Err(HerdrError::TimedOut) => {
+                reconciler.replan(self.reconciliation_plan());
+                Some(())
+            }
+            Err(_) => {
+                self.mark_connected(false, Some("disconnected".to_owned()));
+                None
+            }
+        }
+    }
+
+    /// Capture full session state through the live subscription and
+    /// append the difference it reports, if any (DR-HB-09, DR-HB-10).
+    /// Returns `None` when the capture failed and the subscription
+    /// cycle must end so the observer redials.
+    fn capture_session(
+        &self,
+        reconciler: &mut Reconciler,
+        client: &mut SessionClient,
+    ) -> Option<()> {
+        match reconciler.reconcile(SystemTime::now(), client) {
+            Ok(Some(difference)) => self.append_reconciliation(&difference),
+            Ok(None) => {}
+            Err(error) => {
+                self.mark_connected(false, Some(error.to_string()));
+                return None;
+            }
+        }
+        // Each capture retunes the cadence, so interval and fallback
+        // changes land at the next capture at the latest.
+        reconciler.replan(self.reconciliation_plan());
+        Some(())
+    }
+
+    /// The whole-session cadence the Project's Herdr settings call
+    /// for: their reconciliation interval, tightened by the polling
+    /// fallback while the Project has one enabled (DR-HB-09,
+    /// DR-HB-10). A Project without settings yet reconciles on the
+    /// defaults.
+    fn reconciliation_plan(&self) -> ReconciliationPlan {
+        let Ok(settings) =
+            SqliteHerdrSettingsStore::new(&self.database).project_settings(self.project_id)
+        else {
+            return ReconciliationPlan::default();
+        };
+        let fallback = if settings.polling_fallback_enabled {
+            PollingFallback::every(Duration::from_secs(settings.polling_fallback_interval_secs))
+        } else {
+            PollingFallback::off()
+        };
+        ReconciliationPlan::new(Duration::from_secs(settings.reconciliation_interval_secs))
+            .with_fallback(fallback)
+    }
+
+    /// Append one whole-session difference as a telemetry event:
+    /// what reconciliation found, as observation, never a verdict.
+    fn append_reconciliation(&self, difference: &SnapshotDifference) {
+        let changes = serde_json::to_value(&difference.changes).unwrap_or(Value::Null);
+        let detail = json!({
+            "source": "herdr",
+            "event": "reconciliation",
+            "previous_captured_at": difference.previous_captured_at,
+            "captured_at": difference.captured_at,
+            "changes": changes,
+        });
+        let envelope =
+            TimelineEnvelope::project(self.project_id, TimelineEventKind::Telemetry, None, detail);
+        if let Err(error) = self.database.append_timeline_event(&envelope) {
+            self.mark_error(ObservationError::Timeline(error.to_string()));
+        }
     }
 
     /// Wait out the settle window against the live subscription,
@@ -488,7 +593,7 @@ impl HerdrObserverHandle {
     /// Append one observed push event through the telemetry
     /// projection (DR-HB-07). The projection can only mint timeline
     /// rows and attention signals; push events never raise a signal,
-    /// and the signal consumer lands with KAN-T41 and KAN-S11.
+    /// and the signals' consumer is the KAN-S11 attention inbox.
     fn append_push_event(&self, event: &Value) {
         for projection in project_herdr_event(self.project_id, event) {
             match projection {
@@ -593,8 +698,11 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use kanban_app::{HerdrDiagnostics, TimelineStore};
-    use kanban_dto::{TimelineEventKind, TimelineQuery, TimelineScope};
+    use kanban_app::{HerdrDiagnostics, HerdrSettingsStore, ProjectStore, TimelineStore};
+    use kanban_dto::{
+        HerdrSettingsUpdateRequest, MutationContext, TimelineEventKind, TimelineQuery,
+        TimelineScope,
+    };
     use kanban_herdr::fixture::{ScriptedSession, SessionScript};
     use serde_json::json;
     use tempfile::TempDir;
@@ -605,7 +713,7 @@ mod tests {
     };
     use crate::timeline::StorageTimelineStore;
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
-    use kanban_storage::{AllowAllMigrations, Database};
+    use kanban_storage::{AllowAllMigrations, Database, SqliteHerdrSettingsStore};
 
     fn project(session: Option<&str>, workspace: &str) -> Project {
         let registration = ProjectRegistration::new(
@@ -658,6 +766,62 @@ mod tests {
             .into_iter()
             .map(|event| event.detail)
             .collect()
+    }
+
+    /// Seed Project 1's Herdr settings from the global defaults,
+    /// after registering the Project the settings attach to.
+    fn seed_herdr_settings(database: &Arc<Database>) {
+        let registration = ProjectRegistration::new(
+            "CORE",
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban.seed",
+            Some("kanban-main"),
+            None,
+        )
+        .expect("the fixture registration validates");
+        let projects = kanban_storage::SqliteProjectStore::new(database);
+        let project = projects
+            .create(&registration, &|id| {
+                kanban_app::TimelineEnvelope::project(
+                    id.value(),
+                    kanban_dto::TimelineEventKind::Transition,
+                    None,
+                    json!({ "action": "registered" }),
+                )
+            })
+            .expect("the fixture project registers");
+        SqliteHerdrSettingsStore::new(database)
+            .seed_project_settings(project.id().value())
+            .expect("the settings seed from the defaults");
+    }
+
+    /// Retune Project 1's Herdr settings through the store the
+    /// settings command writes through.
+    fn retune_herdr_settings(
+        database: &Arc<Database>,
+        retune: impl FnOnce(&mut HerdrSettingsUpdateRequest),
+    ) {
+        let store = SqliteHerdrSettingsStore::new(database);
+        let current = store.project_settings(1).expect("the seeded settings load");
+        let mut request = HerdrSettingsUpdateRequest {
+            mutation: MutationContext {
+                optimistic_version: current.version,
+                idempotency_key: "observer-tuning".to_owned(),
+            },
+            project_id: 1,
+            reconciliation_interval_secs: current.reconciliation_interval_secs,
+            polling_fallback_enabled: current.polling_fallback_enabled,
+            polling_fallback_interval_secs: current.polling_fallback_interval_secs,
+            stall_deadline_secs: current.stall_deadline_secs,
+            missing_result_deadline_secs: current.missing_result_deadline_secs,
+        };
+        retune(&mut request);
+        store
+            .update_project_settings(&request)
+            .expect("the retuned settings land");
     }
 
     #[test]
@@ -1239,5 +1403,176 @@ mod tests {
         );
 
         core.shutdown();
+    }
+
+    /// KAN-T41-AC1: the observer compares full session state on the
+    /// Project's reconciliation interval and appends the difference it
+    /// finds as telemetry.
+    #[test]
+    fn reconciliation_appends_difference_events_on_its_interval() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_snapshot_states(vec![
+                json!({ "roles": [] }),
+                json!({ "roles": [{ "name": "implementer" }] }),
+            ]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.reconciliation_interval_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                telemetry_details(&database)
+                    .iter()
+                    .any(|detail| detail["event"] == json!("reconciliation"))
+            }),
+            "the interval elapses and the difference lands"
+        );
+
+        let differences: Vec<_> = telemetry_details(&database)
+            .into_iter()
+            .filter(|detail| detail["event"] == json!("reconciliation"))
+            .collect();
+        assert_eq!(
+            differences.len(),
+            1,
+            "the changed state is reported once per difference"
+        );
+        assert_eq!(differences[0]["source"], json!("herdr"));
+        assert_eq!(
+            differences[0]["changes"],
+            json!([
+                { "op": "changed", "key": "roles", "from": [], "to": [{ "name": "implementer" }] }
+            ]),
+            "the row carries what the whole-session comparison found"
+        );
+        assert!(
+            fixture.requests_seen() >= 3,
+            "the comparison captured through the session socket"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC1: a comparison that finds nothing appends nothing.
+    #[test]
+    fn reconciliation_appends_nothing_while_state_is_unchanged() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.reconciliation_interval_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(2_500));
+
+        assert!(
+            fixture.requests_seen() >= 3,
+            "whole-session captures happened on the interval"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            1,
+            "unchanged state appends no difference row, however often it is compared"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC2: with the settings a Project starts with, the
+    /// whole-session polling fallback stays off: nothing polls the
+    /// session before the five-minute reconciliation interval.
+    #[test]
+    fn polling_fallback_stays_off_for_default_settings() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(600));
+
+        assert_eq!(
+            fixture.requests_seen(),
+            2,
+            "only the handshake's snapshot and subscribe reached the session"
+        );
+        assert_eq!(telemetry_details(&database).len(), 1);
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC2: a Project can opt into the fallback while its
+    /// session is under observation, and the faster whole-session
+    /// cadence starts without a reconnect.
+    #[test]
+    fn polling_fallback_opts_in_live_without_a_reconnect() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_snapshot_states(vec![
+                json!({ "roles": [] }),
+                json!({ "roles": [{ "name": "reviewer" }] }),
+            ]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(300));
+        retune_herdr_settings(&database, |request| {
+            request.polling_fallback_enabled = true;
+            request.polling_fallback_interval_secs = 1;
+        });
+
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                telemetry_details(&database)
+                    .iter()
+                    .any(|detail| detail["event"] == json!("reconciliation"))
+            }),
+            "the opted-in fallback polls the whole session and reports the difference"
+        );
+        let snapshots: Vec<_> = telemetry_details(&database)
+            .into_iter()
+            .filter(|detail| detail["event"] == json!("snapshot"))
+            .collect();
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "the fallback cadence took effect on the live connection, without a reconnect"
+        );
+
+        observer.shutdown();
     }
 }

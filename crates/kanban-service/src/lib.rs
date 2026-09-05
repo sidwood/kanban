@@ -981,18 +981,34 @@ mod tests {
                 "herdr_workspace": "wave.seed",
             }),
         );
-        thread::sleep(Duration::from_millis(200));
-        let answer = client.query_with(
-            "timeline.query",
-            json!({
-                "scope": { "project": 1 },
-                "kinds": ["telemetry"],
-            }),
+        // The snapshot lands when the observer settles, not at a
+        // fixed tick: poll for it so a loaded test run is still one
+        // exact assertion, not a race.
+        let events = {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let answer = client.query_with(
+                    "timeline.query",
+                    json!({
+                        "scope": { "project": 1 },
+                        "kinds": ["telemetry"],
+                    }),
+                );
+                let events = answer["events"]
+                    .as_array()
+                    .expect("telemetry is queryable on the live registration path")
+                    .clone();
+                if !events.is_empty() || std::time::Instant::now() > deadline {
+                    break events;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert_eq!(
+            events.len(),
+            1,
+            "the startup snapshot lands without a restart, and it is the only telemetry row"
         );
-        let events = answer["events"]
-            .as_array()
-            .expect("telemetry is queryable on the live registration path");
-        assert_eq!(events.len(), 1);
         assert_eq!(events[0]["detail"]["event"], json!("snapshot"));
         assert_eq!(events[0]["detail"]["reason"], json!("startup"));
         core.shutdown();

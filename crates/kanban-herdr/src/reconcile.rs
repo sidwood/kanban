@@ -238,6 +238,13 @@ impl Reconciler {
         self.plan
     }
 
+    /// Follow `plan` from now on, keeping the baseline and the last
+    /// capture: a settings change applies from the next capture the
+    /// new cadence calls due.
+    pub fn replan(&mut self, plan: ReconciliationPlan) {
+        self.plan = plan;
+    }
+
     /// Whether a whole-session capture is due at `now`: immediately
     /// when no baseline exists, and once the plan's effective cadence
     /// has elapsed since the last capture otherwise.
@@ -348,5 +355,32 @@ mod tests {
             "a clock reading from before the last capture must not fire a capture per tick"
         );
         assert!(!reconciler.due(at(500)));
+    }
+
+    #[test]
+    fn replan_keeps_the_baseline_and_applies_the_new_cadence() {
+        let mut reconciler = Reconciler::seeded_with(
+            ReconciliationPlan::new(Duration::from_secs(300)),
+            &snapshot(json!({ "roles": [] })),
+            at(0),
+        );
+        assert!(!reconciler.due(at(10)));
+
+        reconciler.replan(
+            ReconciliationPlan::new(Duration::from_secs(300))
+                .with_fallback(super::PollingFallback::every(Duration::from_secs(10))),
+        );
+
+        assert!(
+            reconciler.due(at(10)),
+            "a plan with a shorter effective cadence applies from the last capture"
+        );
+        let difference = reconciler
+            .adopt(
+                at(10),
+                snapshot(json!({ "roles": [{ "name": "implementer" }] })),
+            )
+            .expect("the baseline survives the replan");
+        assert_eq!(difference.changes.len(), 1);
     }
 }

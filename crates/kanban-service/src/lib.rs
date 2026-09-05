@@ -9,7 +9,7 @@ pub mod timeline;
 mod test_client;
 
 use std::num::NonZeroU32;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kanban_app::{
@@ -83,6 +83,7 @@ fn assemble_core(
     data_dir: &Path,
     database: Database,
     events: Arc<dyn EventSink>,
+    herdr_socket_root: PathBuf,
 ) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
@@ -101,12 +102,14 @@ fn assemble_core(
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
+    let herdr = HerdrObserver::new(database.clone(), herdr_socket_root);
     core.register_initiatives(initiative_store.clone())?;
     core.register_projects(
         project_store.clone(),
         Arc::new(LocalRepositories),
         initiative_store,
         herdr_settings_store.clone(),
+        herdr.clone(),
     )?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
@@ -119,7 +122,7 @@ fn assemble_core(
     let projects = project_store.list().map_err(|error| {
         ServiceError::Registration(RegistrationError::Uncatalogued(error.message))
     })?;
-    let herdr = HerdrObserver::start(database.clone(), &projects, production_socket_root());
+    herdr.observe_projects(&projects);
     let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
     Ok((database, core, herdr))
@@ -132,7 +135,25 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let (database, core, herdr) = assemble_core(data_dir, database, broker)?;
+    let (database, core, herdr) =
+        assemble_core(data_dir, database, broker, production_socket_root())?;
+    let server = server.serve(Arc::new(core))?;
+    Ok(CoreProcess {
+        database,
+        server,
+        _herdr: herdr,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn serve_with_herdr_sessions(
+    data_dir: &Path,
+    herdr_socket_root: PathBuf,
+) -> Result<CoreProcess, ServiceError> {
+    let database = prepare_database(data_dir)?;
+    let server = SocketServer::bind(data_dir)?;
+    let broker = server.broker();
+    let (database, core, herdr) = assemble_core(data_dir, database, broker, herdr_socket_root)?;
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
         database,
@@ -195,8 +216,15 @@ mod tests {
 
     use kanban_app::{GitObservation, NoopEventSink, assert_registered_matches_exposed_catalogue};
 
-    use super::{LocalRepositories, ServiceError, assemble_core, prepare_database, serve};
+    use super::{
+        LocalRepositories, ServiceError, assemble_core, prepare_database, serve,
+        serve_with_herdr_sessions,
+    };
+    use crate::herdr::production_socket_root;
     use crate::test_client::{Client, boot};
+    use kanban_herdr::fixture::{ScriptedSession, SessionScript};
+    use std::thread;
+    use std::time::Duration;
 
     /// A scratch directory standing in for a Git repository the
     /// service's own observation accepts.
@@ -219,8 +247,13 @@ mod tests {
     fn registered_catalogue_matches_the_exposed_catalogue() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let database = prepare_database(dir.path()).expect("the production database prepares");
-        let (_, core, _) = assemble_core(dir.path(), database, Arc::new(NoopEventSink))
-            .expect("the production core wires");
+        let (_, core, _) = assemble_core(
+            dir.path(),
+            database,
+            Arc::new(NoopEventSink),
+            production_socket_root(),
+        )
+        .expect("the production core wires");
 
         assert_registered_matches_exposed_catalogue(&core.registered_operations());
     }
@@ -547,6 +580,49 @@ mod tests {
         );
 
         rebooted.shutdown();
+    }
+
+    #[test]
+    fn registering_a_project_starts_herdr_observation_without_a_restart() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = scratch_repository(&dir, "wave");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default(),
+        );
+        let core = serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository,
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+            }),
+        );
+        thread::sleep(Duration::from_millis(200));
+        let answer = client.query_with(
+            "timeline.query",
+            json!({
+                "scope": { "project": "1" },
+                "kinds": ["telemetry"],
+            }),
+        );
+        let events = answer["events"]
+            .as_array()
+            .expect("telemetry is queryable on the live registration path");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["detail"]["event"], json!("snapshot"));
+        assert_eq!(events[0]["detail"]["reason"], json!("startup"));
+        core.shutdown();
     }
 
     #[test]

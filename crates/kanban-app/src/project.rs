@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::{EventDescriptor, event_descriptor};
 use crate::events::{EventSink, emit_catalogued};
-use crate::herdr::HerdrSettingsStore;
+use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
 use crate::initiative::InitiativeStore;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
@@ -104,6 +104,7 @@ impl Core {
         git: Arc<dyn GitObservation>,
         initiatives: Arc<dyn InitiativeStore>,
         herdr_settings: Arc<dyn HerdrSettingsStore>,
+        herdr_observer: Arc<dyn HerdrProjectObserver>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "project.register",
@@ -112,6 +113,7 @@ impl Core {
                 git,
                 initiatives,
                 herdr_settings,
+                herdr_observer,
             }),
         )?;
         self.register_command(
@@ -131,6 +133,7 @@ struct RegisterProject {
     git: Arc<dyn GitObservation>,
     initiatives: Arc<dyn InitiativeStore>,
     herdr_settings: Arc<dyn HerdrSettingsStore>,
+    herdr_observer: Arc<dyn HerdrProjectObserver>,
 }
 
 impl CommandHandler for RegisterProject {
@@ -186,6 +189,7 @@ impl CommandHandler for RegisterProject {
         })?;
         self.herdr_settings
             .seed_project_settings(project.id().value())?;
+        self.herdr_observer.observe(&project);
         announce(events, event_descriptor("project.registered"), &project);
         encode_record(&project)
     }
@@ -586,6 +590,7 @@ mod testing {
             Arc::new(git),
             initiatives.clone(),
             herdr_settings.clone(),
+            Arc::new(crate::herdr::NoopHerdrProjectObserver),
         )
         .expect("the project operations register");
         Harness {

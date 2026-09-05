@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use kanban_app::{HerdrDiagnostics, TimelineEnvelope};
+use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, TimelineEnvelope};
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
 use kanban_herdr::{SessionClient, SessionMapping};
@@ -52,26 +52,36 @@ pub struct HerdrObserver {
 }
 
 impl HerdrObserver {
-    /// Start observing every active Project through its per-session
-    /// socket. Snapshots on startup are appended as telemetry events.
-    pub fn start(database: Arc<Database>, projects: &[Project], socket_root: PathBuf) -> Arc<Self> {
-        let observer = Arc::new(Self {
+    /// Create an observer rooted at `socket_root`.
+    pub fn new(database: Arc<Database>, socket_root: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
             socket_root,
             database,
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
             threads: Mutex::new(Vec::new()),
-        });
+        })
+    }
+
+    /// Start observing every active Project through its per-session
+    /// socket. Snapshots on startup are appended as telemetry events.
+    pub fn start(database: Arc<Database>, projects: &[Project], socket_root: PathBuf) -> Arc<Self> {
+        let observer = Self::new(database, socket_root);
+        observer.observe_projects(projects);
+        observer
+    }
+
+    /// Start observing every active Project in `projects`.
+    pub fn observe_projects(&self, projects: &[Project]) {
         for project in projects {
             if project.is_archived() {
                 continue;
             }
-            observer.observe_project(project);
+            self.observe_project(project);
         }
-        observer
     }
 
     /// Start observing one Project's Herdr session.
-    pub fn observe_project(self: &Arc<Self>, project: &Project) {
+    pub fn observe_project(&self, project: &Project) {
         if project.is_archived() {
             return;
         }
@@ -99,6 +109,12 @@ impl HerdrObserver {
             .spawn(move || handle.run())
             .expect("a Herdr observation thread starts");
         self.threads.lock().unwrap().push(thread);
+    }
+}
+
+impl HerdrProjectObserver for HerdrObserver {
+    fn observe(&self, project: &Project) {
+        self.observe_project(project);
     }
 }
 

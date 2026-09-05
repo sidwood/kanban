@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use kanban_domain::Project;
 use kanban_domain::ProjectId;
 use kanban_dto::{
     ApiError, HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
@@ -32,6 +33,20 @@ pub trait HerdrSettingsStore: Send + Sync {
     ) -> Result<HerdrProjectSettings, ApiError>;
     /// Seed settings for a freshly registered Project.
     fn seed_project_settings(&self, project_id: u64) -> Result<(), ApiError>;
+}
+
+/// Starts or continues Herdr observation for one Project.
+pub trait HerdrProjectObserver: Send + Sync {
+    /// Observe one active Project's Herdr session.
+    fn observe(&self, project: &Project);
+}
+
+/// A test double that records no observation.
+#[derive(Debug, Default)]
+pub struct NoopHerdrProjectObserver;
+
+impl HerdrProjectObserver for NoopHerdrProjectObserver {
+    fn observe(&self, _project: &Project) {}
 }
 
 /// Live connection diagnostics maintained by the service observer.

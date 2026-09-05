@@ -138,7 +138,6 @@ fn working_tree_clean(workspace_path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::process::Command;
 
@@ -205,49 +204,51 @@ mod tests {
     }
 
     #[test]
-    fn failed_git_status_is_not_reported_as_clean() {
-        let dir = TempDir::new().expect("a scratch directory is available");
-        let repository = init_repo(dir.path());
-        let bin = dir.path().join("bin");
-        fs::create_dir_all(&bin).expect("the wrapper directory is created");
-        let real_git = Command::new("which")
-            .arg("git")
-            .output()
-            .expect("git is on PATH")
-            .stdout;
-        let real_git = String::from_utf8(real_git)
-            .expect("which output is UTF-8")
-            .trim()
-            .to_owned();
-        fs::write(
-            bin.join("git"),
-            format!(
-                "#!/bin/sh\n\
-                 if [ \"$1\" = \"-C\" ] && [ \"$3\" = \"status\" ] && [ \"$4\" = \"--porcelain\" ]; then\n\
-                   exit 1\n\
-                 fi\n\
-                 exec \"{real_git}\" \"$@\"\n"
-            ),
-        )
-        .expect("the wrapper is written");
-        let mut permissions = fs::metadata(bin.join("git"))
-            .expect("the wrapper exists")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(bin.join("git"), permissions).expect("the wrapper is executable");
+    fn sibling_git_status_reads_survive_concurrent_path_poisoning() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
 
-        let path = std::env::var("PATH").expect("PATH is set");
-        // SAFETY: the test owns the environment for this process only.
-        unsafe {
-            std::env::set_var("PATH", format!("{}:{}", bin.display(), path));
-        }
+        let barrier = Arc::new(Barrier::new(2));
 
-        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+        let poisoner = thread::spawn({
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                let status = Command::new(env!("CARGO"))
+                    .args([
+                        "test",
+                        "-p",
+                        "kanban-service",
+                        "--test",
+                        "git_observer_failed_status",
+                    ])
+                    .status()
+                    .expect("the isolated failure-mode probe runs");
+                assert!(
+                    status.success(),
+                    "the isolated failure-mode probe must pass in its own process"
+                );
+            }
+        });
 
-        assert!(snapshot.present);
-        assert!(
-            !snapshot.working_tree_clean,
-            "a failed git status must not report a clean tree"
-        );
+        let sibling = thread::spawn({
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                let dir = TempDir::new().expect("a scratch directory is available");
+                let repository = init_repo(dir.path());
+                let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+                assert!(snapshot.present);
+                assert!(
+                    snapshot.working_tree_clean,
+                    "sibling git status reads must stay clean when PATH is not theirs to poison"
+                );
+            }
+        });
+
+        poisoner
+            .join()
+            .expect("the failure-mode probe thread completes");
+        sibling.join().expect("the sibling git thread completes");
     }
 }

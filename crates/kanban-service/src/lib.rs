@@ -5,6 +5,7 @@
 mod backup_scheduler;
 pub mod git_observer;
 pub mod herdr;
+pub mod redaction;
 pub mod timeline;
 
 #[cfg(test)]

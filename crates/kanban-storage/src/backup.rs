@@ -2117,6 +2117,90 @@ mod backup_restore {
     }
 
     #[test]
+    fn a_failed_copy_leaves_no_partial_bundle_or_verified_record() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        // An unreadable attachment fails the copy after the bundle
+        // directory and database snapshot already exist.
+        let blocked = attachments_dir(dir.path()).join("blocked-attachment");
+        std::fs::write(&blocked, b"unreadable").expect("the blocked attachment writes");
+        let mut permissions = std::fs::metadata(&blocked)
+            .expect("the blocked attachment reads")
+            .permissions();
+        permissions.set_mode(0o000);
+        std::fs::set_permissions(&blocked, permissions).expect("the blocked attachment closes");
+
+        let outcome = store.create(&database, &overlap_options());
+
+        assert!(
+            outcome.is_err(),
+            "the unreadable attachment must fail the copy"
+        );
+        let residue: Vec<_> = std::fs::read_dir(crate::paths::backups_dir(dir.path()))
+            .expect("the backups directory lists")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "a failed copy must not leave a partial bundle behind: {residue:?}"
+        );
+        assert!(
+            store
+                .verified_record_for(LATEST_SCHEMA_VERSION)
+                .expect("records read")
+                .is_none(),
+            "a failed copy must not leave a verified record"
+        );
+        assert!(
+            database.connection_handle().try_lock().is_some(),
+            "a failed copy must release the live connection"
+        );
+    }
+
+    #[test]
+    fn a_failed_validation_discards_the_bundle_and_records_nothing() {
+        use super::validation_temp_test_hooks::CorruptStagingAfterWriteGuard;
+
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let _corrupt = CorruptStagingAfterWriteGuard::enable();
+
+        let outcome = store.create(
+            &database,
+            &BackupOptions {
+                retention: BackupRetentionPolicy::keep_most_recent(
+                    NonZeroU32::new(3).expect("three is not zero"),
+                ),
+                passphrase: Some("operator-secret".to_string()),
+            },
+        );
+
+        assert!(
+            outcome.is_err(),
+            "the corrupted validation must fail the backup"
+        );
+        let residue: Vec<_> = std::fs::read_dir(crate::paths::backups_dir(dir.path()))
+            .expect("the backups directory lists")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "a failed validation must not leave an unverified bundle behind: {residue:?}"
+        );
+        assert!(
+            store
+                .verified_record_for(LATEST_SCHEMA_VERSION)
+                .expect("records read")
+                .is_none(),
+            "a failed validation must not leave a verified record"
+        );
+    }
+
+    #[test]
     fn restore_into_fresh_core_reproduces_state_exactly() {
         let (dir, database, store) = managed_fixture();
         seed_state(dir.path(), &database);

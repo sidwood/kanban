@@ -191,7 +191,7 @@ fn repository_objects(repository_path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     use tempfile::TempDir;
@@ -216,6 +216,36 @@ mod tests {
         git(dir, &["add", "."]);
         git(dir, &["commit", "-m", "initial"]);
         dir.to_str().expect("the path is UTF-8").to_owned()
+    }
+
+    /// Cargo builds the `harness = false` failure-mode probe as a test
+    /// binary beside this suite before any test runs, so running it
+    /// directly keeps Cargo and its shared build lock out of the test
+    /// suite (KAN-T96-AC2). The newest matching binary is the current
+    /// build; older hashes linger from earlier builds.
+    fn prebuilt_failed_status_probe() -> PathBuf {
+        let deps = std::env::current_exe()
+            .expect("the test binary path is available")
+            .parent()
+            .expect("the test binary lives inside a directory")
+            .to_path_buf();
+        let mut probes: Vec<_> = fs::read_dir(&deps)
+            .expect("the test binary directory is readable")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("git_observer_failed_status-") && !name.ends_with(".d")
+                    })
+            })
+            .filter(|path| path.is_file())
+            .collect();
+        probes.sort_by_key(|path| fs::metadata(path).and_then(|meta| meta.modified()).ok());
+        probes
+            .pop()
+            .expect("cargo builds the failure-mode probe beside the suite")
     }
 
     #[test]
@@ -629,24 +659,18 @@ mod tests {
         use std::thread;
 
         let barrier = Arc::new(Barrier::new(2));
+        let probe = prebuilt_failed_status_probe();
 
         let poisoner = thread::spawn({
             let barrier = barrier.clone();
             move || {
                 barrier.wait();
-                let status = Command::new(env!("CARGO"))
-                    .args([
-                        "test",
-                        "-p",
-                        "kanban-service",
-                        "--test",
-                        "git_observer_failed_status",
-                    ])
+                let status = Command::new(&probe)
                     .status()
-                    .expect("the isolated failure-mode probe runs");
+                    .expect("the prebuilt failure-mode probe runs");
                 assert!(
                     status.success(),
-                    "the isolated failure-mode probe must pass in its own process"
+                    "the prebuilt failure-mode probe must pass in its own process"
                 );
             }
         });

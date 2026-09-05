@@ -1,6 +1,5 @@
 //! App gate for workspace observation through the shipped git observer
-//! and real SQLite persistence (KAN-T31), with the unlanded-commit
-//! reuse guard end to end (KAN-T33).
+//! and real SQLite persistence (KAN-T31).
 
 use std::fs;
 use std::path::Path;
@@ -42,16 +41,50 @@ fn init_repo(dir: &Path) -> String {
     dir.to_str().expect("the path is UTF-8").to_owned()
 }
 
-/// A migrated database, wired core, and one registered Project.
-struct Fixture {
-    core: Core,
-    workspaces: Arc<SqliteWorkspaceStore>,
-    database_path: std::path::PathBuf,
+fn init_repo_at(parent: &Path, name: &str) -> String {
+    let dir = parent.join(name);
+    fs::create_dir_all(&dir).expect("the repository directory is created");
+    init_repo(&dir)
 }
 
-fn fixture() -> (TempDir, Fixture) {
-    let scratch = TempDir::new().expect("a scratch directory is available");
-    let database_path = scratch.path().join("kanban.sqlite");
+fn set_bc_source(workspace: &Path, source: &str) {
+    git(
+        workspace,
+        &[
+            "config",
+            "bc.source",
+            Path::new(source)
+                .canonicalize()
+                .expect("the source resolves")
+                .to_str()
+                .expect("the path is UTF-8"),
+        ],
+    );
+}
+
+fn register(workspace_id: u64, key: &str, version: u64) -> serde_json::Value {
+    json!({
+        "mutation": { "optimistic_version": version, "idempotency_key": key },
+        "workspace_id": workspace_id,
+    })
+}
+
+fn register_workspace(project_id: u64, path: &str, key: &str) -> serde_json::Value {
+    json!({
+        "mutation": { "optimistic_version": 0, "idempotency_key": key },
+        "project_id": project_id,
+        "path": path,
+    })
+}
+
+struct Wired {
+    core: Core,
+    projects: Arc<SqliteProjectStore>,
+    workspaces: Arc<SqliteWorkspaceStore>,
+}
+
+fn wired(scratch: &Path) -> Wired {
+    let database_path = scratch.join("kanban.sqlite");
     let mut database = Database::open(&database_path).expect("a scratch database opens");
     database
         .migrate(&AllowAllMigrations)
@@ -86,12 +119,19 @@ fn fixture() -> (TempDir, Fixture) {
         Arc::new(LocalWorkspaceGitObserver),
     )
     .expect("the workspace operations register");
+    Wired {
+        core,
+        projects,
+        workspaces,
+    }
+}
 
+fn create_project(projects: &SqliteProjectStore, repository: &str, seed_workspace: &str) {
     let registration = ProjectRegistration::new(
         "CORE",
         "Control plane",
-        scratch.path().to_str().expect("the path is UTF-8"),
-        "/workspaces/kanban.seed",
+        repository,
+        seed_workspace,
         "main",
         "kanban.seed",
         Some("kanban-main"),
@@ -111,7 +151,163 @@ fn fixture() -> (TempDir, Fixture) {
             )
         })
         .expect("the project registers");
+}
 
+#[test]
+fn workspace_observe_reads_git_state_through_the_shipped_observer() {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let Wired {
+        core,
+        projects,
+        workspaces,
+    } = wired(scratch.path());
+
+    let git_dir = TempDir::new().expect("a scratch directory is available");
+    let repository = init_repo(git_dir.path());
+    git(
+        Path::new(&repository),
+        &["remote", "add", "origin", "https://example.com/kanban.git"],
+    );
+    let workspace = git_dir.path().join("clone");
+    git(
+        git_dir.path(),
+        &["clone", "--local", &repository, workspace.to_str().unwrap()],
+    );
+    set_bc_source(&workspace, &repository);
+
+    create_project(
+        &projects,
+        &repository,
+        workspace.to_str().expect("the path is UTF-8"),
+    );
+
+    let head_before = Command::new("git")
+        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
+        .output()
+        .expect("head reads");
+
+    core.command(
+        "workspace.register",
+        &register_workspace(1, workspace.to_str().unwrap(), "key-1"),
+    )
+    .expect("the workspace registers");
+    let response = core
+        .command("workspace.observe", &register(1, "key-2", 1))
+        .expect("the observation applies");
+
+    let head_after = Command::new("git")
+        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
+        .output()
+        .expect("head reads");
+
+    assert_eq!(head_before.stdout, head_after.stdout, "HEAD must not move");
+    assert_eq!(response["health"], json!("available"));
+    assert_eq!(response["observation"]["branch"], json!("main"));
+    assert!(response["observation"]["head"].as_str().is_some());
+    assert_eq!(response["observation"]["working_tree_clean"], json!(true));
+
+    let stored = workspaces
+        .find(WorkspaceId::new(1))
+        .expect("the workspace loads")
+        .expect("the workspace exists");
+    assert_eq!(stored.health(), WorkspaceHealth::Available);
+    assert_eq!(stored.observation().branch(), Some("main"));
+    assert!(stored.observation().head().is_some());
+    assert_eq!(stored.observation().working_tree_clean(), Some(true));
+    assert_eq!(stored.observation().unique_unlanded_commits(), Some(false));
+    assert!(stored.reuse_evaluation().reusable());
+
+    let row: (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = rusqlite::Connection::open(scratch.path().join("kanban.sqlite"))
+        .expect("the database reopens")
+        .query_row(
+            "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits
+             FROM workspaces WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("the SQLite row is readable");
+    assert_eq!(row.0, "available");
+    assert_eq!(row.1.as_deref(), Some("main"));
+    assert!(row.2.is_some());
+    assert_eq!(row.3, Some(1));
+    assert_eq!(row.4, Some(0));
+}
+
+#[test]
+fn workspace_observe_refuses_an_unrelated_same_origin_clone() {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let Wired { core, projects, .. } = wired(scratch.path());
+
+    let git_dir = TempDir::new().expect("a scratch directory is available");
+    let origin = init_repo_at(git_dir.path(), "origin");
+    let repository = git_dir.path().join("repository");
+    let unrelated = git_dir.path().join("unrelated");
+    git(
+        Path::new(&origin),
+        &["clone", "--local", &origin, repository.to_str().unwrap()],
+    );
+    git(
+        Path::new(&origin),
+        &["clone", "--local", &origin, unrelated.to_str().unwrap()],
+    );
+    create_project(
+        &projects,
+        repository.to_str().expect("the path is UTF-8"),
+        repository.to_str().expect("the path is UTF-8"),
+    );
+
+    core.command(
+        "workspace.register",
+        &register_workspace(1, unrelated.to_str().expect("the path is UTF-8"), "key-1"),
+    )
+    .expect("the workspace registers");
+    let response = core
+        .command("workspace.observe", &register(1, "key-2", 1))
+        .expect("the observation applies");
+
+    assert_eq!(
+        response["health"],
+        json!("missing"),
+        "origin URL equality alone must not establish membership"
+    );
+    assert_eq!(response["observation"]["repository_identity"], json!(null));
+    assert_eq!(response["observation"]["branch"], json!(null));
+    assert_eq!(response["observation"]["head"], json!(null));
+}
+
+struct Fixture {
+    core: Core,
+    workspaces: Arc<SqliteWorkspaceStore>,
+    database_path: std::path::PathBuf,
+}
+
+fn fixture() -> (TempDir, Fixture) {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let Wired {
+        core,
+        projects,
+        workspaces,
+    } = wired(scratch.path());
+    create_project(
+        &projects,
+        scratch.path().to_str().expect("the path is UTF-8"),
+        "/workspaces/kanban.seed",
+    );
+    let database_path = scratch.path().join("kanban.sqlite");
     (
         scratch,
         Fixture {
@@ -163,82 +359,6 @@ fn observe(core: &Core, workspace_id: u64, key: &str, version: u64) -> serde_jso
         }),
     )
     .expect("the observation applies")
-}
-
-#[test]
-fn workspace_observe_reads_git_state_through_the_shipped_observer() {
-    let (dir, fixture) = fixture();
-    let repository = init_repo(dir.path());
-    git(
-        Path::new(&repository),
-        &["remote", "add", "origin", "https://example.com/kanban.git"],
-    );
-    let workspace = registered_clone(dir.path(), &repository, &fixture.core, "seed-head");
-    let workspace = Path::new(&workspace);
-
-    let head_before = Command::new("git")
-        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
-        .output()
-        .expect("head reads");
-
-    let response = observe(&fixture.core, 1, "key-2", 1);
-
-    let head_after = Command::new("git")
-        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
-        .output()
-        .expect("head reads");
-
-    assert_eq!(head_before.stdout, head_after.stdout, "HEAD must not move");
-    assert_eq!(response["health"], json!("available"));
-    assert_eq!(response["observation"]["branch"], json!("main"));
-    assert!(response["observation"]["head"].as_str().is_some());
-    assert_eq!(response["observation"]["working_tree_clean"], json!(true));
-    assert_eq!(
-        response["observation"]["unique_unlanded_commits"],
-        json!(false)
-    );
-    assert_eq!(response["reuse"]["reusable"], json!(true));
-
-    let stored = fixture
-        .workspaces
-        .find(WorkspaceId::new(1))
-        .expect("the workspace loads")
-        .expect("the workspace exists");
-    assert_eq!(stored.health(), WorkspaceHealth::Available);
-    assert_eq!(stored.observation().branch(), Some("main"));
-    assert!(stored.observation().head().is_some());
-    assert_eq!(stored.observation().working_tree_clean(), Some(true));
-    assert_eq!(stored.observation().unique_unlanded_commits(), Some(false));
-    assert!(stored.reuse_evaluation().reusable());
-
-    let row: (
-        String,
-        Option<String>,
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-    ) = rusqlite::Connection::open(&fixture.database_path)
-        .expect("the database reopens")
-        .query_row(
-            "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits
-             FROM workspaces WHERE id = 1",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .expect("the SQLite row is readable");
-    assert_eq!(row.0, "available");
-    assert_eq!(row.1.as_deref(), Some("main"));
-    assert!(row.2.is_some());
-    assert_eq!(row.3, Some(1));
-    assert_eq!(row.4, Some(0));
 }
 
 #[test]

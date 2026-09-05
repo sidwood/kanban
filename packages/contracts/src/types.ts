@@ -190,7 +190,7 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -345,7 +345,7 @@ export type RulingSupersedeRequest = {
   ruling_id: number;
   summary: string;
 };
-export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment';
+export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace';
 export type TimelineEntityRef = {
   id: string;
   kind: TimelineEntityKind;
@@ -371,4 +371,36 @@ export type TimelineQueryResponse = {
 };
 export type TimelineScope = 'global' | {
   project: string;
+};
+export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired';
+export type WorkspaceListQuery = {
+  project_id: number;
+};
+export type WorkspaceListResponse = {
+  workspaces: WorkspaceRecord[];
+};
+export type WorkspaceObservationDto = {
+  branch?: string | null;
+  head?: string | null;
+  lane_assignment?: number | null;
+  repository_identity?: string | null;
+  working_tree_clean?: boolean | null;
+};
+export type WorkspaceObserveRequest = {
+  mutation: MutationContext;
+  workspace_id: number;
+};
+export type WorkspaceRecord = {
+  health: WorkspaceHealthDto;
+  id: number;
+  is_seed: boolean;
+  observation: WorkspaceObservationDto;
+  path: string;
+  project_id: number;
+  version: number;
+};
+export type WorkspaceRegisterRequest = {
+  mutation: MutationContext;
+  path: string;
+  project_id: number;
 };

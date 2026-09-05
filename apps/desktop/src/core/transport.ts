@@ -65,6 +65,9 @@ const COMMAND_FOR_OPERATION = {
   'herdr.settings.update': 'herdr_settings_update',
   'herdr.defaults.get': 'herdr_defaults_get',
   'herdr.defaults.update': 'herdr_defaults_update',
+  'workspace.register': 'workspace_register',
+  'workspace.observe': 'workspace_observe',
+  'workspace.list': 'workspace_list',
 } as const satisfies Record<KanbanOperationName, string>
 
 // The transport the generated client runs on, plus the shell's

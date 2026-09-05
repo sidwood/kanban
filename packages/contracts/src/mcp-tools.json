@@ -2865,7 +2865,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -2987,7 +2988,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3141,7 +3143,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3211,7 +3214,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3342,7 +3346,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3511,7 +3516,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3596,7 +3602,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3665,7 +3672,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3807,7 +3815,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -3898,7 +3907,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -4010,7 +4020,8 @@
             "review",
             "finding",
             "evidence",
-            "comment"
+            "comment",
+            "workspace"
           ],
           "type": "string"
         },
@@ -5034,6 +5045,430 @@
         "version"
       ],
       "title": "HerdrGlobalDefaults",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Register a Workspace path for a Project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `workspace.register` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "path",
+        "project_id"
+      ],
+      "title": "WorkspaceRegisterRequest",
+      "type": "object"
+    },
+    "name": "workspace_register",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "WorkspaceHealthDto": {
+          "description": "The closed health vocabulary as every client sees it.",
+          "enum": [
+            "available",
+            "assigned",
+            "dirty",
+            "missing",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "WorkspaceObservationDto": {
+          "additionalProperties": false,
+          "description": "The git facts the core last observed without mutating the clone.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lane_assignment": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "repository_identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "working_tree_clean": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "description": "The Workspace record as every client sees it.",
+      "properties": {
+        "health": {
+          "$ref": "#/definitions/WorkspaceHealthDto"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "is_seed": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/WorkspaceObservationDto"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "health",
+        "id",
+        "is_seed",
+        "observation",
+        "path",
+        "project_id",
+        "version"
+      ],
+      "title": "WorkspaceRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Observe git state for a Workspace without mutating the clone.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `workspace.observe` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "workspace_id"
+      ],
+      "title": "WorkspaceObserveRequest",
+      "type": "object"
+    },
+    "name": "workspace_observe",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "WorkspaceHealthDto": {
+          "description": "The closed health vocabulary as every client sees it.",
+          "enum": [
+            "available",
+            "assigned",
+            "dirty",
+            "missing",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "WorkspaceObservationDto": {
+          "additionalProperties": false,
+          "description": "The git facts the core last observed without mutating the clone.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lane_assignment": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "repository_identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "working_tree_clean": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "description": "The Workspace record as every client sees it.",
+      "properties": {
+        "health": {
+          "$ref": "#/definitions/WorkspaceHealthDto"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "is_seed": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/WorkspaceObservationDto"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "health",
+        "id",
+        "is_seed",
+        "observation",
+        "path",
+        "project_id",
+        "version"
+      ],
+      "title": "WorkspaceRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Workspace for one Project with health and observation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `workspace.list` query.",
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "WorkspaceListQuery",
+      "type": "object"
+    },
+    "name": "workspace_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "WorkspaceHealthDto": {
+          "description": "The closed health vocabulary as every client sees it.",
+          "enum": [
+            "available",
+            "assigned",
+            "dirty",
+            "missing",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "WorkspaceObservationDto": {
+          "additionalProperties": false,
+          "description": "The git facts the core last observed without mutating the clone.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lane_assignment": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "repository_identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "working_tree_clean": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "WorkspaceRecord": {
+          "additionalProperties": false,
+          "description": "The Workspace record as every client sees it.",
+          "properties": {
+            "health": {
+              "$ref": "#/definitions/WorkspaceHealthDto"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "is_seed": {
+              "type": "boolean"
+            },
+            "observation": {
+              "$ref": "#/definitions/WorkspaceObservationDto"
+            },
+            "path": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "health",
+            "id",
+            "is_seed",
+            "observation",
+            "path",
+            "project_id",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `workspace.list` query.",
+      "properties": {
+        "workspaces": {
+          "items": {
+            "$ref": "#/definitions/WorkspaceRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "workspaces"
+      ],
+      "title": "WorkspaceListResponse",
       "type": "object"
     }
   }

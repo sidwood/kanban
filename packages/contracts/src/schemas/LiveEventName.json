@@ -20,7 +20,9 @@
     "deferral.recorded",
     "deferral.superseded",
     "evidence.attached",
-    "evidence.listed"
+    "evidence.listed",
+    "workspace.registered",
+    "workspace.observed"
   ],
   "title": "LiveEventName",
   "type": "string"

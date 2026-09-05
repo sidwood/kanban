@@ -281,7 +281,7 @@ fn announce(events: &dyn EventSink, event: &EventDescriptor, project: &Project) 
 }
 
 #[cfg(test)]
-mod testing {
+pub(crate) mod testing {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -304,8 +304,8 @@ mod testing {
     /// The git observation the tests steer: a fixed set of known
     /// repositories. An empty set refuses every target.
     #[derive(Default)]
-    pub(super) struct KnownRepositories {
-        pub(super) repositories: Vec<String>,
+    pub(crate) struct KnownRepositories {
+        pub(crate) repositories: Vec<String>,
     }
 
     impl GitObservation for KnownRepositories {
@@ -317,7 +317,7 @@ mod testing {
     /// An in-memory Project store: rows by id, every uniqueness rule,
     /// plus every timeline envelope it was asked to land.
     #[derive(Default)]
-    pub(super) struct MemoryProjectStore {
+    pub(crate) struct MemoryProjectStore {
         state: Mutex<MemoryState>,
     }
 
@@ -337,7 +337,7 @@ mod testing {
 
         /// Insert a stored Project as-is, standing in for a Project
         /// with minted numbers.
-        pub(super) fn seed(&self, project: Project) {
+        pub(crate) fn seed(&self, project: Project) {
             self.state
                 .lock()
                 .expect("the memory store lock is sound")
@@ -399,7 +399,7 @@ mod testing {
     /// An in-memory Initiative store, so registrations can link to
     /// Initiatives that exist.
     #[derive(Default)]
-    pub(super) struct MemoryInitiatives {
+    pub(crate) struct MemoryInitiatives {
         initiatives: Mutex<Vec<Initiative>>,
     }
 
@@ -486,10 +486,10 @@ mod testing {
 
     /// A core with the Project and Initiative operations wired to
     /// in-memory stores and one known repository.
-    pub(super) struct Harness {
-        pub(super) projects: Arc<MemoryProjectStore>,
-        pub(super) initiatives: Arc<MemoryInitiatives>,
-        pub(super) core: Core,
+    pub(crate) struct Harness {
+        pub(crate) projects: Arc<MemoryProjectStore>,
+        pub(crate) initiatives: Arc<MemoryInitiatives>,
+        pub(crate) core: Core,
     }
 
     struct MemoryHerdrSettings {
@@ -561,7 +561,7 @@ mod testing {
         }
     }
 
-    pub(super) fn harness() -> Harness {
+    pub(crate) fn harness() -> Harness {
         harness_with_observing(
             KnownRepositories {
                 repositories: vec!["/repositories/kanban".to_owned()],
@@ -625,7 +625,7 @@ mod testing {
 
     /// The standard registration, with the code, session, and key
     /// tests vary.
-    pub(super) fn registering(code: &str, session: &str, key: &str) -> Value {
+    pub(crate) fn registering(code: &str, session: &str, key: &str) -> Value {
         register(
             code,
             "Control plane",

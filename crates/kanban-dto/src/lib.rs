@@ -16,6 +16,8 @@ pub mod ruling;
 pub mod schema;
 pub mod timeline;
 
+pub mod workspace;
+
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
@@ -62,6 +64,10 @@ pub use schema::schema_definitions;
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
+};
+pub use workspace::{
+    WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
 };
 
 #[cfg(test)]
@@ -188,6 +194,13 @@ mod tests {
                 "TimelineQuery",
                 "TimelineQueryResponse",
                 "TimelineScope",
+                "WorkspaceHealthDto",
+                "WorkspaceListQuery",
+                "WorkspaceListResponse",
+                "WorkspaceObserveRequest",
+                "WorkspaceObservationDto",
+                "WorkspaceRecord",
+                "WorkspaceRegisterRequest",
             ]
         );
     }

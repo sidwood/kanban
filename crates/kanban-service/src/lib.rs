@@ -2,6 +2,7 @@
 //! application core, and the socket transport together and keeps
 //! serving after the desktop UI quits (ADR-0001).
 
+pub mod git_observer;
 pub mod herdr;
 pub mod timeline;
 
@@ -19,12 +20,14 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteWorkspaceStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use herdr::{HerdrObserver, LiveHerdrDiagnostics, production_socket_root};
 use timeline::StorageTimelineStore;
+
+use git_observer::LocalWorkspaceGitObserver;
 
 /// How many replay outcomes the core keeps. A retry follows its
 /// original within seconds and the Operator drives one window, so a
@@ -89,6 +92,7 @@ fn assemble_core(
     let project_store = Arc::new(SqliteProjectStore::new(&database));
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
     let plan_store = Arc::new(SqlitePlanStore::new(&database));
+    let workspace_store = Arc::new(SqliteWorkspaceStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -112,6 +116,11 @@ fn assemble_core(
         initiative_store,
         herdr_settings_store.clone(),
         herdr.clone(),
+    )?;
+    core.register_workspaces(
+        workspace_store,
+        project_store.clone(),
+        Arc::new(LocalWorkspaceGitObserver),
     )?;
     core.register_plans(plan_store, projects)?;
     core.register_comments(comment_store)?;

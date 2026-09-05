@@ -9,6 +9,7 @@ pub mod plan;
 pub mod project;
 pub mod ruling;
 pub mod timeline;
+pub mod workspace;
 
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
@@ -31,3 +32,7 @@ pub use project::{
 };
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
+pub use workspace::{
+    Workspace, WorkspaceHealth, WorkspaceHealthInputs, WorkspaceId, WorkspaceObservation,
+    WorkspaceRegistration, WorkspaceRegistrationError, compute_health,
+};

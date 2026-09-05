@@ -82,7 +82,8 @@
         "review",
         "finding",
         "evidence",
-        "comment"
+        "comment",
+        "workspace"
       ],
       "type": "string"
     },

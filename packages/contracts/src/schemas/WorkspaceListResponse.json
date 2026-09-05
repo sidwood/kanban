@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "WorkspaceHealthDto": {
+      "description": "The closed health vocabulary as every client sees it.",
+      "enum": [
+        "available",
+        "assigned",
+        "dirty",
+        "missing",
+        "retired"
+      ],
+      "type": "string"
+    },
+    "WorkspaceObservationDto": {
+      "additionalProperties": false,
+      "description": "The git facts the core last observed without mutating the clone.",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lane_assignment": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "repository_identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "working_tree_clean": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "WorkspaceRecord": {
+      "additionalProperties": false,
+      "description": "The Workspace record as every client sees it.",
+      "properties": {
+        "health": {
+          "$ref": "#/definitions/WorkspaceHealthDto"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "is_seed": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/WorkspaceObservationDto"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "health",
+        "id",
+        "is_seed",
+        "observation",
+        "path",
+        "project_id",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `workspace.list` query.",
+  "properties": {
+    "workspaces": {
+      "items": {
+        "$ref": "#/definitions/WorkspaceRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "workspaces"
+  ],
+  "title": "WorkspaceListResponse",
+  "type": "object"
+}

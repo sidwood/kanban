@@ -16,6 +16,7 @@ pub mod plan;
 pub mod projects;
 pub mod rulings;
 pub mod timeline;
+pub mod workspaces;
 
 #[cfg(test)]
 mod test_support;
@@ -36,3 +37,4 @@ pub use plan::SqlitePlanStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;
 pub use timeline::{TimelineFilter, TimelineRow};
+pub use workspaces::SqliteWorkspaceStore;

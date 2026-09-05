@@ -10,6 +10,7 @@ use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
 use crate::plan::PlanRecord;
 use crate::project::ProjectRecord;
+use crate::workspace::WorkspaceRecord;
 
 /// The closed set of live event names the desktop may consume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -52,6 +53,10 @@ pub enum LiveEventName {
     EvidenceAttached,
     #[serde(rename = "evidence.listed")]
     EvidenceListed,
+    #[serde(rename = "workspace.registered")]
+    WorkspaceRegistered,
+    #[serde(rename = "workspace.observed")]
+    WorkspaceObserved,
 }
 
 impl LiveEventName {
@@ -77,6 +82,8 @@ impl LiveEventName {
             Self::DeferralSuperseded => "deferral.superseded",
             Self::EvidenceAttached => "evidence.attached",
             Self::EvidenceListed => "evidence.listed",
+            Self::WorkspaceRegistered => "workspace.registered",
+            Self::WorkspaceObserved => "workspace.observed",
         }
     }
 
@@ -102,6 +109,8 @@ impl LiveEventName {
             "deferral.superseded" => Ok(Self::DeferralSuperseded),
             "evidence.attached" => Ok(Self::EvidenceAttached),
             "evidence.listed" => Ok(Self::EvidenceListed),
+            "workspace.registered" => Ok(Self::WorkspaceRegistered),
+            "workspace.observed" => Ok(Self::WorkspaceObserved),
             other => Err(UnknownLiveEventError {
                 event_type: other.to_owned(),
             }),
@@ -210,6 +219,14 @@ pub enum LiveEvent {
         sequence: u64,
         payload: EvidenceListSummary,
     },
+    WorkspaceRegistered {
+        sequence: u64,
+        payload: WorkspaceRecord,
+    },
+    WorkspaceObserved {
+        sequence: u64,
+        payload: WorkspaceRecord,
+    },
 }
 
 impl LiveEvent {
@@ -235,6 +252,8 @@ impl LiveEvent {
             Self::DeferralSuperseded { .. } => LiveEventName::DeferralSuperseded,
             Self::EvidenceAttached { .. } => LiveEventName::EvidenceAttached,
             Self::EvidenceListed { .. } => LiveEventName::EvidenceListed,
+            Self::WorkspaceRegistered { .. } => LiveEventName::WorkspaceRegistered,
+            Self::WorkspaceObserved { .. } => LiveEventName::WorkspaceObserved,
         }
     }
 
@@ -259,7 +278,9 @@ impl LiveEvent {
             | Self::DeferralRecorded { sequence, .. }
             | Self::DeferralSuperseded { sequence, .. }
             | Self::EvidenceAttached { sequence, .. }
-            | Self::EvidenceListed { sequence, .. } => *sequence,
+            | Self::EvidenceListed { sequence, .. }
+            | Self::WorkspaceRegistered { sequence, .. }
+            | Self::WorkspaceObserved { sequence, .. } => *sequence,
         }
     }
 }
@@ -385,6 +406,14 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::EvidenceListed => LiveEvent::EvidenceListed {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::WorkspaceRegistered => LiveEvent::WorkspaceRegistered {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::WorkspaceObserved => LiveEvent::WorkspaceObserved {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

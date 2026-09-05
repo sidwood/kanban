@@ -25,3 +25,4 @@ name = "kanban-contracts-gen"
 path = "src/bin/kanban-contracts-gen.rs"
 
 [dev-dependencies]
+tempfile = "3.27.0"

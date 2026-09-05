@@ -19,7 +19,8 @@ use kanban_dto::{
     PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -222,6 +223,16 @@ fn sample_request(schema: &str) -> Value {
             "stall_deadline_secs": 3600,
             "missing_result_deadline_secs": 7200,
         }),
+        "WorkspaceRegisterRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "path": "/workspaces/kanban.seed",
+        }),
+        "WorkspaceObserveRequest" => json!({
+            "mutation": mutation,
+            "workspace_id": 1,
+        }),
+        "WorkspaceListQuery" => json!({ "project_id": 1 }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -448,6 +459,18 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "HerdrDefaultsUpdateRequest" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsUpdateRequest>,
+        >(envelope)
+        .is_err(),
+        "WorkspaceRegisterRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceRegisterRequest>,
+        >(envelope)
+        .is_err(),
+        "WorkspaceObserveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceObserveRequest>,
+        >(envelope)
+        .is_err(),
+        "WorkspaceListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceListQuery>,
         >(envelope)
         .is_err(),
         other => panic!("no unknown-field arm for {other}"),

@@ -50,6 +50,9 @@ describe('generated client', () => {
       'herdr.settings.update',
       'herdr.defaults.get',
       'herdr.defaults.update',
+      'workspace.register',
+      'workspace.observe',
+      'workspace.list',
     ])
   })
 
@@ -74,6 +77,8 @@ describe('generated client', () => {
       'deferral.superseded',
       'evidence.attached',
       'evidence.listed',
+      'workspace.registered',
+      'workspace.observed',
     ])
   })
 

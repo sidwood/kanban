@@ -45,6 +45,10 @@ use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
 };
+use crate::workspace::{
+    WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+};
 
 /// Every DTO schema exported to `packages/contracts`.
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
@@ -166,5 +170,21 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TimelineQuery", schema_for!(TimelineQuery)),
         ("TimelineQueryResponse", schema_for!(TimelineQueryResponse)),
         ("TimelineScope", schema_for!(TimelineScope)),
+        ("WorkspaceHealthDto", schema_for!(WorkspaceHealthDto)),
+        ("WorkspaceListQuery", schema_for!(WorkspaceListQuery)),
+        ("WorkspaceListResponse", schema_for!(WorkspaceListResponse)),
+        (
+            "WorkspaceObserveRequest",
+            schema_for!(WorkspaceObserveRequest),
+        ),
+        (
+            "WorkspaceObservationDto",
+            schema_for!(WorkspaceObservationDto),
+        ),
+        ("WorkspaceRecord", schema_for!(WorkspaceRecord)),
+        (
+            "WorkspaceRegisterRequest",
+            schema_for!(WorkspaceRegisterRequest),
+        ),
     ]
 }

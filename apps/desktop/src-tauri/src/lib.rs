@@ -26,7 +26,8 @@ use kanban_dto::{
     PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest, TimelineQuery,
-    TimelineQueryResponse,
+    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
+    WorkspaceRecord, WorkspaceRegisterRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -490,6 +491,18 @@ async fn herdr_settings_get(
 }
 
 #[tauri::command]
+async fn workspace_register(
+    shell: State<'_, Arc<Shell>>,
+    request: WorkspaceRegisterRequest,
+) -> Result<WorkspaceRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "workspace register", |shell| {
+        forward_command(shell, "workspace.register", "registered Workspace", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn herdr_settings_update(
     shell: State<'_, Arc<Shell>>,
     request: HerdrSettingsUpdateRequest,
@@ -502,6 +515,18 @@ async fn herdr_settings_update(
             "updated herdr settings",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_observe(
+    shell: State<'_, Arc<Shell>>,
+    request: WorkspaceObserveRequest,
+) -> Result<WorkspaceRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "workspace observe", |shell| {
+        forward_command(shell, "workspace.observe", "observed Workspace", request)
     })
     .await
 }
@@ -531,6 +556,18 @@ async fn herdr_defaults_update(
             "updated herdr defaults",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_list(
+    shell: State<'_, Arc<Shell>>,
+    request: WorkspaceListQuery,
+) -> Result<WorkspaceListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "workspace list", |shell| {
+        forward_query(shell, "workspace.list", "workspace list", request)
     })
     .await
 }
@@ -573,6 +610,9 @@ shell_handlers::shell_handler_catalogue! {
     herdr_settings_update,
     herdr_defaults_get,
     herdr_defaults_update,
+    workspace_register,
+    workspace_observe,
+    workspace_list,
 }
 
 /// Build the window, start the core on demand, and supervise the

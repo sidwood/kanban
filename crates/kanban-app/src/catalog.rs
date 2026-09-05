@@ -313,6 +313,27 @@ define_exposed_catalogue! {
         mcp: "herdr_defaults_update",
         description: "Update global Herdr reconciliation and deadline defaults.",
     },
+    "workspace.register" => {
+        kind: Command,
+        request: "WorkspaceRegisterRequest",
+        response: "WorkspaceRecord",
+        mcp: "workspace_register",
+        description: "Register a Workspace path for a Project.",
+    },
+    "workspace.observe" => {
+        kind: Command,
+        request: "WorkspaceObserveRequest",
+        response: "WorkspaceRecord",
+        mcp: "workspace_observe",
+        description: "Observe git state for a Workspace without mutating the clone.",
+    },
+    "workspace.list" => {
+        kind: Query,
+        request: "WorkspaceListQuery",
+        response: "WorkspaceListResponse",
+        mcp: "workspace_list",
+        description: "List every Workspace for one Project with health and observation.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

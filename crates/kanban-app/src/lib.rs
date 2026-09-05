@@ -16,6 +16,7 @@ pub mod plan;
 pub mod project;
 pub mod rulings;
 pub mod timeline;
+pub mod workspace;
 
 pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, EXPOSED_OPERATION_COUNT, OperationDescriptor, OperationKind,
@@ -41,6 +42,9 @@ pub use project::{GitObservation, ProjectStore, duplicate_code_error, duplicate_
 pub use rulings::RulingStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
+};
+pub use workspace::{
+    WorkspaceGitObserver, WorkspaceGitSnapshot, WorkspaceStore, duplicate_path_error,
 };
 
 #[cfg(test)]
@@ -104,6 +108,8 @@ mod tests {
             kanban_dto::LiveEventName::DeferralSuperseded,
             kanban_dto::LiveEventName::EvidenceAttached,
             kanban_dto::LiveEventName::EvidenceListed,
+            kanban_dto::LiveEventName::WorkspaceRegistered,
+            kanban_dto::LiveEventName::WorkspaceObserved,
         ]
         .into_iter()
         .map(kanban_dto::LiveEventName::as_str)

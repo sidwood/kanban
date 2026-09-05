@@ -219,6 +219,13 @@ async function submitArchive(id: number) {
         >
           Archive
         </button>
+        <RouterLink
+          :to="`/projects/${project.id}/workspaces`"
+          :data-testid="`project-workspaces-${project.id}`"
+          class="rounded border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50"
+        >
+          Workspaces
+        </RouterLink>
       </li>
     </ul>
     <p

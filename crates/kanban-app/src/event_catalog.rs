@@ -105,6 +105,16 @@ pub fn exposed_events() -> &'static [EventDescriptor] {
             payload_schema: "EvidenceListSummary",
             description: "Evidence was listed for a Project.",
         },
+        EventDescriptor {
+            name: "workspace.registered",
+            payload_schema: "WorkspaceRecord",
+            description: "A Workspace was registered.",
+        },
+        EventDescriptor {
+            name: "workspace.observed",
+            payload_schema: "WorkspaceRecord",
+            description: "A Workspace was observed and its health updated.",
+        },
     ]
 }
 

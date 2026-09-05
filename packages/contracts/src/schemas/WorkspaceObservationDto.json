@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The git facts the core last observed without mutating the clone.",
+  "properties": {
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "head": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lane_assignment": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "repository_identity": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_tree_clean": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "title": "WorkspaceObservationDto",
+  "type": "object"
+}

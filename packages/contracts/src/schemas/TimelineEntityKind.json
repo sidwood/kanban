@@ -11,7 +11,8 @@
     "review",
     "finding",
     "evidence",
-    "comment"
+    "comment",
+    "workspace"
   ],
   "title": "TimelineEntityKind",
   "type": "string"

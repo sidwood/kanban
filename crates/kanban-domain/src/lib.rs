@@ -8,6 +8,7 @@ pub mod initiative;
 pub mod plan;
 pub mod project;
 pub mod ruling;
+pub mod spec;
 pub mod timeline;
 pub mod workspace;
 
@@ -31,6 +32,10 @@ pub use project::{
     ProjectRegistration, ProjectState, RegistrationError, validate_herdr_session_name,
 };
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
+pub use spec::{
+    ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,
+    SpecVersion,
+};
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use workspace::{
     Workspace, WorkspaceHealth, WorkspaceHealthInputs, WorkspaceId, WorkspaceObservation,

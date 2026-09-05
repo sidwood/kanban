@@ -24,6 +24,7 @@ function bugRecord(overrides: Partial<TicketRecord> = {}): TicketRecord {
     title: 'Landing drops the integration branch',
     slice: null,
     criteria: [],
+    completion: [],
     bug: {
       actual_behaviour: 'The integration branch is dropped after a review lands.',
       reporter_evidence: 'The landing log names the drop immediately after the merge.',

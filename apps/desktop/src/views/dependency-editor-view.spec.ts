@@ -45,6 +45,7 @@ const coreTicket = {
   title: 'Landing drops the integration branch',
   slice: null,
   criteria: [],
+  completion: [],
   version: 4,
 }
 

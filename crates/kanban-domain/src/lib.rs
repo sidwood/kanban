@@ -33,8 +33,8 @@ pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
 pub use plan::{
-    DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion, SpecNumber,
-    SpecNumberError,
+    DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
+    SpecNumber, SpecNumberError, cycles_in,
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,

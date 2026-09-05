@@ -235,6 +235,141 @@ impl PlanShape {
     }
 }
 
+/// One dependency cycle in a Plan's graph: a group of member Specs
+/// mutually reachable through the edges, so no execution order exists
+/// among them. The planning diagnostics expose each group as one
+/// blocking finding (DR-PS-18).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DependencyCycle {
+    specs: Vec<SpecNumber>,
+}
+
+impl DependencyCycle {
+    /// Wrap one group, as [`cycles_in`] mints it.
+    pub fn new(specs: Vec<SpecNumber>) -> Self {
+        Self { specs }
+    }
+
+    /// The group's members, ascending.
+    pub fn specs(&self) -> &[SpecNumber] {
+        &self.specs
+    }
+}
+
+/// Every dependency cycle a graph holds: each group of two or more
+/// member Specs mutually reachable through `edges`, plus every
+/// self-edge, reported with its members ascending and its groups
+/// ordered by first member. Edges naming Specs outside `order` shape
+/// no ring among the membership and are ignored. Pure and
+/// deterministic, so the working shape and any frozen version read
+/// the same rule.
+pub fn cycles_in(order: &[SpecNumber], edges: &[DependencyEdge]) -> Vec<DependencyCycle> {
+    let members: std::collections::BTreeSet<SpecNumber> = order.iter().copied().collect();
+    let mut adjacency: std::collections::BTreeMap<SpecNumber, Vec<SpecNumber>> =
+        std::collections::BTreeMap::new();
+    let mut self_edges: std::collections::BTreeSet<SpecNumber> = std::collections::BTreeSet::new();
+    for edge in edges {
+        if !order.contains(&edge.from()) || !order.contains(&edge.to()) {
+            continue;
+        }
+        if edge.from() == edge.to() {
+            self_edges.insert(edge.from());
+            continue;
+        }
+        adjacency.entry(edge.from()).or_default().push(edge.to());
+    }
+
+    let mut cycles: Vec<DependencyCycle> = strongly_connected_groups(&members, &adjacency)
+        .into_iter()
+        .filter(|group| group.len() > 1)
+        .map(|mut group| {
+            group.sort();
+            DependencyCycle::new(group)
+        })
+        .collect();
+    cycles.extend(
+        self_edges
+            .into_iter()
+            .map(|spec| DependencyCycle::new(vec![spec])),
+    );
+    cycles.sort();
+    cycles
+}
+
+/// The groups of Specs mutually reachable through `adjacency`, in
+/// discovery order. An iterative depth-first walk keeps the walk
+/// deterministic and free of recursion limits on large drafts.
+fn strongly_connected_groups(
+    members: &std::collections::BTreeSet<SpecNumber>,
+    adjacency: &std::collections::BTreeMap<SpecNumber, Vec<SpecNumber>>,
+) -> Vec<Vec<SpecNumber>> {
+    let mut visited: std::collections::BTreeMap<SpecNumber, usize> =
+        std::collections::BTreeMap::new();
+    let mut lowest: std::collections::BTreeMap<SpecNumber, usize> =
+        std::collections::BTreeMap::new();
+    let mut on_stack = std::collections::BTreeSet::new();
+    let mut walked: Vec<SpecNumber> = Vec::new();
+    let mut groups = Vec::new();
+    let mut next = 0usize;
+    let low = |map: &std::collections::BTreeMap<SpecNumber, usize>, spec: SpecNumber| {
+        map.get(&spec).copied().unwrap_or(usize::MAX)
+    };
+
+    for &root in members {
+        if visited.contains_key(&root) {
+            continue;
+        }
+        visited.insert(root, next);
+        lowest.insert(root, next);
+        next += 1;
+        walked.push(root);
+        on_stack.insert(root);
+        let mut frames: Vec<(SpecNumber, usize)> = vec![(root, 0)];
+        while let Some((spec, position)) = frames.pop() {
+            let neighbours: &[SpecNumber] =
+                adjacency.get(&spec).map(Vec::as_slice).unwrap_or_default();
+            if position < neighbours.len() {
+                let target = neighbours[position];
+                frames.push((spec, position + 1));
+                if let Some(&seen) = visited.get(&target) {
+                    if on_stack.contains(&target) && seen < low(&lowest, spec) {
+                        lowest.insert(spec, seen);
+                    }
+                    continue;
+                }
+                visited.insert(target, next);
+                lowest.insert(target, next);
+                next += 1;
+                walked.push(target);
+                on_stack.insert(target);
+                frames.push((target, 0));
+                continue;
+            }
+            // The Spec is exhausted: a lowest link equal to its own
+            // visit order roots one group; everything stacked above
+            // it belongs to that group.
+            if low(&lowest, spec) == visited[&spec] {
+                let mut group = Vec::new();
+                while let Some(member) = walked.pop() {
+                    on_stack.remove(&member);
+                    group.push(member);
+                    if member == spec {
+                        break;
+                    }
+                }
+                groups.push(group);
+            }
+            if let Some(&(parent, _)) = frames.last() {
+                let reached = low(&lowest, spec);
+                if reached < low(&lowest, parent) {
+                    lowest.insert(parent, reached);
+                }
+            }
+        }
+    }
+    groups
+}
+
 /// One immutable frozen Plan version: the Spec membership, display
 /// order, and dependency graph exactly as they stood at activation.
 /// Minted once, never edited; later versions stand beside it rather
@@ -270,6 +405,13 @@ impl PlanVersion {
     /// The frozen dependency graph.
     pub fn edges(&self) -> &[DependencyEdge] {
         &self.edges
+    }
+
+    /// Every dependency cycle the frozen graph holds, exactly as it
+    /// froze: a version's rings stay diagnostics forever, because the
+    /// frozen shape never changes (DR-PS-04, DR-PS-18).
+    pub fn cycles(&self) -> Vec<DependencyCycle> {
+        cycles_in(&self.order, &self.edges)
     }
 }
 
@@ -356,6 +498,13 @@ impl Plan {
     /// The working dependency graph, editable only in draft.
     pub fn edges(&self) -> &[DependencyEdge] {
         &self.edges
+    }
+
+    /// Every dependency cycle the working graph holds: the rings the
+    /// planning diagnostics expose as blocking, because a ring admits
+    /// no execution order (DR-PS-18).
+    pub fn cycles(&self) -> Vec<DependencyCycle> {
+        cycles_in(&self.order, &self.edges)
     }
 
     /// Every frozen version, oldest first; each stays queryable
@@ -771,6 +920,160 @@ mod plan_graph {
             plan.remove_edge(spec(1), spec(2)),
             Err(PlanError::EdgeNotFound)
         );
+    }
+}
+
+#[cfg(test)]
+mod cycle_detection {
+    use super::{
+        DependencyCycle, DependencyEdge, Plan, PlanId, PlanShape, PlanState, ProjectId, SpecNumber,
+        cycles_in,
+    };
+
+    fn spec(number: u64) -> SpecNumber {
+        SpecNumber::new(number).expect("the fixture number is positive")
+    }
+
+    fn edge(from: u64, to: u64) -> DependencyEdge {
+        DependencyEdge::new(spec(from), spec(to))
+    }
+
+    fn cycle(numbers: &[u64]) -> DependencyCycle {
+        DependencyCycle::new(numbers.iter().map(|number| spec(*number)).collect())
+    }
+
+    /// The cycles a graph holds, as the numbers its rings carry.
+    fn rings(order: &[u64], edges: &[DependencyEdge]) -> Vec<Vec<u64>> {
+        let members: Vec<SpecNumber> = order.iter().map(|number| spec(*number)).collect();
+        cycles_in(&members, edges)
+            .iter()
+            .map(|found| {
+                found
+                    .specs()
+                    .iter()
+                    .map(|member| member.value())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_acyclic_graph_reports_no_cycle() {
+        // A chain and a diamond: every edge runs one way.
+        assert_eq!(
+            rings(&[1, 2, 3], &[edge(1, 2), edge(2, 3), edge(1, 3)]),
+            Vec::<Vec<u64>>::new()
+        );
+        assert_eq!(rings(&[1, 2], &[]), Vec::<Vec<u64>>::new());
+    }
+
+    #[test]
+    fn a_ring_of_two_specs_is_one_cycle() {
+        assert_eq!(rings(&[1, 2], &[edge(1, 2), edge(2, 1)]), [[1, 2]]);
+    }
+
+    #[test]
+    fn a_ring_of_three_specs_reports_its_members_ascending() {
+        assert_eq!(
+            rings(&[3, 1, 2], &[edge(3, 1), edge(1, 2), edge(2, 3)]),
+            [[1, 2, 3]],
+            "the members are named ascending, whatever the display order"
+        );
+    }
+
+    #[test]
+    fn disjoint_rings_report_separately_in_member_order() {
+        assert_eq!(
+            rings(
+                &[4, 2, 1, 3],
+                &[edge(4, 3), edge(3, 4), edge(1, 2), edge(2, 1)]
+            ),
+            [[1, 2], [3, 4]],
+            "each ring is one diagnostic, ordered by its first member"
+        );
+    }
+
+    #[test]
+    fn overlapping_rings_report_as_one_group() {
+        // 1 ↔ 2 and 2 ↔ 3 share Spec 2: every member reaches every
+        // other, so one group names the whole locked set.
+        assert_eq!(
+            rings(
+                &[1, 2, 3],
+                &[edge(1, 2), edge(2, 1), edge(2, 3), edge(3, 2)]
+            ),
+            [[1, 2, 3]]
+        );
+    }
+
+    #[test]
+    fn a_ring_reached_only_downstream_reports_too() {
+        // The ring sits below Spec 4, not around it: 4 stays out.
+        assert_eq!(
+            rings(&[4, 1, 2], &[edge(4, 1), edge(1, 2), edge(2, 1)]),
+            [[1, 2]]
+        );
+    }
+
+    #[test]
+    fn a_stored_self_edge_is_a_cycle_of_one() {
+        // add_edge refuses a self edge; a rehydrated shape may still
+        // hold one, and it names a Spec that can never land.
+        assert_eq!(rings(&[1], &[edge(1, 1)]), [[1]]);
+    }
+
+    #[test]
+    fn edges_leaving_the_membership_shape_no_cycle() {
+        // Storage hands the membership and the edges as two rows; an
+        // edge naming a non-member is not a ring among these Specs.
+        assert_eq!(
+            rings(&[1, 2], &[edge(1, 9), edge(9, 1)]),
+            Vec::<Vec<u64>>::new()
+        );
+    }
+
+    #[test]
+    fn the_working_graph_and_frozen_versions_report_their_own_cycles() {
+        let mut plan = Plan::new(PlanId::new(1), ProjectId::new(7), 1);
+        for number in [1, 2] {
+            plan.add_spec(spec(number))
+                .expect("the fixture membership lands");
+        }
+        plan.add_edge(spec(1), spec(2))
+            .expect("the fixture edge lands");
+        plan.add_edge(spec(2), spec(1))
+            .expect("the closing edge lands");
+
+        assert_eq!(plan.cycles(), [cycle(&[1, 2])]);
+
+        plan.activate().expect("the ring freezes");
+        plan.replan().expect("the draft reopens");
+        plan.remove_edge(spec(2), spec(1)).expect("the ring breaks");
+
+        assert!(
+            plan.cycles().is_empty(),
+            "the working graph reports its own shape"
+        );
+        assert_eq!(
+            plan.versions()[0].cycles(),
+            [cycle(&[1, 2])],
+            "the frozen version keeps the ring it froze"
+        );
+    }
+
+    #[test]
+    fn a_rehydrated_shape_reports_its_cycles() {
+        let plan = Plan::restore(
+            PlanId::new(1),
+            ProjectId::new(7),
+            1,
+            PlanState::Active,
+            PlanShape::new(vec![spec(1), spec(2)], vec![edge(1, 2), edge(2, 1)]),
+            Vec::new(),
+            5,
+        );
+
+        assert_eq!(plan.cycles(), [cycle(&[1, 2])]);
     }
 }
 

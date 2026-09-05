@@ -16,6 +16,7 @@ pub mod paths;
 pub mod plan;
 pub mod projects;
 pub mod rulings;
+pub mod spec;
 pub mod timeline;
 pub mod workspaces;
 
@@ -41,5 +42,6 @@ pub use paths::{attachments_dir, backups_dir, config_file_name, database_path, m
 pub use plan::SqlitePlanStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;
+pub use spec::SqliteSpecStore;
 pub use timeline::{TimelineFilter, TimelineRow};
 pub use workspaces::SqliteWorkspaceStore;

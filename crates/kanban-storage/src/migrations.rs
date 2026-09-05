@@ -119,6 +119,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspaces",
         sql: include_str!("../migrations/0013_workspaces.sql"),
     },
+    Migration {
+        version: 14,
+        name: "specs",
+        sql: include_str!("../migrations/0014_specs.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -276,7 +281,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
             }
         );
         assert_eq!(
@@ -296,7 +301,10 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(
+            versions,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        );
         for table in [
             "audit_events",
             "timeline_events",
@@ -365,7 +373,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 13, "one event per applied migration");
+        assert_eq!(events.len(), 14, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -431,6 +439,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[12].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 13, "name": "workspaces" })
         );
+        assert_eq!(events[13].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[13].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 14, "name": "specs" })
+        );
     }
 
     #[test]
@@ -452,7 +465,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the upgrade applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![13] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![13, 14]
+            }
+        );
         let present: i64 = database
             .connection()
             .query_row(
@@ -465,7 +483,9 @@ mod tests {
         let audited: String = database
             .connection()
             .query_row(
-                "SELECT detail FROM audit_events WHERE kind = 'migration.applied' ORDER BY id DESC LIMIT 1",
+                "SELECT detail FROM audit_events
+                 WHERE kind = 'migration.applied'
+                   AND json_extract(detail, '$.version') = 13",
                 [],
                 |row| row.get(0),
             )
@@ -560,6 +580,10 @@ mod tests {
                     version: 13,
                     name: "workspaces",
                 },
+                PendingMigration {
+                    version: 14,
+                    name: "specs",
+                },
             ]]
         );
     }
@@ -600,9 +624,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0013 apply");
+            .expect("migrations 0010 through 0014 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

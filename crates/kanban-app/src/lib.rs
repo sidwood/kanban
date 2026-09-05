@@ -15,6 +15,7 @@ pub mod mutation;
 pub mod plan;
 pub mod project;
 pub mod rulings;
+pub mod spec;
 pub mod timeline;
 pub mod workspace;
 
@@ -40,6 +41,7 @@ pub use mutation::{
 pub use plan::PlanStore;
 pub use project::{GitObservation, ProjectStore, duplicate_code_error, duplicate_session_error};
 pub use rulings::RulingStore;
+pub use spec::SpecStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
 };

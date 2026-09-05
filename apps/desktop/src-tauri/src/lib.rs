@@ -30,9 +30,12 @@ use kanban_dto::{
     SpecCoverageCheckResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
     SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
-    TicketCreateRequest, TicketGetQuery, TicketListQuery, TicketListResponse, TicketRecord,
-    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery, TicketListResponse,
+    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TimelineQuery,
+    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
+    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -576,6 +579,98 @@ async fn ticket_get(
 }
 
 #[tauri::command]
+async fn ticket_dependency_add(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketDependencyAddRequest,
+) -> Result<TicketDependenciesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket dependency add", |shell| {
+        forward_command(
+            shell,
+            "ticket.dependency.add",
+            "added Ticket dependency",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_dependency_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketDependencyRemoveRequest,
+) -> Result<TicketDependenciesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket dependency remove", |shell| {
+        forward_command(
+            shell,
+            "ticket.dependency.remove",
+            "removed Ticket dependency",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_blocker_add(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketBlockerAddRequest,
+) -> Result<TicketDependenciesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket blocker add", |shell| {
+        forward_command(
+            shell,
+            "ticket.blocker.add",
+            "added external blocker",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_blocker_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketBlockerRemoveRequest,
+) -> Result<TicketDependenciesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket blocker remove", |shell| {
+        forward_command(
+            shell,
+            "ticket.blocker.remove",
+            "removed external blocker",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_dependencies(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketDependenciesQuery,
+) -> Result<TicketDependenciesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket dependencies", |shell| {
+        forward_query(shell, "ticket.dependencies", "ticket dependencies", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_readiness(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketReadinessQuery,
+) -> Result<TicketReadinessResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket readiness", |shell| {
+        forward_query(shell, "ticket.readiness", "ticket readiness", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -882,6 +977,12 @@ shell_handlers::shell_handler_catalogue! {
     ticket_create,
     ticket_list,
     ticket_get,
+    ticket_dependency_add,
+    ticket_dependency_remove,
+    ticket_blocker_add,
+    ticket_blocker_remove,
+    ticket_dependencies,
+    ticket_readiness,
     timeline_query,
     comment_create,
     comment_edit,

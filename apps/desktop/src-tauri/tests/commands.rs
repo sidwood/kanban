@@ -24,8 +24,10 @@ use kanban_dto::{
     RulingListQuery, RulingRecordRequest, RulingSupersedeRequest, SpecContent,
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest,
     SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
-    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery,
-    TicketListQuery, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketBlockerAddRequest,
+    TicketBlockerRemoveRequest, TicketCreateRequest, TicketDependenciesQuery,
+    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery,
+    TicketReadinessQuery, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
     WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
@@ -225,6 +227,20 @@ fn sample_request(schema: &str) -> Value {
         }),
         "TicketListQuery" => json!({ "project_id": 1 }),
         "TicketGetQuery" => json!({ "ticket_id": 1 }),
+        "TicketDependencyAddRequest" => {
+            json!({ "mutation": mutation, "from_ticket": 1, "to_ticket": 2 })
+        }
+        "TicketDependencyRemoveRequest" => {
+            json!({ "mutation": mutation, "from_ticket": 1, "to_ticket": 2 })
+        }
+        "TicketBlockerAddRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 2, "description": "Design sign-off" })
+        }
+        "TicketBlockerRemoveRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 2, "blocker_id": 1 })
+        }
+        "TicketDependenciesQuery" => json!({ "ticket_id": 2 }),
+        "TicketReadinessQuery" => json!({ "ticket_id": 2 }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -455,6 +471,22 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "TicketCreateRequest" => decode_invoke_args::<TicketCreateRequest>(request).is_err(),
         "TicketListQuery" => decode_invoke_args::<TicketListQuery>(request).is_err(),
         "TicketGetQuery" => decode_invoke_args::<TicketGetQuery>(request).is_err(),
+        "TicketDependencyAddRequest" => {
+            decode_invoke_args::<TicketDependencyAddRequest>(request).is_err()
+        }
+        "TicketDependencyRemoveRequest" => {
+            decode_invoke_args::<TicketDependencyRemoveRequest>(request).is_err()
+        }
+        "TicketBlockerAddRequest" => {
+            decode_invoke_args::<TicketBlockerAddRequest>(request).is_err()
+        }
+        "TicketBlockerRemoveRequest" => {
+            decode_invoke_args::<TicketBlockerRemoveRequest>(request).is_err()
+        }
+        "TicketDependenciesQuery" => {
+            decode_invoke_args::<TicketDependenciesQuery>(request).is_err()
+        }
+        "TicketReadinessQuery" => decode_invoke_args::<TicketReadinessQuery>(request).is_err(),
         "WorkspaceRegisterRequest" => {
             decode_invoke_args::<WorkspaceRegisterRequest>(request).is_err()
         }

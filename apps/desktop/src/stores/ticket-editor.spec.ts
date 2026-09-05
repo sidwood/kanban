@@ -21,6 +21,7 @@ function record(overrides: Partial<TicketRecord> = {}): TicketRecord {
     title: null,
     slice: 'Spec authoring creates content versions end to end',
     criteria: [{ outcome: 'Specs mint unique numbers.', stories: ['CORE-S1-US1'] }],
+    bug: null,
     version: 1,
     ...overrides,
   }
@@ -110,6 +111,8 @@ describe('ticket editor store', () => {
     bug.kind = 'bug'
     bug.priority = 'urgent'
     bug.title = 'Landing drops the integration branch'
+    bug.actualBehaviour = 'The integration branch is dropped after a review lands.'
+    bug.reporterEvidence = 'The landing log names the drop immediately after the merge.'
     await editor.create(transport, 4, bug)
 
     const task = blankTicketDraft()
@@ -127,6 +130,8 @@ describe('ticket editor store', () => {
       kind: 'bug',
       priority: 'urgent',
       title: 'Landing drops the integration branch',
+      actual_behaviour: 'The integration branch is dropped after a review lands.',
+      reporter_evidence: 'The landing log names the drop immediately after the merge.',
     })
     expect(requests[1]).toEqual({
       mutation: expect.any(Object),

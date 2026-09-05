@@ -1,10 +1,12 @@
 // The Ticket editor state, driven entirely through the generated
 // client: the Tickets of one Project and the per-kind creation the
 // editor drives — an Implementation attached to exactly one Spec,
-// carrying its slice description and story-linked criteria; a Bug or
-// Task carrying a title and an optional attachment. Every kind takes
-// the closed priority vocabulary, creation lands in draft, and a
-// refusal is reported, never swallowed (KAN-S4-US1, KAN-S4-US2).
+// carrying its slice description and story-linked criteria; a Bug
+// quick-captured with title, actual behaviour, and reporter evidence
+// and nothing else required; a Task carrying a title and an optional
+// attachment. Every kind takes the closed priority vocabulary,
+// creation lands in draft, and a refusal is reported, never
+// swallowed (KAN-S4-US1 through KAN-S4-US3).
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type {
@@ -32,6 +34,8 @@ export interface TicketDraft {
   kind: TicketKind
   priority: TicketPriority
   title: string
+  actualBehaviour: string
+  reporterEvidence: string
   specId: number | null
   slice: string
   criteria: TicketCriterionDraft[]
@@ -43,6 +47,8 @@ export function blankTicketDraft(): TicketDraft {
     kind: 'bug',
     priority: 'normal',
     title: '',
+    actualBehaviour: '',
+    reporterEvidence: '',
     specId: null,
     slice: '',
     criteria: [{ outcome: '', stories: '' }],
@@ -83,6 +89,12 @@ export function ticketCreateRequestOf(
     request.title = draft.title
     if (draft.specId !== null) {
       request.spec_id = draft.specId
+    }
+    if (draft.kind === 'bug') {
+      // Quick capture needs the two capture facts beside the title
+      // and nothing else (DR-TK-08).
+      request.actual_behaviour = draft.actualBehaviour
+      request.reporter_evidence = draft.reporterEvidence
     }
   }
   return request

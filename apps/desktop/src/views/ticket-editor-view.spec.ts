@@ -48,6 +48,7 @@ const tickets = [
     title: null,
     slice: 'Spec authoring creates content versions end to end',
     criteria: [{ outcome: 'Specs mint unique numbers.', stories: ['CORE-S1-US1'] }],
+    bug: null,
     version: 1,
   },
   {
@@ -61,6 +62,13 @@ const tickets = [
     title: 'Landing drops the integration branch',
     slice: null,
     criteria: [],
+    bug: {
+      actual_behaviour: 'The integration branch is dropped after a review lands.',
+      reporter_evidence: 'The landing log names the drop immediately after the merge.',
+      external_references: [],
+      occurrence_snapshots: [],
+      evidence_ids: [],
+    },
     version: 1,
   },
   {
@@ -74,6 +82,7 @@ const tickets = [
     title: 'Archive the old register',
     slice: null,
     criteria: [],
+    bug: null,
     version: 1,
   },
 ] satisfies TicketRecord[]
@@ -134,8 +143,11 @@ describe('TicketEditorView', () => {
     setActivePinia(createPinia())
     const wrapper = await mountView(harness().transport)
 
-    // The blank draft is a Bug: title and optional attachment only.
+    // The blank draft is a Bug: the three capture facts and an
+    // optional attachment only.
     expect(wrapper.find('[data-testid="ticket-title"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-bug-actual"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-bug-evidence"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ticket-criteria"]').exists()).toBe(false)
 
@@ -175,7 +187,7 @@ describe('TicketEditorView', () => {
     })
   })
 
-  it('creating a bug sends the title and the priority', async () => {
+  it('creating a bug quick captures the three facts and nothing else', async () => {
     setActivePinia(createPinia())
     const harnessState = harness()
     const wrapper = await mountView(harnessState.transport)
@@ -183,6 +195,12 @@ describe('TicketEditorView', () => {
     await wrapper
       .find('[data-testid="ticket-title"]')
       .setValue('Landing drops the integration branch')
+    await wrapper
+      .find('[data-testid="ticket-bug-actual"]')
+      .setValue('The integration branch is dropped after a review lands.')
+    await wrapper
+      .find('[data-testid="ticket-bug-evidence"]')
+      .setValue('The landing log names the drop immediately after the merge.')
     await wrapper.find('[data-testid="ticket-priority"]').setValue('urgent')
     await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
     await flushPromises()
@@ -193,8 +211,11 @@ describe('TicketEditorView', () => {
       kind: 'bug',
       priority: 'urgent',
       title: 'Landing drops the integration branch',
+      actual_behaviour: 'The integration branch is dropped after a review lands.',
+      reporter_evidence: 'The landing log names the drop immediately after the merge.',
     })
     expect(created?.request).not.toHaveProperty('slice')
+    expect(created?.request).not.toHaveProperty('criteria')
   })
 
   it('criteria rows add and remove', async () => {

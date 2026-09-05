@@ -12,7 +12,7 @@ import type {
   KanbanOperationName,
   KanbanTransport,
 } from '@kanban/contracts'
-import { parseKanbanLiveEvent } from '@kanban/contracts'
+import { KANBAN_OPERATION_COMMANDS, parseKanbanLiveEvent } from '@kanban/contracts'
 
 // The shell's Tauri event names. These are shell-level plumbing,
 // not domain contracts; `core://event` payloads are the generated
@@ -27,58 +27,6 @@ export type ShellConnectionState = 'connected' | 'disconnected'
 // The generated operations map onto the shell's typed commands,
 // one per operation; the map must stay complete over the generated
 // catalog or typecheck fails.
-const COMMAND_FOR_OPERATION = {
-  'health.get': 'health_get',
-  'initiative.archive': 'initiative_archive',
-  'initiative.create': 'initiative_create',
-  'initiative.list': 'initiative_list',
-  'initiative.rename': 'initiative_rename',
-  'project.archive': 'project_archive',
-  'project.list': 'project_list',
-  'project.register': 'project_register',
-  'plan.create': 'plan_create',
-  'plan.spec.add': 'plan_spec_add',
-  'plan.spec.remove': 'plan_spec_remove',
-  'plan.spec.move': 'plan_spec_move',
-  'plan.edge.add': 'plan_edge_add',
-  'plan.edge.remove': 'plan_edge_remove',
-  'plan.activate': 'plan_activate',
-  'plan.replan': 'plan_replan',
-  'plan.complete': 'plan_complete',
-  'plan.cancel': 'plan_cancel',
-  'plan.archive': 'plan_archive',
-  'plan.list': 'plan_list',
-  'plan.get': 'plan_get',
-  'spec.create': 'spec_create',
-  'spec.content.update': 'spec_content_update',
-  'spec.version.approve': 'spec_version_approve',
-  'spec.version.supersede': 'spec_version_supersede',
-  'spec.plan.join': 'spec_plan_join',
-  'spec.execution.move': 'spec_execution_move',
-  'spec.list': 'spec_list',
-  'spec.get': 'spec_get',
-  'spec.version.get': 'spec_version_get',
-  'timeline.query': 'timeline_query',
-  'comment.create': 'comment_create',
-  'comment.edit': 'comment_edit',
-  'comment.revisions': 'comment_revisions',
-  'ruling.record': 'ruling_record',
-  'ruling.supersede': 'ruling_supersede',
-  'ruling.list': 'ruling_list',
-  'deferral.record': 'deferral_record',
-  'deferral.supersede': 'deferral_supersede',
-  'deferral.list': 'deferral_list',
-  'evidence.attach': 'evidence_attach',
-  'evidence.list': 'evidence_list',
-  'herdr.settings.get': 'herdr_settings_get',
-  'herdr.settings.update': 'herdr_settings_update',
-  'herdr.defaults.get': 'herdr_defaults_get',
-  'herdr.defaults.update': 'herdr_defaults_update',
-  'workspace.register': 'workspace_register',
-  'workspace.observe': 'workspace_observe',
-  'workspace.retire': 'workspace_retire',
-  'workspace.list': 'workspace_list',
-} as const satisfies Record<KanbanOperationName, string>
 
 // The transport the generated client runs on, plus the shell's
 // connection announcements.
@@ -91,13 +39,13 @@ export const tauriTransport: ShellTransport = {
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], { request })
+    return invoke<Response>(KANBAN_OPERATION_COMMANDS[name], { request })
   },
   async command<Request, Response>(
     name: KanbanOperationName,
     request: Request,
   ): Promise<Response> {
-    return invoke<Response>(COMMAND_FOR_OPERATION[name], { request })
+    return invoke<Response>(KANBAN_OPERATION_COMMANDS[name], { request })
   },
   subscribe(handler: (event: KanbanLiveEvent) => void): () => void {
     return listenTo(CORE_EVENT, (payload) => handler(parseKanbanLiveEvent(payload as EventEnvelope)))

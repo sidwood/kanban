@@ -46,10 +46,6 @@ macro_rules! define_exposed_catalogue {
 
         /// The Tauri and MCP names derived from the same catalogue entries.
         pub const EXPOSED_MCP_TOOL_NAMES: &[&str] = &[$( $mcp ),*];
-
-        /// How many operations the catalogue carries; shell drift checks
-        /// compare against this at compile time.
-        pub const EXPOSED_OPERATION_COUNT: usize = [$( $name ),*].len();
     };
 }
 

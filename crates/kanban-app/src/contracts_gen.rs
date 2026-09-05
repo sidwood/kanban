@@ -261,6 +261,18 @@ fn reference_to_type_name(reference: &str) -> String {
     reference.rsplit('/').next().unwrap_or(reference).to_owned()
 }
 
+fn render_operation_command_map() -> String {
+    let mut output = String::from("export const KANBAN_OPERATION_COMMANDS = {\n");
+    for operation in exposed_operations() {
+        output.push_str(&format!(
+            "  '{}': '{}',\n",
+            operation.name, operation.mcp_tool_name
+        ));
+    }
+    output.push_str("} as const satisfies Record<KanbanOperationName, string>;\n\n");
+    output
+}
+
 fn render_event_catalog() -> String {
     let mut output = String::new();
 
@@ -342,6 +354,7 @@ fn render_client(
     output.push_str(
         "export type KanbanOperationName = (typeof KANBAN_CLIENT_OPERATIONS)[number];\n\n",
     );
+    output.push_str(&render_operation_command_map());
     output.push_str(&render_event_catalog());
     output.push_str("export interface KanbanTransport {\n");
     output.push_str(
@@ -595,6 +608,34 @@ mod tests {
             assert!(
                 !source.ends_with("\n\n"),
                 "{file_name} must not end with a blank line"
+            );
+        }
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn generated_client_emits_operation_command_map() {
+        let temp_root =
+            std::env::temp_dir().join(format!("kanban-contracts-gen-map-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_root);
+        generate(&temp_root).expect("generation succeeds");
+
+        let client_source =
+            fs::read_to_string(temp_root.join("src/client.ts")).expect("client exists");
+        assert!(
+            client_source.contains("export const KANBAN_OPERATION_COMMANDS"),
+            "generated client must export the operation-command map"
+        );
+
+        for operation in exposed_operations() {
+            assert!(
+                client_source.contains(&format!(
+                    "  '{}': '{}',",
+                    operation.name, operation.mcp_tool_name
+                )),
+                "missing command mapping for `{}`",
+                operation.name
             );
         }
 

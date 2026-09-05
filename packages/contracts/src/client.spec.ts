@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   KANBAN_CLIENT_EVENTS,
   KANBAN_CLIENT_OPERATIONS,
+  KANBAN_OPERATION_COMMANDS,
   KanbanClient,
   parseKanbanLiveEvent,
   type KanbanOperationName,
@@ -11,6 +12,35 @@ import {
 import type { EventEnvelope } from './types.js'
 
 describe('generated client', () => {
+  it('maps every operation to its typed Tauri command', () => {
+    expect(KANBAN_OPERATION_COMMANDS).toStrictEqual({
+      'health.get': 'health_get',
+      'initiative.create': 'initiative_create',
+      'initiative.rename': 'initiative_rename',
+      'initiative.archive': 'initiative_archive',
+      'initiative.list': 'initiative_list',
+      'project.register': 'project_register',
+      'project.archive': 'project_archive',
+      'project.list': 'project_list',
+      'timeline.query': 'timeline_query',
+      'comment.create': 'comment_create',
+      'comment.edit': 'comment_edit',
+      'comment.revisions': 'comment_revisions',
+      'ruling.record': 'ruling_record',
+      'ruling.supersede': 'ruling_supersede',
+      'ruling.list': 'ruling_list',
+      'deferral.record': 'deferral_record',
+      'deferral.supersede': 'deferral_supersede',
+      'deferral.list': 'deferral_list',
+      'evidence.attach': 'evidence_attach',
+      'evidence.list': 'evidence_list',
+      'herdr.settings.get': 'herdr_settings_get',
+      'herdr.settings.update': 'herdr_settings_update',
+      'herdr.defaults.get': 'herdr_defaults_get',
+      'herdr.defaults.update': 'herdr_defaults_update',
+    })
+  })
+
   it('lists only application-layer operations', () => {
     expect(KANBAN_CLIENT_OPERATIONS).toStrictEqual([
       'health.get',

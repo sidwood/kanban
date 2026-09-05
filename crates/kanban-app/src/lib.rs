@@ -23,7 +23,7 @@ pub mod workspace;
 mod project_scope;
 
 pub use catalog::{
-    EXPOSED_MCP_TOOL_NAMES, EXPOSED_OPERATION_COUNT, OperationDescriptor, OperationKind,
+    EXPOSED_MCP_TOOL_NAMES, OperationDescriptor, OperationKind,
     assert_registered_matches_exposed_catalogue, exposed_operations,
 };
 pub use comment::CommentStore;

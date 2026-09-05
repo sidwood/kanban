@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { KANBAN_CLIENT_OPERATIONS } from '@kanban/contracts'
+import { KANBAN_CLIENT_OPERATIONS, KANBAN_OPERATION_COMMANDS } from '@kanban/contracts'
 
 // The Tauri IPC bridge, faked at the module boundary so the adapter
 // is proven on its own.
@@ -46,7 +46,9 @@ describe('tauri transport', () => {
     }
 
     expect(invokeMock).toHaveBeenCalledTimes(KANBAN_CLIENT_OPERATIONS.length)
-    for (const call of invokeMock.mock.calls) {
+    for (const [index, name] of KANBAN_CLIENT_OPERATIONS.entries()) {
+      const call = invokeMock.mock.calls[index]
+      expect(call[0]).toBe(KANBAN_OPERATION_COMMANDS[name])
       expect(call[1]).toStrictEqual({ request: {} })
     }
   })

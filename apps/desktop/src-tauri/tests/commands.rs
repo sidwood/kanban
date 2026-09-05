@@ -374,18 +374,14 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             kanban_desktop_lib::commands::ShellInvokeArgs<PlanArchiveRequest>,
         >(envelope)
         .is_err(),
-        "PlanListQuery" => {
-            serde_json::from_value::<kanban_desktop_lib::commands::ShellInvokeArgs<PlanListQuery>>(
-                envelope,
-            )
-            .is_err()
-        }
-        "PlanGetQuery" => {
-            serde_json::from_value::<kanban_desktop_lib::commands::ShellInvokeArgs<PlanGetQuery>>(
-                envelope,
-            )
-            .is_err()
-        }
+        "PlanListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanListQuery>,
+        >(envelope)
+        .is_err(),
+        "PlanGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanGetQuery>,
+        >(envelope)
+        .is_err(),
         "ProjectListQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<ProjectListQuery>,
         >(envelope)

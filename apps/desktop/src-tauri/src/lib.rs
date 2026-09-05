@@ -20,9 +20,13 @@ use kanban_dto::{
     HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    ProjectArchiveRequest, ProjectListQuery, ProjectListResponse, ProjectRecord,
-    ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineQuery, TimelineQueryResponse,
+    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
+    PlanCompleteRequest, PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
+    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
+    ProjectListQuery, ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
+    RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest, TimelineQuery,
+    TimelineQueryResponse,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -169,6 +173,162 @@ async fn project_list(
     let shell = shell.inner().clone();
     run_blocking(shell, "project list", |shell| {
         forward_query(shell, "project.list", "project list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_create(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanCreateRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan create", |shell| {
+        forward_command(shell, "plan.create", "created Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_spec_add(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanSpecAddRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan spec add", |shell| {
+        forward_command(shell, "plan.spec.add", "added Spec to Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_spec_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanSpecRemoveRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan spec remove", |shell| {
+        forward_command(shell, "plan.spec.remove", "removed Spec from Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_spec_move(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanSpecMoveRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan spec move", |shell| {
+        forward_command(shell, "plan.spec.move", "moved Spec within Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_edge_add(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanEdgeAddRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan edge add", |shell| {
+        forward_command(shell, "plan.edge.add", "added Plan edge", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_edge_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanEdgeRemoveRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan edge remove", |shell| {
+        forward_command(shell, "plan.edge.remove", "removed Plan edge", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_activate(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanActivateRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan activate", |shell| {
+        forward_command(shell, "plan.activate", "activated Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_replan(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanReplanRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan replan", |shell| {
+        forward_command(shell, "plan.replan", "replanned Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_complete(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanCompleteRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan complete", |shell| {
+        forward_command(shell, "plan.complete", "completed Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_cancel(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanCancelRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan cancel", |shell| {
+        forward_command(shell, "plan.cancel", "cancelled Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_archive(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanArchiveRequest,
+) -> Result<PlanRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan archive", |shell| {
+        forward_command(shell, "plan.archive", "archived Plan", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_list(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanListQuery,
+) -> Result<PlanListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan list", |shell| {
+        forward_query(shell, "plan.list", "plan list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_get(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanGetQuery,
+) -> Result<PlanGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan get", |shell| {
+        forward_query(shell, "plan.get", "plan get", request)
     })
     .await
 }
@@ -384,6 +544,19 @@ shell_handlers::shell_handler_catalogue! {
     project_register,
     project_archive,
     project_list,
+    plan_create,
+    plan_spec_add,
+    plan_spec_remove,
+    plan_spec_move,
+    plan_edge_add,
+    plan_edge_remove,
+    plan_activate,
+    plan_replan,
+    plan_complete,
+    plan_cancel,
+    plan_archive,
+    plan_list,
+    plan_get,
     timeline_query,
     comment_create,
     comment_edit,

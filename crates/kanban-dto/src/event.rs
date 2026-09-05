@@ -338,7 +338,7 @@ pub enum LiveEvent {
     },
     TicketAssigned {
         sequence: u64,
-        payload: TicketRecord,
+        payload: Box<TicketRecord>,
     },
     ProfileDefined {
         sequence: u64,

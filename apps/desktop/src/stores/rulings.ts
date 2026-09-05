@@ -6,6 +6,7 @@ import type {
   RulingRecord,
   TimelineEntityRef,
 } from '@kanban/contracts'
+import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 
 export const useRulingsStore = defineStore('rulings', {
@@ -47,7 +48,7 @@ export const useRulingsStore = defineStore('rulings', {
         this.rulings = rulings.rulings
         this.deferrals = deferrals.deferrals
       } catch (failure) {
-        this.error = failure instanceof Error ? failure.message : String(failure)
+        this.error = asApiError(failure).message
         this.rulings = []
         this.deferrals = []
       } finally {

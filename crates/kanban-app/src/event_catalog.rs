@@ -36,6 +36,36 @@ pub fn exposed_events() -> &'static [EventDescriptor] {
             description: "A Project was archived.",
         },
         EventDescriptor {
+            name: "plan.created",
+            payload_schema: "PlanRecord",
+            description: "A Plan was created.",
+        },
+        EventDescriptor {
+            name: "plan.activated",
+            payload_schema: "PlanRecord",
+            description: "A Plan was activated, freezing a version.",
+        },
+        EventDescriptor {
+            name: "plan.replanned",
+            payload_schema: "PlanRecord",
+            description: "A Plan was replanned, reserving its replacement version.",
+        },
+        EventDescriptor {
+            name: "plan.completed",
+            payload_schema: "PlanRecord",
+            description: "A Plan was completed.",
+        },
+        EventDescriptor {
+            name: "plan.cancelled",
+            payload_schema: "PlanRecord",
+            description: "A Plan was cancelled.",
+        },
+        EventDescriptor {
+            name: "plan.archived",
+            payload_schema: "PlanRecord",
+            description: "A Plan was archived.",
+        },
+        EventDescriptor {
             name: "comment.created",
             payload_schema: "CommentRecord",
             description: "A Comment was created.",

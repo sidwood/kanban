@@ -209,6 +209,32 @@ impl fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
+/// The working shape of one Plan: its display order and dependency
+/// edges together, as they rehydrate from storage. The two relations
+/// stay separate inside it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanShape {
+    order: Vec<SpecNumber>,
+    edges: Vec<DependencyEdge>,
+}
+
+impl PlanShape {
+    /// A shape carrying exactly the order and edges given.
+    pub fn new(order: Vec<SpecNumber>, edges: Vec<DependencyEdge>) -> Self {
+        Self { order, edges }
+    }
+
+    /// The display order.
+    pub fn order(&self) -> &[SpecNumber] {
+        &self.order
+    }
+
+    /// The dependency edges.
+    pub fn edges(&self) -> &[DependencyEdge] {
+        &self.edges
+    }
+}
+
 /// One immutable frozen Plan version: the Spec membership, display
 /// order, and dependency graph exactly as they stood at activation.
 /// Minted once, never edited; later versions stand beside it rather
@@ -285,8 +311,7 @@ impl Plan {
         project: ProjectId,
         number: u64,
         state: PlanState,
-        order: Vec<SpecNumber>,
-        edges: Vec<DependencyEdge>,
+        shape: PlanShape,
         versions: Vec<PlanVersion>,
         version: u64,
     ) -> Self {
@@ -295,8 +320,8 @@ impl Plan {
             project,
             number,
             state,
-            order,
-            edges,
+            order: shape.order,
+            edges: shape.edges,
             versions,
             version,
         }
@@ -745,7 +770,8 @@ mod plan_graph {
 #[cfg(test)]
 mod plan_lifecycle {
     use super::{
-        DependencyEdge, Plan, PlanError, PlanId, PlanState, PlanVersion, ProjectId, SpecNumber,
+        DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion, ProjectId,
+        SpecNumber,
     };
 
     fn spec(number: u64) -> SpecNumber {
@@ -1008,8 +1034,7 @@ mod plan_lifecycle {
             ProjectId::new(4),
             3,
             PlanState::Active,
-            vec![spec(2), spec(1)],
-            vec![edge(2, 1)],
+            PlanShape::new(vec![spec(2), spec(1)], vec![edge(2, 1)]),
             vec![PlanVersion::new(
                 1,
                 vec![spec(2), spec(1)],

@@ -12,6 +12,7 @@ pub mod evidence;
 pub mod herdr;
 pub mod initiative;
 pub mod mutation;
+pub mod plan;
 pub mod project;
 pub mod rulings;
 pub mod timeline;
@@ -35,6 +36,7 @@ pub use mutation::MemoryIdempotencyStore;
 pub use mutation::{
     CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
+pub use plan::PlanStore;
 pub use project::{GitObservation, ProjectStore, duplicate_code_error, duplicate_session_error};
 pub use rulings::RulingStore;
 pub use timeline::{
@@ -88,6 +90,12 @@ mod tests {
             kanban_dto::LiveEventName::InitiativeArchived,
             kanban_dto::LiveEventName::ProjectRegistered,
             kanban_dto::LiveEventName::ProjectArchived,
+            kanban_dto::LiveEventName::PlanCreated,
+            kanban_dto::LiveEventName::PlanActivated,
+            kanban_dto::LiveEventName::PlanReplanned,
+            kanban_dto::LiveEventName::PlanCompleted,
+            kanban_dto::LiveEventName::PlanCancelled,
+            kanban_dto::LiveEventName::PlanArchived,
             kanban_dto::LiveEventName::CommentCreated,
             kanban_dto::LiveEventName::CommentEdited,
             kanban_dto::LiveEventName::RulingRecorded,

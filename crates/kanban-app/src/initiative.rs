@@ -668,7 +668,8 @@ mod tests {
     fn no_initiative_delete_operation_is_catalogued() {
         for operation in exposed_operations() {
             assert!(
-                !operation.name.contains("delete") && !operation.name.contains("remove"),
+                !operation.name.starts_with("initiative.")
+                    || (!operation.name.contains("delete") && !operation.name.contains("remove")),
                 "`{}` must not exist; Initiatives are archived, never deleted",
                 operation.name
             );

@@ -14,7 +14,10 @@ use kanban_dto::{
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
     HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
-    InitiativeListQuery, InitiativeRenameRequest, MutationContext, ProjectArchiveRequest,
+    InitiativeListQuery, InitiativeRenameRequest, MutationContext, PlanActivateRequest,
+    PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest,
+    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
     RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
 };
@@ -128,6 +131,32 @@ fn sample_request(schema: &str) -> Value {
             "initiative_id": null,
         }),
         "ProjectArchiveRequest" => json!({ "mutation": mutation, "project_id": 1 }),
+        "PlanCreateRequest" => json!({ "mutation": mutation, "project_id": 1 }),
+        "PlanSpecAddRequest" => {
+            json!({ "mutation": mutation, "plan_id": 1, "spec_number": 2 })
+        }
+        "PlanSpecRemoveRequest" => {
+            json!({ "mutation": mutation, "plan_id": 1, "spec_number": 2 })
+        }
+        "PlanSpecMoveRequest" => json!({
+            "mutation": mutation,
+            "plan_id": 1,
+            "spec_number": 2,
+            "position": 0,
+        }),
+        "PlanEdgeAddRequest" => {
+            json!({ "mutation": mutation, "plan_id": 1, "from_spec": 1, "to_spec": 2 })
+        }
+        "PlanEdgeRemoveRequest" => {
+            json!({ "mutation": mutation, "plan_id": 1, "from_spec": 1, "to_spec": 2 })
+        }
+        "PlanActivateRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
+        "PlanReplanRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
+        "PlanCompleteRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
+        "PlanCancelRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
+        "PlanArchiveRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
+        "PlanListQuery" => json!({ "project_id": 1 }),
+        "PlanGetQuery" => json!({ "plan_id": 1 }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -301,6 +330,62 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             kanban_desktop_lib::commands::ShellInvokeArgs<ProjectArchiveRequest>,
         >(envelope)
         .is_err(),
+        "PlanCreateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCreateRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanSpecAddRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecAddRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanSpecRemoveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecRemoveRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanSpecMoveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecMoveRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanEdgeAddRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanEdgeAddRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanEdgeRemoveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanEdgeRemoveRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanActivateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanActivateRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanReplanRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanReplanRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanCompleteRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCompleteRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanCancelRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCancelRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanArchiveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanArchiveRequest>,
+        >(envelope)
+        .is_err(),
+        "PlanListQuery" => {
+            serde_json::from_value::<kanban_desktop_lib::commands::ShellInvokeArgs<PlanListQuery>>(
+                envelope,
+            )
+            .is_err()
+        }
+        "PlanGetQuery" => {
+            serde_json::from_value::<kanban_desktop_lib::commands::ShellInvokeArgs<PlanGetQuery>>(
+                envelope,
+            )
+            .is_err()
+        }
         "ProjectListQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<ProjectListQuery>,
         >(envelope)

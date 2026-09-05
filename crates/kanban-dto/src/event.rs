@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::comment::CommentRecord;
 use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
+use crate::plan::PlanRecord;
 use crate::project::ProjectRecord;
 
 /// The closed set of live event names the desktop may consume.
@@ -23,6 +24,18 @@ pub enum LiveEventName {
     ProjectRegistered,
     #[serde(rename = "project.archived")]
     ProjectArchived,
+    #[serde(rename = "plan.created")]
+    PlanCreated,
+    #[serde(rename = "plan.activated")]
+    PlanActivated,
+    #[serde(rename = "plan.replanned")]
+    PlanReplanned,
+    #[serde(rename = "plan.completed")]
+    PlanCompleted,
+    #[serde(rename = "plan.cancelled")]
+    PlanCancelled,
+    #[serde(rename = "plan.archived")]
+    PlanArchived,
     #[serde(rename = "comment.created")]
     CommentCreated,
     #[serde(rename = "comment.edited")]
@@ -50,6 +63,12 @@ impl LiveEventName {
             Self::InitiativeArchived => "initiative.archived",
             Self::ProjectRegistered => "project.registered",
             Self::ProjectArchived => "project.archived",
+            Self::PlanCreated => "plan.created",
+            Self::PlanActivated => "plan.activated",
+            Self::PlanReplanned => "plan.replanned",
+            Self::PlanCompleted => "plan.completed",
+            Self::PlanCancelled => "plan.cancelled",
+            Self::PlanArchived => "plan.archived",
             Self::CommentCreated => "comment.created",
             Self::CommentEdited => "comment.edited",
             Self::RulingRecorded => "ruling.recorded",
@@ -69,6 +88,12 @@ impl LiveEventName {
             "initiative.archived" => Ok(Self::InitiativeArchived),
             "project.registered" => Ok(Self::ProjectRegistered),
             "project.archived" => Ok(Self::ProjectArchived),
+            "plan.created" => Ok(Self::PlanCreated),
+            "plan.activated" => Ok(Self::PlanActivated),
+            "plan.replanned" => Ok(Self::PlanReplanned),
+            "plan.completed" => Ok(Self::PlanCompleted),
+            "plan.cancelled" => Ok(Self::PlanCancelled),
+            "plan.archived" => Ok(Self::PlanArchived),
             "comment.created" => Ok(Self::CommentCreated),
             "comment.edited" => Ok(Self::CommentEdited),
             "ruling.recorded" => Ok(Self::RulingRecorded),
@@ -129,6 +154,30 @@ pub enum LiveEvent {
         sequence: u64,
         payload: ProjectRecord,
     },
+    PlanCreated {
+        sequence: u64,
+        payload: PlanRecord,
+    },
+    PlanActivated {
+        sequence: u64,
+        payload: PlanRecord,
+    },
+    PlanReplanned {
+        sequence: u64,
+        payload: PlanRecord,
+    },
+    PlanCompleted {
+        sequence: u64,
+        payload: PlanRecord,
+    },
+    PlanCancelled {
+        sequence: u64,
+        payload: PlanRecord,
+    },
+    PlanArchived {
+        sequence: u64,
+        payload: PlanRecord,
+    },
     CommentCreated {
         sequence: u64,
         payload: CommentRecord,
@@ -172,6 +221,12 @@ impl LiveEvent {
             Self::InitiativeArchived { .. } => LiveEventName::InitiativeArchived,
             Self::ProjectRegistered { .. } => LiveEventName::ProjectRegistered,
             Self::ProjectArchived { .. } => LiveEventName::ProjectArchived,
+            Self::PlanCreated { .. } => LiveEventName::PlanCreated,
+            Self::PlanActivated { .. } => LiveEventName::PlanActivated,
+            Self::PlanReplanned { .. } => LiveEventName::PlanReplanned,
+            Self::PlanCompleted { .. } => LiveEventName::PlanCompleted,
+            Self::PlanCancelled { .. } => LiveEventName::PlanCancelled,
+            Self::PlanArchived { .. } => LiveEventName::PlanArchived,
             Self::CommentCreated { .. } => LiveEventName::CommentCreated,
             Self::CommentEdited { .. } => LiveEventName::CommentEdited,
             Self::RulingRecorded { .. } => LiveEventName::RulingRecorded,
@@ -191,6 +246,12 @@ impl LiveEvent {
             | Self::InitiativeArchived { sequence, .. }
             | Self::ProjectRegistered { sequence, .. }
             | Self::ProjectArchived { sequence, .. }
+            | Self::PlanCreated { sequence, .. }
+            | Self::PlanActivated { sequence, .. }
+            | Self::PlanReplanned { sequence, .. }
+            | Self::PlanCompleted { sequence, .. }
+            | Self::PlanCancelled { sequence, .. }
+            | Self::PlanArchived { sequence, .. }
             | Self::CommentCreated { sequence, .. }
             | Self::CommentEdited { sequence, .. }
             | Self::RulingRecorded { sequence, .. }
@@ -268,6 +329,30 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::ProjectArchived => LiveEvent::ProjectArchived {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanCreated => LiveEvent::PlanCreated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanActivated => LiveEvent::PlanActivated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanReplanned => LiveEvent::PlanReplanned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanCompleted => LiveEvent::PlanCompleted {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanCancelled => LiveEvent::PlanCancelled {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::PlanArchived => LiveEvent::PlanArchived {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

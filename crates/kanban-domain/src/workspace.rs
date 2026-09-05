@@ -455,6 +455,193 @@ mod workspace_health {
     }
 }
 
+/// The inputs the reuse rule needs: the durable lifecycle flags, the
+/// observed tree state, and the unlanded-commit guard's verdict
+/// (DR-LW-06).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReuseInputs {
+    /// Retirement removes a Workspace from reuse for good.
+    pub retired: bool,
+    /// Whether the last observation found the path present. An
+    /// absent or never-observed tree satisfies no condition.
+    pub present: bool,
+    /// Whether an active Lane assignment holds the Workspace.
+    pub lane_assigned: bool,
+    /// Whether the observed working tree is clean.
+    pub working_tree_clean: bool,
+    /// Whether the Workspace holds unique unlanded commits.
+    pub unique_unlanded_commits: bool,
+}
+
+/// The reuse verdict with every named condition evaluated and
+/// reported (DR-LW-06).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReuseEvaluation {
+    reusable: bool,
+    clean: bool,
+    unassigned: bool,
+    free_of_unlanded_commits: bool,
+}
+
+impl ReuseEvaluation {
+    /// Whether the Workspace may be reused: every condition holds
+    /// and the record is present and not retired.
+    pub fn reusable(&self) -> bool {
+        self.reusable
+    }
+
+    /// Whether the working tree is clean on a present path.
+    pub fn clean(&self) -> bool {
+        self.clean
+    }
+
+    /// Whether no Lane assignment holds the Workspace.
+    pub fn unassigned(&self) -> bool {
+        self.unassigned
+    }
+
+    /// Whether the Workspace is free of unique unlanded commits.
+    pub fn free_of_unlanded_commits(&self) -> bool {
+        self.free_of_unlanded_commits
+    }
+}
+
+/// Evaluate reuse (DR-LW-06): a Workspace is reusable only when
+/// clean, unassigned, and free of unique unlanded commits. Each
+/// condition is evaluated whatever the others say, and a retired or
+/// missing record is never reusable.
+pub fn evaluate_reuse(inputs: ReuseInputs) -> ReuseEvaluation {
+    let clean = inputs.present && inputs.working_tree_clean;
+    let unassigned = !inputs.lane_assigned;
+    let free_of_unlanded_commits = inputs.present && !inputs.unique_unlanded_commits;
+    let reusable = clean && unassigned && free_of_unlanded_commits && !inputs.retired;
+    ReuseEvaluation {
+        reusable,
+        clean,
+        unassigned,
+        free_of_unlanded_commits,
+    }
+}
+
+#[cfg(test)]
+mod reuse_rules {
+    use super::{ReuseInputs, evaluate_reuse};
+
+    fn inputs() -> ReuseInputs {
+        ReuseInputs {
+            retired: false,
+            present: true,
+            lane_assigned: false,
+            working_tree_clean: true,
+            unique_unlanded_commits: false,
+        }
+    }
+
+    #[test]
+    fn clean_unassigned_and_landed_is_reusable() {
+        let verdict = evaluate_reuse(inputs());
+
+        assert!(verdict.reusable());
+        assert!(verdict.clean());
+        assert!(verdict.unassigned());
+        assert!(verdict.free_of_unlanded_commits());
+    }
+
+    #[test]
+    fn a_dirty_tree_blocks_reuse_and_only_the_clean_condition() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            working_tree_clean: false,
+            ..inputs()
+        });
+
+        assert!(!verdict.reusable());
+        assert!(!verdict.clean(), "a dirty tree fails the clean condition");
+        assert!(verdict.unassigned(), "the other conditions still report");
+        assert!(
+            verdict.free_of_unlanded_commits(),
+            "the other conditions still report"
+        );
+    }
+
+    #[test]
+    fn a_lane_assignment_blocks_reuse_and_only_the_assignment_condition() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            lane_assigned: true,
+            ..inputs()
+        });
+
+        assert!(!verdict.reusable());
+        assert!(verdict.clean(), "the other conditions still report");
+        assert!(!verdict.unassigned());
+        assert!(
+            verdict.free_of_unlanded_commits(),
+            "the other conditions still report"
+        );
+    }
+
+    #[test]
+    fn unique_unlanded_commits_block_reuse_and_only_their_condition() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            unique_unlanded_commits: true,
+            ..inputs()
+        });
+
+        assert!(!verdict.reusable());
+        assert!(verdict.clean(), "the other conditions still report");
+        assert!(verdict.unassigned(), "the other conditions still report");
+        assert!(!verdict.free_of_unlanded_commits());
+    }
+
+    #[test]
+    fn every_failing_condition_is_reported_together() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            lane_assigned: true,
+            working_tree_clean: false,
+            unique_unlanded_commits: true,
+            ..inputs()
+        });
+
+        assert!(!verdict.reusable());
+        assert!(!verdict.clean());
+        assert!(!verdict.unassigned());
+        assert!(!verdict.free_of_unlanded_commits());
+    }
+
+    #[test]
+    fn a_retired_workspace_is_never_reusable_whatever_the_conditions() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            retired: true,
+            ..inputs()
+        });
+
+        assert!(
+            !verdict.reusable(),
+            "retirement must dominate every satisfied condition"
+        );
+    }
+
+    #[test]
+    fn a_missing_workspace_satisfies_no_condition() {
+        let verdict = evaluate_reuse(ReuseInputs {
+            present: false,
+            working_tree_clean: true,
+            unique_unlanded_commits: false,
+            ..inputs()
+        });
+
+        assert!(!verdict.reusable());
+        assert!(
+            !verdict.clean(),
+            "an absent tree cannot vouch for cleanliness"
+        );
+        assert!(verdict.unassigned(), "assignment still reports");
+        assert!(
+            !verdict.free_of_unlanded_commits(),
+            "an absent tree cannot vouch for landed commits"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::project::ProjectId;

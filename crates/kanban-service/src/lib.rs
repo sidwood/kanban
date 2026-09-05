@@ -19,7 +19,7 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqliteProjectStore, SqliteRulingStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -88,6 +88,7 @@ fn assemble_core(
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
+    let plan_store = Arc::new(SqlitePlanStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -104,6 +105,7 @@ fn assemble_core(
     let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
     let herdr = HerdrObserver::new(database.clone(), herdr_socket_root);
     core.register_initiatives(initiative_store.clone())?;
+    let projects = project_store.clone();
     core.register_projects(
         project_store.clone(),
         Arc::new(LocalRepositories),
@@ -111,6 +113,7 @@ fn assemble_core(
         herdr_settings_store.clone(),
         herdr.clone(),
     )?;
+    core.register_plans(plan_store, projects)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
     core.register_deferrals(deferral_store)?;
@@ -832,5 +835,190 @@ mod tests {
         );
 
         core.shutdown();
+    }
+
+    /// KAN-T13-AC2, KAN-T13-AC3: a Plan composes, freezes at
+    /// activation, replans with an auditable replacement version, and
+    /// every frozen version stays queryable over the socket and across
+    /// a restart.
+    #[test]
+    fn the_plan_lifecycle_serves_over_the_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = scratch_repository(&dir, "kanban");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+
+        let registered = client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-core" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository,
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
+        assert_eq!(registered["version"], json!(1));
+        // Stand in for the Spec authoring that lands in KAN-T14: the
+        // Project mints four Spec numbers, so Spec 4 exists without
+        // belonging to this Plan.
+        {
+            let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+                .expect("a second connection opens");
+            conn.execute("UPDATE projects SET spec_counter = 4 WHERE id = 1", [])
+                .expect("the Spec numbers are minted");
+        }
+
+        let created = client.command(
+            "plan.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "plan-create" },
+                "project_id": 1,
+            }),
+        );
+        assert_eq!(created["number"], json!(1));
+        assert_eq!(created["state"], json!("draft"));
+
+        let mut version = created["version"]
+            .as_u64()
+            .expect("the version is a number");
+        for spec in [1, 3, 2] {
+            let response = client.command(
+                "plan.spec.add",
+                json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": format!("plan-add-{spec}"),
+                    },
+                    "plan_id": 1,
+                    "spec_number": spec,
+                }),
+            );
+            version = response["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+        for (from, to) in [(1, 2), (3, 2)] {
+            let response = client.command(
+                "plan.edge.add",
+                json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": format!("plan-edge-{from}-{to}"),
+                    },
+                    "plan_id": 1,
+                    "from_spec": from,
+                    "to_spec": to,
+                }),
+            );
+            version = response["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+
+        // An edge leaving the single Plan is refused over the wire.
+        let refused = client.command_error(
+            "plan.edge.add",
+            json!({
+                "mutation": {
+                    "optimistic_version": version,
+                    "idempotency_key": "plan-edge-outside",
+                },
+                "plan_id": 1,
+                "from_spec": 2,
+                "to_spec": 1,
+                "surprise": true,
+            }),
+        );
+        assert_eq!(refused["code"], json!("unknown_field"));
+        let outside = client.command_error(
+            "plan.edge.add",
+            json!({
+                "mutation": {
+                    "optimistic_version": version,
+                    "idempotency_key": "plan-edge-outside-2",
+                },
+                "plan_id": 1,
+                "from_spec": 1,
+                "to_spec": 4,
+            }),
+        );
+        assert_eq!(outside["code"], json!("invalid_request"));
+        assert!(
+            outside["message"]
+                .as_str()
+                .expect("the message is text")
+                .contains("within one Plan"),
+            "the refusal names the rule: {outside}"
+        );
+
+        let activated = client.command(
+            "plan.activate",
+            json!({
+                "mutation": { "optimistic_version": version, "idempotency_key": "plan-activate" },
+                "plan_id": 1,
+            }),
+        );
+        assert_eq!(activated["state"], json!("active"));
+
+        let replanned = client.command(
+            "plan.replan",
+            json!({
+                "mutation": { "optimistic_version": activated["version"], "idempotency_key": "plan-replan" },
+                "plan_id": 1,
+            }),
+        );
+        assert_eq!(replanned["state"], json!("draft"));
+        let mut version = replanned["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let moved = client.command(
+            "plan.spec.move",
+            json!({
+                "mutation": { "optimistic_version": version, "idempotency_key": "plan-move" },
+                "plan_id": 1,
+                "spec_number": 2,
+                "position": 0,
+            }),
+        );
+        version = moved["version"].as_u64().expect("the version is a number");
+        let reactivated = client.command(
+            "plan.activate",
+            json!({
+                "mutation": { "optimistic_version": version, "idempotency_key": "plan-reactivate" },
+                "plan_id": 1,
+            }),
+        );
+        assert_eq!(reactivated["state"], json!("active"));
+
+        let detail = client.query_with("plan.get", json!({ "plan_id": 1 }));
+        assert_eq!(
+            detail["versions"]
+                .as_array()
+                .expect("the versions are a list")
+                .iter()
+                .map(|entry| entry["number"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!(1), json!(2)],
+            "the replacement is minted while the first version stays queryable"
+        );
+        assert_eq!(detail["versions"][0]["spec_numbers"], json!([1, 3, 2]));
+        assert_eq!(detail["versions"][1]["spec_numbers"], json!([2, 1, 3]));
+        assert_eq!(detail["plan"]["state"], json!("active"));
+
+        // The frozen history is durable: a fresh core over the same
+        // database still serves both versions.
+        core.shutdown();
+        let rebooted = boot(&dir);
+        let mut second = Client::connect(rebooted.socket_path());
+        assert_eq!(
+            second.query_with("plan.get", json!({ "plan_id": 1 })),
+            detail,
+            "every frozen version survives a restart"
+        );
+
+        rebooted.shutdown();
     }
 }

@@ -192,6 +192,7 @@ impl BackupStore {
                 path: staging.path().to_path_buf(),
                 source,
             })?;
+            validation_temp_test_hooks::after_staging_write(staging.path())?;
             let conn =
                 Connection::open(staging.path()).map_err(|source| StorageError::BackupOpen {
                     path: staging.path().to_path_buf(),
@@ -936,16 +937,152 @@ fn remove_sqlite_sidecars(database_path: &Path) -> Result<(), StorageError> {
     Ok(())
 }
 
+#[cfg(test)]
+mod validation_temp_test_hooks {
+    use std::cell::RefCell;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    thread_local! {
+        static TEMP_ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+        static CORRUPT_AFTER_WRITE: RefCell<bool> = const { RefCell::new(false) };
+        static OBSERVED_STAGING: RefCell<Vec<(PathBuf, u32)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub struct ValidationTempRootGuard {
+        active: bool,
+    }
+
+    impl ValidationTempRootGuard {
+        pub fn set(root: PathBuf) -> Self {
+            set_validation_temp_root(root);
+            Self { active: true }
+        }
+    }
+
+    impl Drop for ValidationTempRootGuard {
+        fn drop(&mut self) {
+            if self.active {
+                TEMP_ROOT.with(|slot| *slot.borrow_mut() = None);
+                CORRUPT_AFTER_WRITE.with(|flag| *flag.borrow_mut() = false);
+            }
+        }
+    }
+
+    pub struct CorruptStagingAfterWriteGuard {
+        active: bool,
+    }
+
+    impl CorruptStagingAfterWriteGuard {
+        pub fn enable() -> Self {
+            CORRUPT_AFTER_WRITE.with(|flag| *flag.borrow_mut() = true);
+            Self { active: true }
+        }
+    }
+
+    impl Drop for CorruptStagingAfterWriteGuard {
+        fn drop(&mut self) {
+            if self.active {
+                CORRUPT_AFTER_WRITE.with(|flag| *flag.borrow_mut() = false);
+            }
+        }
+    }
+
+    pub fn validation_temp_root() -> Option<PathBuf> {
+        TEMP_ROOT.with(|slot| slot.borrow().clone())
+    }
+
+    pub fn set_validation_temp_root(root: PathBuf) {
+        TEMP_ROOT.with(|slot| *slot.borrow_mut() = Some(root));
+    }
+
+    pub fn corrupt_after_write() -> bool {
+        CORRUPT_AFTER_WRITE.with(|flag| *flag.borrow())
+    }
+
+    pub fn take_observed_staging() -> Vec<(PathBuf, u32)> {
+        OBSERVED_STAGING.with(|observed| std::mem::take(&mut *observed.borrow_mut()))
+    }
+
+    pub fn after_staging_write(path: &Path) -> Result<(), super::StorageError> {
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(path)
+                .map_err(|source| super::StorageError::BackupIo {
+                    path: path.to_path_buf(),
+                    source,
+                })?
+                .permissions()
+                .mode()
+                & 0o777;
+            OBSERVED_STAGING.with(|observed| {
+                observed.borrow_mut().push((path.to_path_buf(), mode));
+            });
+        }
+        if corrupt_after_write() {
+            let conn = super::Connection::open(path).map_err(|source| {
+                super::StorageError::BackupOpen {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?;
+            drop(conn);
+            for sidecar in super::sqlite_sidecar_paths(path) {
+                std::fs::write(&sidecar, b"stale-sidecar").map_err(|source| {
+                    super::StorageError::BackupIo {
+                        path: sidecar,
+                        source,
+                    }
+                })?;
+            }
+            let mut bytes =
+                std::fs::read(path).map_err(|source| super::StorageError::BackupIo {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            if bytes.len() > 32 {
+                bytes[16] ^= 0xFF;
+            }
+            std::fs::write(path, &bytes).map_err(|source| super::StorageError::BackupIo {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(test))]
+mod validation_temp_test_hooks {
+    use std::path::{Path, PathBuf};
+
+    pub fn validation_temp_root() -> Option<PathBuf> {
+        None
+    }
+
+    pub fn after_staging_write(_path: &Path) -> Result<(), super::StorageError> {
+        Ok(())
+    }
+}
+
 struct SecureValidationTemp {
     file: tempfile::NamedTempFile,
 }
 
 impl SecureValidationTemp {
     fn new(bundle_path: &Path) -> Result<Self, StorageError> {
+        let temp_root = match validation_temp_test_hooks::validation_temp_root() {
+            Some(root) => root,
+            None => std::env::temp_dir(),
+        };
+        fs::create_dir_all(&temp_root).map_err(|source| StorageError::BackupIo {
+            path: temp_root.clone(),
+            source,
+        })?;
         let file = tempfile::Builder::new()
             .prefix("kanban-validate-")
             .suffix(".sqlite")
-            .tempfile_in(std::env::temp_dir())
+            .tempfile_in(&temp_root)
             .map_err(|source| StorageError::BackupIo {
                 path: bundle_path.to_path_buf(),
                 source,
@@ -964,6 +1101,13 @@ impl SecureValidationTemp {
 
     fn path(&self) -> &Path {
         self.file.path()
+    }
+}
+
+impl Drop for SecureValidationTemp {
+    fn drop(&mut self) {
+        let path = self.file.path().to_path_buf();
+        let _ = remove_sqlite_sidecars(&path);
     }
 }
 
@@ -1524,7 +1668,7 @@ mod backup_restore {
         assert!(paths.iter().any(|path| *path == database_file_name()));
         assert!(paths.iter().any(|path| path.starts_with("attachments/")));
         assert!(paths.iter().any(|path| *path == config_file_name()));
-        assert_eq!(manifest.schema_version, 9);
+        assert_eq!(manifest.schema_version, 10);
     }
 
     #[test]
@@ -1809,7 +1953,7 @@ mod backup_restore {
 
         assert!(
             store
-                .verified_record_for(9)
+                .verified_record_for(10)
                 .expect("records read")
                 .is_some(),
             "the surviving bundle keeps a verified record"
@@ -1838,7 +1982,7 @@ mod backup_restore {
         store.create(&database, &options).expect("second backup");
 
         let record = store
-            .verified_record_for(9)
+            .verified_record_for(10)
             .expect("record reads")
             .expect("verified record exists");
         let bundle_path = crate::paths::backups_dir(dir.path()).join(&record.bundle_id);
@@ -1847,7 +1991,7 @@ mod backup_restore {
         std::fs::remove_dir_all(&bundle_path).expect("bundle removed manually");
         assert!(
             store
-                .verified_record_for(9)
+                .verified_record_for(10)
                 .expect("record reads")
                 .is_none(),
             "a missing bundle must not satisfy migration"
@@ -2109,10 +2253,38 @@ mod backup_restore {
         assert_eq!(first_salt.len(), 32);
     }
 
+    fn validation_artifacts_in(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut artifacts = Vec::new();
+        if !root.exists() {
+            return artifacts;
+        }
+        for entry in std::fs::read_dir(root).expect("validation root lists") {
+            let path = entry.expect("entry").path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.starts_with("kanban-validate-")
+                || name.ends_with(".sqlite-wal")
+                || name.ends_with(".sqlite-shm")
+            {
+                artifacts.push(path);
+            }
+        }
+        artifacts.sort();
+        artifacts
+    }
+
     #[test]
-    fn encrypted_validation_cleans_up_on_integrity_failure() {
+    fn encrypted_validation_temp_is_owner_only_and_cleans_up_after_integrity_failure() {
+        use super::validation_temp_test_hooks::{
+            CorruptStagingAfterWriteGuard, ValidationTempRootGuard, take_observed_staging,
+        };
+
         let (dir, database, store) = managed_fixture();
         seed_state(dir.path(), &database);
+        let validation_root = dir.path().join("validation-temp");
+        std::fs::create_dir_all(&validation_root).expect("validation root creates");
+        let _root_guard = ValidationTempRootGuard::set(validation_root.clone());
         let passphrase = "operator-secret";
         let bundle = store
             .create(
@@ -2125,26 +2297,96 @@ mod backup_restore {
                 },
             )
             .expect("encrypted backup creates");
+        let _corrupt_guard = CorruptStagingAfterWriteGuard::enable();
+        let _ = take_observed_staging();
 
-        let database_path = bundle.join(database_file_name());
-        let mut payload = std::fs::read(&database_path).expect("payload reads");
-        if let Some(byte) = payload.last_mut() {
-            *byte ^= 0xFF;
+        let outcome = store.validate(&bundle, Some(passphrase));
+        assert!(
+            matches!(
+                outcome,
+                Err(crate::error::StorageError::BackupIntegrity { .. })
+                    | Err(crate::error::StorageError::BackupOpen { .. })
+            ),
+            "validation must fail after staging decrypts: {outcome:?}"
+        );
+
+        let observed = take_observed_staging();
+        assert_eq!(observed.len(), 1, "staging must be created before failure");
+        let (staging_path, mode) = &observed[0];
+        assert!(
+            staging_path.starts_with(&validation_root),
+            "staging must live in the isolated validation root"
+        );
+        assert_eq!(*mode, 0o600, "staging must be owner-only");
+        assert!(
+            validation_artifacts_in(&validation_root).is_empty(),
+            "validation must remove plaintext and sqlite sidecars on failure"
+        );
+    }
+
+    #[test]
+    fn encrypted_validation_temp_roots_do_not_collide_across_parallel_runs() {
+        use std::path::PathBuf;
+        use std::sync::{Arc, Barrier, Mutex};
+        use std::thread;
+
+        use super::validation_temp_test_hooks::{
+            CorruptStagingAfterWriteGuard, ValidationTempRootGuard,
+        };
+
+        let roots: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|index| {
+                let roots = Arc::clone(&roots);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let isolation = tempfile::tempdir().expect("isolation directory");
+                    let validation_root = isolation.path().join(format!("branch-{index}"));
+                    std::fs::create_dir_all(&validation_root).expect("validation root creates");
+                    roots
+                        .lock()
+                        .expect("validation roots lock")
+                        .push(validation_root.clone());
+                    let _root_guard = ValidationTempRootGuard::set(validation_root.clone());
+                    let (dir, database, store) = managed_fixture();
+                    seed_state(dir.path(), &database);
+                    let passphrase = format!("operator-secret-{index}");
+                    let bundle = store
+                        .create(
+                            &database,
+                            &BackupOptions {
+                                retention: BackupRetentionPolicy::keep_most_recent(
+                                    NonZeroU32::new(3).expect("three is not zero"),
+                                ),
+                                passphrase: Some(passphrase.clone()),
+                            },
+                        )
+                        .expect("encrypted backup creates");
+                    let _corrupt_guard = CorruptStagingAfterWriteGuard::enable();
+                    barrier.wait();
+                    assert!(
+                        store.validate(&bundle, Some(&passphrase)).is_err(),
+                        "branch clone {index} must fail after staging"
+                    );
+                    assert!(
+                        validation_artifacts_in(&validation_root).is_empty(),
+                        "branch clone {index} must clean its own validation root"
+                    );
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("parallel validation joins");
         }
-        std::fs::write(&database_path, payload).expect("payload tampers");
-
-        assert!(store.validate(&bundle, Some(passphrase)).is_err());
-        for entry in std::fs::read_dir(std::env::temp_dir()).expect("temp lists") {
-            let path = entry.expect("entry").path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if name.starts_with("kanban-validate-") {
-                panic!(
-                    "validation must remove temporary artifacts on error: {}",
-                    path.display()
-                );
-            }
+        let registered = roots.lock().expect("validation roots lock");
+        assert_eq!(registered.len(), 2);
+        assert_ne!(registered[0], registered[1]);
+        for root in registered.iter() {
+            assert!(
+                validation_artifacts_in(root).is_empty(),
+                "parallel runs must not leave validation artifacts behind"
+            );
         }
     }
 }
@@ -2210,7 +2452,7 @@ mod migration_requires_backup {
                 row.get(0)
             })
             .expect("schema version reads");
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         let _ = dir;
     }
 
@@ -2237,7 +2479,7 @@ mod migration_requires_backup {
                 row.get(0)
             })
             .expect("schema version reads");
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         let _ = dir;
     }
 

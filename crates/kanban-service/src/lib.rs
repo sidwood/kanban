@@ -22,8 +22,8 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteWorkspaceStore,
-    VerifiedBackupHook, load_backup_settings,
+    SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
+    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -122,6 +122,7 @@ fn assemble_core(
     let plan_store = Arc::new(SqlitePlanStore::new(&database));
     let workspace_store = Arc::new(SqliteWorkspaceStore::new(&database));
     let spec_store = Arc::new(SqliteSpecStore::new(&database));
+    let ticket_store = Arc::new(SqliteTicketStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -152,7 +153,8 @@ fn assemble_core(
         Arc::new(LocalWorkspaceGitObserver),
     )?;
     core.register_plans(plan_store.clone(), projects.clone(), spec_store.clone())?;
-    core.register_specs(spec_store, projects, plan_store)?;
+    core.register_specs(spec_store.clone(), projects.clone(), plan_store)?;
+    core.register_tickets(ticket_store, projects, spec_store)?;
     core.register_comments(comment_store, project_store.clone())?;
     core.register_rulings(ruling_store, project_store.clone())?;
     core.register_deferrals(deferral_store, project_store.clone())?;

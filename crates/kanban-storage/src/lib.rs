@@ -17,6 +17,7 @@ pub mod plan;
 pub mod projects;
 pub mod rulings;
 pub mod spec;
+pub mod tickets;
 pub mod timeline;
 pub mod workspaces;
 
@@ -46,5 +47,6 @@ pub use plan::SqlitePlanStore;
 pub use projects::SqliteProjectStore;
 pub use rulings::SqliteRulingStore;
 pub use spec::SqliteSpecStore;
+pub use tickets::SqliteTicketStore;
 pub use timeline::{TimelineFilter, TimelineRow};
 pub use workspaces::SqliteWorkspaceStore;

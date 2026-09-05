@@ -409,6 +409,7 @@ mod tests {
             "workspaces",
             "specs",
             "spec_versions",
+            "supersession_duplicate_quarantine",
         ] {
             let present: i64 = database
                 .connection()
@@ -1155,6 +1156,177 @@ mod tests {
                 .to_string()
                 .contains("UNIQUE constraint failed"),
             "fresh stores should enforce one deferral successor: {deferral_error}"
+        );
+    }
+
+    #[test]
+    fn migration_0011_recovers_duplicate_ruling_successors_on_dirty_upgraded_stores() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
+        {
+            let conn = database.connection();
+            conn.execute(
+                "INSERT INTO rulings (project_id, summary) VALUES ('kan', 'Hold')",
+                [],
+            )
+            .expect("the original ruling lands");
+            conn.execute(
+                "INSERT INTO rulings (project_id, summary, supersedes_id)
+                 VALUES ('kan', 'Proceed', 1)",
+                [],
+            )
+            .expect("the first successor lands");
+            conn.execute(
+                "INSERT INTO rulings (project_id, summary, supersedes_id)
+                 VALUES ('kan', 'Reconsider', 1)",
+                [],
+            )
+            .expect("the duplicate successor lands");
+        }
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0011 recovers duplicate ruling successors");
+
+        let conn = database.connection();
+        let quarantined: (String, i64, i64, String) = conn
+            .query_row(
+                "SELECT record_kind, successor_id, supersedes_id, detail
+                 FROM supersession_duplicate_quarantine",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("the duplicate successor is quarantined");
+        assert_eq!(quarantined.0, "ruling");
+        assert_eq!(quarantined.1, 3, "the later successor is quarantined");
+        assert_eq!(quarantined.2, 1, "the original ruling is named");
+        assert!(
+            quarantined.3.contains("Reconsider"),
+            "the quarantine preserves the successor evidence"
+        );
+
+        let audit_detail: String = conn
+            .query_row(
+                "SELECT detail FROM audit_events
+                 WHERE kind = 'migration.supersession_recovery'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("recovery names the offending identifiers");
+        let audit = serde_json::from_str::<serde_json::Value>(&audit_detail)
+            .expect("the recovery detail is JSON");
+        assert_eq!(audit["record_kind"], "ruling");
+        assert_eq!(audit["successor_id"], 3);
+        assert_eq!(audit["supersedes_id"], 1);
+
+        let canonical_supersedes: Option<i64> = conn
+            .query_row(
+                "SELECT supersedes_id FROM rulings WHERE id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the canonical successor remains linked");
+        assert_eq!(canonical_supersedes, Some(1));
+        let detached_supersedes: Option<i64> = conn
+            .query_row(
+                "SELECT supersedes_id FROM rulings WHERE id = 3",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the quarantined row stays readable");
+        assert_eq!(detached_supersedes, None);
+
+        let outcome = conn.execute(
+            "INSERT INTO rulings (project_id, summary, supersedes_id)
+             VALUES ('kan', 'Blocked', 1)",
+            [],
+        );
+        let error = outcome.expect_err("a second successor stays refused after recovery");
+        assert!(
+            error.to_string().contains("UNIQUE constraint failed"),
+            "the schema should enforce one successor: {error}"
+        );
+    }
+
+    #[test]
+    fn migration_0011_recovers_duplicate_deferral_successors_on_dirty_upgraded_stores() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
+        {
+            let conn = database.connection();
+            conn.execute(
+                "INSERT INTO deferrals (project_id, finding_id, reason)
+                 VALUES ('kan', 'finding-1', 'Cosmetic only')",
+                [],
+            )
+            .expect("the original deferral lands");
+            conn.execute(
+                "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+                 VALUES ('kan', 'finding-1', 'Accepted risk', 1)",
+                [],
+            )
+            .expect("the first successor lands");
+            conn.execute(
+                "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+                 VALUES ('kan', 'finding-1', 'Reopened', 1)",
+                [],
+            )
+            .expect("the duplicate successor lands");
+        }
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0011 recovers duplicate deferral successors");
+
+        let conn = database.connection();
+        let quarantined: (String, i64, i64, String) = conn
+            .query_row(
+                "SELECT record_kind, successor_id, supersedes_id, detail
+                 FROM supersession_duplicate_quarantine",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("the duplicate successor is quarantined");
+        assert_eq!(quarantined.0, "deferral");
+        assert_eq!(quarantined.1, 3, "the later successor is quarantined");
+        assert_eq!(quarantined.2, 1, "the original deferral is named");
+        assert!(
+            quarantined.3.contains("Reopened"),
+            "the quarantine preserves the successor evidence"
+        );
+
+        let audit_detail: String = conn
+            .query_row(
+                "SELECT detail FROM audit_events
+                 WHERE kind = 'migration.supersession_recovery'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("recovery names the offending identifiers");
+        let audit = serde_json::from_str::<serde_json::Value>(&audit_detail)
+            .expect("the recovery detail is JSON");
+        assert_eq!(audit["record_kind"], "deferral");
+        assert_eq!(audit["successor_id"], 3);
+        assert_eq!(audit["supersedes_id"], 1);
+
+        let canonical_supersedes: Option<i64> = conn
+            .query_row(
+                "SELECT supersedes_id FROM deferrals WHERE id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the canonical successor remains linked");
+        assert_eq!(canonical_supersedes, Some(1));
+
+        let outcome = conn.execute(
+            "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
+             VALUES ('kan', 'finding-1', 'Blocked', 1)",
+            [],
+        );
+        let error = outcome.expect_err("a second successor stays refused after recovery");
+        assert!(
+            error.to_string().contains("UNIQUE constraint failed"),
+            "the schema should enforce one successor: {error}"
         );
     }
 

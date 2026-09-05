@@ -191,16 +191,17 @@ fn has_successor(
     project_id: u64,
     id: RulingId,
 ) -> Result<bool, ApiError> {
-    let present: Option<i64> = conn
-        .query_row(
-            "SELECT 1 FROM rulings
-             WHERE project_id = ?1 AND supersedes_id = ?2
-             LIMIT 1",
-            params![project_id.to_string(), id.value() as i64],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(present.is_some())
+    match conn.query_row(
+        "SELECT 1 FROM rulings
+         WHERE project_id = ?1 AND supersedes_id = ?2
+         LIMIT 1",
+        params![project_id.to_string(), id.value() as i64],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(error) => Err(internal(error)),
+    }
 }
 
 /// Report a SQLite failure the caller cannot act on.
@@ -430,5 +431,26 @@ mod tests {
         assert!(listed[0].supersedes().is_none());
         assert_eq!(listed[1].summary().as_str(), "Proceed");
         assert_eq!(listed[1].supersedes(), Some(original.id()));
+    }
+
+    #[test]
+    fn has_successor_propagates_sqlite_errors() {
+        let (_dir, database, store) = store();
+        let ruling = store
+            .insert(
+                &draft(1, "Hold", None, None),
+                append(json!({ "summary": "Hold" })),
+            )
+            .expect("the ruling lands");
+        database
+            .connection()
+            .execute("ALTER TABLE rulings RENAME TO rulings_hidden", [])
+            .expect("the table rename breaks the query");
+
+        let error = store
+            .has_successor(1, ruling.id())
+            .expect_err("storage errors propagate");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::Internal);
     }
 }

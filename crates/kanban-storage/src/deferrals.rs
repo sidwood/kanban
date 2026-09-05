@@ -159,16 +159,17 @@ fn has_successor(
     project_id: u64,
     id: DeferralId,
 ) -> Result<bool, ApiError> {
-    let present: Option<i64> = conn
-        .query_row(
-            "SELECT 1 FROM deferrals
-             WHERE project_id = ?1 AND supersedes_id = ?2
-             LIMIT 1",
-            params![project_id.to_string(), id.value() as i64],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(present.is_some())
+    match conn.query_row(
+        "SELECT 1 FROM deferrals
+         WHERE project_id = ?1 AND supersedes_id = ?2
+         LIMIT 1",
+        params![project_id.to_string(), id.value() as i64],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(error) => Err(internal(error)),
+    }
 }
 
 /// Report a SQLite failure the caller cannot act on.
@@ -397,5 +398,26 @@ mod tests {
         assert!(listed[0].supersedes().is_none());
         assert_eq!(listed[1].reason().as_str(), "Accepted risk");
         assert_eq!(listed[1].supersedes(), Some(original.id()));
+    }
+
+    #[test]
+    fn has_successor_propagates_sqlite_errors() {
+        let (_dir, database, store) = store();
+        let deferral = store
+            .insert(
+                &draft(1, "finding-1", "Cosmetic only", None),
+                append(json!({ "reason": "Cosmetic only" })),
+            )
+            .expect("the deferral lands");
+        database
+            .connection()
+            .execute("ALTER TABLE deferrals RENAME TO deferrals_hidden", [])
+            .expect("the table rename breaks the query");
+
+        let error = store
+            .has_successor(1, deferral.id())
+            .expect_err("storage errors propagate");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::Internal);
     }
 }

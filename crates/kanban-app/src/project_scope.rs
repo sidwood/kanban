@@ -149,6 +149,15 @@ impl RulingStore for RecordingRulings {
             .cloned())
     }
 
+    fn has_successor(&self, project_id: u64, id: RulingId) -> Result<bool, ApiError> {
+        Ok(self
+            .rows
+            .lock()
+            .expect("the rows lock is sound")
+            .iter()
+            .any(|row| row.project_id() == project_id && row.supersedes() == Some(id)))
+    }
+
     fn list(&self, query: &RulingListQuery) -> Result<Vec<Ruling>, ApiError> {
         Ok(self
             .rows
@@ -197,6 +206,15 @@ impl DeferralStore for RecordingDeferrals {
             .iter()
             .find(|row| row.project_id() == project_id && row.id() == id)
             .cloned())
+    }
+
+    fn has_successor(&self, project_id: u64, id: DeferralId) -> Result<bool, ApiError> {
+        Ok(self
+            .rows
+            .lock()
+            .expect("the rows lock is sound")
+            .iter()
+            .any(|row| row.project_id() == project_id && row.supersedes() == Some(id)))
     }
 
     fn list(&self, query: &DeferralListQuery) -> Result<Vec<Deferral>, ApiError> {

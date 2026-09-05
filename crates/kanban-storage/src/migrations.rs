@@ -108,6 +108,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "plans",
         sql: include_str!("../migrations/0011_plans.sql"),
     },
+    Migration {
+        version: 11,
+        name: "plan versions append-only",
+        sql: include_str!("../migrations/0011_plan_versions_append_only.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -404,6 +409,11 @@ mod tests {
                 .expect("the detail is JSON"),
             serde_json::json!({ "version": 11, "name": "plans" })
         );
+        assert_eq!(events[10].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[10].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 11, "name": "plan versions append-only" })
+        );
     }
 
     #[test]
@@ -481,6 +491,10 @@ mod tests {
                 PendingMigration {
                     version: 11,
                     name: "plans",
+                },
+                PendingMigration {
+                    version: 11,
+                    name: "plan versions append-only",
                 },
             ]]
         );

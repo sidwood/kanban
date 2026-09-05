@@ -924,6 +924,58 @@ mod tests {
     }
 
     #[test]
+    fn frozen_version_rows_refuse_updates_and_deletes() {
+        let (_dir, database, store) = store();
+        let project = seeded_project(&database);
+        let mut plan = shaped_draft(&store, &project);
+        let frozen = plan.activate().expect("the shape freezes");
+        store
+            .save(
+                &plan,
+                Some(&frozen),
+                transition(
+                    plan.id(),
+                    "activated",
+                    json!({ "frozen_version": frozen.number() }),
+                ),
+            )
+            .expect("the activation lands");
+
+        let conn = database.connection();
+        for sql in [
+            "UPDATE plan_versions SET number = 9",
+            "DELETE FROM plan_versions",
+            "UPDATE plan_version_specs SET position = 9",
+            "DELETE FROM plan_version_specs",
+            "UPDATE plan_version_edges SET from_spec = 9",
+            "DELETE FROM plan_version_edges",
+        ] {
+            let outcome = conn.execute(sql, []);
+
+            let error = outcome.expect_err("the frozen rows are append-only");
+            assert!(
+                error.to_string().contains("append-only"),
+                "`{sql}` should refuse with append-only, got: {error}"
+            );
+        }
+
+        let stored: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM plan_versions),
+                        (SELECT COUNT(*) FROM plan_version_specs),
+                        (SELECT COUNT(*) FROM plan_version_edges)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the frozen rows are readable");
+        assert_eq!(
+            stored,
+            (1, 3, 2),
+            "every refused statement left the frozen shape intact"
+        );
+    }
+
+    #[test]
     fn listing_covers_every_plan_of_one_project_in_id_order() {
         let (_dir, database, store) = store();
         let mut project = seeded_project(&database);

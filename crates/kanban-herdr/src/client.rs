@@ -1,5 +1,6 @@
 //! The per-session Herdr socket client (DR-HB-12).
 
+use std::collections::VecDeque;
 use std::io::{BufReader, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,10 @@ pub struct SessionClient {
     /// Bytes of a response line that has only partly arrived, carried
     /// across a bounded read so a timeout cannot lose them.
     pending: Vec<u8>,
+    /// Push events that overtook a request's response on the wire,
+    /// held for the next [`SessionClient::read_event`] so the stream
+    /// keeps its order while requests proceed.
+    queued_events: VecDeque<Value>,
 }
 
 impl SessionClient {
@@ -69,6 +74,7 @@ impl SessionClient {
             reader,
             stream,
             pending: Vec::new(),
+            queued_events: VecDeque::new(),
         })
     }
 
@@ -135,8 +141,12 @@ impl SessionClient {
         }
     }
 
-    /// Read one push event after subscribing.
+    /// Read one push event after subscribing. Events that overtook an
+    /// in-flight request are served first, in arrival order.
     pub fn read_event(&mut self) -> Result<Value, HerdrError> {
+        if let Some(payload) = self.queued_events.pop_front() {
+            return Ok(payload);
+        }
         match self.read_response()? {
             HerdrResponse::Event { payload } => Ok(payload),
             HerdrResponse::Error { message } => Err(HerdrError::Remote { message }),
@@ -178,7 +188,15 @@ impl SessionClient {
         let encoded = serde_json::to_string(&request)
             .map_err(|error| HerdrError::Write(error.to_string()))?;
         writeln!(self.stream, "{encoded}").map_err(|error| HerdrError::Write(error.to_string()))?;
-        self.read_response()
+        // The subscription keeps pushing while a request awaits its
+        // answer, so events read here are queued for `read_event`
+        // instead of being refused as the wrong frame.
+        loop {
+            match self.read_response()? {
+                HerdrResponse::Event { payload } => self.queued_events.push_back(payload),
+                response => return Ok(response),
+            }
+        }
     }
 
     fn read_response(&mut self) -> Result<HerdrResponse, HerdrError> {

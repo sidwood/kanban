@@ -29,7 +29,8 @@ use kanban_dto::{
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
     SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionRecord, SpecVersionSupersedeRequest, TimelineQuery, TimelineQueryResponse,
+    SpecVersionRecord, SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery,
+    TicketListQuery, TicketListResponse, TicketRecord, TimelineQuery, TimelineQueryResponse,
     WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
     WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
@@ -479,6 +480,42 @@ async fn spec_coverage_check(
 }
 
 #[tauri::command]
+async fn ticket_create(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketCreateRequest,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket create", |shell| {
+        forward_command(shell, "ticket.create", "created Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_list(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketListQuery,
+) -> Result<TicketListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket list", |shell| {
+        forward_query(shell, "ticket.list", "ticket list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_get(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketGetQuery,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket get", |shell| {
+        forward_query(shell, "ticket.get", "ticket get", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: TimelineQuery,
@@ -760,6 +797,9 @@ shell_handlers::shell_handler_catalogue! {
     spec_get,
     spec_version_get,
     spec_coverage_check,
+    ticket_create,
+    ticket_list,
+    ticket_get,
     timeline_query,
     comment_create,
     comment_edit,

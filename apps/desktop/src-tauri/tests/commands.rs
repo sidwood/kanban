@@ -22,8 +22,9 @@ use kanban_dto::{
     RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCoverageCheckQuery,
     SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
-    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketCreateRequest, TicketGetQuery, TicketListQuery, TimelineEntityKind, TimelineEntityRef,
+    TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
+    WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -203,6 +204,22 @@ fn sample_request(schema: &str) -> Value {
                 }
             ],
         }),
+        "TicketCreateRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "kind": "implementation",
+            "priority": "high",
+            "spec_id": 1,
+            "slice": "Registration creates Projects end to end",
+            "criteria": [
+                {
+                    "outcome": "Projects register with unique codes.",
+                    "stories": ["CORE-S1-US1"],
+                }
+            ],
+        }),
+        "TicketListQuery" => json!({ "project_id": 1 }),
+        "TicketGetQuery" => json!({ "ticket_id": 1 }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -548,6 +565,18 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "SpecCoverageCheckQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<SpecCoverageCheckQuery>,
+        >(envelope)
+        .is_err(),
+        "TicketCreateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<TicketCreateRequest>,
+        >(envelope)
+        .is_err(),
+        "TicketListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<TicketListQuery>,
+        >(envelope)
+        .is_err(),
+        "TicketGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<TicketGetQuery>,
         >(envelope)
         .is_err(),
         "WorkspaceRegisterRequest" => serde_json::from_value::<

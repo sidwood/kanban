@@ -44,6 +44,7 @@ describe('generated client', () => {
       'spec.list': 'spec_list',
       'spec.get': 'spec_get',
       'spec.version.get': 'spec_version_get',
+      'spec.coverage.check': 'spec_coverage_check',
       'timeline.query': 'timeline_query',
       'comment.create': 'comment_create',
       'comment.edit': 'comment_edit',

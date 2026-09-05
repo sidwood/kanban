@@ -18,9 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use kanban_app::{
-    Core, EventSink, GitObservation, ProjectStore, RegistrationError, TimelineQueryHandler,
-};
+use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
@@ -177,9 +175,9 @@ fn assemble_core(
         "diagnostics.export",
         Arc::new(DiagnosticsExportHandler::new(data_dir, service_version)),
     )?;
-    let projects = project_store.list().map_err(|error| {
-        ServiceError::Registration(RegistrationError::Uncatalogued(error.message))
-    })?;
+    let projects = project_store
+        .list()
+        .map_err(|cause| ServiceError::ProjectLoad { cause })?;
     herdr.observe_projects(&projects);
     let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
@@ -283,6 +281,12 @@ pub enum ServiceError {
     /// A handler could not be registered.
     #[error(transparent)]
     Registration(#[from] kanban_app::RegistrationError),
+    /// Persisted Projects could not be loaded during assembly.
+    #[error("project load failed: {}", .cause.message)]
+    ProjectLoad {
+        /// The structured application refusal.
+        cause: kanban_dto::ApiError,
+    },
 }
 
 /// Serve from the managed application data directory until killed.
@@ -1737,5 +1741,161 @@ mod tests {
 
             core.shutdown();
         }
+    }
+
+    mod project_load {
+        use kanban_app::NoopEventSink;
+        use kanban_dto::ErrorCode;
+        use std::sync::Arc;
+
+        use super::{
+            ObservationTuning, ServiceError, assemble_core, corrupt_project_fixture,
+            prepare_database, serve,
+        };
+        use crate::herdr::production_socket_root;
+        use tempfile::TempDir;
+
+        #[test]
+        fn project_load_preserves_the_structured_application_cause() {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            let database = corrupt_project_fixture(&dir);
+
+            let failure = match assemble_core(
+                dir.path(),
+                database,
+                Arc::new(NoopEventSink),
+                production_socket_root(),
+                ObservationTuning::PRODUCTION,
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("corrupt data refuses assembly"),
+            };
+
+            let cause = match failure {
+                ServiceError::ProjectLoad { cause } => cause,
+                other => panic!("expected ProjectLoad, got {other}"),
+            };
+            assert_eq!(cause.code, ErrorCode::Internal);
+            assert!(
+                cause
+                    .message
+                    .contains("stored Project row failed validation"),
+                "the structured cause names the corruption: {cause:?}"
+            );
+        }
+
+        #[test]
+        fn project_load_surfaces_through_serve() {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            corrupt_project_fixture(&dir);
+
+            let failure = match serve(dir.path()) {
+                Err(error) => error,
+                Ok(_) => panic!("corrupt data refuses serve"),
+            };
+
+            let cause = match failure {
+                ServiceError::ProjectLoad { cause } => cause,
+                other => panic!("expected ProjectLoad, got {other}"),
+            };
+            assert_eq!(cause.code, ErrorCode::Internal);
+            assert!(
+                cause
+                    .message
+                    .contains("stored Project row failed validation"),
+                "serve preserves the application cause: {cause:?}"
+            );
+        }
+
+        #[test]
+        fn project_load_lists_the_storage_cause_before_socket_bind() {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            corrupt_project_fixture(&dir);
+
+            let failure = match assemble_core(
+                dir.path(),
+                prepare_database(dir.path()).expect("the database prepares"),
+                Arc::new(NoopEventSink),
+                production_socket_root(),
+                ObservationTuning::PRODUCTION,
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("assembly fails before the socket is bound"),
+            };
+
+            assert!(
+                matches!(failure, ServiceError::ProjectLoad { .. }),
+                "the load refusal is dedicated, not transport: {failure}"
+            );
+        }
+    }
+
+    mod startup {
+        use kanban_app::{NoopEventSink, RegistrationError};
+        use kanban_dto::ErrorCode;
+        use std::sync::Arc;
+
+        use super::{ObservationTuning, ServiceError, assemble_core, corrupt_project_fixture};
+        use crate::herdr::production_socket_root;
+        use tempfile::TempDir;
+
+        #[test]
+        fn startup_corrupt_project_row_is_not_a_catalogue_registration_error() {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            let database = corrupt_project_fixture(&dir);
+
+            let failure = match assemble_core(
+                dir.path(),
+                database,
+                Arc::new(NoopEventSink),
+                production_socket_root(),
+                ObservationTuning::PRODUCTION,
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("corrupt data refuses assembly"),
+            };
+
+            let catalogue = ServiceError::Registration(RegistrationError::Uncatalogued(
+                "stored Project row failed validation".to_owned(),
+            ));
+            assert!(
+                catalogue.to_string().contains("is not in the catalog"),
+                "catalogue registration errors name the catalogue: {catalogue}"
+            );
+            assert!(
+                matches!(failure, ServiceError::ProjectLoad { .. }),
+                "corrupt data must surface as project load, not registration: {failure}"
+            );
+            assert!(
+                !failure.to_string().contains("is not in the catalog"),
+                "startup must not mislabel corruption as an uncatalogued operation: {failure}"
+            );
+            let cause = match failure {
+                ServiceError::ProjectLoad { cause } => cause,
+                other => panic!("expected ProjectLoad, got {other}"),
+            };
+            assert_eq!(cause.code, ErrorCode::Internal);
+        }
+    }
+
+    /// One prepared database whose sole Project row fails domain
+    /// validation on read.
+    fn corrupt_project_fixture(dir: &TempDir) -> kanban_storage::Database {
+        let database = prepare_database(dir.path()).expect("the database prepares");
+        let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+            .expect("a second connection opens");
+        conn.execute(
+            "INSERT INTO projects
+                 (code, name, repository, seed_workspace, default_branch,
+                  herdr_workspace, herdr_session, archived, version)
+             VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                     '/workspaces/kanban.seed', 'main', 'kanban.seed',
+                     'kanban-main', 0, 1)",
+            [],
+        )
+        .expect("the fixture Project lands");
+        conn.execute("UPDATE projects SET code = 'bad' WHERE id = 1", [])
+            .expect("the row is corrupted");
+        database
     }
 }

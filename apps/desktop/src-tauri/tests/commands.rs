@@ -18,6 +18,8 @@ use kanban_dto::{
     DiagnosticsExportQuery,
     EvidenceAttachRequest,
     EvidenceListQuery,
+    ExportDriftQuery,
+    ExportRenderRequest,
     HealthQuery,
     HerdrDefaultsGetQuery,
     HerdrDefaultsUpdateRequest,
@@ -421,6 +423,15 @@ fn sample_request(schema: &str) -> Value {
         }
         "LaneTicketReleaseRequest" => json!({ "mutation": mutation, "lane_id": 1 }),
         "LaneListQuery" => json!({ "project_id": 1 }),
+        "ExportRenderRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "directory": "temp/project-management/docs",
+        }),
+        "ExportDriftQuery" => json!({
+            "project_id": 1,
+            "directory": "temp/project-management/docs",
+        }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -613,6 +624,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<LaneTicketReleaseRequest>(request).is_err()
         }
         "LaneListQuery" => decode_invoke_args::<LaneListQuery>(request).is_err(),
+        "ExportRenderRequest" => {
+            decode_invoke_args::<ExportRenderRequest>(request).is_err()
+        }
+        "ExportDriftQuery" => decode_invoke_args::<ExportDriftQuery>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

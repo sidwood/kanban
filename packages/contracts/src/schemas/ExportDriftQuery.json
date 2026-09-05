@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `export.drift` query.",
+  "properties": {
+    "directory": {
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "directory",
+    "project_id"
+  ],
+  "title": "ExportDriftQuery",
+  "type": "object"
+}

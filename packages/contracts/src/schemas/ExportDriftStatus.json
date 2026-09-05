@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed drift vocabulary: how one file on disk stands against the current planning state.",
+  "oneOf": [
+    {
+      "description": "The current state renders a file the directory does not hold.",
+      "enum": [
+        "missing"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The file on disk is not the bytes the current state renders.",
+      "enum": [
+        "differs"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The directory holds a file the current state does not render.",
+      "enum": [
+        "unmatched"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "ExportDriftStatus"
+}

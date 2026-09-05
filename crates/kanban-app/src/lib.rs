@@ -13,6 +13,7 @@ pub mod dispatch;
 pub mod event_catalog;
 pub mod events;
 pub mod evidence;
+pub mod exports;
 pub mod herdr;
 pub mod initiative;
 pub mod lane;
@@ -43,6 +44,7 @@ pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};
 pub use evidence::{EvidenceFilter, EvidenceStore};
+pub use exports::{ExportArtifact, ExportFiles, render_project_export};
 pub use herdr::{
     HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, NoopHerdrProjectObserver,
 };

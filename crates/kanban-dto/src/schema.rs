@@ -21,6 +21,10 @@ use crate::event::{
 use crate::evidence::{
     EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
 };
+use crate::export::{
+    ExportDriftEntry, ExportDriftQuery, ExportDriftResponse, ExportDriftStatus,
+    ExportRenderRequest, ExportRenderResponse,
+};
 use crate::health::{HealthQuery, HealthResponse};
 use crate::herdr::{
     HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
@@ -105,6 +109,12 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(DiagnosticsExportResponse),
         ),
         ("EventEnvelope", schema_for!(EventEnvelope)),
+        ("ExportDriftEntry", schema_for!(ExportDriftEntry)),
+        ("ExportDriftQuery", schema_for!(ExportDriftQuery)),
+        ("ExportDriftResponse", schema_for!(ExportDriftResponse)),
+        ("ExportDriftStatus", schema_for!(ExportDriftStatus)),
+        ("ExportRenderRequest", schema_for!(ExportRenderRequest)),
+        ("ExportRenderResponse", schema_for!(ExportRenderResponse)),
         ("EvidenceAttachRequest", schema_for!(EvidenceAttachRequest)),
         ("EvidenceKindDto", schema_for!(EvidenceKindDto)),
         ("EvidenceListQuery", schema_for!(EvidenceListQuery)),

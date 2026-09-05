@@ -22,6 +22,10 @@ use kanban_dto::{
     EvidenceListQuery,
     EvidenceListResponse,
     EvidenceRecord,
+    ExportDriftQuery,
+    ExportDriftResponse,
+    ExportRenderRequest,
+    ExportRenderResponse,
     HealthQuery,
     HealthResponse,
     HerdrDefaultsGetQuery,
@@ -1124,6 +1128,25 @@ async fn lane_list(
     let shell = shell.inner().clone();
     run_blocking(shell, "lane list", |shell| {
         forward_query(shell, "lane.list", "lane list", request)
+async fn export_render(
+    shell: State<'_, Arc<Shell>>,
+    request: ExportRenderRequest,
+) -> Result<ExportRenderResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "export render", |shell| {
+        forward_command(shell, "export.render", "rendered export", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_drift(
+    shell: State<'_, Arc<Shell>>,
+    request: ExportDriftQuery,
+) -> Result<ExportDriftResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "export drift", |shell| {
+        forward_query(shell, "export.drift", "export drift", request)
     })
     .await
 }
@@ -1199,6 +1222,8 @@ shell_handlers::shell_handler_catalogue! {
     lane_ticket_assign,
     lane_ticket_release,
     lane_list,
+    export_render,
+    export_drift,
 }
 
 /// Build the window, start the core on demand, and supervise the

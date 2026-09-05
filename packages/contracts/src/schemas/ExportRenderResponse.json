@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Response payload for the `export.render` command: the files written, each relative to the configured directory.",
+  "properties": {
+    "directory": {
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "directory",
+    "files",
+    "project_id"
+  ],
+  "title": "ExportRenderResponse",
+  "type": "object"
+}

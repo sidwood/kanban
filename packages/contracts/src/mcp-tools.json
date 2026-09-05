@@ -13346,5 +13346,186 @@
       "title": "LaneListResponse",
       "type": "object"
     }
+  },
+  {
+    "description": "Render Plans, Specs, and Tickets as deterministic Markdown into a directory within the Seed. Files replace atomically; nothing is committed, pushed, or staged.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `export.render` command. `directory` names the directory within the Project's Seed Workspace the Markdown lands in; a directory that would leave the Seed is refused.",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "directory",
+        "mutation",
+        "project_id"
+      ],
+      "title": "ExportRenderRequest",
+      "type": "object"
+    },
+    "name": "export_render",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Response payload for the `export.render` command: the files written, each relative to the configured directory.",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "directory",
+        "files",
+        "project_id"
+      ],
+      "title": "ExportRenderResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Report drift between the exported Markdown on disk and the current planning state.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `export.drift` query.",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "directory",
+        "project_id"
+      ],
+      "title": "ExportDriftQuery",
+      "type": "object"
+    },
+    "name": "export_drift",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ExportDriftEntry": {
+          "additionalProperties": false,
+          "description": "One drifted file: its path relative to the configured directory and how it stands against the current planning state.",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/definitions/ExportDriftStatus"
+            }
+          },
+          "required": [
+            "path",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ExportDriftStatus": {
+          "description": "The closed drift vocabulary: how one file on disk stands against the current planning state.",
+          "oneOf": [
+            {
+              "description": "The current state renders a file the directory does not hold.",
+              "enum": [
+                "missing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The file on disk is not the bytes the current state renders.",
+              "enum": [
+                "differs"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The directory holds a file the current state does not render.",
+              "enum": [
+                "unmatched"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "Response payload for the `export.drift` query: every drifted file, in path order, with the verdict for the whole directory.",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ExportDriftEntry"
+          },
+          "type": "array"
+        },
+        "in_drift": {
+          "description": "Whether any entry drifted; a clean export renders this false with no entries.",
+          "type": "boolean"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "directory",
+        "entries",
+        "in_drift",
+        "project_id"
+      ],
+      "title": "ExportDriftResponse",
+      "type": "object"
+    }
   }
 ]

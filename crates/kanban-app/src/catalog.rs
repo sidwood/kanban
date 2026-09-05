@@ -540,6 +540,20 @@ define_exposed_catalogue! {
         mcp: "lane_list",
         description: "List every Lane of one Project with its Workspace claim and held Ticket.",
     },
+    "export.render" => {
+        kind: Command,
+        request: "ExportRenderRequest",
+        response: "ExportRenderResponse",
+        mcp: "export_render",
+        description: "Render Plans, Specs, and Tickets as deterministic Markdown into a directory within the Seed. Files replace atomically; nothing is committed, pushed, or staged.",
+    },
+    "export.drift" => {
+        kind: Query,
+        request: "ExportDriftQuery",
+        response: "ExportDriftResponse",
+        mcp: "export_drift",
+        description: "Report drift between the exported Markdown on disk and the current planning state.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

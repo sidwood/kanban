@@ -121,6 +121,31 @@ export type EvidenceRecord = {
   project_id: number;
   relative_path?: string | null;
 };
+export type ExportDriftEntry = {
+  path: string;
+  status: ExportDriftStatus;
+};
+export type ExportDriftQuery = {
+  directory: string;
+  project_id: number;
+};
+export type ExportDriftResponse = {
+  directory: string;
+  entries: ExportDriftEntry[];
+  in_drift: boolean;
+  project_id: number;
+};
+export type ExportDriftStatus = 'missing' | 'differs' | 'unmatched';
+export type ExportRenderRequest = {
+  directory: string;
+  mutation: MutationContext;
+  project_id: number;
+};
+export type ExportRenderResponse = {
+  directory: string;
+  files: string[];
+  project_id: number;
+};
 export type HealthQuery = Record<string, never>;
 export type HealthResponse = {
   connected: boolean;

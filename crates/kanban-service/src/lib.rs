@@ -4,6 +4,7 @@
 
 mod backup_scheduler;
 pub mod diagnostics;
+pub mod export_files;
 pub mod git_observer;
 pub mod herdr;
 pub mod logs;
@@ -164,11 +165,11 @@ fn assemble_core(
         Arc::new(LocalWorkspaceGitObserver),
     )?;
     core.register_plans(plan_store.clone(), projects.clone(), spec_store.clone())?;
-    core.register_specs(spec_store.clone(), projects.clone(), plan_store)?;
+    core.register_specs(spec_store.clone(), projects.clone(), plan_store.clone())?;
     core.register_tickets(
         ticket_store.clone(),
         projects.clone(),
-        spec_store,
+        spec_store.clone(),
         evidence_store.clone(),
     )?;
     core.register_lanes(
@@ -177,7 +178,14 @@ fn assemble_core(
         workspace_store,
         ticket_store.clone(),
     )?;
-    core.register_dependencies(dependency_store, ticket_store, projects)?;
+    core.register_dependencies(dependency_store, ticket_store.clone(), projects.clone())?;
+    core.register_exports(
+        plan_store,
+        spec_store,
+        ticket_store,
+        projects,
+        Arc::new(export_files::LocalExportFiles),
+    )?;
     core.register_comments(comment_store, project_store.clone())?;
     core.register_rulings(ruling_store, project_store.clone())?;
     core.register_deferrals(deferral_store, project_store.clone())?;

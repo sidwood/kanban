@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ExportDriftEntry": {
+      "additionalProperties": false,
+      "description": "One drifted file: its path relative to the configured directory and how it stands against the current planning state.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/ExportDriftStatus"
+        }
+      },
+      "required": [
+        "path",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ExportDriftStatus": {
+      "description": "The closed drift vocabulary: how one file on disk stands against the current planning state.",
+      "oneOf": [
+        {
+          "description": "The current state renders a file the directory does not hold.",
+          "enum": [
+            "missing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The file on disk is not the bytes the current state renders.",
+          "enum": [
+            "differs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The directory holds a file the current state does not render.",
+          "enum": [
+            "unmatched"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `export.drift` query: every drifted file, in path order, with the verdict for the whole directory.",
+  "properties": {
+    "directory": {
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/definitions/ExportDriftEntry"
+      },
+      "type": "array"
+    },
+    "in_drift": {
+      "description": "Whether any entry drifted; a clean export renders this false with no entries.",
+      "type": "boolean"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "directory",
+    "entries",
+    "in_drift",
+    "project_id"
+  ],
+  "title": "ExportDriftResponse",
+  "type": "object"
+}

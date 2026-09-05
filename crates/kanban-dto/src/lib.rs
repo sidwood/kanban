@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod event;
 pub mod evidence;
+pub mod export;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
@@ -44,6 +45,10 @@ pub use event::{
 };
 pub use evidence::{
     EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
+};
+pub use export::{
+    ExportDriftEntry, ExportDriftQuery, ExportDriftResponse, ExportDriftStatus,
+    ExportRenderRequest, ExportRenderResponse,
 };
 pub use health::{HealthQuery, HealthResponse};
 pub use herdr::{
@@ -161,6 +166,12 @@ mod tests {
                 "DiagnosticsExportQuery",
                 "DiagnosticsExportResponse",
                 "EventEnvelope",
+                "ExportDriftEntry",
+                "ExportDriftQuery",
+                "ExportDriftResponse",
+                "ExportDriftStatus",
+                "ExportRenderRequest",
+                "ExportRenderResponse",
                 "EvidenceAttachRequest",
                 "EvidenceKindDto",
                 "EvidenceListQuery",

@@ -447,6 +447,22 @@ mod tests {
         let core = boot(&dir);
         let created =
             Client::connect(core.socket_path()).command("initiative.create", request.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let completed = std::fs::read_to_string(dir.path().join(".backup-scheduler.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|state| state["last_success_unix_secs"].as_u64())
+                .is_some();
+            if completed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the initial scheduled backup finishes before burst seeding"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
         core.shutdown();
 
         let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))

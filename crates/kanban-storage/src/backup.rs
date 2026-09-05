@@ -325,14 +325,24 @@ impl BackupStore {
     }
 
     /// Assembles, validates, records, and prunes one bundle from
-    /// `source`.
+    /// `source`. A bundle that fails to assemble or validate is
+    /// removed rather than left half-published.
     fn publish(
         &self,
         source: SnapshotSource<'_>,
         options: &BackupOptions,
     ) -> Result<PathBuf, StorageError> {
         let bundle_path = self.write_bundle(source, options)?;
-        let manifest = self.validate(&bundle_path, options.passphrase.as_deref())?;
+        let manifest = match self.validate(&bundle_path, options.passphrase.as_deref()) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                // An unverified bundle must not linger where an
+                // operator preview or a later retention sweep could
+                // pick it up.
+                let _ = fs::remove_dir_all(&bundle_path);
+                return Err(error);
+            }
+        };
         self.write_verified(&bundle_path, &manifest)?;
         self.prune(options.retention)?;
         Ok(bundle_path)
@@ -345,7 +355,14 @@ impl BackupStore {
     ) -> Result<PathBuf, StorageError> {
         let bundle_id = bundle_id_from_now();
         let bundle_path = backups_dir(&self.managed_root).join(&bundle_id);
-        self.assemble_bundle(&bundle_path, source, options)
+        let assembled = self.assemble_bundle(&bundle_path, source, options);
+        if assembled.is_err() {
+            // A failed copy must not leave a half-written bundle
+            // behind: nothing lists a bundle without its manifest,
+            // but the directory itself goes too.
+            let _ = fs::remove_dir_all(&bundle_path);
+        }
+        assembled
     }
 
     fn assemble_bundle(

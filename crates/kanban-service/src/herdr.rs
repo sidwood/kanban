@@ -5,7 +5,9 @@
 //! projection (KAN-S8-US2, DR-HB-07), while whole-session
 //! reconciliation compares full state on the Project's cadence and
 //! appends the differences push events may have missed (KAN-S8-US3,
-//! DR-HB-09, DR-HB-10).
+//! DR-HB-09, DR-HB-10). The same observed events feed the Project's
+//! stall and missing-result deadlines, evaluated on a bounded
+//! cadence and emitted as attention signals (KAN-S8-US4).
 
 use std::collections::HashMap;
 use std::net::Shutdown;
@@ -18,7 +20,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
-use kanban_app::telemetry::{TelemetryProjection, project_herdr_event};
+use kanban_app::deadlines::{DeadlineConfig, DeadlineMonitor};
+use kanban_app::telemetry::{AttentionSignal, TelemetryProjection, project_herdr_event};
 use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, TimelineEnvelope};
 use kanban_domain::Project;
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
@@ -112,8 +115,15 @@ const MAX_BACKOFF_SHIFT: u32 = 16;
 /// How often the steady read re-reads the Project's Herdr settings
 /// while nothing is due: a quiet session retunes its whole-session
 /// cadence — reconciliation interval or an opted-in polling
-/// fallback — within this window, without waiting for a reconnect.
+/// fallback — and re-evaluates its deadlines within this window,
+/// without waiting for a reconnect.
 const SETTINGS_REFRESH_WINDOW: Duration = Duration::from_secs(1);
+
+/// How many attention signals one Project retains: a breach is
+/// re-reported on every evaluation while it holds, so retention —
+/// not deduplication, which belongs to the KAN-S11 consumer —
+/// bounds what an unconsumed producer keeps.
+const RETAINED_SIGNALS_PER_PROJECT: usize = 256;
 
 /// The delay after `failures` consecutive failed attempts: the base
 /// doubling per failure, bounded by the policy maximum.
@@ -149,6 +159,7 @@ pub struct HerdrObserver {
     socket_root: PathBuf,
     database: Arc<Database>,
     diagnostics: Arc<Mutex<HashMap<u64, SessionDiagnostics>>>,
+    signals: Arc<Mutex<HashMap<u64, Vec<AttentionSignal>>>>,
     sessions: Mutex<HashMap<u64, Observation>>,
     backoff: BackoffPolicy,
     settle: Duration,
@@ -188,6 +199,7 @@ impl HerdrObserver {
             socket_root,
             database,
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
+            signals: Arc::new(Mutex::new(HashMap::new())),
             sessions: Mutex::new(HashMap::new()),
             backoff: tuning.backoff,
             settle: tuning.settle,
@@ -237,6 +249,7 @@ impl HerdrObserver {
             socket_root: self.socket_root.clone(),
             database: self.database.clone(),
             diagnostics: self.diagnostics.clone(),
+            signals: self.signals.clone(),
             stop: stop.clone(),
             socket: socket.clone(),
             backoff: self.backoff,
@@ -276,6 +289,21 @@ impl HerdrObserver {
             .unwrap_or(0)
     }
 
+    /// The attention signals observation has emitted for one
+    /// Project, oldest first (KAN-T41-AC3): the producer boundary
+    /// the KAN-S11 attention inbox consumes. A breach holds on every
+    /// evaluation while it lasts, so one breach appears repeatedly;
+    /// collapsing those re-reports into Attention items belongs to
+    /// the consumer.
+    pub fn attention_signals(&self, project_id: u64) -> Vec<AttentionSignal> {
+        self.signals
+            .lock()
+            .unwrap()
+            .get(&project_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Stop observing one Project, release its socket and database
     /// references, and join its thread (KAN-T78-AC1).
     pub fn stop_observing(&self, project_id: u64) {
@@ -284,6 +312,7 @@ impl HerdrObserver {
         };
         end_observation(observation);
         self.diagnostics.lock().unwrap().remove(&project_id);
+        self.signals.lock().unwrap().remove(&project_id);
     }
 
     /// The Herdr socket root this observer dials.
@@ -306,6 +335,7 @@ impl HerdrObserver {
             end_observation(observation);
         }
         self.diagnostics.lock().unwrap().clear();
+        self.signals.lock().unwrap().clear();
     }
 }
 
@@ -325,6 +355,7 @@ struct HerdrObserverHandle {
     socket_root: PathBuf,
     database: Arc<Database>,
     diagnostics: Arc<Mutex<HashMap<u64, SessionDiagnostics>>>,
+    signals: Arc<Mutex<HashMap<u64, Vec<AttentionSignal>>>>,
     stop: Arc<AtomicBool>,
     socket: Arc<Mutex<Option<UnixStream>>>,
     backoff: BackoffPolicy,
@@ -335,8 +366,11 @@ impl HerdrObserverHandle {
     fn run(self) {
         let mut failures = 0u32;
         let mut live_once = false;
+        // The monitor outlives every redial: roles observed before a
+        // disconnect stay watched once the session returns.
+        let mut deadlines = DeadlineMonitor::new(self.session_tuning().1);
         while !self.stopped() {
-            if self.observe_live(&mut live_once) {
+            if self.observe_live(&mut live_once, &mut deadlines) {
                 // A settled session that ended is the first failure of
                 // the next cycle, not a reset.
                 failures = 1;
@@ -369,8 +403,9 @@ impl HerdrObserverHandle {
     /// diagnostics alone, and the captured snapshot is appended only
     /// once the subscription has held past the settle window
     /// (KAN-T78-AC2, KAN-T78-AC3). Every push event read on the way
-    /// lands through the telemetry projection (DR-HB-07).
-    fn observe_live(&self, live_once: &mut bool) -> bool {
+    /// feeds `deadlines` and lands through the telemetry projection
+    /// (DR-HB-07).
+    fn observe_live(&self, live_once: &mut bool, deadlines: &mut DeadlineMonitor) -> bool {
         // Open carries no request traffic: the socket duplicate — the
         // only handle a stop can shut down — is registered before the
         // snapshot handshake blocks, so stopping this thread is always
@@ -427,8 +462,9 @@ impl HerdrObserverHandle {
         // The settled snapshot is also reconciliation's first
         // baseline: the first whole-session comparison waits a full
         // cadence beyond it (DR-HB-09).
-        let mut reconciler =
-            Reconciler::seeded_with(self.reconciliation_plan(), &snapshot, SystemTime::now());
+        let (plan, deadline_config) = self.session_tuning();
+        deadlines.retune(deadline_config);
+        let mut reconciler = Reconciler::seeded_with(plan, &snapshot, SystemTime::now());
         match self.append_snapshot(&snapshot, reason) {
             Ok(()) => self.record_snapshot(snapshot.captured_at),
             Err(error) => self.mark_error(error),
@@ -436,10 +472,13 @@ impl HerdrObserverHandle {
         // The capture precedes every event it raced, so the events
         // buffered inside the window append after the snapshot row.
         for event in windowed {
-            self.append_push_event(&event);
+            self.append_push_event(deadlines, &event);
         }
         while !self.stopped() {
-            if self.observe_once(&mut reconciler, &mut client).is_none() {
+            if self
+                .observe_once(&mut reconciler, &mut client, deadlines)
+                .is_none()
+            {
                 break;
             }
         }
@@ -449,25 +488,34 @@ impl HerdrObserverHandle {
     /// One step of the steady observation: wait for the next push
     /// event or the next whole-session capture, whichever comes
     /// first, bounded by the settings refresh window so a quiet
-    /// session still retunes its cadence. Returns `None` when the
-    /// subscription ended and the observer must redial.
-    fn observe_once(&self, reconciler: &mut Reconciler, client: &mut SessionClient) -> Option<()> {
+    /// session still retunes its cadence and re-evaluates its
+    /// deadlines. Returns `None` when the subscription ended and the
+    /// observer must redial.
+    fn observe_once(
+        &self,
+        reconciler: &mut Reconciler,
+        client: &mut SessionClient,
+        deadlines: &mut DeadlineMonitor,
+    ) -> Option<()> {
+        self.evaluate_deadlines(deadlines);
         let window = reconciler
             .remaining_until(SystemTime::now())
             .min(SETTINGS_REFRESH_WINDOW);
         if window.is_zero() {
-            return self.capture_session(reconciler, client);
+            return self.capture_session(reconciler, client, deadlines);
         }
         match client.read_event_within(window) {
             Ok(event) => {
-                self.append_push_event(&event);
+                self.append_push_event(deadlines, &event);
                 Some(())
             }
             // The window closed without a frame: the cadence is
             // re-checked above, and the plan is retuned so settings
             // changes apply without a reconnect (DR-HB-11).
             Err(HerdrError::TimedOut) => {
-                reconciler.replan(self.reconciliation_plan());
+                let (plan, deadline_config) = self.session_tuning();
+                reconciler.replan(plan);
+                deadlines.retune(deadline_config);
                 Some(())
             }
             Err(_) => {
@@ -485,6 +533,7 @@ impl HerdrObserverHandle {
         &self,
         reconciler: &mut Reconciler,
         client: &mut SessionClient,
+        deadlines: &mut DeadlineMonitor,
     ) -> Option<()> {
         match reconciler.reconcile(SystemTime::now(), client) {
             Ok(Some(difference)) => self.append_reconciliation(&difference),
@@ -494,30 +543,54 @@ impl HerdrObserverHandle {
                 return None;
             }
         }
-        // Each capture retunes the cadence, so interval and fallback
-        // changes land at the next capture at the latest.
-        reconciler.replan(self.reconciliation_plan());
+        // Each capture retunes the cadence and the deadlines, so
+        // interval, fallback, and deadline changes land at the next
+        // capture at the latest.
+        let (plan, deadline_config) = self.session_tuning();
+        reconciler.replan(plan);
+        deadlines.retune(deadline_config);
         Some(())
     }
 
-    /// The whole-session cadence the Project's Herdr settings call
-    /// for: their reconciliation interval, tightened by the polling
-    /// fallback while the Project has one enabled (DR-HB-09,
-    /// DR-HB-10). A Project without settings yet reconciles on the
-    /// defaults.
-    fn reconciliation_plan(&self) -> ReconciliationPlan {
+    /// The whole-session cadence and the deadlines the Project's
+    /// Herdr settings call for, read together: their reconciliation
+    /// interval tightened by the polling fallback while the Project
+    /// has one enabled (DR-HB-09, DR-HB-10), and their stall and
+    /// missing-result deadlines (KAN-S8-US4). A Project without
+    /// settings yet observes on the defaults.
+    fn session_tuning(&self) -> (ReconciliationPlan, DeadlineConfig) {
         let Ok(settings) =
             SqliteHerdrSettingsStore::new(&self.database).project_settings(self.project_id)
         else {
-            return ReconciliationPlan::default();
+            return (ReconciliationPlan::default(), DeadlineConfig::default());
         };
         let fallback = if settings.polling_fallback_enabled {
             PollingFallback::every(Duration::from_secs(settings.polling_fallback_interval_secs))
         } else {
             PollingFallback::off()
         };
-        ReconciliationPlan::new(Duration::from_secs(settings.reconciliation_interval_secs))
-            .with_fallback(fallback)
+        let plan =
+            ReconciliationPlan::new(Duration::from_secs(settings.reconciliation_interval_secs))
+                .with_fallback(fallback);
+        (plan, DeadlineConfig::from(&settings))
+    }
+
+    /// Evaluate the Project's deadlines now and record every breach
+    /// as an emitted attention signal (KAN-T41-AC3): the producer
+    /// boundary the KAN-S11 attention inbox consumes. Deduplicating
+    /// the per-evaluation re-reports into Attention items belongs to
+    /// that consumer, so retention — not silence — bounds the
+    /// record.
+    fn evaluate_deadlines(&self, deadlines: &mut DeadlineMonitor) {
+        let signals = deadlines.evaluate(self.project_id, SystemTime::now());
+        if signals.is_empty() {
+            return;
+        }
+        let mut emitted = self.signals.lock().unwrap();
+        let entry = emitted.entry(self.project_id).or_default();
+        entry.extend(signals);
+        let surplus = entry.len().saturating_sub(RETAINED_SIGNALS_PER_PROJECT);
+        entry.drain(..surplus);
     }
 
     /// Append one whole-session difference as a telemetry event:
@@ -590,11 +663,15 @@ impl HerdrObserverHandle {
         Ok(())
     }
 
-    /// Append one observed push event through the telemetry
-    /// projection (DR-HB-07). The projection can only mint timeline
-    /// rows and attention signals; push events never raise a signal,
-    /// and the signals' consumer is the KAN-S11 attention inbox.
-    fn append_push_event(&self, event: &Value) {
+    /// Feed one observed push event to the Project's deadlines —
+    /// every kind of role event is activity, so no unseen Herdr
+    /// event can fake a stall (KAN-S8-US4) — and append it through
+    /// the telemetry projection (DR-HB-07). The projection can only
+    /// mint timeline rows and attention signals; push events never
+    /// raise a signal, and the signals' consumer is the KAN-S11
+    /// attention inbox.
+    fn append_push_event(&self, deadlines: &mut DeadlineMonitor, event: &Value) {
+        deadlines.observe_event(SystemTime::now(), event);
         for projection in project_herdr_event(self.project_id, event) {
             match projection {
                 TelemetryProjection::Timeline(envelope) => {
@@ -712,6 +789,7 @@ mod tests {
         production_socket_root,
     };
     use crate::timeline::StorageTimelineStore;
+    use kanban_app::deadlines::{MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON};
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
     use kanban_storage::{AllowAllMigrations, Database, SqliteHerdrSettingsStore};
 
@@ -1574,5 +1652,256 @@ mod tests {
         );
 
         observer.shutdown();
+    }
+
+    /// KAN-T41-AC3: a role whose observed output goes quiet past the
+    /// Project's stall deadline raises an attention signal from the
+    /// production observation path, under the deadlines the Project's
+    /// settings call for.
+    #[test]
+    fn a_stalled_role_emits_its_attention_signal_from_observation() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_events(vec![json!({
+                "kind": "role.output",
+                "role": "implementer",
+                "text": "working"
+            })]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.stall_deadline_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                observer
+                    .attention_signals(1)
+                    .iter()
+                    .any(|signal| signal.reason == STALL_DEADLINE_REASON)
+            }),
+            "the quiet role breaches the stall deadline and observation emits the signal"
+        );
+
+        let signal = observer
+            .attention_signals(1)
+            .into_iter()
+            .find(|signal| signal.reason == STALL_DEADLINE_REASON)
+            .expect("the emitted stall signal is retained");
+        assert_eq!(signal.project_id, 1);
+        assert_eq!(signal.detail["deadline"], json!("stall"));
+        assert_eq!(signal.detail["role"], json!("implementer"));
+        assert_eq!(signal.detail["deadline_secs"], json!(1));
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC3: a role that settled without its result breaches
+    /// the missing-result deadline, not the stall deadline.
+    #[test]
+    fn a_settled_role_missing_its_result_emits_the_missing_result_signal() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_events(vec![json!({
+                "kind": "role.settled",
+                "role": "implementer"
+            })]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.missing_result_deadline_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                observer
+                    .attention_signals(1)
+                    .iter()
+                    .any(|signal| signal.reason == MISSING_RESULT_DEADLINE_REASON)
+            }),
+            "a settled role without a result breaches the missing-result deadline"
+        );
+
+        let reasons: Vec<_> = observer
+            .attention_signals(1)
+            .into_iter()
+            .map(|signal| signal.reason)
+            .collect();
+        assert!(
+            reasons
+                .iter()
+                .all(|reason| reason == MISSING_RESULT_DEADLINE_REASON),
+            "a settled role faces the missing-result deadline alone: {reasons:?}"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC3: a role whose result was observed faces no
+    /// deadline, so a quiet session with a finished role emits
+    /// nothing.
+    #[test]
+    fn a_role_whose_result_was_observed_emits_no_deadline_signal() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_events(vec![
+                json!({ "kind": "role.output", "role": "implementer", "text": "working" }),
+                json!({ "kind": "role.settled", "role": "implementer" }),
+                json!({ "kind": "role.result", "role": "implementer", "outcome": "done" }),
+            ]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        retune_herdr_settings(&database, |request| {
+            request.stall_deadline_secs = 1;
+            request.missing_result_deadline_secs = 1;
+        });
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(2_500));
+
+        assert!(
+            observer.attention_signals(1).is_empty(),
+            "an observed result retires both deadlines"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC3: tightened deadline settings apply to the live
+    /// observation without a reconnect, like the reconciliation
+    /// cadence does.
+    #[test]
+    fn deadline_settings_tighten_live_without_a_reconnect() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_events(vec![json!({
+                "kind": "role.output",
+                "role": "implementer",
+                "text": "working"
+            })]),
+        );
+        let database = migrated_database(&dir);
+        seed_herdr_settings(&database);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        // The seeded stall deadline of an hour cannot breach; only the
+        // tightened one can.
+        thread::sleep(Duration::from_millis(300));
+        retune_herdr_settings(&database, |request| {
+            request.stall_deadline_secs = 1;
+        });
+
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                observer
+                    .attention_signals(1)
+                    .iter()
+                    .any(|signal| signal.reason == STALL_DEADLINE_REASON)
+            }),
+            "the tightened stall deadline applies to the live observation"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T41-AC3: the serving core — booted the way production
+    /// boots it, registered and retuned through the served commands —
+    /// emits the attention signal a breached deadline raises.
+    #[test]
+    fn the_serving_core_emits_attention_signals_on_deadline_breaches() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default().with_events(vec![json!({
+                "kind": "role.output",
+                "role": "implementer",
+                "text": "working"
+            })]),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
+            }),
+        );
+        let current = client.query_with("herdr.settings.get", json!({ "project_id": 1 }));
+        let current = &current["settings"];
+        client.command(
+            "herdr.settings.update",
+            json!({
+                "mutation": {
+                    "optimistic_version": current["version"],
+                    "idempotency_key": "tighten-wave-stall"
+                },
+                "project_id": 1,
+                "reconciliation_interval_secs": current["reconciliation_interval_secs"],
+                "polling_fallback_enabled": current["polling_fallback_enabled"],
+                "polling_fallback_interval_secs": current["polling_fallback_interval_secs"],
+                "stall_deadline_secs": 1,
+                "missing_result_deadline_secs": current["missing_result_deadline_secs"],
+            }),
+        );
+
+        let observer = core.herdr.clone();
+        assert!(
+            soon_enough(Duration::from_secs(8), || {
+                observer
+                    .attention_signals(1)
+                    .iter()
+                    .any(|signal| signal.reason == STALL_DEADLINE_REASON)
+            }),
+            "the serving core's observation path emits the breach signal"
+        );
+        let signal = observer
+            .attention_signals(1)
+            .into_iter()
+            .find(|signal| signal.reason == STALL_DEADLINE_REASON)
+            .expect("the emitted stall signal is retained");
+        assert_eq!(signal.detail["role"], json!("implementer"));
+        assert_eq!(signal.detail["deadline_secs"], json!(1));
+
+        core.shutdown();
     }
 }

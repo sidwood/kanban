@@ -116,7 +116,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 13,
         name: "workspaces",
-        sql: include_str!("../migrations/0011_workspaces.sql"),
+        sql: include_str!("../migrations/0013_workspaces.sql"),
     },
 ];
 

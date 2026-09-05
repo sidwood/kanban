@@ -250,7 +250,14 @@ mod tests {
                 branch: None,
                 head: Some("abc".to_owned()),
                 working_tree_clean: Some(true),
+                unique_unlanded_commits: Some(false),
                 lane_assignment: None,
+            },
+            reuse: super::WorkspaceReuseDto {
+                reusable: true,
+                clean: true,
+                unassigned: true,
+                free_of_unlanded_commits: true,
             },
             version: 3,
         };

@@ -221,31 +221,33 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
     assert_eq!(stored.observation().unique_unlanded_commits(), Some(false));
     assert!(stored.reuse_evaluation().reusable());
 
-    let row: (
+    type ObservedWorkspaceRow = (
         String,
         Option<String>,
         Option<String>,
         Option<i64>,
         Option<i64>,
         Option<i64>,
-    ) = rusqlite::Connection::open(scratch.path().join("kanban.sqlite"))
-        .expect("the database reopens")
-        .query_row(
-            "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits, detached
+    );
+    let row: ObservedWorkspaceRow =
+        rusqlite::Connection::open(scratch.path().join("kanban.sqlite"))
+            .expect("the database reopens")
+            .query_row(
+                "SELECT health, branch, head, working_tree_clean, unique_unlanded_commits, detached
              FROM workspaces WHERE id = 1",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .expect("the SQLite row is readable");
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("the SQLite row is readable");
     assert_eq!(row.0, "available");
     assert_eq!(row.1.as_deref(), Some("main"));
     assert!(row.2.is_some());

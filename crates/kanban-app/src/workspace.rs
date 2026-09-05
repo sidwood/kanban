@@ -764,7 +764,7 @@ mod workspace_observe {
             .filter(|row| row.detail().get("action") == Some(&json!("health_changed")))
             .map(|row| {
                 (
-                    row.scope().clone(),
+                    *row.scope(),
                     row.kind(),
                     row.entity().cloned(),
                     row.detail().clone(),

@@ -128,7 +128,7 @@ fn assemble_core(
         project_store.clone(),
         Arc::new(LocalWorkspaceGitObserver),
     )?;
-    core.register_plans(plan_store.clone(), projects.clone())?;
+    core.register_plans(plan_store.clone(), projects.clone(), spec_store.clone())?;
     core.register_specs(spec_store, projects, plan_store)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
@@ -881,14 +881,38 @@ mod tests {
             }),
         );
         assert_eq!(registered["version"], json!(1));
-        // Stand in for the Spec authoring that lands in KAN-T14: the
-        // Project mints four Spec numbers, so Spec 4 exists without
-        // belonging to this Plan.
-        {
-            let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
-                .expect("a second connection opens");
-            conn.execute("UPDATE projects SET spec_counter = 4 WHERE id = 1", [])
-                .expect("the Spec numbers are minted");
+        // Author four Specs through the served core: Specs 1, 2, and 3
+        // join the Plan below, while Spec 4 stays minted but never a
+        // member, so an edge reaching it leaves the single Plan.
+        for (name, number) in [
+            ("Registration", 1),
+            ("Timeline", 2),
+            ("Review", 3),
+            ("Landing", 4),
+        ] {
+            let authored = client.command(
+                "spec.create",
+                json!({
+                    "mutation": {
+                        "optimistic_version": 0,
+                        "idempotency_key": format!("spec-create-{number}"),
+                    },
+                    "project_id": 1,
+                    "content": {
+                        "name": name,
+                        "short_description": "One behaviour area",
+                        "problem_statement": "",
+                        "solution": "",
+                        "user_stories": "",
+                        "implementation_decisions": "",
+                        "testing_decisions": "",
+                        "out_of_scope": "",
+                        "further_notes": "",
+                    },
+                }),
+            );
+            assert_eq!(authored["number"], json!(number));
+            assert_eq!(authored["execution"], json!("unplanned"));
         }
 
         let created = client.command(

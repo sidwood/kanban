@@ -571,7 +571,7 @@ fn announce(events: &dyn EventSink, name: &str, spec: &Spec) {
 pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
-    use kanban_domain::{Spec, SpecContent as DomainContent, SpecId, SpecNumber};
+    use kanban_domain::{ProjectId, Spec, SpecContent as DomainContent, SpecId, SpecNumber};
     use kanban_dto::ApiError;
 
     use super::SpecStore;
@@ -603,6 +603,32 @@ pub(crate) mod testing {
             Self {
                 projects,
                 ..Self::default()
+            }
+        }
+
+        /// Insert authored Spec rows as-is, standing in for Specs the
+        /// Project minted before the fixture began.
+        pub(crate) fn seed_authored(&self, project: ProjectId, numbers: &[u64]) {
+            let mut state = self.state.lock().expect("the memory spec lock is sound");
+            for number in numbers {
+                let spec = Spec::new(
+                    SpecId::new(state.next_id + 1),
+                    project,
+                    SpecNumber::new(*number).expect("the fixture number is positive"),
+                    DomainContent::new(format!("Fixture {number}"), "", "", "", "", "", "", "", "")
+                        .expect("the fixture content validates"),
+                )
+                .expect("the fixture content validates");
+                state.next_id += 1;
+                state.specs.push(spec);
+            }
+        }
+
+        /// Replace one stored Spec row, keeping its identity.
+        pub(crate) fn replace(&self, spec: Spec) {
+            let mut state = self.state.lock().expect("the memory spec lock is sound");
+            if let Some(row) = state.specs.iter_mut().find(|row| row.id() == spec.id()) {
+                *row = spec;
             }
         }
 
@@ -706,7 +732,7 @@ pub(crate) mod testing {
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
-        core.register_plans(plans.clone(), projects.clone())
+        core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .expect("the plan operations register");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
             .expect("the spec operations register");

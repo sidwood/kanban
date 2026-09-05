@@ -89,6 +89,7 @@ fn refuse(error: impl std::fmt::Display) -> ApiError {
 struct PlanContext {
     plans: Arc<dyn PlanStore>,
     projects: Arc<dyn ProjectStore>,
+    specs: Arc<dyn crate::spec::SpecStore>,
 }
 
 impl PlanContext {
@@ -110,33 +111,58 @@ impl PlanContext {
         Ok((project, plan))
     }
 
-    /// The Spec number a command names, refusing zero and numbers the
-    /// Project never minted: a Plan is composed only of Specs that
-    /// exist.
-    fn minted_spec(&self, project: &Project, number: u64) -> Result<SpecNumber, ApiError> {
+    /// The Spec number a command names, refusing zero and numbers no
+    /// authored Spec carries: a Plan is composed only of Specs that
+    /// exist (DR-PS-06).
+    fn authored_spec(&self, project: &Project, number: u64) -> Result<SpecNumber, ApiError> {
         let spec = SpecNumber::new(number)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
-        if number > project.counters().last(NumberKind::Spec) {
+        if self.specs.find_by_number(project.id(), spec)?.is_none() {
             return Err(ApiError::invalid_request(&format!(
-                "`{}` has not been minted by this Project",
+                "`{}` has not been authored by this Project",
                 NumberKind::Spec.render(project.code(), number),
             )));
         }
         Ok(spec)
     }
+
+    /// The Spec a Plan wants to hold, refusing one already belonging
+    /// to another Plan: a Spec belongs to one Plan at a time
+    /// (DR-PS-06).
+    fn unbound_spec(
+        &self,
+        project: &Project,
+        plan: PlanId,
+        spec: SpecNumber,
+    ) -> Result<(), ApiError> {
+        let bound = self
+            .specs
+            .find_by_number(project.id(), spec)?
+            .and_then(|held| held.plan().filter(|existing| *existing != plan));
+        if let Some(existing) = bound {
+            return Err(ApiError::invalid_request(&format!(
+                "Spec {} already belongs to Plan {existing}",
+                spec.value(),
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Core {
     /// Register the Plan operations against `plans`, resolving
-    /// Projects and their counters through `projects`.
+    /// Projects through `projects` and authored Specs through
+    /// `specs`.
     pub fn register_plans(
         &mut self,
         plans: Arc<dyn PlanStore>,
         projects: Arc<dyn ProjectStore>,
+        specs: Arc<dyn crate::spec::SpecStore>,
     ) -> Result<(), RegistrationError> {
         let context = PlanContext {
             plans: plans.clone(),
             projects,
+            specs,
         };
         self.register_command("plan.create", Arc::new(CreatePlan(context.clone())))?;
         self.register_command("plan.spec.add", Arc::new(AddSpec(context.clone())))?;
@@ -218,7 +244,8 @@ impl CommandHandler for AddSpec {
     fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: PlanSpecAddRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
-        let spec = self.0.minted_spec(&project, request.spec_number)?;
+        let spec = self.0.authored_spec(&project, request.spec_number)?;
+        self.0.unbound_spec(&project, plan.id(), spec)?;
         plan.add_spec(spec).map_err(refuse)?;
         self.0.plans.save(
             &plan,
@@ -251,7 +278,7 @@ impl CommandHandler for RemoveSpec {
     fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: PlanSpecRemoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
-        let spec = self.0.minted_spec(&project, request.spec_number)?;
+        let spec = self.0.authored_spec(&project, request.spec_number)?;
         plan.remove_spec(spec).map_err(refuse)?;
         self.0.plans.save(
             &plan,
@@ -284,7 +311,7 @@ impl CommandHandler for MoveSpec {
     fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: PlanSpecMoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
-        let spec = self.0.minted_spec(&project, request.spec_number)?;
+        let spec = self.0.authored_spec(&project, request.spec_number)?;
         let position = usize::try_from(request.position)
             .map_err(|_| PositionOverflow)
             .map_err(refuse)?;
@@ -333,8 +360,8 @@ impl CommandHandler for AddEdge {
     fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: PlanEdgeAddRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
-        let from = self.0.minted_spec(&project, request.from_spec)?;
-        let to = self.0.minted_spec(&project, request.to_spec)?;
+        let from = self.0.authored_spec(&project, request.from_spec)?;
+        let to = self.0.authored_spec(&project, request.to_spec)?;
         plan.add_edge(from, to).map_err(refuse)?;
         self.0.plans.save(
             &plan,
@@ -367,8 +394,8 @@ impl CommandHandler for RemoveEdge {
     fn apply(&self, command: &ParsedCommand, _events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: PlanEdgeRemoveRequest = parse_payload(&command.payload)?;
         let (project, mut plan) = self.0.open(request.plan_id)?;
-        let from = self.0.minted_spec(&project, request.from_spec)?;
-        let to = self.0.minted_spec(&project, request.to_spec)?;
+        let from = self.0.authored_spec(&project, request.from_spec)?;
+        let to = self.0.authored_spec(&project, request.to_spec)?;
         plan.remove_edge(from, to).map_err(refuse)?;
         self.0.plans.save(
             &plan,
@@ -876,29 +903,16 @@ pub(crate) mod testing {
     }
 
     /// A core with the Plan operations wired to in-memory stores and
-    /// one active Project holding three minted Spec numbers.
+    /// one active Project holding three authored Specs.
     pub(super) struct Harness {
         pub(super) plans: Arc<MemoryPlans>,
         pub(super) projects: Arc<MemoryProjects>,
+        pub(super) specs: Arc<crate::spec::testing::MemorySpecs>,
         pub(super) core: Core,
     }
 
     pub(super) fn harness() -> Harness {
-        let projects = Arc::new(MemoryProjects::default());
-        projects.seed(active_project(1, "CORE", ProjectCounters::restore(0, 3, 0)));
-        let plans = Arc::new(MemoryPlans::sharing(projects.clone()));
-        let mut core = Core::new(
-            exposed_operations(),
-            Arc::new(MemoryIdempotencyStore::new()),
-            Arc::new(crate::events::NoopEventSink),
-        );
-        core.register_plans(plans.clone(), projects.clone())
-            .expect("the plan operations register");
-        Harness {
-            plans,
-            projects,
-            core,
-        }
+        harness_with_sink(Arc::new(crate::events::NoopEventSink))
     }
 
     /// A core whose event sink the test chooses.
@@ -906,16 +920,19 @@ pub(crate) mod testing {
         let projects = Arc::new(MemoryProjects::default());
         projects.seed(active_project(1, "CORE", ProjectCounters::restore(0, 3, 0)));
         let plans = Arc::new(MemoryPlans::sharing(projects.clone()));
+        let specs = Arc::new(crate::spec::testing::MemorySpecs::sharing(projects.clone()));
+        specs.seed_authored(ProjectId::new(1), &[1, 2, 3]);
         let mut core = Core::new(
             exposed_operations(),
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
-        core.register_plans(plans.clone(), projects.clone())
+        core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .expect("the plan operations register");
         Harness {
             plans,
             projects,
+            specs,
             core,
         }
     }
@@ -1154,13 +1171,46 @@ mod plan_commands {
                 "plan.spec.add",
                 &command(id, json!({ "spec_number": 9 }), 1, "key-add"),
             )
-            .expect_err("an unminted Spec number is refused");
+            .expect_err("an un-authored Spec number is refused");
 
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(
             error.message,
-            "`CORE-S9` has not been minted by this Project"
+            "`CORE-S9` has not been authored by this Project"
         );
+    }
+
+    #[test]
+    fn adding_a_spec_bound_to_another_plan_is_refused() {
+        let harness = harness();
+        let created = harness
+            .core
+            .command("plan.create", &create(1, "key-1"))
+            .expect("the Plan creates");
+        let id = created["id"].as_u64().expect("the identity is a number");
+        // Spec 1 already planned onto another Plan.
+        let mut bound = harness
+            .specs
+            .snapshot()
+            .0
+            .into_iter()
+            .find(|spec| spec.number().value() == 1)
+            .expect("the fixture Spec exists");
+        bound
+            .assign_to_plan(kanban_domain::PlanId::new(9))
+            .expect("the fixture binds");
+        harness.specs.replace(bound);
+
+        let error = harness
+            .core
+            .command(
+                "plan.spec.add",
+                &command(id, json!({ "spec_number": 1 }), 1, "key-add"),
+            )
+            .expect_err("a Spec belongs to one Plan at a time");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.message, "Spec 1 already belongs to Plan 9");
     }
 
     #[test]

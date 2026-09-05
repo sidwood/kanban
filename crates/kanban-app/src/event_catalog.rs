@@ -66,6 +66,31 @@ pub fn exposed_events() -> &'static [EventDescriptor] {
             description: "A Plan was archived.",
         },
         EventDescriptor {
+            name: "spec.created",
+            payload_schema: "SpecRecord",
+            description: "A Spec was authored.",
+        },
+        EventDescriptor {
+            name: "spec.planned",
+            payload_schema: "SpecRecord",
+            description: "A Spec joined a Plan, planning its execution.",
+        },
+        EventDescriptor {
+            name: "spec.version.approved",
+            payload_schema: "SpecRecord",
+            description: "A Spec content version was approved.",
+        },
+        EventDescriptor {
+            name: "spec.version.superseded",
+            payload_schema: "SpecRecord",
+            description: "A Spec content version was superseded.",
+        },
+        EventDescriptor {
+            name: "spec.execution.moved",
+            payload_schema: "SpecRecord",
+            description: "A Spec's execution moved along its state set.",
+        },
+        EventDescriptor {
             name: "comment.created",
             payload_schema: "CommentRecord",
             description: "A Comment was created.",

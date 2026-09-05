@@ -669,7 +669,7 @@ fn announce(events: &dyn EventSink, name: &str, plan: &Plan) {
 }
 
 #[cfg(test)]
-mod testing {
+pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
@@ -689,18 +689,18 @@ mod testing {
 
     /// An in-memory Project store: rows by id.
     #[derive(Default)]
-    pub(super) struct MemoryProjects {
-        state: Mutex<MemoryProjectState>,
+    pub(crate) struct MemoryProjects {
+        pub(crate) state: Mutex<MemoryProjectState>,
     }
 
     #[derive(Default)]
-    struct MemoryProjectState {
-        projects: Vec<Project>,
+    pub(crate) struct MemoryProjectState {
+        pub(crate) projects: Vec<Project>,
     }
 
     impl MemoryProjects {
         /// The stored rows, for assertions.
-        pub(super) fn rows(&self) -> Vec<Project> {
+        pub(crate) fn rows(&self) -> Vec<Project> {
             self.state
                 .lock()
                 .expect("the memory project lock is sound")
@@ -710,7 +710,7 @@ mod testing {
 
         /// Insert a stored Project as-is, standing in for one with
         /// minted counters.
-        pub(super) fn seed(&self, project: Project) {
+        pub(crate) fn seed(&self, project: Project) {
             self.state
                 .lock()
                 .expect("the memory project lock is sound")
@@ -719,7 +719,7 @@ mod testing {
         }
 
         /// Replace one stored Project row, keeping its identity.
-        pub(super) fn replace(&self, project: Project) {
+        pub(crate) fn replace(&self, project: Project) {
             let mut state = self.state.lock().expect("the memory project lock is sound");
             if let Some(row) = state
                 .projects
@@ -773,7 +773,7 @@ mod testing {
     /// An in-memory Plan store: rows by id, the timeline envelopes it
     /// was asked to land, and the Project rows its writes moved.
     #[derive(Default)]
-    pub(super) struct MemoryPlans {
+    pub(crate) struct MemoryPlans {
         state: Mutex<MemoryPlanState>,
         projects: Arc<MemoryProjects>,
     }
@@ -787,7 +787,7 @@ mod testing {
 
     impl MemoryPlans {
         /// A plan store sharing the Project rows the harness seeded.
-        pub(super) fn sharing(projects: Arc<MemoryProjects>) -> Self {
+        pub(crate) fn sharing(projects: Arc<MemoryProjects>) -> Self {
             Self {
                 projects,
                 ..Self::default()
@@ -795,7 +795,7 @@ mod testing {
         }
 
         /// The stored rows and timeline envelopes, for assertions.
-        pub(super) fn snapshot(&self) -> (Vec<Plan>, Vec<TimelineEnvelope>) {
+        pub(crate) fn snapshot(&self) -> (Vec<Plan>, Vec<TimelineEnvelope>) {
             let state = self.state.lock().expect("the memory plan lock is sound");
             (state.plans.clone(), state.timeline.clone())
         }
@@ -862,8 +862,8 @@ mod testing {
     }
 
     #[derive(Debug, Default)]
-    pub(super) struct RecordingSink {
-        pub(super) events: Mutex<Vec<(String, Value)>>,
+    pub(crate) struct RecordingSink {
+        pub(crate) events: Mutex<Vec<(String, Value)>>,
     }
 
     impl EventSink for RecordingSink {
@@ -921,7 +921,7 @@ mod testing {
     }
 
     /// One active Project with the counters a test chooses.
-    pub(super) fn active_project(id: u64, code: &str, counters: ProjectCounters) -> Project {
+    pub(crate) fn active_project(id: u64, code: &str, counters: ProjectCounters) -> Project {
         let registration = ProjectRegistration::new(
             code,
             "Control plane",

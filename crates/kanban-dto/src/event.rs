@@ -10,6 +10,7 @@ use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
 use crate::plan::PlanRecord;
 use crate::project::ProjectRecord;
+use crate::spec::SpecRecord;
 use crate::workspace::WorkspaceRecord;
 
 /// The closed set of live event names the desktop may consume.
@@ -37,6 +38,16 @@ pub enum LiveEventName {
     PlanCancelled,
     #[serde(rename = "plan.archived")]
     PlanArchived,
+    #[serde(rename = "spec.created")]
+    SpecCreated,
+    #[serde(rename = "spec.planned")]
+    SpecPlanned,
+    #[serde(rename = "spec.version.approved")]
+    SpecVersionApproved,
+    #[serde(rename = "spec.version.superseded")]
+    SpecVersionSuperseded,
+    #[serde(rename = "spec.execution.moved")]
+    SpecExecutionMoved,
     #[serde(rename = "comment.created")]
     CommentCreated,
     #[serde(rename = "comment.edited")]
@@ -74,6 +85,11 @@ impl LiveEventName {
             Self::PlanCompleted => "plan.completed",
             Self::PlanCancelled => "plan.cancelled",
             Self::PlanArchived => "plan.archived",
+            Self::SpecCreated => "spec.created",
+            Self::SpecPlanned => "spec.planned",
+            Self::SpecVersionApproved => "spec.version.approved",
+            Self::SpecVersionSuperseded => "spec.version.superseded",
+            Self::SpecExecutionMoved => "spec.execution.moved",
             Self::CommentCreated => "comment.created",
             Self::CommentEdited => "comment.edited",
             Self::RulingRecorded => "ruling.recorded",
@@ -101,6 +117,11 @@ impl LiveEventName {
             "plan.completed" => Ok(Self::PlanCompleted),
             "plan.cancelled" => Ok(Self::PlanCancelled),
             "plan.archived" => Ok(Self::PlanArchived),
+            "spec.created" => Ok(Self::SpecCreated),
+            "spec.planned" => Ok(Self::SpecPlanned),
+            "spec.version.approved" => Ok(Self::SpecVersionApproved),
+            "spec.version.superseded" => Ok(Self::SpecVersionSuperseded),
+            "spec.execution.moved" => Ok(Self::SpecExecutionMoved),
             "comment.created" => Ok(Self::CommentCreated),
             "comment.edited" => Ok(Self::CommentEdited),
             "ruling.recorded" => Ok(Self::RulingRecorded),
@@ -187,6 +208,26 @@ pub enum LiveEvent {
         sequence: u64,
         payload: PlanRecord,
     },
+    SpecCreated {
+        sequence: u64,
+        payload: SpecRecord,
+    },
+    SpecPlanned {
+        sequence: u64,
+        payload: SpecRecord,
+    },
+    SpecVersionApproved {
+        sequence: u64,
+        payload: SpecRecord,
+    },
+    SpecVersionSuperseded {
+        sequence: u64,
+        payload: SpecRecord,
+    },
+    SpecExecutionMoved {
+        sequence: u64,
+        payload: SpecRecord,
+    },
     CommentCreated {
         sequence: u64,
         payload: CommentRecord,
@@ -244,6 +285,11 @@ impl LiveEvent {
             Self::PlanCompleted { .. } => LiveEventName::PlanCompleted,
             Self::PlanCancelled { .. } => LiveEventName::PlanCancelled,
             Self::PlanArchived { .. } => LiveEventName::PlanArchived,
+            Self::SpecCreated { .. } => LiveEventName::SpecCreated,
+            Self::SpecPlanned { .. } => LiveEventName::SpecPlanned,
+            Self::SpecVersionApproved { .. } => LiveEventName::SpecVersionApproved,
+            Self::SpecVersionSuperseded { .. } => LiveEventName::SpecVersionSuperseded,
+            Self::SpecExecutionMoved { .. } => LiveEventName::SpecExecutionMoved,
             Self::CommentCreated { .. } => LiveEventName::CommentCreated,
             Self::CommentEdited { .. } => LiveEventName::CommentEdited,
             Self::RulingRecorded { .. } => LiveEventName::RulingRecorded,
@@ -271,6 +317,11 @@ impl LiveEvent {
             | Self::PlanCompleted { sequence, .. }
             | Self::PlanCancelled { sequence, .. }
             | Self::PlanArchived { sequence, .. }
+            | Self::SpecCreated { sequence, .. }
+            | Self::SpecPlanned { sequence, .. }
+            | Self::SpecVersionApproved { sequence, .. }
+            | Self::SpecVersionSuperseded { sequence, .. }
+            | Self::SpecExecutionMoved { sequence, .. }
             | Self::CommentCreated { sequence, .. }
             | Self::CommentEdited { sequence, .. }
             | Self::RulingRecorded { sequence, .. }
@@ -374,6 +425,26 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::PlanArchived => LiveEvent::PlanArchived {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::SpecCreated => LiveEvent::SpecCreated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::SpecPlanned => LiveEvent::SpecPlanned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::SpecVersionApproved => LiveEvent::SpecVersionApproved {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::SpecVersionSuperseded => LiveEvent::SpecVersionSuperseded {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::SpecExecutionMoved => LiveEvent::SpecExecutionMoved {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -589,6 +660,46 @@ mod tests {
                     version: 2,
                 },
             }
+        );
+    }
+
+    #[test]
+    fn catalogued_spec_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 7,
+            event_type: "spec.version.approved".to_owned(),
+            payload: json!({
+                "id": 6,
+                "project_id": 2,
+                "number": 4,
+                "name": "Plans and specifications",
+                "execution": "unplanned",
+                "plan_id": null,
+                "version": 3,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::SpecVersionApproved {
+                sequence: 7,
+                payload: SpecRecord {
+                    id: 6,
+                    project_id: 2,
+                    number: 4,
+                    name: "Plans and specifications".to_owned(),
+                    execution: crate::spec::SpecExecutionState::Unplanned,
+                    plan_id: None,
+                    version: 3,
+                },
+            }
+        );
+        assert_eq!(
+            LiveEventName::parse("spec.planned")
+                .expect("the name parses")
+                .as_str(),
+            "spec.planned"
         );
     }
 

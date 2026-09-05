@@ -22,7 +22,7 @@ use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
     SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
     SqlitePlanStore, SqliteProjectStore, SqliteRulingStore, SqliteWorkspaceStore,
-    VerifiedBackupHook, load_backup_settings,
+    SqliteSpecStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -98,6 +98,7 @@ fn assemble_core(
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
     let plan_store = Arc::new(SqlitePlanStore::new(&database));
     let workspace_store = Arc::new(SqliteWorkspaceStore::new(&database));
+    let spec_store = Arc::new(SqliteSpecStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -127,7 +128,8 @@ fn assemble_core(
         project_store.clone(),
         Arc::new(LocalWorkspaceGitObserver),
     )?;
-    core.register_plans(plan_store, projects)?;
+    core.register_plans(plan_store.clone(), projects.clone())?;
+    core.register_specs(spec_store, projects, plan_store)?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
     core.register_deferrals(deferral_store)?;

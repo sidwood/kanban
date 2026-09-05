@@ -25,9 +25,12 @@ use kanban_dto::{
     PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest, PlanSpecAddRequest,
     PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
-    RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest, TimelineQuery,
-    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest,
+    RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
+    SpecContentUpdateRequest, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -335,6 +338,134 @@ async fn plan_get(
 }
 
 #[tauri::command]
+async fn spec_create(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecCreateRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec create", |shell| {
+        forward_command(shell, "spec.create", "authored Spec", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_content_update(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecContentUpdateRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec content update", |shell| {
+        forward_command(
+            shell,
+            "spec.content.update",
+            "updated Spec content",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_version_approve(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecVersionApproveRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec version approve", |shell| {
+        forward_command(
+            shell,
+            "spec.version.approve",
+            "approved Spec version",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_version_supersede(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecVersionSupersedeRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec version supersede", |shell| {
+        forward_command(
+            shell,
+            "spec.version.supersede",
+            "superseded Spec version",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_plan_join(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecPlanJoinRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec plan join", |shell| {
+        forward_command(shell, "spec.plan.join", "planned Spec", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_execution_move(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecExecutionMoveRequest,
+) -> Result<SpecRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec execution move", |shell| {
+        forward_command(
+            shell,
+            "spec.execution.move",
+            "moved Spec execution",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_list(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecListQuery,
+) -> Result<SpecListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec list", |shell| {
+        forward_query(shell, "spec.list", "spec list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_get(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecGetQuery,
+) -> Result<SpecGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec get", |shell| {
+        forward_query(shell, "spec.get", "spec get", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_version_get(
+    shell: State<'_, Arc<Shell>>,
+    request: SpecVersionGetQuery,
+) -> Result<SpecVersionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "spec version get", |shell| {
+        forward_query(shell, "spec.version.get", "spec version get", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
     request: TimelineQuery,
@@ -594,6 +725,15 @@ shell_handlers::shell_handler_catalogue! {
     plan_archive,
     plan_list,
     plan_get,
+    spec_create,
+    spec_content_update,
+    spec_version_approve,
+    spec_version_supersede,
+    spec_plan_join,
+    spec_execution_move,
+    spec_list,
+    spec_get,
+    spec_version_get,
     timeline_query,
     comment_create,
     comment_edit,

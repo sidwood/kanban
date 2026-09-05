@@ -19,8 +19,11 @@ use kanban_dto::{
     PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
-    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest,
+    RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -112,6 +115,20 @@ fn production_timeline_query_fixture() -> Value {
     .expect("the production timeline query encodes")
 }
 
+fn spec_content() -> SpecContent {
+    SpecContent {
+        name: "Plans and specifications".to_owned(),
+        short_description: "Versioned Plan graphs of Specs".to_owned(),
+        problem_statement: "Planning must survive change.".to_owned(),
+        solution: "Immutable approved versions.".to_owned(),
+        user_stories: "KAN-S3-US4".to_owned(),
+        implementation_decisions: "Supersession is explicit.".to_owned(),
+        testing_decisions: "Domain tests prove immutability.".to_owned(),
+        out_of_scope: "The Ticket graph proposal.".to_owned(),
+        further_notes: "None".to_owned(),
+    }
+}
+
 fn sample_request(schema: &str) -> Value {
     let mutation = mutation_for(schema);
     match schema {
@@ -158,6 +175,23 @@ fn sample_request(schema: &str) -> Value {
         "PlanArchiveRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
         "PlanListQuery" => json!({ "project_id": 1 }),
         "PlanGetQuery" => json!({ "plan_id": 1 }),
+        "SpecCreateRequest" => {
+            json!({ "mutation": mutation, "project_id": 1, "content": spec_content() })
+        }
+        "SpecContentUpdateRequest" => {
+            json!({ "mutation": mutation, "spec_id": 1, "content": spec_content() })
+        }
+        "SpecVersionApproveRequest" => json!({ "mutation": mutation, "spec_id": 1 }),
+        "SpecVersionSupersedeRequest" => {
+            json!({ "mutation": mutation, "spec_id": 1, "version": 1 })
+        }
+        "SpecPlanJoinRequest" => json!({ "mutation": mutation, "spec_id": 1, "plan_id": 1 }),
+        "SpecExecutionMoveRequest" => {
+            json!({ "mutation": mutation, "spec_id": 1, "execution": "ready" })
+        }
+        "SpecListQuery" => json!({ "project_id": 1 }),
+        "SpecGetQuery" => json!({ "spec_id": 1 }),
+        "SpecVersionGetQuery" => json!({ "spec_id": 1, "number": 1 }),
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
@@ -459,6 +493,42 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "HerdrDefaultsUpdateRequest" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsUpdateRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecCreateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecCreateRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecContentUpdateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecContentUpdateRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecVersionApproveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionApproveRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecVersionSupersedeRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionSupersedeRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecPlanJoinRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecPlanJoinRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecExecutionMoveRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecExecutionMoveRequest>,
+        >(envelope)
+        .is_err(),
+        "SpecListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecListQuery>,
+        >(envelope)
+        .is_err(),
+        "SpecGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecGetQuery>,
+        >(envelope)
+        .is_err(),
+        "SpecVersionGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionGetQuery>,
         >(envelope)
         .is_err(),
         "WorkspaceRegisterRequest" => serde_json::from_value::<

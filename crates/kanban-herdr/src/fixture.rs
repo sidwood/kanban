@@ -10,11 +10,11 @@ use serde_json::{Value, json};
 
 use kanban_domain::HerdrSession;
 
-use crate::paths::session_socket_in;
 use crate::protocol::{HerdrRequest, HerdrResponse, Snapshot};
 
 /// A running scripted Herdr session socket.
 pub struct ScriptedSession {
+    root: PathBuf,
     socket_path: PathBuf,
     server: JoinHandle<()>,
 }
@@ -71,8 +71,12 @@ impl ScriptedSession {
         herdr_workspace: Option<String>,
         script: SessionScript,
     ) -> Self {
-        std::fs::create_dir_all(root).expect("the fixture root is created");
-        let socket_path = session_socket_in(root, &session).expect("the session resolves a socket");
+        let directory = match session.as_name() {
+            None => root.to_path_buf(),
+            Some(name) => root.join("sessions").join(name),
+        };
+        std::fs::create_dir_all(&directory).expect("the fixture session directory is created");
+        let socket_path = directory.join("herdr.sock");
         if socket_path.exists() {
             std::fs::remove_file(&socket_path).expect("stale fixture socket is cleared");
         }
@@ -95,6 +99,7 @@ impl ScriptedSession {
             })
             .expect("the fixture server starts");
         Self {
+            root: root.to_path_buf(),
             socket_path,
             server,
         }
@@ -105,9 +110,9 @@ impl ScriptedSession {
         &self.socket_path
     }
 
-    /// The directory holding the session socket.
+    /// The injected Herdr config root, shared by default and named sessions.
     pub fn root(&self) -> &Path {
-        self.socket_path.parent().expect("the socket has a parent")
+        &self.root
     }
 }
 

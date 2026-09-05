@@ -14,6 +14,11 @@ fn a_named_session_connects_through_its_own_socket() {
         "/workspaces/kanban.seed",
         SessionScript::default(),
     );
+    assert_eq!(
+        _fixture.socket_path(),
+        dir.path().join("sessions/kanban-main/herdr.sock")
+    );
+    assert_eq!(_fixture.root(), dir.path());
     let mapping = SessionMapping::new(
         HerdrSession::named("kanban-main").expect("the name validates"),
         "/workspaces/kanban.seed",
@@ -37,6 +42,7 @@ fn a_project_without_a_session_connects_to_the_default_session_socket() {
         "/workspaces/kanban.seed",
         SessionScript::default(),
     );
+    assert_eq!(_fixture.socket_path(), dir.path().join("herdr.sock"));
     let mapping = SessionMapping::new(
         HerdrSession::Default,
         "/workspaces/kanban.seed",

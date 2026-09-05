@@ -282,11 +282,10 @@ impl From<SessionDiagnostics> for HerdrConnectionDiagnostics {
     }
 }
 
-/// Resolve the Herdr sessions directory for production observation.
+/// Resolve Herdr's config root for default and named session observation.
 pub fn production_socket_root() -> PathBuf {
     kanban_herdr::herdr_sessions_dir().unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("HOME").unwrap_or_default())
-            .join("Library/Application Support/Herdr/sessions")
+        PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/herdr")
     })
 }
 
@@ -401,8 +400,12 @@ mod tests {
     }
 
     #[test]
-    fn production_socket_root_points_at_application_support() {
+    fn production_socket_root_matches_the_installed_cli_config_root() {
         let root = production_socket_root();
-        assert!(root.ends_with("Herdr/sessions"));
+        assert_eq!(
+            root,
+            std::path::PathBuf::from(std::env::var_os("HOME").expect("home is known"))
+                .join(".config/herdr")
+        );
     }
 }

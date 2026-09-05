@@ -7,15 +7,15 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kanban_domain::{CommitIdentity, EvidenceItem, EvidenceKind, RelativePath, is_entity_kind};
 use kanban_dto::{
     ApiError, EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceRecord,
+    EvidenceRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::dispatch::{Core, RegistrationError};
 use crate::events::EventSink;
-use crate::initiative::TimelineAppend;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::timeline::{TimelineEnvelope, TimelineFacts};
 
 /// Filter for listing evidence within one Project.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub trait EvidenceStore: Send + Sync {
         entity_kind: &str,
         entity_id: &str,
         content_base64: &str,
-        append: TimelineAppend,
+        facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError>;
 
     /// Record repository evidence without copying content.
@@ -46,14 +46,14 @@ pub trait EvidenceStore: Send + Sync {
         entity_id: &str,
         relative_path: &RelativePath,
         commit_identity: &CommitIdentity,
-        append: TimelineAppend,
+        facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError>;
 
     /// List evidence for `filter`, appending the list timeline event.
     fn list(
         &self,
         filter: &EvidenceFilter,
-        append: TimelineAppend,
+        envelope: TimelineEnvelope,
     ) -> Result<Vec<EvidenceItem>, ApiError>;
 }
 
@@ -106,8 +106,8 @@ impl CommandHandler for AttachEvidence {
                     &request.entity_kind,
                     &request.entity_id,
                     content_base64,
-                    TimelineAppend {
-                        kind: "evidence",
+                    TimelineFacts {
+                        kind: TimelineEventKind::Evidence,
                         facts: json!({
                             "action": "attached",
                             "evidence_kind": "managed_file",
@@ -139,8 +139,8 @@ impl CommandHandler for AttachEvidence {
                     &request.entity_id,
                     &path,
                     &commit,
-                    TimelineAppend {
-                        kind: "evidence",
+                    TimelineFacts {
+                        kind: TimelineEventKind::Evidence,
                         facts: json!({
                             "action": "attached",
                             "evidence_kind": "repository",
@@ -183,17 +183,26 @@ impl CommandHandler for ListEvidence {
             entity_kind: request.entity_kind.clone(),
             entity_id: request.entity_id.clone(),
         };
-        let items = self.store.list(
-            &filter,
-            TimelineAppend {
-                kind: "evidence",
-                facts: json!({
-                    "action": "listed",
-                    "entity_kind": request.entity_kind,
-                    "entity_id": request.entity_id,
-                }),
-            },
+        let entity = request
+            .entity_kind
+            .as_deref()
+            .zip(request.entity_id.as_deref())
+            .map(|(kind, id)| TimelineEntityRef {
+                kind: TimelineEntityKind::parse(kind)
+                    .expect("validated timeline entity kind has a DTO variant"),
+                id: id.to_owned(),
+            });
+        let envelope = TimelineEnvelope::project(
+            &request.project_id,
+            TimelineEventKind::Evidence,
+            entity,
+            json!({
+                "action": "listed",
+                "entity_kind": request.entity_kind,
+                "entity_id": request.entity_id,
+            }),
         )?;
+        let items = self.store.list(&filter, envelope)?;
         announce_list(events, &request.project_id, items.len());
         let response = EvidenceListResponse {
             evidence: items.iter().map(record_of).collect(),
@@ -261,7 +270,7 @@ mod evidence_attach {
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
 
-    use super::{EvidenceFilter, EvidenceStore, TimelineAppend};
+    use super::{EvidenceFilter, EvidenceStore, TimelineEnvelope, TimelineFacts};
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
@@ -293,7 +302,7 @@ mod evidence_attach {
             entity_kind: &str,
             entity_id: &str,
             content_base64: &str,
-            append: TimelineAppend,
+            append: TimelineFacts,
         ) -> Result<EvidenceItem, ApiError> {
             let content = STANDARD
                 .decode(content_base64)
@@ -318,9 +327,10 @@ mod evidence_attach {
             )
             .map_err(|error| ApiError::internal(&error.to_string()))?;
             state.items.push(item.clone());
-            state
-                .timeline
-                .push((append.kind.to_owned(), with_id(&append.facts, item.id())));
+            state.timeline.push((
+                append.kind.as_str().to_owned(),
+                with_id(&append.facts, item.id()),
+            ));
             Ok(item)
         }
 
@@ -331,7 +341,7 @@ mod evidence_attach {
             entity_id: &str,
             relative_path: &RelativePath,
             commit_identity: &CommitIdentity,
-            append: TimelineAppend,
+            append: TimelineFacts,
         ) -> Result<EvidenceItem, ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             state.next_id += 1;
@@ -349,16 +359,17 @@ mod evidence_attach {
             )
             .map_err(|error| ApiError::internal(&error.to_string()))?;
             state.items.push(item.clone());
-            state
-                .timeline
-                .push((append.kind.to_owned(), with_id(&append.facts, item.id())));
+            state.timeline.push((
+                append.kind.as_str().to_owned(),
+                with_id(&append.facts, item.id()),
+            ));
             Ok(item)
         }
 
         fn list(
             &self,
             filter: &EvidenceFilter,
-            append: TimelineAppend,
+            append: TimelineEnvelope,
         ) -> Result<Vec<EvidenceItem>, ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             let items = state
@@ -383,7 +394,7 @@ mod evidence_attach {
                 .collect();
             state
                 .timeline
-                .push((append.kind.to_owned(), append.facts.clone()));
+                .push((append.kind().as_str().to_owned(), append.detail().clone()));
             Ok(items)
         }
     }

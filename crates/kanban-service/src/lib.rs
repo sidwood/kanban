@@ -133,7 +133,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tempfile::TempDir;
 
     use super::{ServiceError, serve};
@@ -400,7 +400,10 @@ mod tests {
             }),
         );
 
-        let timeline = client.query_with("timeline.query", json!({ "project_id": "kan-p1" }));
+        let timeline = client.query_with(
+            "timeline.query",
+            json!({ "scope": { "project": "kan-p1" } }),
+        );
         let events = timeline["events"]
             .as_array()
             .expect("the timeline query answers with events");

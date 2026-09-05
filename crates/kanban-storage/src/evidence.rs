@@ -8,18 +8,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use kanban_app::{EvidenceFilter, EvidenceStore, TimelineAppend};
+use kanban_app::{EvidenceFilter, EvidenceStore, TimelineEnvelope, TimelineFacts};
 use kanban_domain::{
     CommitIdentity, ContentHash, EvidenceId, EvidenceItem, EvidenceKind, EvidenceShape,
     RelativePath,
 };
-use kanban_dto::ApiError;
+use kanban_dto::{ApiError, TimelineEntityKind, TimelineEntityRef};
 use rusqlite::params;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::db::{ConnectionHandle, Database};
-use crate::timeline::{TimelineAppend as StorageTimelineAppend, insert_event};
+use crate::db::{ConnectionHandle, Database, WriteSpan};
+use crate::timeline::insert_event;
 
 /// The evidence port over the authoritative database and attachment
 /// directory.
@@ -38,10 +38,8 @@ impl SqliteEvidenceStore {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock(&self) -> parking_lot::ReentrantMutexGuard<'_, rusqlite::Connection> {
+        self.conn.lock()
     }
 }
 
@@ -52,7 +50,7 @@ impl EvidenceStore for SqliteEvidenceStore {
         entity_kind: &str,
         entity_id: &str,
         content_base64: &str,
-        append: TimelineAppend,
+        facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError> {
         let content = STANDARD
             .decode(content_base64)
@@ -71,7 +69,7 @@ impl EvidenceStore for SqliteEvidenceStore {
                 relative_path: None,
                 commit_identity: None,
             },
-            append,
+            facts,
         )
     }
 
@@ -82,7 +80,7 @@ impl EvidenceStore for SqliteEvidenceStore {
         entity_id: &str,
         relative_path: &RelativePath,
         commit_identity: &CommitIdentity,
-        append: TimelineAppend,
+        facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError> {
         self.insert_row(
             EvidenceShape {
@@ -94,34 +92,20 @@ impl EvidenceStore for SqliteEvidenceStore {
                 relative_path: Some(relative_path.clone()),
                 commit_identity: Some(commit_identity.clone()),
             },
-            append,
+            facts,
         )
     }
 
     fn list(
         &self,
         filter: &EvidenceFilter,
-        append: TimelineAppend,
+        envelope: TimelineEnvelope,
     ) -> Result<Vec<EvidenceItem>, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let items = query_rows(&transaction, filter)?;
-        let entity = filter
-            .entity_kind
-            .as_deref()
-            .zip(filter.entity_id.as_deref());
-        append_timeline(
-            &transaction,
-            &filter.project_id,
-            append.kind,
-            entity,
-            append.facts,
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        let items = query_rows(&span, filter)?;
+        insert_event(&span, &envelope).map_err(internal)?;
+        span.commit().map_err(internal)?;
         Ok(items)
     }
 }
@@ -141,56 +125,53 @@ impl SqliteEvidenceStore {
     fn insert_row(
         &self,
         shape: EvidenceShape,
-        append: TimelineAppend,
+        facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError> {
-        let mut conn = self.lock();
-        let transaction = conn
-            .transaction()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
         let kind_wire = evidence_kind_wire(shape.kind);
-        transaction
-            .execute(
-                "INSERT INTO evidence_items (
+        span.execute(
+            "INSERT INTO evidence_items (
                      project_id, entity_kind, entity_id, kind,
                      content_hash, relative_path, commit_identity
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    shape.project_id,
-                    shape.entity_kind,
-                    shape.entity_id,
-                    kind_wire,
-                    shape.content_hash.as_ref().map(ContentHash::as_str),
-                    shape.relative_path.as_ref().map(RelativePath::as_str),
-                    shape.commit_identity.as_ref().map(CommitIdentity::as_str),
-                ],
-            )
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            params![
+                shape.project_id,
+                shape.entity_kind,
+                shape.entity_id,
+                kind_wire,
+                shape.content_hash.as_ref().map(ContentHash::as_str),
+                shape.relative_path.as_ref().map(RelativePath::as_str),
+                shape.commit_identity.as_ref().map(CommitIdentity::as_str),
+            ],
+        )
+        .map_err(|error| ApiError::internal(&error.to_string()))?;
         let id = EvidenceId::new(
-            transaction
-                .last_insert_rowid()
+            span.last_insert_rowid()
                 .try_into()
                 .map_err(|_| ApiError::internal("the evidence identity overflowed"))?,
         );
         let item = EvidenceItem::restore(id, shape)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let mut detail = append.facts;
-        let facts = detail
+        let mut detail = facts.facts;
+        let detail_object = detail
             .as_object_mut()
             .ok_or_else(|| ApiError::internal("timeline facts must be a JSON object"))?;
-        facts.insert("id".to_owned(), Value::from(id.value()));
-        facts.insert("entity_kind".to_owned(), Value::from(item.entity_kind()));
-        facts.insert("entity_id".to_owned(), Value::from(item.entity_id()));
+        detail_object.insert("id".to_owned(), Value::from(id.value()));
+        detail_object.insert("entity_kind".to_owned(), Value::from(item.entity_kind()));
+        detail_object.insert("entity_id".to_owned(), Value::from(item.entity_id()));
         let evidence_id = id.value().to_string();
-        append_timeline(
-            &transaction,
+        let envelope = TimelineEnvelope::project(
             item.project_id(),
-            append.kind,
-            Some(("evidence", evidence_id.as_str())),
+            facts.kind,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Evidence,
+                id: evidence_id,
+            }),
             detail,
         )?;
-        transaction
-            .commit()
-            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        insert_event(&span, &envelope).map_err(internal)?;
+        span.commit().map_err(internal)?;
         Ok(item)
     }
 }
@@ -344,29 +325,8 @@ fn evidence_kind_wire(kind: EvidenceKind) -> &'static str {
     }
 }
 
-/// Append one evidence event to the Project timeline. `entity` is the
-/// envelope's `(entity_kind, entity_id)` pair and lands whole or not
-/// at all: the timeline decoder refuses a row carrying only one of
-/// the two columns, and one such row makes the entire Project query
-/// fail.
-fn append_timeline(
-    transaction: &rusqlite::Transaction<'_>,
-    project_id: &str,
-    kind: &str,
-    entity: Option<(&str, &str)>,
-    detail: Value,
-) -> Result<(), ApiError> {
-    insert_event(
-        transaction,
-        &StorageTimelineAppend {
-            project_id: project_id.to_owned(),
-            kind: kind.to_owned(),
-            entity_kind: entity.map(|(kind, _)| kind.to_owned()),
-            entity_id: entity.map(|(_, id)| id.to_owned()),
-            detail,
-        },
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))
+fn internal(error: impl std::fmt::Display) -> ApiError {
+    ApiError::internal(&error.to_string())
 }
 
 #[derive(Debug)]
@@ -383,8 +343,9 @@ impl std::error::Error for CorruptEvidence {}
 #[cfg(test)]
 mod evidence_storage {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use kanban_app::{EvidenceFilter, EvidenceStore, TimelineAppend};
+    use kanban_app::{EvidenceFilter, EvidenceStore, TimelineEnvelope, TimelineFacts};
     use kanban_domain::{CommitIdentity, ContentHash, EvidenceKind, RelativePath};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
     use serde_json::json;
 
     use super::{SqliteEvidenceStore, attachment_path, content_hash};
@@ -402,18 +363,33 @@ mod evidence_storage {
         (dir, database, store)
     }
 
-    fn append(kind: &'static str, facts: serde_json::Value) -> TimelineAppend {
-        TimelineAppend { kind, facts }
+    fn append(_kind: &'static str, facts: serde_json::Value) -> TimelineFacts {
+        TimelineFacts {
+            kind: TimelineEventKind::Evidence,
+            facts,
+        }
+    }
+
+    fn list_append(entity: Option<(&str, &str)>, detail: serde_json::Value) -> TimelineEnvelope {
+        TimelineEnvelope::project(
+            "kan-p1",
+            TimelineEventKind::Evidence,
+            entity.map(|(kind, id)| TimelineEntityRef {
+                kind: TimelineEntityKind::parse(kind).expect("the test kind is valid"),
+                id: id.to_owned(),
+            }),
+            detail,
+        )
+        .expect("the test Project scope is valid")
     }
 
     /// The Project timeline as the query surface reads it, so every
     /// test sees the envelope columns and not only the detail.
     fn timeline_rows(database: &Database) -> Vec<TimelineRow> {
         database
-            .query_timeline(&TimelineFilter {
-                project_id: "kan-p1".to_owned(),
-                ..TimelineFilter::default()
-            })
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(
+                "kan-p1".to_owned(),
+            )))
             .expect("the timeline is readable")
     }
 
@@ -640,8 +616,8 @@ mod evidence_storage {
                     entity_kind: Some("ticket".to_owned()),
                     entity_id: Some("kan-t10".to_owned()),
                 },
-                append(
-                    "evidence",
+                list_append(
+                    Some(("ticket", "kan-t10")),
                     json!({
                         "action": "listed",
                         "entity_kind": "ticket",
@@ -680,8 +656,8 @@ mod evidence_storage {
                     entity_kind: None,
                     entity_id: None,
                 },
-                append(
-                    "evidence",
+                list_append(
+                    None,
                     json!({
                         "action": "listed",
                         "entity_kind": null,
@@ -719,8 +695,8 @@ mod evidence_storage {
                     entity_kind: Some("ticket".to_owned()),
                     entity_id: None,
                 },
-                append(
-                    "evidence",
+                list_append(
+                    None,
                     json!({
                         "action": "listed",
                         "entity_kind": "ticket",

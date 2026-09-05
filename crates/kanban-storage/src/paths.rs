@@ -31,6 +31,17 @@ pub fn backups_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
     managed_root.join("backups")
 }
 
+/// The structured logs directory inside managed application data.
+pub fn logs_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
+    managed_root.join("logs")
+}
+
+/// The exported diagnostic bundles directory inside managed
+/// application data.
+pub fn diagnostics_dir(managed_root: &std::path::Path) -> std::path::PathBuf {
+    managed_root.join("diagnostics")
+}
+
 /// The operator configuration file inside managed application data.
 pub const fn config_file_name() -> &'static str {
     "config.json"
@@ -43,6 +54,8 @@ pub fn database_path() -> Result<PathBuf, StorageError> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{database_path, managed_data_dir};
 
     #[test]
@@ -74,6 +87,19 @@ mod tests {
             managed_data_dir()
                 .expect("home is known in tests")
                 .join("kanban.sqlite")
+        );
+    }
+
+    #[test]
+    fn logs_dir_sits_in_the_managed_root() {
+        assert_eq!(super::logs_dir(Path::new("/data")), Path::new("/data/logs"));
+    }
+
+    #[test]
+    fn diagnostics_dir_sits_in_the_managed_root() {
+        assert_eq!(
+            super::diagnostics_dir(Path::new("/data")),
+            Path::new("/data/diagnostics")
         );
     }
 }

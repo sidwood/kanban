@@ -3,7 +3,10 @@
 //! telemetry events (KAN-S8-US1, DR-HB-08, DR-HB-19).
 
 use std::collections::HashMap;
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -47,22 +50,86 @@ struct SessionDiagnostics {
     last_error: Option<String>,
 }
 
+/// How failed attempts space out: the base delay doubles with each
+/// consecutive failure, capped at the maximum (KAN-T78-AC2).
+#[derive(Debug, Clone, Copy)]
+pub struct BackoffPolicy {
+    base: Duration,
+    max: Duration,
+}
+
+impl BackoffPolicy {
+    /// The production curve: one second doubling up to one minute.
+    pub const PRODUCTION: Self = Self {
+        base: Duration::from_secs(1),
+        max: Duration::from_secs(60),
+    };
+
+    /// A custom curve, for tests that need quick redials.
+    pub const fn new(base: Duration, max: Duration) -> Self {
+        Self { base, max }
+    }
+}
+
+/// Cap the doubling shift so it cannot overflow the base.
+const MAX_BACKOFF_SHIFT: u32 = 16;
+
+/// The delay after `failures` consecutive failed attempts: the base
+/// doubling per failure, bounded by the policy maximum.
+fn backoff_delay(policy: BackoffPolicy, failures: u32) -> Duration {
+    let shift = failures.saturating_sub(1).min(MAX_BACKOFF_SHIFT);
+    policy.base.saturating_mul(1 << shift).min(policy.max)
+}
+
+/// One owned observation: the stop flag its thread polls, the socket
+/// duplicate that wakes a blocked read, and the thread itself.
+struct Observation {
+    stop: Arc<AtomicBool>,
+    socket: Arc<Mutex<Option<UnixStream>>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+/// End one observation: signal its thread, wake any blocked read
+/// through the socket duplicate, then join the thread so its socket
+/// and database references are released before the call returns.
+fn end_observation(observation: Observation) {
+    observation.stop.store(true, Ordering::Relaxed);
+    if let Some(socket) = observation.socket.lock().unwrap().take() {
+        let _ = socket.shutdown(Shutdown::Both);
+    }
+    if let Some(handle) = observation.handle {
+        handle.thread().unpark();
+        let _ = handle.join();
+    }
+}
+
 /// The service-side Herdr observer.
 pub struct HerdrObserver {
     socket_root: PathBuf,
     database: Arc<Database>,
     diagnostics: Arc<Mutex<HashMap<u64, SessionDiagnostics>>>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
+    sessions: Mutex<HashMap<u64, Observation>>,
+    backoff: BackoffPolicy,
 }
 
 impl HerdrObserver {
     /// Create an observer rooted at `socket_root`.
     pub fn new(database: Arc<Database>, socket_root: PathBuf) -> Arc<Self> {
+        Self::with_backoff(database, socket_root, BackoffPolicy::PRODUCTION)
+    }
+
+    /// Create an observer whose failed attempts follow `backoff`.
+    pub fn with_backoff(
+        database: Arc<Database>,
+        socket_root: PathBuf,
+        backoff: BackoffPolicy,
+    ) -> Arc<Self> {
         Arc::new(Self {
             socket_root,
             database,
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
-            threads: Mutex::new(Vec::new()),
+            sessions: Mutex::new(HashMap::new()),
+            backoff,
         })
     }
 
@@ -90,6 +157,10 @@ impl HerdrObserver {
         if project.is_archived() {
             return;
         }
+        let mut sessions = self.sessions.lock().unwrap();
+        if sessions.contains_key(&project.id().value()) {
+            return;
+        }
         let registration = project.registration();
         let session = registration.effective_herdr_session();
         self.diagnostics.lock().unwrap().insert(
@@ -101,6 +172,8 @@ impl HerdrObserver {
                 ..SessionDiagnostics::default()
             },
         );
+        let stop = Arc::new(AtomicBool::new(false));
+        let socket = Arc::new(Mutex::new(None));
         let handle = HerdrObserverHandle {
             project_id: project.id().value(),
             mapping: SessionMapping::new(
@@ -111,6 +184,9 @@ impl HerdrObserver {
             socket_root: self.socket_root.clone(),
             database: self.database.clone(),
             diagnostics: self.diagnostics.clone(),
+            stop: stop.clone(),
+            socket: socket.clone(),
+            backoff: self.backoff,
         };
         let thread_name = session
             .as_name()
@@ -120,7 +196,45 @@ impl HerdrObserver {
             .name(thread_name)
             .spawn(move || handle.run())
             .expect("a Herdr observation thread starts");
-        self.threads.lock().unwrap().push(thread);
+        sessions.insert(
+            project.id().value(),
+            Observation {
+                stop,
+                socket,
+                handle: Some(thread),
+            },
+        );
+    }
+
+    /// Whether this observer still owns one Project's session.
+    pub fn is_observing(&self, project_id: u64) -> bool {
+        self.sessions.lock().unwrap().contains_key(&project_id)
+    }
+
+    /// Stop observing one Project, release its socket and database
+    /// references, and join its thread (KAN-T78-AC1).
+    pub fn stop_observing(&self, project_id: u64) {
+        let Some(observation) = self.sessions.lock().unwrap().remove(&project_id) else {
+            return;
+        };
+        end_observation(observation);
+        self.diagnostics.lock().unwrap().remove(&project_id);
+    }
+
+    /// Stop every owned observer and join every thread: shutdown
+    /// leaves no session observed and no resource held (KAN-T78-AC1).
+    pub fn shutdown(&self) {
+        let observations: Vec<Observation> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, observation)| observation)
+            .collect();
+        for observation in observations {
+            end_observation(observation);
+        }
+        self.diagnostics.lock().unwrap().clear();
     }
 }
 
@@ -136,52 +250,99 @@ struct HerdrObserverHandle {
     socket_root: PathBuf,
     database: Arc<Database>,
     diagnostics: Arc<Mutex<HashMap<u64, SessionDiagnostics>>>,
+    stop: Arc<AtomicBool>,
+    socket: Arc<Mutex<Option<UnixStream>>>,
+    backoff: BackoffPolicy,
 }
 
 impl HerdrObserverHandle {
     fn run(self) {
-        let mut first_connect = true;
-        loop {
-            match SessionClient::connect(self.mapping.clone(), &self.socket_root) {
-                Ok(mut client) => {
-                    self.mark_connected(true, None);
-                    let reason = if first_connect {
-                        "startup"
-                    } else {
-                        "reconnect"
-                    };
-                    first_connect = false;
-                    match self.capture_snapshot(&mut client, reason) {
-                        Ok(snapshot) => self.record_snapshot(snapshot.captured_at),
-                        Err(error) => self.mark_error(error),
-                    }
-                    if client.subscribe().is_ok() {
-                        loop {
-                            if client.read_event().is_err() {
-                                self.mark_connected(false, Some("disconnected".to_owned()));
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(error) => self.mark_connected(false, Some(error.to_string())),
+        let mut failures = 0u32;
+        let mut live_once = false;
+        while !self.stopped() {
+            if self.observe_live(&mut live_once) {
+                // A session that was live and ended is the first
+                // failure of the next cycle, not a reset.
+                failures = 1;
+            } else {
+                failures = failures.saturating_add(1);
             }
-            thread::sleep(Duration::from_secs(1));
+            if self.stopped() {
+                break;
+            }
+            thread::park_timeout(backoff_delay(self.backoff, failures));
         }
     }
 
-    fn capture_snapshot(
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Connect, subscribe, and observe the live subscription. Returns
+    /// whether the subscription went live: a failed connection or
+    /// subscription reports through diagnostics alone, and the
+    /// captured snapshot is appended only once the subscription is
+    /// live (KAN-T78-AC2, KAN-T78-AC3).
+    fn observe_live(&self, live_once: &mut bool) -> bool {
+        let mut client = match SessionClient::connect(self.mapping.clone(), &self.socket_root) {
+            Ok(client) => client,
+            Err(error) => {
+                self.mark_connected(false, Some(error.to_string()));
+                return false;
+            }
+        };
+        // Register the duplicate before anything can block, so a stop
+        // can always wake this thread.
+        match client.duplicate_socket() {
+            Ok(duplicate) => *self.socket.lock().unwrap() = Some(duplicate),
+            Err(error) => {
+                self.mark_connected(false, Some(error.to_string()));
+                return false;
+            }
+        }
+        if self.stopped() {
+            return false;
+        }
+        // Capture before subscribing so no push event can overtake
+        // the capture; the append below is gated on the subscription.
+        let snapshot = match client.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.mark_connected(false, Some(error.to_string()));
+                return false;
+            }
+        };
+        if let Err(error) = client.mapping().verify_snapshot(&snapshot) {
+            self.mark_connected(false, Some(error.to_string()));
+            return false;
+        }
+        if let Err(error) = client.subscribe() {
+            *self.socket.lock().unwrap() = None;
+            self.mark_connected(false, Some(error.to_string()));
+            return false;
+        }
+        let reason = if *live_once { "reconnect" } else { "startup" };
+        *live_once = true;
+        self.mark_connected(true, None);
+        match self.append_snapshot(&snapshot, reason) {
+            Ok(()) => self.record_snapshot(snapshot.captured_at),
+            Err(error) => self.mark_error(error),
+        }
+        while !self.stopped() {
+            if client.read_event().is_err() {
+                self.mark_connected(false, Some("disconnected".to_owned()));
+                break;
+            }
+        }
+        true
+    }
+
+    /// Append one captured snapshot as a telemetry event.
+    fn append_snapshot(
         &self,
-        client: &mut SessionClient,
+        snapshot: &kanban_herdr::Snapshot,
         reason: &str,
-    ) -> Result<kanban_herdr::Snapshot, ObservationError> {
-        let snapshot = client
-            .snapshot()
-            .map_err(|error| ObservationError::Snapshot(error.to_string()))?;
-        client
-            .mapping()
-            .verify_snapshot(&snapshot)
-            .map_err(|error| ObservationError::Connect(error.to_string()))?;
+    ) -> Result<(), ObservationError> {
         let detail = json!({
             "source": "herdr",
             "event": "snapshot",
@@ -202,7 +363,7 @@ impl HerdrObserverHandle {
         self.database
             .append_timeline_event(&envelope)
             .map_err(|error| ObservationError::Timeline(error.to_string()))?;
-        Ok(snapshot)
+        Ok(())
     }
 
     fn mark_connected(&self, connected: bool, last_error: Option<String>) {
@@ -295,13 +456,15 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use kanban_app::TimelineStore;
+    use kanban_app::{HerdrDiagnostics, TimelineStore};
     use kanban_dto::{TimelineEventKind, TimelineQuery, TimelineScope};
     use kanban_herdr::fixture::{ScriptedSession, SessionScript};
     use serde_json::json;
     use tempfile::TempDir;
 
-    use super::{HerdrObserver, production_socket_root};
+    use super::{
+        BackoffPolicy, HerdrObserver, LiveHerdrDiagnostics, backoff_delay, production_socket_root,
+    };
     use crate::timeline::StorageTimelineStore;
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
     use kanban_storage::{AllowAllMigrations, Database};
@@ -321,6 +484,36 @@ mod tests {
         Project::new(ProjectId::new(1), registration)
     }
 
+    fn migrated_database(dir: &TempDir) -> Arc<Database> {
+        let mut database = Database::open(&dir.path().join("kanban.sqlite"))
+            .expect("opening a fresh database succeeds");
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        Arc::new(database)
+    }
+
+    /// A fast curve so lifecycle tests redial within milliseconds.
+    fn fast_backoff() -> BackoffPolicy {
+        BackoffPolicy::new(Duration::from_millis(10), Duration::from_millis(40))
+    }
+
+    fn telemetry_details(database: &Arc<Database>) -> Vec<serde_json::Value> {
+        let timeline = StorageTimelineStore::new(database.clone());
+        timeline
+            .query(&TimelineQuery {
+                scope: TimelineScope::Project("1".to_owned()),
+                entity: None,
+                kinds: Some(vec![TimelineEventKind::Telemetry]),
+                since: None,
+                until: None,
+            })
+            .expect("telemetry is queryable")
+            .into_iter()
+            .map(|event| event.detail)
+            .collect()
+    }
+
     #[test]
     fn startup_snapshot_appends_a_telemetry_event() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -331,31 +524,18 @@ mod tests {
             "/workspaces/kanban.seed",
             SessionScript::default(),
         );
-        let mut database = Database::open(&dir.path().join("kanban.sqlite"))
-            .expect("opening a fresh database succeeds");
-        database
-            .migrate(&AllowAllMigrations)
-            .expect("the migrations apply");
-        let database = Arc::new(database);
-        let _observer = HerdrObserver::start(
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::start(
             database.clone(),
             &[project(Some("kanban-main"), "/workspaces/kanban.seed")],
             socket_root,
         );
         thread::sleep(Duration::from_millis(200));
-        let timeline = StorageTimelineStore::new(database);
-        let events = timeline
-            .query(&TimelineQuery {
-                scope: TimelineScope::Project("1".to_owned()),
-                entity: None,
-                kinds: Some(vec![TimelineEventKind::Telemetry]),
-                since: None,
-                until: None,
-            })
-            .expect("telemetry is queryable");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].detail["event"], json!("snapshot"));
-        assert_eq!(events[0].detail["reason"], json!("startup"));
+        let details = telemetry_details(&database);
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0]["event"], json!("snapshot"));
+        assert_eq!(details[0]["reason"], json!("startup"));
+        observer.shutdown();
     }
 
     /// KAN-T100-AC4: a Project without a session is observed through
@@ -406,6 +586,204 @@ mod tests {
             root,
             std::path::PathBuf::from(std::env::var_os("HOME").expect("home is known"))
                 .join(".config/herdr")
+        );
+    }
+
+    #[test]
+    fn observer_backoff_doubles_until_bounded() {
+        let policy = BackoffPolicy::PRODUCTION;
+        assert_eq!(backoff_delay(policy, 1), Duration::from_secs(1));
+        assert_eq!(backoff_delay(policy, 2), Duration::from_secs(2));
+        assert_eq!(backoff_delay(policy, 3), Duration::from_secs(4));
+        assert_eq!(backoff_delay(policy, 6), Duration::from_secs(32));
+        assert_eq!(
+            backoff_delay(policy, 7),
+            Duration::from_secs(60),
+            "the doubling is bounded at the maximum"
+        );
+        assert_eq!(backoff_delay(policy, 60), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn observer_shutdown_stops_the_owned_session() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(200));
+        assert!(observer.is_observing(1));
+        assert_eq!(telemetry_details(&database).len(), 1);
+
+        observer.shutdown();
+
+        assert!(
+            !observer.is_observing(1),
+            "shutdown releases the owned session"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            telemetry_details(&database).len(),
+            1,
+            "no thread survives shutdown to append again"
+        );
+    }
+
+    #[test]
+    fn observer_backs_off_failed_connections_without_appending_rows() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        // No fixture: every connect fails on the missing socket.
+        let socket_root = dir.path().join("sessions");
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(250));
+
+        assert!(
+            observer.is_observing(1),
+            "failed connects keep observing under backoff"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a failed connect appends no timeline row"
+        );
+        let diagnostics = LiveHerdrDiagnostics::new(&observer);
+        let state = diagnostics.for_project(
+            1,
+            Some("kanban-main"),
+            "/workspaces/kanban.seed",
+            "kanban.seed",
+        );
+        assert!(!state.connected);
+        assert!(
+            state
+                .last_error
+                .expect("the failed connection is reported")
+                .contains("not available")
+        );
+
+        observer.shutdown();
+    }
+
+    #[test]
+    fn observer_appends_no_rows_when_subscription_never_succeeds() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_subscribe_error("session is sealed"),
+        );
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(250));
+
+        assert!(
+            observer.is_observing(1),
+            "failed subscriptions keep observing under backoff"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a connection without a live subscription appends no snapshot row"
+        );
+        let diagnostics = LiveHerdrDiagnostics::new(&observer);
+        let state = diagnostics.for_project(
+            1,
+            Some("kanban-main"),
+            "/workspaces/kanban.seed",
+            "kanban.seed",
+        );
+        assert!(!state.connected);
+        assert!(
+            state
+                .last_error
+                .expect("the refused subscription is reported")
+                .contains("sealed")
+        );
+
+        observer.shutdown();
+    }
+
+    #[test]
+    fn observer_reconnect_snapshot_lands_only_after_a_live_subscription() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_events(vec![json!({ "kind": "role.output", "text": "working" })])
+                .close_after_events(),
+        );
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_backoff(database.clone(), socket_root, fast_backoff());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        thread::sleep(Duration::from_millis(300));
+
+        let reasons: Vec<_> = telemetry_details(&database)
+            .iter()
+            .map(|detail| detail["reason"].clone())
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![json!("startup"), json!("reconnect")],
+            "the reconnect snapshot lands after the second live subscription, and only after it"
+        );
+
+        observer.shutdown();
+    }
+
+    #[test]
+    fn observer_threads_stop_on_core_shutdown() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default(),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
+            }),
+        );
+        thread::sleep(Duration::from_millis(200));
+        let observer = core.herdr.clone();
+        assert!(
+            observer.is_observing(1),
+            "registration starts observation without a restart"
+        );
+
+        core.shutdown();
+
+        assert!(
+            !observer.is_observing(1),
+            "core shutdown stops the owned observer and joins its thread"
         );
     }
 }

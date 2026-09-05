@@ -56,7 +56,7 @@ impl GitObservation for LocalRepositories {
 pub struct CoreProcess {
     database: Arc<Database>,
     server: ServerHandle,
-    _herdr: Arc<HerdrObserver>,
+    herdr: Arc<HerdrObserver>,
     _backup_scheduler: BackupScheduler,
 }
 
@@ -66,10 +66,18 @@ impl CoreProcess {
         self.server.socket_path()
     }
 
-    /// Stop serving and close the database.
+    /// Stop serving, stop every Herdr observer, and close the
+    /// database.
     pub fn shutdown(self) {
-        self.server.shutdown();
-        drop(self.database);
+        let Self {
+            database,
+            server,
+            herdr,
+            _backup_scheduler,
+        } = self;
+        server.shutdown();
+        herdr.shutdown();
+        drop(database);
     }
 }
 
@@ -161,7 +169,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     Ok(CoreProcess {
         database,
         server,
-        _herdr: herdr,
+        herdr,
         _backup_scheduler: backup_scheduler,
     })
 }
@@ -180,7 +188,7 @@ pub(crate) fn serve_with_herdr_sessions(
     Ok(CoreProcess {
         database,
         server,
-        _herdr: herdr,
+        herdr,
         _backup_scheduler: backup_scheduler,
     })
 }

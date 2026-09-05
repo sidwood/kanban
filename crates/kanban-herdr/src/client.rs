@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -32,6 +32,7 @@ pub struct PromptRequest {
 /// One connected Herdr session client.
 pub struct SessionClient {
     mapping: SessionMapping,
+    socket_path: PathBuf,
     reader: BufReader<UnixStream>,
     stream: UnixStream,
 }
@@ -57,6 +58,7 @@ impl SessionClient {
         })?);
         let mut client = Self {
             mapping,
+            socket_path: path,
             reader,
             stream,
         };
@@ -68,6 +70,19 @@ impl SessionClient {
     /// The mapping this client serves.
     pub fn mapping(&self) -> &SessionMapping {
         &self.mapping
+    }
+
+    /// A second handle to this client's socket. Shutting the duplicate
+    /// down wakes a read blocked on this client without touching its
+    /// buffered state, which is how an observer's owner stops a
+    /// thread parked on [`SessionClient::read_event`].
+    pub fn duplicate_socket(&self) -> Result<UnixStream, HerdrError> {
+        self.stream
+            .try_clone()
+            .map_err(|source| HerdrError::Connect {
+                path: self.socket_path.display().to_string(),
+                source: source.to_string(),
+            })
     }
 
     /// Capture the full session state.

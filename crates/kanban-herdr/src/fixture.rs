@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
 use serde_json::{Value, json};
@@ -84,16 +85,19 @@ impl ScriptedSession {
         let script = Arc::new(script);
         let product_workspace = product_workspace.to_owned();
         let session_name = session.as_name().unwrap_or("default").to_owned();
+        let accept_connections = Arc::new(AtomicUsize::new(0));
         let server = thread::Builder::new()
             .name(format!("herdr-fixture-{session_name}"))
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
+                    let index = accept_connections.fetch_add(1, Ordering::Relaxed);
                     serve_connection(
                         stream,
                         &session_name,
                         &product_workspace,
                         herdr_workspace.clone(),
                         script.clone(),
+                        index,
                     );
                 }
             })
@@ -130,6 +134,8 @@ pub struct SessionScript {
     wait_met: bool,
     wait_detail: Value,
     prompt_accepted: bool,
+    subscribe_error: Option<String>,
+    close_after_events: bool,
 }
 
 impl SessionScript {
@@ -151,6 +157,21 @@ impl SessionScript {
         self.prompt_accepted = accepted;
         self
     }
+
+    /// Refuse every subscribe request with this message, so a test
+    /// observes connections that never reach a live subscription.
+    pub fn with_subscribe_error(mut self, message: &str) -> Self {
+        self.subscribe_error = Some(message.to_owned());
+        self
+    }
+
+    /// Close the first connection once it has delivered every scripted
+    /// event, so a test observes one reconnect; later connections stay
+    /// open like a settled session.
+    pub fn close_after_events(mut self) -> Self {
+        self.close_after_events = true;
+        self
+    }
 }
 
 fn serve_connection(
@@ -159,6 +180,7 @@ fn serve_connection(
     product_workspace: &str,
     herdr_workspace: Option<String>,
     script: Arc<SessionScript>,
+    connection_index: usize,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
     let mut writer = stream;
@@ -190,8 +212,14 @@ fn serve_connection(
                 herdr_workspace.as_deref(),
             )),
             HerdrRequest::Subscribe => {
-                subscribed = true;
-                HerdrResponse::Subscribed
+                if let Some(message) = &script.subscribe_error {
+                    HerdrResponse::Error {
+                        message: message.clone(),
+                    }
+                } else {
+                    subscribed = true;
+                    HerdrResponse::Subscribed
+                }
             }
             HerdrRequest::Wait {
                 condition,
@@ -227,6 +255,9 @@ fn serve_connection(
                 if write_response(&mut writer, HerdrResponse::Event { payload: event }).is_err() {
                     return;
                 }
+            }
+            if script.close_after_events && connection_index == 0 {
+                return;
             }
         }
     }

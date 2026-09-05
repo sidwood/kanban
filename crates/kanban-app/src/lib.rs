@@ -18,6 +18,7 @@ pub mod project;
 pub mod rulings;
 pub mod spec;
 pub mod telemetry;
+pub mod ticket;
 pub mod timeline;
 pub mod workspace;
 
@@ -49,6 +50,7 @@ pub use project::{GitObservation, ProjectStore, duplicate_code_error};
 pub use rulings::{RulingStore, already_superseded_ruling_error};
 pub use spec::SpecStore;
 pub use telemetry::{AttentionSignal, TelemetryProjection, project_herdr_event};
+pub use ticket::TicketStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
 };

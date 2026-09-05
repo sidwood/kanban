@@ -267,6 +267,27 @@ define_exposed_catalogue! {
         mcp: "spec_coverage_check",
         description: "Check one Spec version's story coverage against proposed criteria; the executable gate refuses uncovered stories.",
     },
+    "ticket.create" => {
+        kind: Command,
+        request: "TicketCreateRequest",
+        response: "TicketRecord",
+        mcp: "ticket_create",
+        description: "Create a Ticket under its kind's schema, minting its number from the Project counter.",
+    },
+    "ticket.list" => {
+        kind: Query,
+        request: "TicketListQuery",
+        response: "TicketListResponse",
+        mcp: "ticket_list",
+        description: "List every Ticket of a Project, terminal lifecycle states included.",
+    },
+    "ticket.get" => {
+        kind: Query,
+        request: "TicketGetQuery",
+        response: "TicketRecord",
+        mcp: "ticket_get",
+        description: "Read one Ticket with the record of its kind's schema.",
+    },
     "timeline.query" => {
         kind: Query,
         request: "TimelineQuery",

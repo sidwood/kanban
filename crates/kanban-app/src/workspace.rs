@@ -8,7 +8,7 @@ use kanban_domain::{ProjectId, Workspace, WorkspaceHealth, WorkspaceId, Workspac
 use kanban_dto::{
     ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceHealthDto,
     WorkspaceListQuery, WorkspaceListResponse, WorkspaceObservationDto, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest, WorkspaceReuseDto,
 };
 use serde_json::{Value, json};
 
@@ -28,6 +28,9 @@ pub struct WorkspaceGitSnapshot {
     pub branch: Option<String>,
     pub head: Option<String>,
     pub working_tree_clean: bool,
+    /// Whether the Workspace holds unique unlanded commits; `None`
+    /// when the observer could not decide (DR-LW-06).
+    pub unique_unlanded_commits: Option<bool>,
 }
 
 /// The git observation port: read-only workspace state. The service
@@ -224,6 +227,7 @@ impl CommandHandler for ObserveWorkspace {
             snapshot.branch,
             snapshot.head,
             snapshot.working_tree_clean,
+            snapshot.unique_unlanded_commits,
         );
         let envelope = if let Some((from, to)) = health_change {
             health_transition(
@@ -336,6 +340,7 @@ fn observation_facts(workspace: &Workspace) -> Value {
         "branch": observation.branch(),
         "head": observation.head(),
         "working_tree_clean": observation.working_tree_clean(),
+        "unique_unlanded_commits": observation.unique_unlanded_commits(),
         "lane_assignment": observation.lane_assignment(),
     })
 }
@@ -353,9 +358,20 @@ fn record_of(workspace: &Workspace) -> WorkspaceRecord {
             branch: observation.branch().map(str::to_owned),
             head: observation.head().map(str::to_owned),
             working_tree_clean: observation.working_tree_clean(),
+            unique_unlanded_commits: observation.unique_unlanded_commits(),
             lane_assignment: observation.lane_assignment(),
         },
+        reuse: reuse_dto(workspace.reuse_evaluation()),
         version: workspace.version(),
+    }
+}
+
+fn reuse_dto(evaluation: kanban_domain::ReuseEvaluation) -> WorkspaceReuseDto {
+    WorkspaceReuseDto {
+        reusable: evaluation.reusable(),
+        clean: evaluation.clean(),
+        unassigned: evaluation.unassigned(),
+        free_of_unlanded_commits: evaluation.free_of_unlanded_commits(),
     }
 }
 
@@ -494,6 +510,7 @@ mod testing {
                     branch: None,
                     head: None,
                     working_tree_clean: true,
+                    unique_unlanded_commits: None,
                 })
         }
     }
@@ -689,6 +706,7 @@ mod workspace_observe {
                     branch: Some("feature".to_owned()),
                     head: Some("abc".to_owned()),
                     working_tree_clean: true,
+                    unique_unlanded_commits: Some(false),
                 },
                 WorkspaceGitSnapshot {
                     present: true,
@@ -696,6 +714,7 @@ mod workspace_observe {
                     branch: Some("feature".to_owned()),
                     head: Some("def".to_owned()),
                     working_tree_clean: false,
+                    unique_unlanded_commits: Some(false),
                 },
             ]),
         }));
@@ -776,6 +795,109 @@ mod workspace_observe {
     }
 
     #[test]
+    fn observing_reports_the_reuse_verdict_with_every_condition() {
+        let harness = harness(Arc::new(ScriptedObserver {
+            snapshots: HashMap::from([(
+                "/workspaces/kanban.feature".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    branch: Some("feature".to_owned()),
+                    head: Some("def456".to_owned()),
+                    working_tree_clean: true,
+                    unique_unlanded_commits: Some(true),
+                },
+            )]),
+        }));
+        harness.projects.seed(stored_project());
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.feature", "key-1"),
+            )
+            .expect("the workspace registers");
+
+        let response = harness
+            .core
+            .command("workspace.observe", &observe(1, "key-2", 1))
+            .expect("the observation applies");
+
+        assert_eq!(
+            response["observation"]["unique_unlanded_commits"],
+            json!(true)
+        );
+        assert_eq!(
+            response["reuse"],
+            json!({
+                "reusable": false,
+                "clean": true,
+                "unassigned": true,
+                "free_of_unlanded_commits": false,
+            }),
+            "every condition reports even when the verdict refuses reuse"
+        );
+    }
+
+    #[test]
+    fn observing_a_landed_clean_workspace_reports_it_reusable() {
+        let harness = harness(Arc::new(ScriptedObserver {
+            snapshots: HashMap::from([(
+                "/workspaces/kanban.feature".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    branch: Some("feature".to_owned()),
+                    head: Some("abc123".to_owned()),
+                    working_tree_clean: true,
+                    unique_unlanded_commits: Some(false),
+                },
+            )]),
+        }));
+        harness.projects.seed(stored_project());
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.feature", "key-1"),
+            )
+            .expect("the workspace registers");
+
+        let response = harness
+            .core
+            .command("workspace.observe", &observe(1, "key-2", 1))
+            .expect("the observation applies");
+
+        assert_eq!(response["reuse"]["reusable"], json!(true));
+        assert_eq!(response["reuse"]["free_of_unlanded_commits"], json!(true));
+    }
+
+    #[test]
+    fn listing_reports_unobserved_workspaces_as_not_reusable() {
+        let harness = harness(Arc::new(ScriptedObserver::default()));
+        harness.projects.seed(stored_project());
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &register(1, "/workspaces/kanban.feature", "key-1"),
+            )
+            .expect("the workspace registers");
+
+        let listing = harness
+            .core
+            .query("workspace.list", &json!({ "project_id": 1 }))
+            .expect("the listing serves");
+
+        assert_eq!(listing["workspaces"][0]["reuse"]["reusable"], json!(false));
+        assert_eq!(
+            listing["workspaces"][0]["reuse"]["free_of_unlanded_commits"],
+            json!(false),
+            "an undecided unlanded guard refuses reuse"
+        );
+    }
+
+    #[test]
     fn observing_an_assigned_lane_reports_assigned_health() {
         let harness = harness(Arc::new(ScriptedObserver {
             snapshots: HashMap::from([(
@@ -786,6 +908,7 @@ mod workspace_observe {
                     branch: Some("feature".to_owned()),
                     head: Some("abc".to_owned()),
                     working_tree_clean: false,
+                    unique_unlanded_commits: Some(false),
                 },
             )]),
         }));
@@ -867,6 +990,7 @@ mod workspace_retire {
                     branch: Some("feature".to_owned()),
                     head: Some("abc".to_owned()),
                     working_tree_clean: true,
+                    unique_unlanded_commits: Some(false),
                 },
             )]),
         })
@@ -949,6 +1073,11 @@ mod workspace_retire {
         assert_eq!(
             listing["workspaces"][0]["path"],
             json!("/workspaces/kanban.feature")
+        );
+        assert_eq!(
+            listing["workspaces"][0]["reuse"]["reusable"],
+            json!(false),
+            "a retired record never reports reusable"
         );
 
         let (stored, _) = harness.workspaces.snapshot();

@@ -26,6 +26,7 @@
     "dialog",
     "frontmatter",
     "gitdir",
+    "hardlinked",
     "idempotency",
     "kanban",
     "libsqlite",

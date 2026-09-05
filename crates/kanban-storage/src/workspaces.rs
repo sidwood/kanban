@@ -11,7 +11,8 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 const WORKSPACE_COLUMNS: &str = "id, project_id, path, is_seed, retired, lane_id, health, \
-                                 repository_identity, branch, head, working_tree_clean, version";
+                                 repository_identity, branch, head, working_tree_clean, \
+                                 unique_unlanded_commits, version";
 
 /// The Workspace port over the authoritative database.
 pub struct SqliteWorkspaceStore {
@@ -92,8 +93,9 @@ impl WorkspaceStore for SqliteWorkspaceStore {
                      branch = ?6,
                      head = ?7,
                      working_tree_clean = ?8,
-                     version = ?9
-                 WHERE id = ?1 AND version = ?10",
+                     unique_unlanded_commits = ?9,
+                     version = ?10
+                 WHERE id = ?1 AND version = ?11",
                 params![
                     workspace.id().value() as i64,
                     workspace.is_retired(),
@@ -103,6 +105,9 @@ impl WorkspaceStore for SqliteWorkspaceStore {
                     observation.branch(),
                     observation.head(),
                     observation.working_tree_clean().map(|clean| clean as i64),
+                    observation
+                        .unique_unlanded_commits()
+                        .map(|unlanded| unlanded as i64),
                     workspace.version() as i64,
                     preceding_version as i64,
                 ],
@@ -191,17 +196,31 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
             ));
         }
     };
+    let unique_unlanded_commits = match row.get::<_, Option<i64>>(11)? {
+        Some(1) => Some(true),
+        Some(0) => Some(false),
+        None => None,
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                11,
+                "unique_unlanded_commits".to_owned(),
+                rusqlite::types::Type::Integer,
+            ));
+        }
+    };
     let mut observation = WorkspaceObservation::empty();
     if row.get::<_, Option<String>>(7)?.is_some()
         || row.get::<_, Option<String>>(8)?.is_some()
         || row.get::<_, Option<String>>(9)?.is_some()
         || working_tree_clean.is_some()
+        || unique_unlanded_commits.is_some()
     {
         observation.apply_git_read(
             row.get(7)?,
             row.get(8)?,
             row.get(9)?,
             working_tree_clean.unwrap_or(true),
+            unique_unlanded_commits,
             lane_id,
         );
     } else {
@@ -222,7 +241,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
         lane_id,
         health,
         observation,
-        row.get::<_, i64>(11)? as u64,
+        row.get::<_, i64>(12)? as u64,
     ))
 }
 

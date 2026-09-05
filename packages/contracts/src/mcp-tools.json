@@ -6553,6 +6553,13 @@
                 "null"
               ]
             },
+            "unique_unlanded_commits": {
+              "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "working_tree_clean": {
               "type": [
                 "boolean",
@@ -6560,6 +6567,35 @@
               ]
             }
           },
+          "type": "object"
+        },
+        "WorkspaceReuseDto": {
+          "additionalProperties": false,
+          "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+          "properties": {
+            "clean": {
+              "description": "The working tree is clean on a present path.",
+              "type": "boolean"
+            },
+            "free_of_unlanded_commits": {
+              "description": "No unique unlanded commits sit on the Workspace.",
+              "type": "boolean"
+            },
+            "reusable": {
+              "description": "Reusable only when every condition holds and the record is present and not retired.",
+              "type": "boolean"
+            },
+            "unassigned": {
+              "description": "No Lane assignment holds the Workspace.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clean",
+            "free_of_unlanded_commits",
+            "reusable",
+            "unassigned"
+          ],
           "type": "object"
         }
       },
@@ -6587,6 +6623,9 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "reuse": {
+          "$ref": "#/definitions/WorkspaceReuseDto"
+        },
         "version": {
           "format": "uint64",
           "minimum": 0.0,
@@ -6600,6 +6639,7 @@
         "observation",
         "path",
         "project_id",
+        "reuse",
         "version"
       ],
       "title": "WorkspaceRecord",
@@ -6696,6 +6736,13 @@
                 "null"
               ]
             },
+            "unique_unlanded_commits": {
+              "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "working_tree_clean": {
               "type": [
                 "boolean",
@@ -6703,6 +6750,35 @@
               ]
             }
           },
+          "type": "object"
+        },
+        "WorkspaceReuseDto": {
+          "additionalProperties": false,
+          "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+          "properties": {
+            "clean": {
+              "description": "The working tree is clean on a present path.",
+              "type": "boolean"
+            },
+            "free_of_unlanded_commits": {
+              "description": "No unique unlanded commits sit on the Workspace.",
+              "type": "boolean"
+            },
+            "reusable": {
+              "description": "Reusable only when every condition holds and the record is present and not retired.",
+              "type": "boolean"
+            },
+            "unassigned": {
+              "description": "No Lane assignment holds the Workspace.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clean",
+            "free_of_unlanded_commits",
+            "reusable",
+            "unassigned"
+          ],
           "type": "object"
         }
       },
@@ -6730,6 +6806,9 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "reuse": {
+          "$ref": "#/definitions/WorkspaceReuseDto"
+        },
         "version": {
           "format": "uint64",
           "minimum": 0.0,
@@ -6743,6 +6822,7 @@
         "observation",
         "path",
         "project_id",
+        "reuse",
         "version"
       ],
       "title": "WorkspaceRecord",
@@ -6839,6 +6919,13 @@
                 "null"
               ]
             },
+            "unique_unlanded_commits": {
+              "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "working_tree_clean": {
               "type": [
                 "boolean",
@@ -6846,6 +6933,35 @@
               ]
             }
           },
+          "type": "object"
+        },
+        "WorkspaceReuseDto": {
+          "additionalProperties": false,
+          "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+          "properties": {
+            "clean": {
+              "description": "The working tree is clean on a present path.",
+              "type": "boolean"
+            },
+            "free_of_unlanded_commits": {
+              "description": "No unique unlanded commits sit on the Workspace.",
+              "type": "boolean"
+            },
+            "reusable": {
+              "description": "Reusable only when every condition holds and the record is present and not retired.",
+              "type": "boolean"
+            },
+            "unassigned": {
+              "description": "No Lane assignment holds the Workspace.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clean",
+            "free_of_unlanded_commits",
+            "reusable",
+            "unassigned"
+          ],
           "type": "object"
         }
       },
@@ -6873,6 +6989,9 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "reuse": {
+          "$ref": "#/definitions/WorkspaceReuseDto"
+        },
         "version": {
           "format": "uint64",
           "minimum": 0.0,
@@ -6886,6 +7005,7 @@
         "observation",
         "path",
         "project_id",
+        "reuse",
         "version"
       ],
       "title": "WorkspaceRecord",
@@ -6957,6 +7077,13 @@
                 "null"
               ]
             },
+            "unique_unlanded_commits": {
+              "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "working_tree_clean": {
               "type": [
                 "boolean",
@@ -6992,6 +7119,9 @@
               "minimum": 0.0,
               "type": "integer"
             },
+            "reuse": {
+              "$ref": "#/definitions/WorkspaceReuseDto"
+            },
             "version": {
               "format": "uint64",
               "minimum": 0.0,
@@ -7005,7 +7135,37 @@
             "observation",
             "path",
             "project_id",
+            "reuse",
             "version"
+          ],
+          "type": "object"
+        },
+        "WorkspaceReuseDto": {
+          "additionalProperties": false,
+          "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+          "properties": {
+            "clean": {
+              "description": "The working tree is clean on a present path.",
+              "type": "boolean"
+            },
+            "free_of_unlanded_commits": {
+              "description": "No unique unlanded commits sit on the Workspace.",
+              "type": "boolean"
+            },
+            "reusable": {
+              "description": "Reusable only when every condition holds and the record is present and not retired.",
+              "type": "boolean"
+            },
+            "unassigned": {
+              "description": "No Lane assignment holds the Workspace.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clean",
+            "free_of_unlanded_commits",
+            "reusable",
+            "unassigned"
           ],
           "type": "object"
         }

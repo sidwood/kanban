@@ -48,6 +48,7 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
             branch,
             head,
             working_tree_clean: working_tree_clean(workspace_path),
+            unique_unlanded_commits: unique_unlanded_commits(workspace_path, repository_path),
         }
     }
 }
@@ -141,6 +142,48 @@ fn working_tree_clean(workspace_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Decide whether the Workspace holds commits the repository's HEAD
+/// lacks (DR-LW-06): unique unlanded work that would be lost with the
+/// clone. Landed means reachable from the repository HEAD, so the
+/// count runs in the Workspace with the repository's object store
+/// attached read-only as an alternate — a hardlinked local clone does
+/// not carry commits the repository gained after the clone. The read
+/// never mutates either path; an undecidable answer is `None`, which
+/// reuse evaluation treats as unlanded.
+fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Option<bool> {
+    let repository_head = git_output(repository_path, &["rev-parse", "HEAD"])?;
+    let workspace_head = git_output(workspace_path, &["rev-parse", "HEAD"])?;
+    if repository_head == workspace_head {
+        return Some(false);
+    }
+    let repository_objects = repository_objects(repository_path)?;
+    let range = format!("{repository_head}..{workspace_head}");
+    let output = Command::new("git")
+        .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects)
+        .args([
+            "--no-optional-locks",
+            "-C",
+            workspace_path,
+            "rev-list",
+            "--count",
+            &range,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let count = String::from_utf8(output.stdout).ok()?;
+    let count: u64 = count.trim().parse().ok()?;
+    Some(count > 0)
+}
+
+/// The repository's object directory, addressed through its common
+/// git directory so worktree checkouts resolve too.
+fn repository_objects(repository_path: &str) -> Option<String> {
+    Some(format!("{}/objects", repository_identity(repository_path)?))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -207,6 +250,94 @@ mod tests {
         assert_eq!(snapshot.branch, Some("main".to_owned()));
         assert!(snapshot.head.is_some());
         assert!(snapshot.working_tree_clean);
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(false),
+            "a clone at the seed head holds nothing unlanded"
+        );
+    }
+
+    #[test]
+    fn local_commits_on_a_clone_report_as_unlanded() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        fs::write(workspace.join("work.md"), "local change\n")
+            .expect("the local change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "local work"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(true),
+            "commits the seed lacks must report as unlanded"
+        );
+    }
+
+    #[test]
+    fn landed_work_stops_reporting_unlanded_once_the_seed_advances() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let workspace = dir.path().join("clone");
+        git(
+            dir.path(),
+            &["clone", "--local", &repository, workspace.to_str().unwrap()],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(&repository)
+                    .canonicalize()
+                    .expect("the repository resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+        fs::write(workspace.join("work.md"), "local change\n")
+            .expect("the local change is written");
+        git(&workspace, &["add", "."]);
+        git(&workspace, &["commit", "-m", "local work"]);
+        // Land the clone's branch through the seed with a merge commit
+        // that exists only in the seed's object store.
+        git(
+            Path::new(&repository),
+            &[
+                "fetch",
+                workspace.to_str().expect("the path is UTF-8"),
+                "main",
+            ],
+        );
+        git(Path::new(&repository), &["merge", "--no-ff", "FETCH_HEAD"]);
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
+
+        assert_eq!(
+            snapshot.unique_unlanded_commits,
+            Some(false),
+            "work the seed merged is landed even when the merge commit exists only there"
+        );
     }
 
     #[test]

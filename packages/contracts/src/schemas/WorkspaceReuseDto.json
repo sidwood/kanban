@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+  "properties": {
+    "clean": {
+      "description": "The working tree is clean on a present path.",
+      "type": "boolean"
+    },
+    "free_of_unlanded_commits": {
+      "description": "No unique unlanded commits sit on the Workspace.",
+      "type": "boolean"
+    },
+    "reusable": {
+      "description": "Reusable only when every condition holds and the record is present and not retired.",
+      "type": "boolean"
+    },
+    "unassigned": {
+      "description": "No Lane assignment holds the Workspace.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "clean",
+    "free_of_unlanded_commits",
+    "reusable",
+    "unassigned"
+  ],
+  "title": "WorkspaceReuseDto",
+  "type": "object"
+}

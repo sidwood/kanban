@@ -29,6 +29,13 @@
         "null"
       ]
     },
+    "unique_unlanded_commits": {
+      "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "working_tree_clean": {
       "type": [
         "boolean",

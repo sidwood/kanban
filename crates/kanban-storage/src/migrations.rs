@@ -129,6 +129,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "project Herdr workspace binding",
         sql: include_str!("../migrations/0015_project_herdr_binding.sql"),
     },
+    Migration {
+        version: 16,
+        name: "workspace unlanded guard",
+        sql: include_str!("../migrations/0016_workspace_unlanded.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -344,7 +349,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
             }
         );
         assert_eq!(
@@ -366,7 +371,7 @@ mod tests {
             .expect("versions decode");
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
         for table in [
             "audit_events",
@@ -438,7 +443,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 15, "one event per applied migration");
+        assert_eq!(events.len(), 16, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -514,6 +519,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[14].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 15, "name": "project Herdr workspace binding" })
         );
+        assert_eq!(events[15].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[15].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 16, "name": "workspace unlanded guard" })
+        );
     }
 
     #[test]
@@ -538,7 +548,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15]
+                applied: vec![13, 14, 15, 16]
             }
         );
         let present: i64 = database
@@ -563,6 +573,61 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
             serde_json::json!({ "version": 13, "name": "workspaces" })
+        );
+    }
+
+    #[test]
+    fn migrate_from_version_thirteen_adds_the_unlanded_guard() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 13).expect("the older schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces')
+                 WHERE name = 'unique_unlanded_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the table shape is readable");
+        assert_eq!(
+            before, 0,
+            "version thirteen must not carry the unlanded guard"
+        );
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the upgrade applies");
+
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![14, 15, 16]
+            }
+        );
+        let after: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces')
+                 WHERE name = 'unique_unlanded_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the table shape is readable");
+        assert_eq!(after, 1, "version sixteen adds the unlanded guard");
+        let audited: String = database
+            .connection()
+            .query_row(
+                "SELECT detail FROM audit_events WHERE kind = 'migration.applied' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the audit trail is readable");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
+            serde_json::json!({
+                "version": 16,
+                "name": "workspace unlanded guard"
+            })
         );
     }
 
@@ -599,7 +664,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the rebinding migration applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![15] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![15, 16]
+            }
+        );
         let conn = database.connection();
         let rebound: Vec<(String, Option<String>, String, i64, i64)> = {
             let mut statement = conn
@@ -834,6 +904,10 @@ mod tests {
                     version: 15,
                     name: "project Herdr workspace binding",
                 },
+                PendingMigration {
+                    version: 16,
+                    name: "workspace unlanded guard",
+                },
             ]]
         );
     }
@@ -874,9 +948,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0015 apply");
+            .expect("migrations 0010 through 0016 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

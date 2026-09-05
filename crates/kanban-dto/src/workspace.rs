@@ -36,7 +36,25 @@ pub struct WorkspaceObservationDto {
     pub branch: Option<String>,
     pub head: Option<String>,
     pub working_tree_clean: Option<bool>,
+    /// Whether the Workspace holds unique unlanded commits; absent
+    /// when the observer could not decide.
+    pub unique_unlanded_commits: Option<bool>,
     pub lane_assignment: Option<u64>,
+}
+
+/// The reuse verdict with every condition evaluated (DR-LW-06).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceReuseDto {
+    /// Reusable only when every condition holds and the record is
+    /// present and not retired.
+    pub reusable: bool,
+    /// The working tree is clean on a present path.
+    pub clean: bool,
+    /// No Lane assignment holds the Workspace.
+    pub unassigned: bool,
+    /// No unique unlanded commits sit on the Workspace.
+    pub free_of_unlanded_commits: bool,
 }
 
 /// The Workspace record as every client sees it.
@@ -49,6 +67,7 @@ pub struct WorkspaceRecord {
     pub is_seed: bool,
     pub health: WorkspaceHealthDto,
     pub observation: WorkspaceObservationDto,
+    pub reuse: WorkspaceReuseDto,
     pub version: u64,
 }
 
@@ -177,7 +196,14 @@ mod tests {
                 branch: Some("main".to_owned()),
                 head: Some("abc".to_owned()),
                 working_tree_clean: Some(true),
+                unique_unlanded_commits: Some(false),
                 lane_assignment: None,
+            },
+            reuse: super::WorkspaceReuseDto {
+                reusable: true,
+                clean: true,
+                unassigned: true,
+                free_of_unlanded_commits: true,
             },
             version: 3,
         };

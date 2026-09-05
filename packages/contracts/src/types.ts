@@ -459,6 +459,7 @@ export type WorkspaceObservationDto = {
   head?: string | null;
   lane_assignment?: number | null;
   repository_identity?: string | null;
+  unique_unlanded_commits?: boolean | null;
   working_tree_clean?: boolean | null;
 };
 export type WorkspaceObserveRequest = {
@@ -472,6 +473,7 @@ export type WorkspaceRecord = {
   observation: WorkspaceObservationDto;
   path: string;
   project_id: number;
+  reuse: WorkspaceReuseDto;
   version: number;
 };
 export type WorkspaceRegisterRequest = {
@@ -482,4 +484,10 @@ export type WorkspaceRegisterRequest = {
 export type WorkspaceRetireRequest = {
   mutation: MutationContext;
   workspace_id: number;
+};
+export type WorkspaceReuseDto = {
+  clean: boolean;
+  free_of_unlanded_commits: boolean;
+  reusable: boolean;
+  unassigned: boolean;
 };

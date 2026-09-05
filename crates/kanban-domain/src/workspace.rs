@@ -182,6 +182,7 @@ pub struct WorkspaceObservation {
     branch: Option<String>,
     head: Option<String>,
     working_tree_clean: Option<bool>,
+    unique_unlanded_commits: Option<bool>,
     lane_assignment: Option<u64>,
 }
 
@@ -192,19 +193,22 @@ impl WorkspaceObservation {
     }
 
     /// Apply a fresh git read. Lane assignment comes from durable
-    /// storage, not from git.
+    /// storage, not from git; the unlanded guard is `None` when the
+    /// observer could not decide it.
     pub fn apply_git_read(
         &mut self,
         repository_identity: Option<String>,
         branch: Option<String>,
         head: Option<String>,
         working_tree_clean: bool,
+        unique_unlanded_commits: Option<bool>,
         lane_assignment: Option<u64>,
     ) {
         self.repository_identity = repository_identity;
         self.branch = branch;
         self.head = head;
         self.working_tree_clean = Some(working_tree_clean);
+        self.unique_unlanded_commits = unique_unlanded_commits;
         self.lane_assignment = lane_assignment;
     }
 
@@ -214,7 +218,13 @@ impl WorkspaceObservation {
         self.branch = None;
         self.head = None;
         self.working_tree_clean = None;
+        self.unique_unlanded_commits = None;
         self.lane_assignment = lane_assignment;
+    }
+
+    /// Whether a git read ever applied on a present path.
+    pub fn observed_present(&self) -> bool {
+        self.working_tree_clean.is_some()
     }
 
     /// The observed repository identity, when present.
@@ -235,6 +245,12 @@ impl WorkspaceObservation {
     /// Whether the working tree is clean, when observed.
     pub fn working_tree_clean(&self) -> Option<bool> {
         self.working_tree_clean
+    }
+
+    /// Whether the Workspace holds unique unlanded commits, when the
+    /// observer could decide it.
+    pub fn unique_unlanded_commits(&self) -> Option<bool> {
+        self.unique_unlanded_commits
     }
 
     /// The Lane this Workspace is assigned to, when any.
@@ -335,6 +351,7 @@ impl Workspace {
         branch: Option<String>,
         head: Option<String>,
         working_tree_clean: bool,
+        unique_unlanded_commits: Option<bool>,
     ) -> Option<(WorkspaceHealth, WorkspaceHealth)> {
         let lane_assignment = self.lane_id;
         if present {
@@ -343,6 +360,7 @@ impl Workspace {
                 branch,
                 head,
                 working_tree_clean,
+                unique_unlanded_commits,
                 lane_assignment,
             );
         } else {
@@ -362,6 +380,20 @@ impl Workspace {
         } else {
             Some((previous, next))
         }
+    }
+
+    /// Evaluate reuse from the recorded facts (DR-LW-06): the
+    /// observed tree state, the Lane assignment, retirement, and the
+    /// unlanded-commit guard. An undecided guard counts as unlanded
+    /// work, so reuse stays refused until git proves the tree landed.
+    pub fn reuse_evaluation(&self) -> ReuseEvaluation {
+        evaluate_reuse(ReuseInputs {
+            retired: self.retired,
+            present: self.observation.observed_present(),
+            lane_assigned: self.lane_id.is_some(),
+            working_tree_clean: self.observation.working_tree_clean().unwrap_or(false),
+            unique_unlanded_commits: self.observation.unique_unlanded_commits().unwrap_or(true),
+        })
     }
 
     /// Retire the Workspace: the explicit operator action that ends
@@ -678,6 +710,26 @@ mod reuse_rules {
             "an absent tree cannot vouch for landed commits"
         );
     }
+
+    #[test]
+    fn an_unobserved_workspace_is_not_reusable() {
+        use super::super::{Workspace, WorkspaceId, WorkspaceRegistration};
+        use crate::project::ProjectId;
+
+        let workspace = Workspace::new(
+            WorkspaceId::new(1),
+            WorkspaceRegistration::new(ProjectId::new(1), "/workspaces/core", false)
+                .expect("the registration validates"),
+        );
+
+        let verdict = workspace.reuse_evaluation();
+
+        assert!(
+            !verdict.reusable(),
+            "reuse stays refused until git proves the tree landed"
+        );
+        assert!(!verdict.free_of_unlanded_commits());
+    }
 }
 
 #[cfg(test)]
@@ -731,6 +783,7 @@ mod tests {
             Some("main".to_owned()),
             Some("abc123".to_owned()),
             true,
+            Some(false),
         );
 
         assert_eq!(
@@ -753,6 +806,7 @@ mod tests {
                 Some("feature".to_owned()),
                 Some("def456".to_owned()),
                 false,
+                Some(false),
             )
             .expect("the first observation transitions");
 
@@ -769,6 +823,7 @@ mod tests {
                 Some("main".to_owned()),
                 Some("abc123".to_owned()),
                 true,
+                Some(false),
             )
             .expect("the first observation transitions");
 
@@ -812,6 +867,7 @@ mod tests {
             Some("main".to_owned()),
             Some("abc123".to_owned()),
             true,
+            Some(false),
         );
 
         assert_eq!(transition, None, "retired dominates every observation");
@@ -828,16 +884,91 @@ mod tests {
                 Some("main".to_owned()),
                 Some("abc123".to_owned()),
                 true,
+                Some(false),
             )
             .expect("the first observation transitions");
 
-        let transition = workspace.observe(false, None, None, None, true);
+        let transition = workspace.observe(false, None, None, None, true, None);
 
         assert_eq!(
             transition,
             Some((WorkspaceHealth::Available, WorkspaceHealth::Missing))
         );
         assert_eq!(workspace.observation().branch(), None);
+        assert_eq!(workspace.observation().unique_unlanded_commits(), None);
         assert_eq!(workspace.health(), WorkspaceHealth::Missing);
+    }
+
+    #[test]
+    fn the_observation_records_the_unlanded_commit_guard() {
+        let mut workspace = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+        workspace
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some("feature".to_owned()),
+                Some("def456".to_owned()),
+                true,
+                Some(true),
+            )
+            .expect("the first observation transitions");
+
+        assert_eq!(
+            workspace.observation().unique_unlanded_commits(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn reuse_evaluation_assembles_every_condition_from_stored_facts() {
+        let mut reusable = Workspace::new(WorkspaceId::new(1), registration("/workspaces/core"));
+        reusable
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some("main".to_owned()),
+                Some("abc123".to_owned()),
+                true,
+                Some(false),
+            )
+            .expect("the observation transitions");
+
+        let verdict = reusable.reuse_evaluation();
+        assert!(verdict.reusable());
+        assert!(verdict.clean());
+        assert!(verdict.unassigned());
+        assert!(verdict.free_of_unlanded_commits());
+
+        let mut unlanded = Workspace::new(WorkspaceId::new(2), registration("/workspaces/edge"));
+        unlanded
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some("feature".to_owned()),
+                Some("def456".to_owned()),
+                true,
+                Some(true),
+            )
+            .expect("the observation transitions");
+        let verdict = unlanded.reuse_evaluation();
+        assert!(!verdict.reusable());
+        assert!(verdict.clean(), "the tree itself is clean");
+        assert!(verdict.unassigned());
+        assert!(!verdict.free_of_unlanded_commits());
+
+        let mut retired = Workspace::new(WorkspaceId::new(3), registration("/workspaces/old"));
+        retired
+            .observe(
+                true,
+                Some("identity".to_owned()),
+                Some("main".to_owned()),
+                Some("abc123".to_owned()),
+                true,
+                Some(false),
+            )
+            .expect("the observation transitions");
+        retired.retire().expect("the retirement applies");
+        let verdict = retired.reuse_evaluation();
+        assert!(!verdict.reusable(), "a retired record never reuses");
     }
 }

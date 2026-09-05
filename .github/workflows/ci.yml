@@ -1,0 +1,64 @@
+# Application-repository-owned CI gates (KAN-T102): pull requests and
+# main run the repository gate `just check` — formatting, lint, tests,
+# contract regeneration, spelling, and diff checks — and nothing else.
+# There is deliberately no secret, publication, packaging, or planning
+# input here, so untrusted pull-request code cannot reach any of them.
+# scripts/check_workflow_policy.mjs regression-tests every rule below.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# Least privilege at every level: read-only contents, and no job asks
+# for more. Untrusted pull-request code runs with exactly this token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Repository gates
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      # Every action is pinned to an immutable commit with its release
+      # identity recorded beside the pin. Before adding an action,
+      # extend the allowlist in scripts/check_workflow_policy.mjs.
+      - name: Check out the application repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gates only run local git operations afterwards, so the
+          # workflow token is not kept on disk for untrusted code.
+          persist-credentials: false
+      - name: Enable pnpm from the packageManager field
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Provide the pinned Node LTS with a pnpm cache
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # The run commands below are the workflow command matrix. Keep
+      # them single-line: scripts/check_ci_matrix.sh extracts and
+      # re-runs them from a fresh checkout. `just check` needs no
+      # packaging (KAN-T64), Apple membership, or release credential.
+      # The runner image ships rustup without the format and lint
+      # components; a Homebrew Rust has them and no rustup, so only
+      # ensure them when rustup manages the toolchain. `just check`
+      # still fails loudly through need-rust when they are missing.
+      - name: Ensure the Rust format and lint components
+        run: if command -v rustup >/dev/null 2>&1; then rustup component add rustfmt clippy; fi
+      - name: Install just and pre-commit
+        run: brew install just pre-commit
+      - name: Install locked web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Fetch the locked Rust workspace
+        run: cargo fetch --locked
+      - name: Run the repository gates
+        run: just check

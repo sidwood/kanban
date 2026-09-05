@@ -44,8 +44,9 @@ build: need-rust need-web
     cargo build --workspace
     pnpm -r run build
 
-# fmt, clippy, Rust tests, contract drift, the repository gates, web
-# lint, typecheck, and web tests.
+# fmt, clippy, Rust tests, contract drift, the repository gates, the
+# spelling gate, the CI workflow policy, web lint, typecheck, and web
+# tests.
 check: need-rust need-web
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
@@ -53,6 +54,8 @@ check: need-rust need-web
     just check-shell
     just verify-contracts
     just check-gates
+    just check-spelling
+    just check-workflows
     pnpm -r run lint
     pnpm -r run typecheck
     pnpm -r run test
@@ -72,6 +75,60 @@ check-shell: need-rust need-web
 # Prove the commit hooks and contract verification reject bad input.
 check-gates: need-rust need-web
     scripts/check_gates.sh
+
+# The repository's real spelling gate: the same pinned CSpell hook the
+# commit hooks run, applied to every file. Hooks only judge staged
+# content, so `just check` carries the spelling gate into CI rather
+# than trusting that every commit ran its hooks. The dictionary is
+# checked for order first: an unsorted list gives an addition no
+# obvious home, so words accrete wherever the last edit happened.
+check-spelling:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    words="$(
+      awk '
+        /^  "words": \[$/ { inside = 1; next }
+        inside && /^  \]/ { inside = 0 }
+        inside { gsub(/^[[:space:]]*"|",?$/, ""); print }
+      ' cspell.json
+    )"
+    if [[ -z "$words" ]]; then
+      echo "kanban: cspell.json exposes no word list to check." >&2
+      exit 1
+    fi
+    if [[ "$words" != "$(LC_ALL=C sort <<<"$words")" ]]; then
+      echo "kanban: the cspell.json word list is out of order." >&2
+      echo "" >&2
+      echo "Out of place:" >&2
+      diff <(printf '%s\n' "$words") <(LC_ALL=C sort <<<"$words") \
+        | sed -n 's/^< /    /p' >&2
+      echo "" >&2
+      echo "Sort the list with LC_ALL=C ordering and commit it." >&2
+      exit 1
+    fi
+    if ! command -v pre-commit >/dev/null 2>&1; then
+      echo "kanban: pre-commit is required but was not found." >&2
+      echo "" >&2
+      echo "Install it with: brew install pre-commit" >&2
+      echo "Then re-run just bootstrap and the failed recipe." >&2
+      exit 1
+    fi
+    pre-commit run cspell --all-files
+
+# Prove the CI workflow holds its least-privilege policy: pinned and
+# documented actions, read-only permissions, locked installs, an
+# allow-list of the expressions it may evaluate, an explicit
+# persist-credentials refusal at every checkout, and no publication,
+# privileged-event, or planning input. The checker judges the document
+# the pinned YAML parser reads, so it needs the locked web workspace.
+check-workflows: need-web
+    scripts/check_workflow_policy.mjs
+
+# Re-run the CI workflow's command matrix from a fresh checkout with
+# no temp/ directory (the KAN-T102 proof). Heavy and recursive in
+# `just check`, which it runs itself, so it is an on-demand audit.
+check-ci-matrix:
+    scripts/check_ci_matrix.sh
 
 # Run the core and the desktop app for development. The shell starts
 # the core on demand; quitting the window leaves it running.

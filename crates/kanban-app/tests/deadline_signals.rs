@@ -225,3 +225,24 @@ fn deadline_signals_report_each_breached_role_once_in_role_order() {
         "each breached role raises one signal, in a stable order"
     );
 }
+
+#[test]
+fn deadline_signals_retune_without_forgetting_observed_roles() {
+    let mut monitor = deadlines(3_600, 7_200);
+    monitor.observe_event(at(0), &output("implementer"));
+
+    monitor.retune(DeadlineConfig::from_secs(600, 1_200));
+
+    assert_eq!(monitor.config(), DeadlineConfig::from_secs(600, 1_200));
+    assert!(
+        monitor.evaluate(2, at(600)).len() == 1,
+        "a role observed before the retune faces the tightened stall deadline"
+    );
+}
+
+#[test]
+fn deadline_signals_default_to_the_global_deadlines() {
+    let defaults = DeadlineConfig::default();
+    assert_eq!(defaults.stall(), Duration::from_secs(3_600));
+    assert_eq!(defaults.missing_result(), Duration::from_secs(7_200));
+}

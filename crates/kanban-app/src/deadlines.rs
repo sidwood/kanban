@@ -66,6 +66,15 @@ impl From<&HerdrGlobalDefaults> for DeadlineConfig {
     }
 }
 
+impl Default for DeadlineConfig {
+    /// The global defaults (KAN-S8-US4): an hour of quiet before a
+    /// working role is stalled, two hours without a result before a
+    /// settled one is result-missing.
+    fn default() -> Self {
+        Self::from_secs(3_600, 7_200)
+    }
+}
+
 /// What one observed role's deadlines hang on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct RoleDeadlines {
@@ -103,6 +112,13 @@ impl DeadlineMonitor {
     /// The deadlines this monitor enforces.
     pub fn config(&self) -> DeadlineConfig {
         self.config
+    }
+
+    /// Enforce `config` from now on, keeping every observed role:
+    /// settings changes apply to the live observation without a
+    /// reconnect, and the roles already watched stay watched.
+    pub fn retune(&mut self, config: DeadlineConfig) {
+        self.config = config;
     }
 
     /// Observe one push event at `at`. Events without a named role —

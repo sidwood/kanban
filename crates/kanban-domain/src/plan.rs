@@ -269,7 +269,7 @@ pub fn cycles_in(order: &[SpecNumber], edges: &[DependencyEdge]) -> Vec<Dependen
         std::collections::BTreeMap::new();
     let mut self_edges: std::collections::BTreeSet<SpecNumber> = std::collections::BTreeSet::new();
     for edge in edges {
-        if !order.contains(&edge.from()) || !order.contains(&edge.to()) {
+        if !members.contains(&edge.from()) || !members.contains(&edge.to()) {
             continue;
         }
         if edge.from() == edge.to() {

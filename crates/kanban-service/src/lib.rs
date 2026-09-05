@@ -2,6 +2,7 @@
 //! application core, and the socket transport together and keeps
 //! serving after the desktop UI quits (ADR-0001).
 
+pub mod herdr;
 pub mod timeline;
 
 #[cfg(test)]
@@ -11,15 +12,18 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 
-use kanban_app::{Core, EventSink, GitObservation, TimelineQueryHandler};
+use kanban_app::{
+    Core, EventSink, GitObservation, ProjectStore, RegistrationError, TimelineQueryHandler,
+};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
-    SqliteEvidenceStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteProjectStore,
-    SqliteRulingStore,
+    SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore,
+    SqliteProjectStore, SqliteRulingStore,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
+use herdr::{HerdrObserver, LiveHerdrDiagnostics, production_socket_root};
 use timeline::StorageTimelineStore;
 
 /// How many replay outcomes the core keeps. A retry follows its
@@ -41,11 +45,12 @@ impl GitObservation for LocalRepositories {
     }
 }
 
-/// The running core process: its open database and its serving
-/// socket.
+/// The running core process: its open database, its serving
+/// socket, and its Herdr observer.
 pub struct CoreProcess {
     database: Arc<Database>,
     server: ServerHandle,
+    _herdr: Arc<HerdrObserver>,
 }
 
 impl CoreProcess {
@@ -78,9 +83,10 @@ fn assemble_core(
     data_dir: &Path,
     database: Database,
     events: Arc<dyn EventSink>,
-) -> Result<(Arc<Database>, Core), ServiceError> {
+) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
+    let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -96,7 +102,12 @@ fn assemble_core(
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
     let mut core = Core::with_health(env!("CARGO_PKG_VERSION"), idempotency_store, events)?;
     core.register_initiatives(initiative_store.clone())?;
-    core.register_projects(project_store, Arc::new(LocalRepositories), initiative_store)?;
+    core.register_projects(
+        project_store.clone(),
+        Arc::new(LocalRepositories),
+        initiative_store,
+        herdr_settings_store.clone(),
+    )?;
     core.register_comments(comment_store)?;
     core.register_rulings(ruling_store)?;
     core.register_deferrals(deferral_store)?;
@@ -105,7 +116,13 @@ fn assemble_core(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),
     )?;
-    Ok((database, core))
+    let projects = project_store.list().map_err(|error| {
+        ServiceError::Registration(RegistrationError::Uncatalogued(error.message))
+    })?;
+    let herdr = HerdrObserver::start(database.clone(), &projects, production_socket_root());
+    let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
+    core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
+    Ok((database, core, herdr))
 }
 
 /// Open (creating if needed) the database inside `data_dir`, bring
@@ -115,9 +132,13 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let (database, core) = assemble_core(data_dir, database, broker)?;
+    let (database, core, herdr) = assemble_core(data_dir, database, broker)?;
     let server = server.serve(Arc::new(core))?;
-    Ok(CoreProcess { database, server })
+    Ok(CoreProcess {
+        database,
+        server,
+        _herdr: herdr,
+    })
 }
 
 /// Why the core process could not start.
@@ -198,7 +219,7 @@ mod tests {
     fn registered_catalogue_matches_the_exposed_catalogue() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let database = prepare_database(dir.path()).expect("the production database prepares");
-        let (_, core) = assemble_core(dir.path(), database, Arc::new(NoopEventSink))
+        let (_, core, _) = assemble_core(dir.path(), database, Arc::new(NoopEventSink))
             .expect("the production core wires");
 
         assert_registered_matches_exposed_catalogue(&core.registered_operations());

@@ -7,6 +7,7 @@ pub mod db;
 pub mod deferrals;
 pub mod error;
 pub mod evidence;
+pub mod herdr;
 pub mod idempotency;
 pub mod initiatives;
 pub mod migrations;
@@ -23,6 +24,7 @@ pub use db::Database;
 pub use deferrals::SqliteDeferralStore;
 pub use error::StorageError;
 pub use evidence::{SqliteEvidenceStore, content_hash};
+pub use herdr::SqliteHerdrSettingsStore;
 pub use idempotency::{RetentionPolicy, SqliteIdempotencyStore};
 pub use initiatives::SqliteInitiativeStore;
 pub use migrations::{

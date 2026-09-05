@@ -118,6 +118,55 @@ export type HealthResponse = {
   connected: boolean;
   service_version: string;
 };
+export type HerdrConnectionDiagnostics = {
+  connected: boolean;
+  herdr_workspace?: string | null;
+  last_error?: string | null;
+  last_snapshot_at?: string | null;
+  product_workspace: string;
+  session_name: string;
+};
+export type HerdrDefaultsGetQuery = Record<string, never>;
+export type HerdrDefaultsGetResponse = {
+  defaults: HerdrGlobalDefaults;
+};
+export type HerdrDefaultsUpdateRequest = {
+  missing_result_deadline_secs: number;
+  mutation: MutationContext;
+  reconciliation_interval_secs: number;
+  stall_deadline_secs: number;
+};
+export type HerdrGlobalDefaults = {
+  missing_result_deadline_secs: number;
+  reconciliation_interval_secs: number;
+  stall_deadline_secs: number;
+  version: number;
+};
+export type HerdrProjectSettings = {
+  missing_result_deadline_secs: number;
+  polling_fallback_enabled: boolean;
+  polling_fallback_interval_secs: number;
+  reconciliation_interval_secs: number;
+  stall_deadline_secs: number;
+  version: number;
+};
+export type HerdrSettingsGetQuery = {
+  project_id: number;
+};
+export type HerdrSettingsGetResponse = {
+  diagnostics: HerdrConnectionDiagnostics;
+  project_id: number;
+  settings: HerdrProjectSettings;
+};
+export type HerdrSettingsUpdateRequest = {
+  missing_result_deadline_secs: number;
+  mutation: MutationContext;
+  polling_fallback_enabled: boolean;
+  polling_fallback_interval_secs: number;
+  project_id: number;
+  reconciliation_interval_secs: number;
+  stall_deadline_secs: number;
+};
 export type InitiativeArchiveRequest = {
   initiative_id: number;
   mutation: MutationContext;

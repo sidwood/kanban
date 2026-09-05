@@ -194,6 +194,34 @@ define_exposed_catalogue! {
         mcp: "evidence_list",
         description: "List evidence for a Project and append a timeline event.",
     },
+    "herdr.settings.get" => {
+        kind: Query,
+        request: "HerdrSettingsGetQuery",
+        response: "HerdrSettingsGetResponse",
+        mcp: "herdr_settings_get",
+        description: "Return one Project's Herdr settings and connection diagnostics.",
+    },
+    "herdr.settings.update" => {
+        kind: Command,
+        request: "HerdrSettingsUpdateRequest",
+        response: "HerdrProjectSettings",
+        mcp: "herdr_settings_update",
+        description: "Update one Project's Herdr reconciliation, fallback polling, and deadlines.",
+    },
+    "herdr.defaults.get" => {
+        kind: Query,
+        request: "HerdrDefaultsGetQuery",
+        response: "HerdrDefaultsGetResponse",
+        mcp: "herdr_defaults_get",
+        description: "Return global Herdr observation defaults.",
+    },
+    "herdr.defaults.update" => {
+        kind: Command,
+        request: "HerdrDefaultsUpdateRequest",
+        response: "HerdrGlobalDefaults",
+        mcp: "herdr_defaults_update",
+        description: "Update global Herdr reconciliation and deadline defaults.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

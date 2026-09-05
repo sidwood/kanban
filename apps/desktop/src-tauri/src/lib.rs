@@ -15,11 +15,14 @@ use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
-    EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, InitiativeArchiveRequest,
-    InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
-    InitiativeRenameRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
-    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
-    RulingRecordRequest, RulingSupersedeRequest, TimelineQuery, TimelineQueryResponse,
+    EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
+    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
+    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
+    HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
+    InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
+    ProjectArchiveRequest, ProjectListQuery, ProjectListResponse, ProjectRecord,
+    ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest,
+    RulingSupersedeRequest, TimelineQuery, TimelineQueryResponse,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -314,6 +317,64 @@ async fn evidence_list(
     .await
 }
 
+#[tauri::command]
+async fn herdr_settings_get(
+    shell: State<'_, Arc<Shell>>,
+    request: HerdrSettingsGetQuery,
+) -> Result<HerdrSettingsGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "herdr settings", |shell| {
+        forward_query(shell, "herdr.settings.get", "herdr settings", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn herdr_settings_update(
+    shell: State<'_, Arc<Shell>>,
+    request: HerdrSettingsUpdateRequest,
+) -> Result<HerdrProjectSettings, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "herdr settings update", |shell| {
+        forward_command(
+            shell,
+            "herdr.settings.update",
+            "updated herdr settings",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn herdr_defaults_get(
+    shell: State<'_, Arc<Shell>>,
+    request: HerdrDefaultsGetQuery,
+) -> Result<HerdrDefaultsGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "herdr defaults", |shell| {
+        forward_query(shell, "herdr.defaults.get", "herdr defaults", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn herdr_defaults_update(
+    shell: State<'_, Arc<Shell>>,
+    request: HerdrDefaultsUpdateRequest,
+) -> Result<HerdrGlobalDefaults, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "herdr defaults update", |shell| {
+        forward_command(
+            shell,
+            "herdr.defaults.update",
+            "updated herdr defaults",
+            request,
+        )
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
     health_get,
     initiative_create,
@@ -335,6 +396,10 @@ shell_handlers::shell_handler_catalogue! {
     deferral_list,
     evidence_attach,
     evidence_list,
+    herdr_settings_get,
+    herdr_settings_update,
+    herdr_defaults_get,
+    herdr_defaults_update,
 }
 
 /// Build the window, start the core on demand, and supervise the

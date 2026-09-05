@@ -98,6 +98,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "projects",
         sql: include_str!("../migrations/0009_projects.sql"),
     },
+    Migration {
+        version: 10,
+        name: "herdr_settings",
+        sql: include_str!("../migrations/0010_herdr_settings.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any
@@ -248,7 +253,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
             }
         );
         assert_eq!(
@@ -268,7 +273,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -280,6 +285,8 @@ mod tests {
             "idempotency_outcomes",
             "evidence_items",
             "projects",
+            "herdr_global_defaults",
+            "herdr_project_settings",
         ] {
             let present: i64 = database
                 .connection()
@@ -328,7 +335,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 9, "one event per applied migration");
+        assert_eq!(events.len(), 10, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -443,6 +450,10 @@ mod tests {
                 PendingMigration {
                     version: 9,
                     name: "projects",
+                },
+                PendingMigration {
+                    version: 10,
+                    name: "herdr_settings",
                 },
             ]]
         );

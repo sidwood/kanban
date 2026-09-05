@@ -63,6 +63,12 @@ const eventStream = computed(() =>
       >
         Manage Initiatives
       </RouterLink>
+      <RouterLink
+        to="/settings/herdr"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Herdr settings
+      </RouterLink>
     </div>
     <section
       v-if="connection.phase === 'connected'"

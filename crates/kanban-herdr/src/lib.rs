@@ -1,3 +1,17 @@
 //! Per-session Herdr socket client: snapshots, subscriptions,
 //! reconciliation, and polling fallback. Emits telemetry, never
 //! verdicts.
+
+mod client;
+mod error;
+mod paths;
+mod protocol;
+mod session;
+
+pub use client::{PromptRequest, SessionClient, WaitRequest};
+pub use error::HerdrError;
+pub use paths::{herdr_sessions_dir, session_socket_path};
+pub use protocol::{HerdrRequest, HerdrResponse, Snapshot};
+pub use session::SessionMapping;
+
+pub mod fixture;

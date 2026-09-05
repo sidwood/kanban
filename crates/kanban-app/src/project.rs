@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::{EventDescriptor, event_descriptor};
 use crate::events::{EventSink, emit_catalogued};
+use crate::herdr::HerdrSettingsStore;
 use crate::initiative::InitiativeStore;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::timeline::TimelineEnvelope;
@@ -102,6 +103,7 @@ impl Core {
         projects: Arc<dyn ProjectStore>,
         git: Arc<dyn GitObservation>,
         initiatives: Arc<dyn InitiativeStore>,
+        herdr_settings: Arc<dyn HerdrSettingsStore>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "project.register",
@@ -109,6 +111,7 @@ impl Core {
                 store: projects.clone(),
                 git,
                 initiatives,
+                herdr_settings,
             }),
         )?;
         self.register_command(
@@ -127,6 +130,7 @@ struct RegisterProject {
     store: Arc<dyn ProjectStore>,
     git: Arc<dyn GitObservation>,
     initiatives: Arc<dyn InitiativeStore>,
+    herdr_settings: Arc<dyn HerdrSettingsStore>,
 }
 
 impl CommandHandler for RegisterProject {
@@ -180,6 +184,8 @@ impl CommandHandler for RegisterProject {
         let project = self.store.create(&registration, &|id| {
             transition(id, "registered", facts.clone())
         })?;
+        self.herdr_settings
+            .seed_project_settings(project.id().value())?;
         announce(events, event_descriptor("project.registered"), &project);
         encode_record(&project)
     }
@@ -272,6 +278,7 @@ fn announce(events: &dyn EventSink, event: &EventDescriptor, project: &Project) 
 
 #[cfg(test)]
 mod testing {
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
@@ -285,6 +292,7 @@ mod testing {
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
+    use crate::herdr::HerdrSettingsStore;
     use crate::initiative::InitiativeStore;
     use crate::mutation::MemoryIdempotencyStore;
     use crate::timeline::TimelineEnvelope;
@@ -480,6 +488,75 @@ mod testing {
         pub(super) core: Core,
     }
 
+    struct MemoryHerdrSettings {
+        projects: Mutex<HashMap<u64, kanban_dto::HerdrProjectSettings>>,
+        defaults: kanban_dto::HerdrGlobalDefaults,
+    }
+
+    impl Default for MemoryHerdrSettings {
+        fn default() -> Self {
+            Self {
+                projects: Mutex::new(HashMap::new()),
+                defaults: kanban_dto::HerdrGlobalDefaults {
+                    reconciliation_interval_secs: 300,
+                    stall_deadline_secs: 3600,
+                    missing_result_deadline_secs: 7200,
+                    version: 1,
+                },
+            }
+        }
+    }
+
+    impl HerdrSettingsStore for MemoryHerdrSettings {
+        fn global_defaults(&self) -> Result<kanban_dto::HerdrGlobalDefaults, ApiError> {
+            Ok(self.defaults.clone())
+        }
+
+        fn update_global_defaults(
+            &self,
+            _request: &kanban_dto::HerdrDefaultsUpdateRequest,
+        ) -> Result<kanban_dto::HerdrGlobalDefaults, ApiError> {
+            Err(ApiError::internal("not implemented in project tests"))
+        }
+
+        fn project_settings(
+            &self,
+            project_id: u64,
+        ) -> Result<kanban_dto::HerdrProjectSettings, ApiError> {
+            self.projects
+                .lock()
+                .unwrap()
+                .get(&project_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::not_found(&format!("herdr settings for project {project_id}"))
+                })
+        }
+
+        fn update_project_settings(
+            &self,
+            _request: &kanban_dto::HerdrSettingsUpdateRequest,
+        ) -> Result<kanban_dto::HerdrProjectSettings, ApiError> {
+            Err(ApiError::internal("not implemented in project tests"))
+        }
+
+        fn seed_project_settings(&self, project_id: u64) -> Result<(), ApiError> {
+            let defaults = self.global_defaults()?;
+            self.projects.lock().unwrap().insert(
+                project_id,
+                kanban_dto::HerdrProjectSettings {
+                    reconciliation_interval_secs: defaults.reconciliation_interval_secs,
+                    polling_fallback_enabled: false,
+                    polling_fallback_interval_secs: 10,
+                    stall_deadline_secs: defaults.stall_deadline_secs,
+                    missing_result_deadline_secs: defaults.missing_result_deadline_secs,
+                    version: 1,
+                },
+            );
+            Ok(())
+        }
+    }
+
     pub(super) fn harness() -> Harness {
         harness_with_observing(
             KnownRepositories {
@@ -496,6 +573,7 @@ mod testing {
     ) -> Harness {
         let projects = Arc::new(MemoryProjectStore::default());
         let initiatives = Arc::new(MemoryInitiatives::default());
+        let herdr_settings = Arc::new(MemoryHerdrSettings::default());
         let mut core = Core::new(
             exposed_operations(),
             Arc::new(MemoryIdempotencyStore::new()),
@@ -503,8 +581,13 @@ mod testing {
         );
         core.register_initiatives(initiatives.clone())
             .expect("the initiative operations register");
-        core.register_projects(projects.clone(), Arc::new(git), initiatives.clone())
-            .expect("the project operations register");
+        core.register_projects(
+            projects.clone(),
+            Arc::new(git),
+            initiatives.clone(),
+            herdr_settings.clone(),
+        )
+        .expect("the project operations register");
         Harness {
             projects,
             initiatives,

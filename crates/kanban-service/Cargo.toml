@@ -7,7 +7,9 @@ publish.workspace = true
 
 [dependencies]
 kanban-app = { workspace = true }
+kanban-domain = { workspace = true }
 kanban-dto = { workspace = true }
+kanban-herdr = { path = "../kanban-herdr" }
 kanban-storage = { workspace = true }
 kanban-transport = { workspace = true }
 serde_json = { workspace = true }

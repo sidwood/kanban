@@ -9,6 +9,7 @@ pub mod dispatch;
 pub mod event_catalog;
 pub mod events;
 pub mod evidence;
+pub mod herdr;
 pub mod initiative;
 pub mod mutation;
 pub mod project;
@@ -25,6 +26,7 @@ pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};
 pub use evidence::{EvidenceFilter, EvidenceStore};
+pub use herdr::{HerdrDiagnostics, HerdrSettingsStore};
 pub use initiative::InitiativeStore;
 #[cfg(any(test, feature = "test-support"))]
 pub use mutation::MemoryIdempotencyStore;

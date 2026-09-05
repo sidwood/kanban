@@ -12,10 +12,11 @@ use kanban_desktop_lib::commands::{forward_command_value, forward_query_value, i
 use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
-    HealthQuery, InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeRenameRequest, MutationContext, ProjectArchiveRequest, ProjectListQuery,
-    ProjectRegisterRequest, RulingListQuery, RulingRecordRequest, RulingSupersedeRequest,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery,
+    HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
+    InitiativeListQuery, InitiativeRenameRequest, MutationContext, ProjectArchiveRequest,
+    ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
+    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -175,6 +176,23 @@ fn sample_request(schema: &str) -> Value {
             "commit_identity": "c9eac24",
         }),
         "EvidenceListRequest" => json!({ "mutation": mutation, "project_id": "kan" }),
+        "HerdrSettingsGetQuery" => json!({ "project_id": 1 }),
+        "HerdrSettingsUpdateRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "reconciliation_interval_secs": 300,
+            "polling_fallback_enabled": false,
+            "polling_fallback_interval_secs": 10,
+            "stall_deadline_secs": 3600,
+            "missing_result_deadline_secs": 7200,
+        }),
+        "HerdrDefaultsGetQuery" => json!({}),
+        "HerdrDefaultsUpdateRequest" => json!({
+            "mutation": mutation,
+            "reconciliation_interval_secs": 300,
+            "stall_deadline_secs": 3600,
+            "missing_result_deadline_secs": 7200,
+        }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -333,6 +351,22 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "EvidenceListRequest" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceListRequest>,
+        >(envelope)
+        .is_err(),
+        "HerdrSettingsGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrSettingsGetQuery>,
+        >(envelope)
+        .is_err(),
+        "HerdrSettingsUpdateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrSettingsUpdateRequest>,
+        >(envelope)
+        .is_err(),
+        "HerdrDefaultsGetQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsGetQuery>,
+        >(envelope)
+        .is_err(),
+        "HerdrDefaultsUpdateRequest" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsUpdateRequest>,
         >(envelope)
         .is_err(),
         other => panic!("no unknown-field arm for {other}"),

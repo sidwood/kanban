@@ -48,6 +48,10 @@ const COMMAND_FOR_OPERATION = {
   'deferral.list': 'deferral_list',
   'evidence.attach': 'evidence_attach',
   'evidence.list': 'evidence_list',
+  'herdr.settings.get': 'herdr_settings_get',
+  'herdr.settings.update': 'herdr_settings_update',
+  'herdr.defaults.get': 'herdr_defaults_get',
+  'herdr.defaults.update': 'herdr_defaults_update',
 } as const satisfies Record<KanbanOperationName, string>
 
 // The transport the generated client runs on, plus the shell's

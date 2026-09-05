@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Per-Project Herdr observation settings.",
+  "properties": {
+    "missing_result_deadline_secs": {
+      "description": "After this many seconds a settled session is result-missing.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "polling_fallback_enabled": {
+      "description": "Whether the ten-second whole-session polling fallback is on.",
+      "type": "boolean"
+    },
+    "polling_fallback_interval_secs": {
+      "description": "The whole-session polling interval when fallback is enabled.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "reconciliation_interval_secs": {
+      "description": "How often reconciliation compares full session state.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "stall_deadline_secs": {
+      "description": "After this many seconds a run is considered stale.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "The optimistic version for updates.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "missing_result_deadline_secs",
+    "polling_fallback_enabled",
+    "polling_fallback_interval_secs",
+    "reconciliation_interval_secs",
+    "stall_deadline_secs",
+    "version"
+  ],
+  "title": "HerdrProjectSettings",
+  "type": "object"
+}

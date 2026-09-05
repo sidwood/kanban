@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `herdr.settings.update` command.",
+  "properties": {
+    "missing_result_deadline_secs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "polling_fallback_enabled": {
+      "type": "boolean"
+    },
+    "polling_fallback_interval_secs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "reconciliation_interval_secs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "stall_deadline_secs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "missing_result_deadline_secs",
+    "mutation",
+    "polling_fallback_enabled",
+    "polling_fallback_interval_secs",
+    "project_id",
+    "reconciliation_interval_secs",
+    "stall_deadline_secs"
+  ],
+  "title": "HerdrSettingsUpdateRequest",
+  "type": "object"
+}

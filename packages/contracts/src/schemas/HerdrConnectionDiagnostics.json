@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Connection diagnostics for one Project's Herdr session.",
+  "properties": {
+    "connected": {
+      "description": "Whether the per-session socket is connected.",
+      "type": "boolean"
+    },
+    "herdr_workspace": {
+      "description": "The Herdr workspace observed through the socket, if connected.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_error": {
+      "description": "The last connection or mapping error, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_snapshot_at": {
+      "description": "When the last full snapshot was captured.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "product_workspace": {
+      "description": "The product Seed Workspace this session maps to.",
+      "type": "string"
+    },
+    "session_name": {
+      "description": "The exclusive named Herdr session.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "connected",
+    "product_workspace",
+    "session_name"
+  ],
+  "title": "HerdrConnectionDiagnostics",
+  "type": "object"
+}

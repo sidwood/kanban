@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "HerdrConnectionDiagnostics": {
+      "additionalProperties": false,
+      "description": "Connection diagnostics for one Project's Herdr session.",
+      "properties": {
+        "connected": {
+          "description": "Whether the per-session socket is connected.",
+          "type": "boolean"
+        },
+        "herdr_workspace": {
+          "description": "The Herdr workspace observed through the socket, if connected.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_error": {
+          "description": "The last connection or mapping error, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_snapshot_at": {
+          "description": "When the last full snapshot was captured.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product_workspace": {
+          "description": "The product Seed Workspace this session maps to.",
+          "type": "string"
+        },
+        "session_name": {
+          "description": "The exclusive named Herdr session.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connected",
+        "product_workspace",
+        "session_name"
+      ],
+      "type": "object"
+    },
+    "HerdrProjectSettings": {
+      "additionalProperties": false,
+      "description": "Per-Project Herdr observation settings.",
+      "properties": {
+        "missing_result_deadline_secs": {
+          "description": "After this many seconds a settled session is result-missing.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "polling_fallback_enabled": {
+          "description": "Whether the ten-second whole-session polling fallback is on.",
+          "type": "boolean"
+        },
+        "polling_fallback_interval_secs": {
+          "description": "The whole-session polling interval when fallback is enabled.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "reconciliation_interval_secs": {
+          "description": "How often reconciliation compares full session state.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stall_deadline_secs": {
+          "description": "After this many seconds a run is considered stale.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The optimistic version for updates.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "missing_result_deadline_secs",
+        "polling_fallback_enabled",
+        "polling_fallback_interval_secs",
+        "reconciliation_interval_secs",
+        "stall_deadline_secs",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `herdr.settings.get` query.",
+  "properties": {
+    "diagnostics": {
+      "$ref": "#/definitions/HerdrConnectionDiagnostics"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "settings": {
+      "$ref": "#/definitions/HerdrProjectSettings"
+    }
+  },
+  "required": [
+    "diagnostics",
+    "project_id",
+    "settings"
+  ],
+  "title": "HerdrSettingsGetResponse",
+  "type": "object"
+}

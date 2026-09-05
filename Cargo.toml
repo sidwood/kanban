@@ -27,4 +27,5 @@ kanban-domain = { path = "crates/kanban-domain" }
 kanban-app = { path = "crates/kanban-app" }
 kanban-storage = { path = "crates/kanban-storage" }
 kanban-transport = { path = "crates/kanban-transport" }
+kanban-herdr = { path = "crates/kanban-herdr" }
 kanban-service = { path = "crates/kanban-service" }

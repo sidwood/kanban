@@ -7,6 +7,7 @@ pub mod error;
 pub mod event;
 pub mod evidence;
 pub mod health;
+pub mod herdr;
 pub mod initiative;
 pub mod mutation;
 pub mod project;
@@ -33,6 +34,11 @@ pub use evidence::{
     EvidenceRecord,
 };
 pub use health::{HealthQuery, HealthResponse};
+pub use herdr::{
+    HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
+    HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
+    HerdrSettingsGetResponse, HerdrSettingsUpdateRequest,
+};
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
@@ -116,6 +122,15 @@ mod tests {
                 "LiveEventName",
                 "HealthQuery",
                 "HealthResponse",
+                "HerdrConnectionDiagnostics",
+                "HerdrDefaultsGetQuery",
+                "HerdrDefaultsGetResponse",
+                "HerdrDefaultsUpdateRequest",
+                "HerdrGlobalDefaults",
+                "HerdrProjectSettings",
+                "HerdrSettingsGetQuery",
+                "HerdrSettingsGetResponse",
+                "HerdrSettingsUpdateRequest",
                 "InitiativeArchiveRequest",
                 "InitiativeCreateRequest",
                 "InitiativeListQuery",

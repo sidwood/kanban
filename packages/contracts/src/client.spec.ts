@@ -33,6 +33,10 @@ describe('generated client', () => {
       'deferral.list',
       'evidence.attach',
       'evidence.list',
+      'herdr.settings.get',
+      'herdr.settings.update',
+      'herdr.defaults.get',
+      'herdr.defaults.update',
     ])
   })
 

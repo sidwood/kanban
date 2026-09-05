@@ -18,6 +18,11 @@ use crate::evidence::{
     EvidenceRecord,
 };
 use crate::health::{HealthQuery, HealthResponse};
+use crate::herdr::{
+    HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
+    HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
+    HerdrSettingsGetResponse, HerdrSettingsUpdateRequest,
+};
 use crate::initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
@@ -60,6 +65,30 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("LiveEventName", schema_for!(LiveEventName)),
         ("HealthQuery", schema_for!(HealthQuery)),
         ("HealthResponse", schema_for!(HealthResponse)),
+        (
+            "HerdrConnectionDiagnostics",
+            schema_for!(HerdrConnectionDiagnostics),
+        ),
+        ("HerdrDefaultsGetQuery", schema_for!(HerdrDefaultsGetQuery)),
+        (
+            "HerdrDefaultsGetResponse",
+            schema_for!(HerdrDefaultsGetResponse),
+        ),
+        (
+            "HerdrDefaultsUpdateRequest",
+            schema_for!(HerdrDefaultsUpdateRequest),
+        ),
+        ("HerdrGlobalDefaults", schema_for!(HerdrGlobalDefaults)),
+        ("HerdrProjectSettings", schema_for!(HerdrProjectSettings)),
+        ("HerdrSettingsGetQuery", schema_for!(HerdrSettingsGetQuery)),
+        (
+            "HerdrSettingsGetResponse",
+            schema_for!(HerdrSettingsGetResponse),
+        ),
+        (
+            "HerdrSettingsUpdateRequest",
+            schema_for!(HerdrSettingsUpdateRequest),
+        ),
         (
             "InitiativeArchiveRequest",
             schema_for!(InitiativeArchiveRequest),

@@ -22,7 +22,7 @@ pub use initiative::{
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,
-    ProjectRegistration, ProjectState, RegistrationError,
+    ProjectRegistration, ProjectState, RegistrationError, validate_herdr_session_name,
 };
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use timeline::{ENTITY_KINDS, is_entity_kind};

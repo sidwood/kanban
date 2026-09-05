@@ -26,7 +26,8 @@ impl ScriptedSession {
         script: SessionScript,
     ) -> Self {
         std::fs::create_dir_all(root).expect("the fixture root is created");
-        let socket_path = session_socket_in(root, session_name);
+        let socket_path =
+            session_socket_in(root, session_name).expect("the session name validates");
         if socket_path.exists() {
             std::fs::remove_file(&socket_path).expect("stale fixture socket is cleared");
         }

@@ -40,7 +40,7 @@ impl SessionClient {
     /// Connect to one named session under `socket_root` and verify the
     /// workspace mapping through an initial snapshot.
     pub fn connect(mapping: SessionMapping, socket_root: &Path) -> Result<Self, HerdrError> {
-        let path = session_socket_in(socket_root, mapping.session_name());
+        let path = session_socket_in(socket_root, mapping.session_name())?;
         if !path.exists() {
             return Err(HerdrError::SocketMissing {
                 path: path.display().to_string(),

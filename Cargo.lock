@@ -256,6 +256,7 @@ name = "kanban-herdr"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "kanban-domain",
  "serde",
  "serde_json",
  "tempfile",

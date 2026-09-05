@@ -182,6 +182,8 @@ pub enum RegistrationError {
     /// A text field holds nothing but whitespace. The value names
     /// the field.
     Blank(&'static str),
+    /// The Herdr session name is not one safe path segment.
+    InvalidHerdrSession,
 }
 
 impl fmt::Display for RegistrationError {
@@ -189,6 +191,9 @@ impl fmt::Display for RegistrationError {
         match self {
             Self::Code(cause) => write!(f, "{cause}"),
             Self::Blank(field) => write!(f, "a Project {field} cannot be blank"),
+            Self::InvalidHerdrSession => {
+                write!(f, "a Herdr session name must be one safe path segment")
+            }
         }
     }
 }
@@ -227,7 +232,7 @@ impl ProjectRegistration {
             repository: anchored("target repository", repository)?,
             seed_workspace: anchored("Seed Workspace", seed_workspace)?,
             default_branch: anchored("default branch", default_branch)?,
-            herdr_session: anchored("Herdr session name", herdr_session)?,
+            herdr_session: herdr_session_name(herdr_session)?,
             initiative,
         })
     }
@@ -268,6 +273,11 @@ impl ProjectRegistration {
     }
 }
 
+/// Reject Herdr session names that are not one safe path segment.
+pub fn validate_herdr_session_name(raw: &str) -> Result<String, RegistrationError> {
+    herdr_session_name(raw)
+}
+
 /// Accept a field that carries at least one non-whitespace
 /// character; surrounding whitespace is not part of the field.
 fn anchored(field: &'static str, raw: &str) -> Result<String, RegistrationError> {
@@ -276,6 +286,24 @@ fn anchored(field: &'static str, raw: &str) -> Result<String, RegistrationError>
         return Err(RegistrationError::Blank(field));
     }
     Ok(trimmed.to_owned())
+}
+
+/// Accept one non-empty path segment that cannot escape a parent
+/// directory when joined under the Herdr sessions root.
+fn herdr_session_name(raw: &str) -> Result<String, RegistrationError> {
+    let trimmed = anchored("Herdr session name", raw)?;
+    if !is_single_safe_path_segment(&trimmed) {
+        return Err(RegistrationError::InvalidHerdrSession);
+    }
+    Ok(trimmed)
+}
+
+fn is_single_safe_path_segment(segment: &str) -> bool {
+    !segment.starts_with('/')
+        && !segment.contains('\\')
+        && !segment.contains('/')
+        && segment != "."
+        && segment != ".."
 }
 
 /// The closed lifecycle vocabulary for a Project.
@@ -634,6 +662,49 @@ mod tests {
         assert_eq!(validated.name(), "Control plane");
         assert_eq!(validated.repository(), "/repositories/kanban");
         assert_eq!(validated.default_branch(), "main");
+        assert_eq!(validated.herdr_session(), "kanban-main");
+    }
+
+    #[test]
+    fn a_registration_refuses_an_unsafe_herdr_session_name() {
+        for session in [
+            "/absolute",
+            "foo/bar",
+            "..",
+            "../escape",
+            "still/../escape",
+            ".",
+        ] {
+            let outcome = ProjectRegistration::new(
+                "CORE",
+                "Control plane",
+                "/repositories/kanban",
+                "/workspaces/kanban.seed",
+                "main",
+                session,
+                None,
+            );
+            assert_eq!(
+                outcome,
+                Err(RegistrationError::InvalidHerdrSession),
+                "session `{session}` must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_registration_accepts_a_single_safe_herdr_session_segment() {
+        let validated = ProjectRegistration::new(
+            "CORE",
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban-main",
+            None,
+        )
+        .expect("a single safe segment is accepted");
+
         assert_eq!(validated.herdr_session(), "kanban-main");
     }
 

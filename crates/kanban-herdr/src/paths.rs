@@ -2,7 +2,15 @@
 
 use std::path::{Path, PathBuf};
 
+use kanban_domain::validate_herdr_session_name;
+
 use crate::error::HerdrError;
+
+fn validated_session_name(session_name: &str) -> Result<&str, HerdrError> {
+    validate_herdr_session_name(session_name)
+        .map(|_| session_name)
+        .map_err(|_| HerdrError::InvalidSessionName)
+}
 
 /// The root directory holding one socket per named Herdr session.
 pub fn herdr_sessions_dir() -> Result<PathBuf, HerdrError> {
@@ -13,12 +21,14 @@ pub fn herdr_sessions_dir() -> Result<PathBuf, HerdrError> {
 
 /// The per-session Herdr socket for `session_name`.
 pub fn session_socket_path(session_name: &str) -> Result<PathBuf, HerdrError> {
+    validated_session_name(session_name)?;
     Ok(herdr_sessions_dir()?.join(format!("{session_name}.sock")))
 }
 
 /// Resolve a socket path inside `root` for tests and injected roots.
-pub fn session_socket_in(root: &Path, session_name: &str) -> PathBuf {
-    root.join(format!("{session_name}.sock"))
+pub fn session_socket_in(root: &Path, session_name: &str) -> Result<PathBuf, HerdrError> {
+    validated_session_name(session_name)?;
+    Ok(root.join(format!("{session_name}.sock")))
 }
 
 #[cfg(test)]
@@ -26,6 +36,7 @@ mod tests {
     use std::path::Path;
 
     use super::{herdr_sessions_dir, session_socket_in, session_socket_path};
+    use crate::error::HerdrError;
 
     #[test]
     fn herdr_sessions_dir_sits_under_application_support() {
@@ -61,8 +72,27 @@ mod tests {
     #[test]
     fn session_socket_in_uses_the_injected_root() {
         assert_eq!(
-            session_socket_in(Path::new("/tmp/herdr"), "wave-main"),
+            session_socket_in(Path::new("/tmp/herdr"), "wave-main").expect("the name validates"),
             Path::new("/tmp/herdr/wave-main.sock")
+        );
+    }
+
+    #[test]
+    fn session_socket_path_refuses_unsafe_session_names() {
+        for session in ["/absolute", "foo/bar", "..", "../escape"] {
+            assert_eq!(
+                session_socket_path(session),
+                Err(HerdrError::InvalidSessionName),
+                "session `{session}` must be refused before joining"
+            );
+        }
+    }
+
+    #[test]
+    fn session_socket_in_refuses_unsafe_session_names() {
+        assert_eq!(
+            session_socket_in(Path::new("/tmp/herdr"), "../escape"),
+            Err(HerdrError::InvalidSessionName)
         );
     }
 }

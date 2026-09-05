@@ -6,17 +6,26 @@
 //! by its slice description and claiming that Spec's User Stories
 //! through story-linked criteria (DR-TK-02, DR-TK-04); a Bug records
 //! incorrect behaviour and may attach to one Spec or stand alone
-//! (DR-TK-03), qualifying in a later slice; a Task is bounded
-//! non-story work with the same optional attachment (DR-TK-06). Every
-//! kind carries the closed priority vocabulary urgent, high, normal,
-//! low (DR-LC-12) and starts its lifecycle in draft (DR-LC-01). The
-//! lifecycle's transitions and readiness rules land in KAN-T21,
-//! dependencies in KAN-T20, and graph approval pinning in KAN-T23;
-//! this module owns the shape a Ticket is created with.
+//! (DR-TK-03), captured quickly with title, actual behaviour, and
+//! reporter evidence (DR-TK-08) and staying draft until a complete
+//! qualification exists (DR-TK-09), carrying vendor-neutral External
+//! References, Occurrence Snapshots, and Evidence Items while it waits
+//! (DR-TK-10); a Task is bounded non-story work with the same optional
+//! attachment (DR-TK-06). Every kind carries the closed priority
+//! vocabulary urgent, high, normal, low (DR-LC-12) and the Bug's
+//! severity the closed critical, high, medium, low (DR-LC-13); every
+//! kind starts its lifecycle in draft (DR-LC-01). The lifecycle's
+//! transitions and readiness rules land in KAN-T21, dependencies in
+//! KAN-T20, and graph approval pinning in KAN-T23; this module owns
+//! the shape a Ticket is created with and the Bug's capture and
+//! qualification rules.
 
 use std::fmt;
 
-use crate::coverage::{AcceptanceCriterion, UserStoryRef};
+use time::format_description::well_known::Rfc3339;
+
+use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
+use crate::evidence::EvidenceId;
 use crate::plan::SpecNumber;
 use crate::project::ProjectId;
 use crate::spec::SpecId;
@@ -158,6 +167,45 @@ impl Priority {
     }
 }
 
+/// The closed Bug severity vocabulary (DR-LC-13): critical, high,
+/// medium, low. Severity is set by qualification alone (DR-TK-09): a
+/// quick-captured Bug carries none until it is qualified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Severity {
+    /// Data loss, secret exposure, or unauthorised execution.
+    Critical,
+    /// A failed approved criterion or workflow invariant.
+    High,
+    /// Usable behaviour, wrongly shaped.
+    Medium,
+    /// Cosmetic or local clarity.
+    Low,
+}
+
+impl Severity {
+    /// Every severity, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Critical, Self::High, Self::Medium, Self::Low];
+
+    /// The stored and wire name of this severity.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
+
+    /// The severity a stored row names, or `None` outside the
+    /// vocabulary.
+    pub fn parse(stored: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|severity| severity.wire_name() == stored)
+    }
+}
+
 /// The closed Ticket lifecycle vocabulary (DR-LC-01): the canonical
 /// states in order, with the terminal states after them. A Ticket is
 /// created into draft; the transitions between states and their
@@ -261,7 +309,43 @@ pub enum TicketError {
         /// The story that named another Spec.
         story: UserStoryRef,
     },
+    /// Only a Bug Ticket carries qualification and Bug facts
+    /// (DR-TK-05); another kind accepts neither.
+    NotABug,
+    /// An External Reference named no URI. The reference is the
+    /// vendor-neutral carrier for every outside link a Bug holds
+    /// (DR-TK-10).
+    InvalidReference,
+    /// An Occurrence Snapshot named no RFC 3339 moment, or stated no
+    /// observation (DR-TK-10).
+    InvalidSnapshot {
+        /// Why the snapshot was refused.
+        reason: SnapshotError,
+    },
+    /// A Bug named an Evidence Item by an identity no attachment can
+    /// hold; storage-assigned identities start at one (DR-TK-10).
+    InvalidEvidenceId,
 }
+
+/// Why an Occurrence Snapshot was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotError {
+    /// The timestamp is not valid RFC 3339.
+    MalformedTime,
+    /// The observation states nothing.
+    BlankObservation,
+}
+
+impl fmt::Display for SnapshotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MalformedTime => write!(f, "an Occurrence Snapshot names an RFC 3339 moment"),
+            Self::BlankObservation => write!(f, "an Occurrence Snapshot states its observation"),
+        }
+    }
+}
+
+impl std::error::Error for SnapshotError {}
 
 impl fmt::Display for TicketError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -279,6 +363,15 @@ impl fmt::Display for TicketError {
                  {} names another Spec",
                 story.wire_name()
             ),
+            Self::NotABug => write!(f, "only a Bug Ticket carries qualification and Bug facts"),
+            Self::InvalidReference => write!(
+                f,
+                "an External Reference names a URI with a scheme, like `https://example.invalid/1`"
+            ),
+            Self::InvalidSnapshot { reason } => write!(f, "{reason}"),
+            Self::InvalidEvidenceId => {
+                write!(f, "an Evidence Item identity starts at one")
+            }
         }
     }
 }
@@ -327,21 +420,321 @@ impl ImplementationTicket {
     }
 }
 
-/// One Bug Ticket's creation schema (DR-TK-03): a title and an
-/// optional Spec attachment. Quick capture fields and qualification
-/// land in KAN-T18.
+/// One vendor-neutral External Reference a Bug may carry (DR-TK-10):
+/// a URI naming an outside link — a tracker item, a chat message, a
+/// dashboard — with an optional label. No vendor owns a field here;
+/// provenance that names one arrives with a later slice, never this
+/// shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalReference {
+    uri: String,
+    label: Option<String>,
+}
+
+impl ExternalReference {
+    /// Assemble one reference, refusing anything but a URI with a
+    /// scheme and, when a label is present, a label that names
+    /// something.
+    pub fn new(uri: impl Into<String>, label: Option<String>) -> Result<Self, TicketError> {
+        let uri = uri.into().trim().to_owned();
+        if !is_uri(&uri) {
+            return Err(TicketError::InvalidReference);
+        }
+        let label = label
+            .map(|raw: String| raw.trim().to_owned())
+            .map(|trimmed| {
+                if trimmed.is_empty() {
+                    Err(TicketError::Blank("External Reference label"))
+                } else {
+                    Ok(trimmed)
+                }
+            })
+            .transpose()?;
+        Ok(Self { uri, label })
+    }
+
+    /// The referenced URI, trimmed as stored.
+    pub fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    /// The reference's label, if it carries one.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+}
+
+/// Whether `text` is a URI with a scheme: an RFC 3986 scheme — a
+/// letter first, then letters, digits, `+`, `-`, or `.` — before the
+/// first colon, with something following it.
+fn is_uri(text: &str) -> bool {
+    let Some((scheme, rest)) = text.split_once(':') else {
+        return false;
+    };
+    if rest.is_empty() || scheme.is_empty() {
+        return false;
+    }
+    let mut characters = scheme.chars();
+    let first = characters.next().expect("the scheme is non-empty");
+    first.is_ascii_alphabetic()
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
+        && !text.chars().any(char::is_whitespace)
+}
+
+/// One Occurrence Snapshot a Bug may carry (DR-TK-10): the RFC 3339
+/// moment one occurrence was observed and what was seen then. Time
+/// arrives as a value; the domain owns no clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OccurrenceSnapshot {
+    observed_at: String,
+    observation: String,
+}
+
+impl OccurrenceSnapshot {
+    /// Assemble one snapshot, refusing a moment that is not RFC 3339
+    /// and an observation that states nothing.
+    pub fn new(
+        observed_at: impl Into<String>,
+        observation: impl Into<String>,
+    ) -> Result<Self, TicketError> {
+        let observed_at = observed_at.into().trim().to_owned();
+        if time::OffsetDateTime::parse(&observed_at, &Rfc3339).is_err() {
+            return Err(TicketError::InvalidSnapshot {
+                reason: SnapshotError::MalformedTime,
+            });
+        }
+        let observation = observation.into();
+        if observation.trim().is_empty() {
+            return Err(TicketError::InvalidSnapshot {
+                reason: SnapshotError::BlankObservation,
+            });
+        }
+        Ok(Self {
+            observed_at,
+            observation,
+        })
+    }
+
+    /// The observed moment, RFC 3339 as it was given.
+    pub fn observed_at(&self) -> &str {
+        &self.observed_at
+    }
+
+    /// What was observed at that moment.
+    pub fn observation(&self) -> &str {
+        &self.observation
+    }
+}
+
+/// The vendor-neutral provenance collections one Bug carries
+/// (DR-TK-10): External References, Occurrence Snapshots, and the
+/// identities of the Evidence Items attached to it. Quick capture
+/// needs none of them; they gather while the Bug waits for
+/// qualification.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BugFacts {
+    external_references: Vec<ExternalReference>,
+    occurrence_snapshots: Vec<OccurrenceSnapshot>,
+    evidence_items: Vec<EvidenceId>,
+}
+
+impl BugFacts {
+    /// Assemble the collections, refusing every malformed entry.
+    pub fn new(
+        external_references: Vec<ExternalReference>,
+        occurrence_snapshots: Vec<OccurrenceSnapshot>,
+        evidence_items: Vec<EvidenceId>,
+    ) -> Result<Self, TicketError> {
+        if evidence_items.iter().any(|item| item.value() == 0) {
+            return Err(TicketError::InvalidEvidenceId);
+        }
+        Ok(Self {
+            external_references,
+            occurrence_snapshots,
+            evidence_items,
+        })
+    }
+
+    /// An empty set of facts: what quick capture starts from.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// The External References, in the order they were recorded.
+    pub fn external_references(&self) -> &[ExternalReference] {
+        &self.external_references
+    }
+
+    /// The Occurrence Snapshots, in the order they were recorded.
+    pub fn occurrence_snapshots(&self) -> &[OccurrenceSnapshot] {
+        &self.occurrence_snapshots
+    }
+
+    /// The identities of the Evidence Items this Bug carries.
+    pub fn evidence_items(&self) -> &[EvidenceId] {
+        &self.evidence_items
+    }
+}
+
+/// One complete Bug qualification (DR-TK-09): the ten facts a Bug
+/// needs before it may leave draft. Every text field must state
+/// something, the criteria must be present and story-linked, and the
+/// verification steps must be present; severity arrives only here
+/// (DR-LC-13). Assembled whole, never piecemeal — qualification is
+/// one act, not ten edits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BugQualification {
+    expected_behaviour: String,
+    reproduction: String,
+    environment: String,
+    severity: Severity,
+    frequency: String,
+    affected_scope: String,
+    risk: String,
+    criteria: Vec<AcceptanceCriterion>,
+    verification_steps: Vec<VerificationStep>,
+}
+
+impl BugQualification {
+    /// Assemble one qualification, refusing any blank text field, an
+    /// empty claim of criteria, and an empty list of verification
+    /// steps. `reproduction` carries the reproduction steps or the
+    /// failing test that demonstrates the defect — one slot, either
+    /// content.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        expected_behaviour: impl Into<String>,
+        reproduction: impl Into<String>,
+        environment: impl Into<String>,
+        severity: Severity,
+        frequency: impl Into<String>,
+        affected_scope: impl Into<String>,
+        risk: impl Into<String>,
+        criteria: Vec<AcceptanceCriterion>,
+        verification_steps: Vec<VerificationStep>,
+    ) -> Result<Self, TicketError> {
+        let fields: [(&'static str, String); 6] = [
+            ("expected behaviour", expected_behaviour.into()),
+            ("reproduction or failing test", reproduction.into()),
+            ("environment", environment.into()),
+            ("frequency", frequency.into()),
+            ("affected scope", affected_scope.into()),
+            ("risk", risk.into()),
+        ];
+        for (name, value) in &fields {
+            if value.trim().is_empty() {
+                return Err(TicketError::Blank(name));
+            }
+        }
+        let [
+            expected_behaviour,
+            reproduction,
+            environment,
+            frequency,
+            affected_scope,
+            risk,
+        ] = fields.map(|(_, value)| value);
+        if criteria.is_empty() {
+            return Err(TicketError::Blank("Acceptance Criteria claim"));
+        }
+        if verification_steps.is_empty() {
+            return Err(TicketError::Blank("Verification Steps claim"));
+        }
+        Ok(Self {
+            expected_behaviour,
+            reproduction,
+            environment,
+            severity,
+            frequency,
+            affected_scope,
+            risk,
+            criteria,
+            verification_steps,
+        })
+    }
+
+    /// The behaviour that should have happened.
+    pub fn expected_behaviour(&self) -> &str {
+        &self.expected_behaviour
+    }
+
+    /// The reproduction steps or the failing test demonstrating the
+    /// defect.
+    pub fn reproduction(&self) -> &str {
+        &self.reproduction
+    }
+
+    /// Where the defect occurs.
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    /// The severity qualification assigned (DR-LC-13).
+    pub fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    /// How often the defect occurs.
+    pub fn frequency(&self) -> &str {
+        &self.frequency
+    }
+
+    /// What the defect affects.
+    pub fn affected_scope(&self) -> &str {
+        &self.affected_scope
+    }
+
+    /// What the defect puts at risk.
+    pub fn risk(&self) -> &str {
+        &self.risk
+    }
+
+    /// The story-linked Acceptance Criteria, in claim order.
+    pub fn criteria(&self) -> &[AcceptanceCriterion] {
+        &self.criteria
+    }
+
+    /// The Verification Steps, in run order.
+    pub fn verification_steps(&self) -> &[VerificationStep] {
+        &self.verification_steps
+    }
+}
+
+/// One Bug Ticket's schema (DR-TK-03, DR-TK-08, DR-TK-09, DR-TK-10):
+/// the quick-capture facts it is created with — title, actual
+/// behaviour, and reporter evidence — an optional Spec attachment,
+/// the vendor-neutral collections it carries while it waits, and the
+/// qualification that completes it. Creation demands only the capture
+/// facts; qualification arrives later as one whole act.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BugTicket {
     title: String,
     spec: Option<SpecId>,
+    actual_behaviour: String,
+    reporter_evidence: String,
+    qualification: Option<BugQualification>,
+    facts: BugFacts,
 }
 
 impl BugTicket {
     /// Rehydrate a stored body exactly as it was recorded.
-    pub fn restore(title: impl Into<String>, spec: Option<SpecId>) -> Self {
+    pub fn restore(
+        title: impl Into<String>,
+        spec: Option<SpecId>,
+        actual_behaviour: impl Into<String>,
+        reporter_evidence: impl Into<String>,
+        qualification: Option<BugQualification>,
+        facts: BugFacts,
+    ) -> Self {
         Self {
             title: title.into(),
             spec,
+            actual_behaviour: actual_behaviour.into(),
+            reporter_evidence: reporter_evidence.into(),
+            qualification,
+            facts,
         }
     }
 
@@ -353,6 +746,37 @@ impl BugTicket {
     /// The Spec this Bug attaches to, if any; a Bug may stand alone.
     pub fn spec(&self) -> Option<SpecId> {
         self.spec
+    }
+
+    /// What the Bug records happening, as the reporter stated it.
+    pub fn actual_behaviour(&self) -> &str {
+        &self.actual_behaviour
+    }
+
+    /// The evidence the reporter holds, as the reporter stated it.
+    pub fn reporter_evidence(&self) -> &str {
+        &self.reporter_evidence
+    }
+
+    /// The qualification, once one exists (DR-TK-09).
+    pub fn qualification(&self) -> Option<&BugQualification> {
+        self.qualification.as_ref()
+    }
+
+    /// Whether a complete qualification exists.
+    pub fn is_qualified(&self) -> bool {
+        self.qualification.is_some()
+    }
+
+    /// The severity qualification assigned, or `None` until the Bug
+    /// is qualified (DR-LC-13).
+    pub fn severity(&self) -> Option<Severity> {
+        self.qualification.as_ref().map(|record| record.severity())
+    }
+
+    /// The vendor-neutral collections this Bug carries (DR-TK-10).
+    pub fn facts(&self) -> &BugFacts {
+        &self.facts
     }
 }
 
@@ -393,8 +817,8 @@ impl TaskTicket {
 pub enum TicketBody {
     /// A vertical slice of exactly one Spec.
     Implementation(ImplementationTicket),
-    /// Incorrect behaviour, qualification pending.
-    Bug(BugTicket),
+    /// Incorrect behaviour, capture facts now, qualification later.
+    Bug(Box<BugTicket>),
     /// Bounded non-story work.
     Task(TaskTicket),
 }
@@ -436,13 +860,36 @@ impl TicketBody {
         }))
     }
 
-    /// Assemble a Bug body, refusing a blank title.
-    pub fn bug(title: impl Into<String>, spec: Option<SpecId>) -> Result<Self, TicketError> {
+    /// Assemble a Bug body from its quick-capture facts (DR-TK-08),
+    /// refusing a blank title, actual behaviour, or reporter evidence.
+    /// Nothing else is required: the Spec attachment, the Bug facts,
+    /// and the qualification all arrive later.
+    pub fn bug(
+        title: impl Into<String>,
+        spec: Option<SpecId>,
+        actual_behaviour: impl Into<String>,
+        reporter_evidence: impl Into<String>,
+    ) -> Result<Self, TicketError> {
         let title = title.into();
         if title.trim().is_empty() {
             return Err(TicketError::Blank("title"));
         }
-        Ok(Self::Bug(BugTicket { title, spec }))
+        let actual_behaviour = actual_behaviour.into();
+        if actual_behaviour.trim().is_empty() {
+            return Err(TicketError::Blank("actual behaviour"));
+        }
+        let reporter_evidence = reporter_evidence.into();
+        if reporter_evidence.trim().is_empty() {
+            return Err(TicketError::Blank("reporter evidence"));
+        }
+        Ok(Self::Bug(Box::new(BugTicket {
+            title,
+            spec,
+            actual_behaviour,
+            reporter_evidence,
+            qualification: None,
+            facts: BugFacts::empty(),
+        })))
     }
 
     /// Assemble a Task body, refusing a blank title.
@@ -603,6 +1050,39 @@ impl Ticket {
         }
     }
 
+    /// The Bug body, if this Ticket carries one.
+    pub fn bug(&self) -> Option<&BugTicket> {
+        match &self.body {
+            TicketBody::Bug(bug) => Some(bug),
+            _ => None,
+        }
+    }
+
+    /// Qualify this Bug with one complete qualification (DR-TK-09),
+    /// replacing any earlier one. Refused for every other kind; a
+    /// refusal changes nothing. The applied change bumps the version.
+    pub fn qualify(&mut self, qualification: BugQualification) -> Result<(), TicketError> {
+        self.with_bug(|bug| bug.qualification = Some(qualification))
+    }
+
+    /// Replace the vendor-neutral collections this Bug carries
+    /// (DR-TK-10). Refused for every other kind; a refusal changes
+    /// nothing. The applied change bumps the version.
+    pub fn record_bug_facts(&mut self, facts: BugFacts) -> Result<(), TicketError> {
+        self.with_bug(|bug| bug.facts = facts)
+    }
+
+    /// Apply `change` to the Bug body alone, bumping the version only
+    /// when the body is a Bug's.
+    fn with_bug(&mut self, change: impl FnOnce(&mut BugTicket)) -> Result<(), TicketError> {
+        let TicketBody::Bug(bug) = &mut self.body else {
+            return Err(TicketError::NotABug);
+        };
+        change(bug);
+        self.version += 1;
+        Ok(())
+    }
+
     /// The number of applied changes, for optimistic version checks.
     pub fn version(&self) -> u64 {
         self.version
@@ -612,8 +1092,8 @@ impl Ticket {
 #[cfg(test)]
 mod ticket_kinds {
     use super::{
-        BugTicket, Priority, TaskTicket, Ticket, TicketBody, TicketError, TicketId, TicketKind,
-        TicketNumber, TicketState,
+        BugFacts, BugTicket, Priority, TaskTicket, Ticket, TicketBody, TicketError, TicketId,
+        TicketKind, TicketNumber, TicketState,
     };
     use crate::coverage::{AcceptanceCriterion, UserStoryRef};
     use crate::plan::SpecNumber;
@@ -804,17 +1284,26 @@ mod ticket_kinds {
 
     #[test]
     fn bugs_and_tasks_attach_to_zero_or_one_spec() {
-        let standing = TicketBody::bug("Landing drops the integration branch", None)
-            .expect("a Bug may stand alone");
+        let standing = TicketBody::bug(
+            "Landing drops the integration branch",
+            None,
+            "The integration branch is dropped on landing.",
+            "The landing log shows the drop.",
+        )
+        .expect("a Bug may stand alone");
         let attached = TicketBody::task("Archive the old register", Some(SpecId::new(3)))
             .expect("a Task may attach to one Spec");
 
         assert_eq!(
             standing,
-            TicketBody::Bug(BugTicket::restore(
+            TicketBody::Bug(Box::new(BugTicket::restore(
                 "Landing drops the integration branch",
-                None
-            ))
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+                None,
+                BugFacts::empty(),
+            )))
         );
         assert_eq!(
             attached,
@@ -830,7 +1319,7 @@ mod ticket_kinds {
     #[test]
     fn a_blank_title_is_refused() {
         assert_eq!(
-            TicketBody::bug("  ", None).unwrap_err(),
+            TicketBody::bug("  ", None, "It drops the branch.", "The log shows it.").unwrap_err(),
             TicketError::Blank("title")
         );
         assert_eq!(
@@ -869,5 +1358,532 @@ mod ticket_kinds {
         assert_eq!(ticket.spec(), Some(SpecId::new(6)));
         assert_eq!(ticket.criteria()[1].stories(), [story(3, 2)].as_slice());
         assert_eq!(ticket.version(), 7);
+    }
+}
+
+#[cfg(test)]
+mod bug_qualification {
+    use super::{
+        BugFacts, BugQualification, BugTicket, ExternalReference, OccurrenceSnapshot, Severity,
+        SnapshotError, Ticket, TicketBody, TicketError, TicketId, TicketKind, TicketState,
+    };
+    use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
+    use crate::evidence::EvidenceId;
+    use crate::plan::SpecNumber;
+    use crate::project::ProjectId;
+    use crate::spec::SpecId;
+
+    fn story(spec: u64, ordinal: u64) -> UserStoryRef {
+        UserStoryRef::new(
+            SpecNumber::new(spec).expect("the fixture number is positive"),
+            ordinal,
+        )
+        .expect("the fixture ordinal is positive")
+    }
+
+    /// A quick-captured Bug: the three capture facts and nothing else.
+    fn captured() -> Ticket {
+        let body = TicketBody::bug(
+            "Landing drops the integration branch",
+            None,
+            "The integration branch is dropped after a review lands.",
+            "The landing log names the drop immediately after the merge.",
+        )
+        .expect("quick capture accepts the three facts");
+        Ticket::new(
+            TicketId::new(3),
+            ProjectId::new(1),
+            super::TicketNumber::new(4).expect("the fixture number is positive"),
+            super::Priority::Normal,
+            body,
+        )
+    }
+
+    fn criterion(outcome: &str) -> AcceptanceCriterion {
+        AcceptanceCriterion::new(outcome, vec![story(1, 3)]).expect("the fixture criterion links")
+    }
+
+    fn step(command: &str) -> VerificationStep {
+        VerificationStep::new(command).expect("the fixture step carries its command")
+    }
+
+    /// One complete qualification, with `severity` and optional
+    /// overrides for the fields a test varies.
+    fn qualified(severity: Severity) -> BugQualification {
+        BugQualification::new(
+            "The integration branch survives every landing.",
+            "Re land a reviewed change; the branch list still names it.",
+            "macOS 26, Kanban 0.1.0, SQLite 3.50.",
+            severity,
+            "Every landing so far.",
+            "All landing reviews of every Project.",
+            "Duplicate landings and lost review state.",
+            vec![criterion("The integration branch survives a landing.")],
+            vec![step("cargo test -p kanban-storage tickets")],
+        )
+        .expect("the fixture qualification is complete")
+    }
+
+    #[test]
+    fn quick_capture_needs_only_title_actual_behaviour_and_reporter_evidence() {
+        let bug = captured();
+
+        assert_eq!(bug.kind(), TicketKind::Bug);
+        assert_eq!(bug.state(), TicketState::Draft, "capture lands in draft");
+        let body = bug.bug().expect("the Bug body is reachable");
+        assert_eq!(body.title(), "Landing drops the integration branch");
+        assert_eq!(
+            body.actual_behaviour(),
+            "The integration branch is dropped after a review lands."
+        );
+        assert_eq!(
+            body.reporter_evidence(),
+            "The landing log names the drop immediately after the merge."
+        );
+        assert_eq!(body.spec(), None, "a captured Bug may stand alone");
+        assert!(
+            !body.is_qualified(),
+            "capture requires no qualification (DR-TK-08)"
+        );
+        assert_eq!(
+            body.severity(),
+            None,
+            "severity arrives only with qualification (DR-LC-13)"
+        );
+        assert_eq!(
+            body.facts(),
+            &BugFacts::empty(),
+            "capture requires no references, snapshots, or evidence"
+        );
+    }
+
+    #[test]
+    fn quick_capture_refuses_a_blank_capture_fact() {
+        let evidence = "The landing log names the drop.";
+        let behaviour = "The integration branch is dropped.";
+        assert_eq!(
+            TicketBody::bug("  ", None, behaviour, evidence).unwrap_err(),
+            TicketError::Blank("title")
+        );
+        assert_eq!(
+            TicketBody::bug("A title", None, "   ", evidence).unwrap_err(),
+            TicketError::Blank("actual behaviour")
+        );
+        assert_eq!(
+            TicketBody::bug("A title", None, behaviour, "\n\t").unwrap_err(),
+            TicketError::Blank("reporter evidence")
+        );
+    }
+
+    #[test]
+    fn a_bug_stays_draft_until_a_complete_qualification_exists() {
+        let mut bug = captured();
+
+        assert_eq!(bug.state(), TicketState::Draft);
+        assert_eq!(bug.version(), 1);
+        bug.qualify(qualified(Severity::High))
+            .expect("the Bug qualifies");
+
+        assert_eq!(
+            bug.state(),
+            TicketState::Draft,
+            "qualification completes a Bug; readiness is computed, never a state change"
+        );
+        assert_eq!(bug.version(), 2, "the applied change bumps the version");
+        let body = bug.bug().expect("the Bug body is reachable");
+        assert!(body.is_qualified());
+        assert_eq!(body.severity(), Some(Severity::High));
+        assert_eq!(
+            body.qualification()
+                .expect("the qualification exists")
+                .expected_behaviour(),
+            "The integration branch survives every landing."
+        );
+    }
+
+    #[test]
+    fn qualification_refuses_any_missing_fact() {
+        let full = |expected: &str,
+                    reproduction: &str,
+                    environment: &str,
+                    frequency: &str,
+                    scope: &str,
+                    risk: &str| {
+            BugQualification::new(
+                expected,
+                reproduction,
+                environment,
+                Severity::Medium,
+                frequency,
+                scope,
+                risk,
+                vec![criterion("The integration branch survives a landing.")],
+                vec![step("cargo test -p kanban-domain bug_qualification")],
+            )
+        };
+
+        assert_eq!(
+            full(
+                "  ",
+                "Re land it.",
+                "macOS 26.",
+                "Always.",
+                "Landings.",
+                "Lost reviews."
+            )
+            .unwrap_err(),
+            TicketError::Blank("expected behaviour")
+        );
+        assert_eq!(
+            full(
+                "It survives.",
+                "   ",
+                "macOS 26.",
+                "Always.",
+                "Landings.",
+                "Lost reviews."
+            )
+            .unwrap_err(),
+            TicketError::Blank("reproduction or failing test")
+        );
+        assert_eq!(
+            full(
+                "It survives.",
+                "Re land it.",
+                "  ",
+                "Always.",
+                "Landings.",
+                "Lost reviews."
+            )
+            .unwrap_err(),
+            TicketError::Blank("environment")
+        );
+        assert_eq!(
+            full(
+                "It survives.",
+                "Re land it.",
+                "macOS 26.",
+                "\t",
+                "Landings.",
+                "Lost reviews."
+            )
+            .unwrap_err(),
+            TicketError::Blank("frequency")
+        );
+        assert_eq!(
+            full(
+                "It survives.",
+                "Re land it.",
+                "macOS 26.",
+                "Always.",
+                "  ",
+                "Lost reviews."
+            )
+            .unwrap_err(),
+            TicketError::Blank("affected scope")
+        );
+        assert_eq!(
+            full(
+                "It survives.",
+                "Re land it.",
+                "macOS 26.",
+                "Always.",
+                "Landings.",
+                "   "
+            )
+            .unwrap_err(),
+            TicketError::Blank("risk")
+        );
+
+        let missing_criteria = BugQualification::new(
+            "It survives.",
+            "Re land it.",
+            "macOS 26.",
+            Severity::Medium,
+            "Always.",
+            "Landings.",
+            "Lost reviews.",
+            Vec::new(),
+            vec![step("cargo test -p kanban-domain bug_qualification")],
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_criteria,
+            TicketError::Blank("Acceptance Criteria claim"),
+            "a Bug qualifies against its criteria (DR-TK-09)"
+        );
+
+        let missing_steps = BugQualification::new(
+            "It survives.",
+            "Re land it.",
+            "macOS 26.",
+            Severity::Medium,
+            "Always.",
+            "Landings.",
+            "Lost reviews.",
+            vec![criterion("The integration branch survives a landing.")],
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_steps,
+            TicketError::Blank("Verification Steps claim")
+        );
+    }
+
+    #[test]
+    fn severity_takes_the_closed_values_and_qualification_sets_it() {
+        assert_eq!(Severity::ALL.len(), 4);
+        for severity in Severity::ALL {
+            assert_eq!(
+                Severity::parse(severity.wire_name()),
+                Some(*severity),
+                "`{}` must survive the round trip",
+                severity.wire_name()
+            );
+        }
+        assert_eq!(Severity::parse("ghost"), None);
+        assert_eq!(Severity::parse("urgent"), None, "priority is not severity");
+
+        let mut urgent = captured();
+        urgent
+            .qualify(qualified(Severity::Critical))
+            .expect("the Bug qualifies");
+        assert_eq!(
+            urgent.bug().expect("the Bug body is reachable").severity(),
+            Some(Severity::Critical),
+            "qualification sets the severity (DR-LC-13)"
+        );
+
+        // A later qualification replaces the whole record, severity
+        // included, in one act.
+        urgent
+            .qualify(qualified(Severity::Low))
+            .expect("the Bug qualifies again");
+        assert_eq!(
+            urgent.bug().expect("the Bug body is reachable").severity(),
+            Some(Severity::Low)
+        );
+    }
+
+    #[test]
+    fn only_a_bug_carries_qualification_and_bug_facts() {
+        let implementation = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            super::TicketNumber::new(1).expect("the fixture number is positive"),
+            super::Priority::Normal,
+            TicketBody::implementation(
+                Some(SpecId::new(7)),
+                SpecNumber::new(1).expect("the fixture number is positive"),
+                "Specs approve end to end",
+                vec![criterion("Approval freezes content.")],
+            )
+            .expect("the fixture body validates"),
+        );
+        let task = Ticket::new(
+            TicketId::new(2),
+            ProjectId::new(1),
+            super::TicketNumber::new(2).expect("the fixture number is positive"),
+            super::Priority::Normal,
+            TicketBody::task("Archive the old register", None).expect("the fixture body validates"),
+        );
+
+        let mut not_a_bug = implementation;
+        assert_eq!(
+            not_a_bug.qualify(qualified(Severity::Low)).unwrap_err(),
+            TicketError::NotABug
+        );
+        assert_eq!(
+            not_a_bug.record_bug_facts(BugFacts::empty()).unwrap_err(),
+            TicketError::NotABug
+        );
+        assert_eq!(not_a_bug.version(), 1, "the refusals changed nothing");
+
+        let mut not_a_bug = task;
+        assert_eq!(
+            not_a_bug.record_bug_facts(BugFacts::empty()).unwrap_err(),
+            TicketError::NotABug
+        );
+    }
+
+    #[test]
+    fn external_references_are_uris_with_optional_labels() {
+        let plain = ExternalReference::new(" https://example.invalid/issues/12 ", None)
+            .expect("an https URI is a reference");
+        assert_eq!(plain.uri(), "https://example.invalid/issues/12");
+        assert_eq!(plain.label(), None);
+
+        let labelled =
+            ExternalReference::new("mailto:ops@example.invalid", Some("The report".to_owned()))
+                .expect("any scheme carrying a URI is a reference");
+        assert_eq!(labelled.label(), Some("The report"));
+
+        let custom = ExternalReference::new("tracker:KAN-9000", Some("  ".to_owned()))
+            .expect_err("a blank label names nothing");
+        assert_eq!(custom, TicketError::Blank("External Reference label"));
+
+        for refused in [
+            "",
+            "no-scheme-here",
+            "https://example.invalid/a b",
+            "1https://example.invalid",
+            "://missing-scheme",
+        ] {
+            assert_eq!(
+                ExternalReference::new(refused, None).unwrap_err(),
+                TicketError::InvalidReference,
+                "`{refused}` names no URI"
+            );
+        }
+        let _ = custom_scheme_is_accepted();
+    }
+
+    /// A custom scheme stays acceptable: vendor-neutral means any
+    /// scheme, not a curated list.
+    fn custom_scheme_is_accepted() -> Option<ExternalReference> {
+        ExternalReference::new("msteams:+chat", None).ok()
+    }
+
+    #[test]
+    fn occurrence_snapshots_carry_an_rfc3339_moment_and_an_observation() {
+        let snapshot =
+            OccurrenceSnapshot::new("2026-09-05T09:41:00+02:00", "Two branches landed at once.")
+                .expect("an RFC 3339 moment with an observation is a snapshot");
+        assert_eq!(snapshot.observed_at(), "2026-09-05T09:41:00+02:00");
+        assert_eq!(snapshot.observation(), "Two branches landed at once.");
+
+        let utc = OccurrenceSnapshot::new("2026-09-05T07:41:00Z", "The log shows the drop.")
+            .expect("a UTC moment is RFC 3339 too");
+        assert_eq!(utc.observed_at(), "2026-09-05T07:41:00Z");
+
+        assert_eq!(
+            OccurrenceSnapshot::new("yesterday", "Seen.").unwrap_err(),
+            TicketError::InvalidSnapshot {
+                reason: SnapshotError::MalformedTime
+            }
+        );
+        assert_eq!(
+            OccurrenceSnapshot::new("2026-13-40T07:41:00Z", "Seen.").unwrap_err(),
+            TicketError::InvalidSnapshot {
+                reason: SnapshotError::MalformedTime
+            }
+        );
+        assert_eq!(
+            OccurrenceSnapshot::new("2026-09-05T07:41:00Z", "   ").unwrap_err(),
+            TicketError::InvalidSnapshot {
+                reason: SnapshotError::BlankObservation
+            }
+        );
+    }
+
+    #[test]
+    fn bug_facts_carry_references_snapshots_and_evidence_items() {
+        let facts = BugFacts::new(
+            vec![
+                ExternalReference::new(
+                    "https://example.invalid/issues/12",
+                    Some("The report".to_owned()),
+                )
+                .expect("the reference is a URI"),
+            ],
+            vec![
+                OccurrenceSnapshot::new("2026-09-05T07:41:00Z", "The log shows the drop.")
+                    .expect("the snapshot carries its moment"),
+            ],
+            vec![EvidenceId::new(1), EvidenceId::new(4)],
+        )
+        .expect("the collections assemble");
+
+        assert_eq!(facts.external_references().len(), 1);
+        assert_eq!(
+            facts.external_references()[0].uri(),
+            "https://example.invalid/issues/12"
+        );
+        assert_eq!(facts.occurrence_snapshots().len(), 1);
+        assert_eq!(
+            facts.evidence_items(),
+            [EvidenceId::new(1), EvidenceId::new(4)].as_slice()
+        );
+
+        assert_eq!(
+            BugFacts::new(Vec::new(), Vec::new(), vec![EvidenceId::new(0)]).unwrap_err(),
+            TicketError::InvalidEvidenceId,
+            "an Evidence Item identity starts at one"
+        );
+        let empty = BugFacts::new(Vec::new(), Vec::new(), Vec::new())
+            .expect("every collection may be empty");
+        assert_eq!(empty, BugFacts::empty());
+    }
+
+    #[test]
+    fn recording_bug_facts_replaces_the_collections_and_bumps_the_version() {
+        let mut bug = captured();
+        bug.qualify(qualified(Severity::High))
+            .expect("the Bug qualifies");
+        let version = bug.version();
+
+        let facts = BugFacts::new(
+            vec![
+                ExternalReference::new("https://example.invalid/issues/12", None)
+                    .expect("the reference is a URI"),
+            ],
+            Vec::new(),
+            vec![EvidenceId::new(2)],
+        )
+        .expect("the collections assemble");
+        bug.record_bug_facts(facts)
+            .expect("the Bug carries its facts");
+
+        let body = bug.bug().expect("the Bug body is reachable");
+        assert_eq!(body.facts().external_references().len(), 1);
+        assert_eq!(
+            body.facts().evidence_items(),
+            [EvidenceId::new(2)].as_slice()
+        );
+        assert_eq!(bug.version(), version + 1);
+        assert_eq!(
+            bug.state(),
+            TicketState::Draft,
+            "carrying facts is not a lifecycle change"
+        );
+        assert!(
+            body.is_qualified(),
+            "recording facts leaves the qualification standing"
+        );
+    }
+
+    #[test]
+    fn restore_rehydrates_every_recorded_bug_fact() {
+        let qualification = qualified(Severity::Critical);
+        let facts = BugFacts::new(
+            Vec::new(),
+            vec![
+                OccurrenceSnapshot::new("2026-09-05T07:41:00Z", "The log shows the drop.")
+                    .expect("the snapshot carries its moment"),
+            ],
+            Vec::new(),
+        )
+        .expect("the collections assemble");
+        let body = BugTicket::restore(
+            "Landing drops the integration branch",
+            Some(SpecId::new(2)),
+            "The integration branch is dropped.",
+            "The landing log names the drop.",
+            Some(qualification),
+            facts,
+        );
+
+        assert_eq!(body.spec(), Some(SpecId::new(2)));
+        assert!(body.is_qualified());
+        assert_eq!(body.severity(), Some(Severity::Critical));
+        assert_eq!(body.facts().occurrence_snapshots().len(), 1);
+        assert_eq!(
+            body.qualification()
+                .expect("the qualification exists")
+                .verification_steps()
+                .len(),
+            1
+        );
     }
 }

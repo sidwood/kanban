@@ -91,7 +91,8 @@ impl CommandHandler for AttachEvidence {
 
     fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: EvidenceAttachRequest = parse_payload(&command.payload)?;
-        validate_entity_kind(&request.entity_kind)?;
+        let project_id = parse_project_id(&request.project_id)?;
+        let (entity_kind, entity_id) = parse_subject(&request.entity_kind, &request.entity_id)?;
         let item = match request.evidence_kind {
             EvidenceKindDto::ManagedFile => {
                 let content_base64 = request.content_base64.as_deref().ok_or_else(|| {
@@ -102,9 +103,9 @@ impl CommandHandler for AttachEvidence {
                     .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
                 let hash = content_hash(&content);
                 self.store.attach_managed_file(
-                    &request.project_id,
-                    &request.entity_kind,
-                    &request.entity_id,
+                    &project_id,
+                    &entity_kind,
+                    &entity_id,
                     content_base64,
                     TimelineFacts {
                         kind: TimelineEventKind::Evidence,
@@ -112,8 +113,8 @@ impl CommandHandler for AttachEvidence {
                             "action": "attached",
                             "evidence_kind": "managed_file",
                             "content_hash": hash,
-                            "entity_kind": request.entity_kind,
-                            "entity_id": request.entity_id,
+                            "entity_kind": entity_kind,
+                            "entity_id": entity_id,
                         }),
                     },
                 )?
@@ -134,9 +135,9 @@ impl CommandHandler for AttachEvidence {
                 let commit = CommitIdentity::new(commit_identity)
                     .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
                 self.store.attach_repository(
-                    &request.project_id,
-                    &request.entity_kind,
-                    &request.entity_id,
+                    &project_id,
+                    &entity_kind,
+                    &entity_id,
                     &path,
                     &commit,
                     TimelineFacts {
@@ -146,8 +147,8 @@ impl CommandHandler for AttachEvidence {
                             "evidence_kind": "repository",
                             "relative_path": relative_path,
                             "commit_identity": commit_identity,
-                            "entity_kind": request.entity_kind,
-                            "entity_id": request.entity_id,
+                            "entity_kind": entity_kind,
+                            "entity_id": entity_id,
                         }),
                     },
                 )?
@@ -175,40 +176,74 @@ impl CommandHandler for ListEvidence {
 
     fn apply(&self, command: &ParsedCommand, events: &dyn EventSink) -> Result<Value, ApiError> {
         let request: EvidenceListRequest = parse_payload(&command.payload)?;
-        if let Some(entity_kind) = &request.entity_kind {
-            validate_entity_kind(entity_kind)?;
-        }
-        let filter = EvidenceFilter {
-            project_id: request.project_id.clone(),
-            entity_kind: request.entity_kind.clone(),
-            entity_id: request.entity_id.clone(),
-        };
-        let entity = request
+        let project_id = parse_project_id(&request.project_id)?;
+        let entity_kind = request
             .entity_kind
             .as_deref()
-            .zip(request.entity_id.as_deref())
+            .map(parse_entity_kind)
+            .transpose()?;
+        let entity_id = request
+            .entity_id
+            .as_deref()
+            .map(parse_entity_id)
+            .transpose()?;
+        let filter = EvidenceFilter {
+            project_id: project_id.clone(),
+            entity_kind: entity_kind.clone(),
+            entity_id: entity_id.clone(),
+        };
+        let entity = entity_kind
+            .as_deref()
+            .zip(entity_id.as_deref())
             .map(|(kind, id)| TimelineEntityRef {
                 kind: TimelineEntityKind::parse(kind)
                     .expect("validated timeline entity kind has a DTO variant"),
                 id: id.to_owned(),
             });
         let envelope = TimelineEnvelope::project(
-            &request.project_id,
+            &project_id,
             TimelineEventKind::Evidence,
             entity,
             json!({
                 "action": "listed",
-                "entity_kind": request.entity_kind,
-                "entity_id": request.entity_id,
+                "entity_kind": entity_kind,
+                "entity_id": entity_id,
             }),
         )?;
         let items = self.store.list(&filter, envelope)?;
-        announce_list(events, &request.project_id, items.len());
+        announce_list(events, &project_id, items.len());
         let response = EvidenceListResponse {
             evidence: items.iter().map(record_of).collect(),
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
+}
+
+fn parse_project_id(project_id: &str) -> Result<String, ApiError> {
+    let trimmed = project_id.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::invalid_request("evidence must name its project"));
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn parse_entity_kind(entity_kind: &str) -> Result<String, ApiError> {
+    validate_entity_kind(entity_kind)?;
+    Ok(entity_kind.to_owned())
+}
+
+fn parse_entity_id(entity_id: &str) -> Result<String, ApiError> {
+    let trimmed = entity_id.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::invalid_request(
+            "an entity identity cannot be blank",
+        ));
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn parse_subject(entity_kind: &str, entity_id: &str) -> Result<(String, String), ApiError> {
+    Ok((parse_entity_kind(entity_kind)?, parse_entity_id(entity_id)?))
 }
 
 fn validate_entity_kind(entity_kind: &str) -> Result<(), ApiError> {
@@ -564,5 +599,80 @@ mod evidence_attach {
         let (items, timeline) = store.snapshot();
         assert!(items.is_empty());
         assert!(timeline.is_empty());
+    }
+
+    #[test]
+    fn attaching_with_blank_project_id_is_refused_without_recording_anything() {
+        let store = Arc::new(MemoryEvidenceStore::default());
+        let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+
+        let error = core
+            .command(
+                "evidence.attach",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": "   ",
+                    "entity_kind": "ticket",
+                    "entity_id": "kan-t10",
+                    "evidence_kind": "managed_file",
+                    "content_base64": STANDARD.encode(b"proof"),
+                }),
+            )
+            .expect_err("a blank project is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        let (items, timeline) = store.snapshot();
+        assert!(items.is_empty());
+        assert!(timeline.is_empty());
+    }
+
+    #[test]
+    fn attaching_with_blank_entity_id_is_refused_without_recording_anything() {
+        let store = Arc::new(MemoryEvidenceStore::default());
+        let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+
+        let error = core
+            .command(
+                "evidence.attach",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": "kan-p1",
+                    "entity_kind": "ticket",
+                    "entity_id": "   ",
+                    "evidence_kind": "managed_file",
+                    "content_base64": STANDARD.encode(b"proof"),
+                }),
+            )
+            .expect_err("a blank entity identity is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        let (items, timeline) = store.snapshot();
+        assert!(items.is_empty());
+        assert!(timeline.is_empty());
+    }
+
+    #[test]
+    fn attaching_canonicalises_untrimmed_identities() {
+        let store = Arc::new(MemoryEvidenceStore::default());
+        let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+
+        core.command(
+            "evidence.attach",
+            &json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                "project_id": " kan-p1 ",
+                "entity_kind": "ticket",
+                "entity_id": " kan-t10 ",
+                "evidence_kind": "managed_file",
+                "content_base64": STANDARD.encode(b"proof"),
+            }),
+        )
+        .expect("the attach applies");
+
+        let (items, timeline) = store.snapshot();
+        assert_eq!(items[0].project_id(), "kan-p1");
+        assert_eq!(items[0].entity_id(), "kan-t10");
+        assert_eq!(timeline[0].1["entity_kind"], json!("ticket"));
+        assert_eq!(timeline[0].1["entity_id"], json!("kan-t10"));
     }
 }

@@ -52,6 +52,8 @@ impl EvidenceStore for SqliteEvidenceStore {
         content_base64: &str,
         facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError> {
+        let (project_id, entity_kind, entity_id) =
+            canonicalise_identities(project_id, entity_kind, entity_id)?;
         let content = STANDARD
             .decode(content_base64)
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
@@ -61,9 +63,9 @@ impl EvidenceStore for SqliteEvidenceStore {
         write_attachment(&self.attachments_dir, &content_hash, &content)?;
         self.insert_row(
             EvidenceShape {
-                project_id: project_id.to_owned(),
-                entity_kind: entity_kind.to_owned(),
-                entity_id: entity_id.to_owned(),
+                project_id,
+                entity_kind,
+                entity_id,
                 kind: EvidenceKind::ManagedFile,
                 content_hash: Some(content_hash),
                 relative_path: None,
@@ -82,11 +84,13 @@ impl EvidenceStore for SqliteEvidenceStore {
         commit_identity: &CommitIdentity,
         facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError> {
+        let (project_id, entity_kind, entity_id) =
+            canonicalise_identities(project_id, entity_kind, entity_id)?;
         self.insert_row(
             EvidenceShape {
-                project_id: project_id.to_owned(),
-                entity_kind: entity_kind.to_owned(),
-                entity_id: entity_id.to_owned(),
+                project_id,
+                entity_kind,
+                entity_id,
                 kind: EvidenceKind::Repository,
                 content_hash: None,
                 relative_path: Some(relative_path.clone()),
@@ -160,13 +164,14 @@ impl SqliteEvidenceStore {
         detail_object.insert("id".to_owned(), Value::from(id.value()));
         detail_object.insert("entity_kind".to_owned(), Value::from(item.entity_kind()));
         detail_object.insert("entity_id".to_owned(), Value::from(item.entity_id()));
-        let evidence_id = id.value().to_string();
         let envelope = TimelineEnvelope::project(
             item.project_id(),
             facts.kind,
             Some(TimelineEntityRef {
-                kind: TimelineEntityKind::Evidence,
-                id: evidence_id,
+                kind: TimelineEntityKind::parse(item.entity_kind()).ok_or_else(|| {
+                    ApiError::internal("a stored evidence entity kind is corrupt")
+                })?,
+                id: item.entity_id().to_owned(),
             }),
             detail,
         )?;
@@ -329,6 +334,33 @@ fn internal(error: impl std::fmt::Display) -> ApiError {
     ApiError::internal(&error.to_string())
 }
 
+fn canonicalise_identities(
+    project_id: &str,
+    entity_kind: &str,
+    entity_id: &str,
+) -> Result<(String, String, String), ApiError> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err(ApiError::invalid_request("evidence must name its project"));
+    }
+    if !kanban_domain::is_entity_kind(entity_kind) {
+        return Err(ApiError::invalid_request(&format!(
+            "unknown entity kind `{entity_kind}`"
+        )));
+    }
+    let entity_id = entity_id.trim();
+    if entity_id.is_empty() {
+        return Err(ApiError::invalid_request(
+            "an entity identity cannot be blank",
+        ));
+    }
+    Ok((
+        project_id.to_owned(),
+        entity_kind.to_owned(),
+        entity_id.to_owned(),
+    ))
+}
+
 #[derive(Debug)]
 struct CorruptEvidence;
 
@@ -444,11 +476,50 @@ mod evidence_storage {
                 "id": item.id().value(),
             })
         );
-        let evidence_id = item.id().value().to_string();
         assert_eq!(
             envelope(&event),
-            (Some("evidence"), Some(evidence_id.as_str())),
-            "the attach event references the new evidence item"
+            (Some("ticket"), Some("kan-t10")),
+            "the attach event references the subject entity"
+        );
+    }
+
+    #[test]
+    fn attach_event_appears_when_timeline_is_filtered_to_the_subject_entity() {
+        let (_dir, database, store) = store();
+        let content = b"subject-filter proof";
+        let encoded = STANDARD.encode(content);
+        store
+            .attach_managed_file(
+                "kan-p1",
+                "ticket",
+                "kan-t10",
+                &encoded,
+                append(
+                    "evidence",
+                    json!({
+                        "action": "attached",
+                        "evidence_kind": "managed_file",
+                        "content_hash": content_hash(content),
+                    }),
+                ),
+            )
+            .expect("the managed file lands");
+
+        let rows = database
+            .query_timeline(&TimelineFilter {
+                entity_kind: Some("ticket".to_owned()),
+                entity_id: Some("kan-t10".to_owned()),
+                ..TimelineFilter::of(TimelineScope::Project("kan-p1".to_owned()))
+            })
+            .expect("the subject filter applies");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "evidence");
+        assert_eq!(rows[0].detail["action"], json!("attached"));
+        assert_eq!(
+            envelope(&rows[0]),
+            (Some("ticket"), Some("kan-t10")),
+            "subject-filtered timelines include the attach event"
         );
     }
 
@@ -783,6 +854,35 @@ mod evidence_storage {
         assert!(
             error.to_string().contains("append-only"),
             "the refusal should say append-only, got: {error}"
+        );
+    }
+
+    #[test]
+    fn blank_identities_refuse_managed_file_without_blob_or_row() {
+        let (dir, database, store) = store();
+        let attachments = dir.path().join("attachments");
+        let encoded = STANDARD.encode(b"proof");
+        let facts = append("evidence", json!({ "action": "attached" }));
+
+        for (project_id, entity_id) in [("", "kan-t10"), ("kan-p1", "   ")] {
+            let error = store
+                .attach_managed_file(project_id, "ticket", entity_id, &encoded, facts.clone())
+                .expect_err("blank identities are refused");
+            assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        }
+
+        assert!(
+            !attachments.exists(),
+            "a refused attach must not create the attachments directory"
+        );
+        let row_count: i64 = database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM evidence_items", [], |row| row.get(0))
+            .expect("the table is readable");
+        assert_eq!(row_count, 0, "a refused attach must not persist a row");
+        assert!(
+            timeline_rows(&database).is_empty(),
+            "a refused attach must not append a timeline event"
         );
     }
 }

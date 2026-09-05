@@ -414,11 +414,11 @@ mod tests {
         assert_eq!(
             entities,
             vec![
-                json!({ "kind": "evidence", "id": "1" }),
+                json!({ "kind": "ticket", "id": "kan-t10" }),
                 json!({ "kind": "ticket", "id": "kan-t10" }),
                 Value::Null,
             ],
-            "attach references the item, a filtered list references the filter, a Project-wide list references nothing"
+            "attach references the subject entity, a filtered list references the filter, a Project-wide list references nothing"
         );
 
         core.shutdown();

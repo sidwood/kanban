@@ -8,6 +8,8 @@ use std::thread::{self, JoinHandle};
 
 use serde_json::{Value, json};
 
+use kanban_domain::HerdrSession;
+
 use crate::paths::session_socket_in;
 use crate::protocol::{HerdrRequest, HerdrResponse, Snapshot};
 
@@ -18,28 +20,77 @@ pub struct ScriptedSession {
 }
 
 impl ScriptedSession {
-    /// Bind one session socket under `root` and serve `script`.
+    /// Bind one named session socket under `root` and serve `script`.
+    /// The Herdr workspace identity reported by snapshots is the
+    /// product workspace's final path segment.
     pub fn bind(
         root: &Path,
         session_name: &str,
         product_workspace: &str,
         script: SessionScript,
     ) -> Self {
+        Self::bind_session(
+            root,
+            HerdrSession::named(session_name).expect("the fixture session name validates"),
+            product_workspace,
+            None,
+            script,
+        )
+    }
+
+    /// Bind Herdr's default session socket under `root` and serve
+    /// `script`.
+    pub fn bind_default(root: &Path, product_workspace: &str, script: SessionScript) -> Self {
+        Self::bind_session(root, HerdrSession::Default, product_workspace, None, script)
+    }
+
+    /// Bind one named session socket whose snapshots report an
+    /// explicit Herdr workspace identity, for bindings where that
+    /// identity differs from the product workspace's final segment.
+    pub fn bind_with_workspace(
+        root: &Path,
+        session_name: &str,
+        product_workspace: &str,
+        herdr_workspace: &str,
+        script: SessionScript,
+    ) -> Self {
+        Self::bind_session(
+            root,
+            HerdrSession::named(session_name).expect("the fixture session name validates"),
+            product_workspace,
+            Some(herdr_workspace.to_owned()),
+            script,
+        )
+    }
+
+    /// Bind one session socket, named or default, under `root`.
+    fn bind_session(
+        root: &Path,
+        session: HerdrSession,
+        product_workspace: &str,
+        herdr_workspace: Option<String>,
+        script: SessionScript,
+    ) -> Self {
         std::fs::create_dir_all(root).expect("the fixture root is created");
-        let socket_path =
-            session_socket_in(root, session_name).expect("the session name validates");
+        let socket_path = session_socket_in(root, &session).expect("the session resolves a socket");
         if socket_path.exists() {
             std::fs::remove_file(&socket_path).expect("stale fixture socket is cleared");
         }
         let listener = UnixListener::bind(&socket_path).expect("the fixture socket binds");
         let script = Arc::new(script);
         let product_workspace = product_workspace.to_owned();
-        let session_name = session_name.to_owned();
+        let session_name = session.as_name().unwrap_or("default").to_owned();
         let server = thread::Builder::new()
             .name(format!("herdr-fixture-{session_name}"))
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
-                    serve_connection(stream, &session_name, &product_workspace, script.clone());
+                    serve_connection(
+                        stream,
+                        &session_name,
+                        &product_workspace,
+                        herdr_workspace.clone(),
+                        script.clone(),
+                    );
                 }
             })
             .expect("the fixture server starts");
@@ -101,6 +152,7 @@ fn serve_connection(
     stream: UnixStream,
     session_name: &str,
     product_workspace: &str,
+    herdr_workspace: Option<String>,
     script: Arc<SessionScript>,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
@@ -127,9 +179,11 @@ fn serve_connection(
         };
 
         let response = match request {
-            HerdrRequest::Snapshot => {
-                HerdrResponse::Snapshot(snapshot(session_name, product_workspace))
-            }
+            HerdrRequest::Snapshot => HerdrResponse::Snapshot(snapshot(
+                session_name,
+                product_workspace,
+                herdr_workspace.as_deref(),
+            )),
             HerdrRequest::Subscribe => {
                 subscribed = true;
                 HerdrResponse::Subscribed
@@ -173,15 +227,21 @@ fn serve_connection(
     }
 }
 
-fn snapshot(session_name: &str, product_workspace: &str) -> Snapshot {
+fn snapshot(
+    session_name: &str,
+    product_workspace: &str,
+    herdr_workspace: Option<&str>,
+) -> Snapshot {
     Snapshot {
         session: session_name.to_owned(),
         product_workspace: product_workspace.to_owned(),
-        herdr_workspace: Path::new(product_workspace)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(product_workspace)
-            .to_owned(),
+        herdr_workspace: herdr_workspace.map(str::to_owned).unwrap_or_else(|| {
+            Path::new(product_workspace)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(product_workspace)
+                .to_owned()
+        }),
         state: json!({ "roles": [] }),
         captured_at: "2026-09-05T04:46:00Z".to_owned(),
     }

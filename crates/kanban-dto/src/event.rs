@@ -592,6 +592,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
                 "initiative_id": null,
                 "archived": false,
                 "counters": { "plan": 0, "spec": 0, "ticket": 0 },
@@ -611,7 +612,8 @@ mod tests {
                     repository: "/repositories/kanban".to_owned(),
                     seed_workspace: "/workspaces/kanban.seed".to_owned(),
                     default_branch: "main".to_owned(),
-                    herdr_session: "kanban-main".to_owned(),
+                    herdr_session: Some("kanban-main".to_owned()),
+                    herdr_workspace: "kanban.seed".to_owned(),
                     initiative_id: None,
                     archived: false,
                     counters: crate::project::ProjectCounters {

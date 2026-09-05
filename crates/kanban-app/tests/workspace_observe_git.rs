@@ -125,7 +125,8 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         &repository,
         workspace.to_str().unwrap(),
         "main",
-        "kanban-main",
+        "kanban.seed",
+        Some("kanban-main"),
         None,
     )
     .expect("the fixture registration validates");

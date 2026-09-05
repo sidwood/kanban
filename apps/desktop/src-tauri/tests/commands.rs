@@ -145,6 +145,7 @@ fn sample_request(schema: &str) -> Value {
             "repository": "/repositories/kanban",
             "seed_workspace": "/workspaces/kanban.seed",
             "default_branch": "main",
+            "herdr_workspace": "kanban.seed",
             "herdr_session": "kanban-main",
             "initiative_id": null,
         }),

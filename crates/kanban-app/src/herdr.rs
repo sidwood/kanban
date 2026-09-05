@@ -51,12 +51,16 @@ impl HerdrProjectObserver for NoopHerdrProjectObserver {
 
 /// Live connection diagnostics maintained by the service observer.
 pub trait HerdrDiagnostics: Send + Sync {
-    /// The current diagnostics for one Project's Herdr session.
+    /// The current diagnostics for one Project's Herdr binding: the
+    /// session the Project selected, if any, the product workspace,
+    /// and the target Herdr workspace, resolved together so identity
+    /// never escapes the effective session (DR-HB-19).
     fn for_project(
         &self,
         project_id: u64,
-        session_name: &str,
+        session: Option<&str>,
         product_workspace: &str,
+        herdr_workspace: &str,
     ) -> HerdrConnectionDiagnostics;
 }
 
@@ -115,6 +119,7 @@ impl QueryHandler for GetHerdrSettings {
             query.project_id,
             registration.herdr_session(),
             registration.seed_workspace(),
+            registration.herdr_workspace(),
         );
         let response = HerdrSettingsGetResponse {
             project_id: query.project_id,
@@ -344,13 +349,14 @@ mod tests {
         fn for_project(
             &self,
             _project_id: u64,
-            session_name: &str,
+            session: Option<&str>,
             product_workspace: &str,
+            herdr_workspace: &str,
         ) -> HerdrConnectionDiagnostics {
             HerdrConnectionDiagnostics {
-                session_name: session_name.to_owned(),
+                session_name: session.map(str::to_owned),
                 product_workspace: product_workspace.to_owned(),
-                herdr_workspace: Some("kanban.seed".to_owned()),
+                herdr_workspace: herdr_workspace.to_owned(),
                 connected: true,
                 last_snapshot_at: Some("2026-09-05T04:46:00Z".to_owned()),
                 last_error: None,
@@ -400,7 +406,8 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             None,
         )
         .expect("the registration validates");
@@ -440,6 +447,49 @@ mod tests {
         assert_eq!(
             response["diagnostics"]["session_name"],
             json!("kanban-main")
+        );
+        assert_eq!(
+            response["diagnostics"]["herdr_workspace"],
+            json!("kanban.seed"),
+            "diagnostics carry the target workspace identity"
+        );
+    }
+
+    #[test]
+    fn herdr_settings_get_reports_a_default_session_without_a_name() {
+        let (settings, projects, project_id) = registered_project();
+        let mut projects_store = projects.0.lock().unwrap();
+        let sessionless = ProjectRegistration::new(
+            "WAVE",
+            "Wave pool",
+            "/repositories/kanban",
+            "/workspaces/wave.seed",
+            "main",
+            "wave.seed",
+            None,
+            None,
+        )
+        .expect("the registration validates");
+        *projects_store.first_mut().unwrap() =
+            Project::new(ProjectId::new(project_id), sessionless);
+        drop(projects_store);
+        let handler = GetHerdrSettings {
+            settings,
+            diagnostics: Arc::new(StaticDiagnostics),
+            projects,
+        };
+
+        let response = handler
+            .handle(&json!({ "project_id": project_id }))
+            .expect("settings and diagnostics are served");
+
+        assert!(
+            response["diagnostics"]["session_name"].is_null(),
+            "an unnamed session reports no name, not an empty one"
+        );
+        assert_eq!(
+            response["diagnostics"]["herdr_workspace"],
+            json!("wave.seed")
         );
     }
 

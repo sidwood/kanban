@@ -1,5 +1,6 @@
-//! Herdr session observation: connect, snapshot on startup and
-//! reconnect, and append telemetry events (KAN-S8-US1, DR-HB-08).
+//! Herdr session observation: connect through each Project's
+//! effective session, snapshot on startup and reconnect, and append
+//! telemetry events (KAN-S8-US1, DR-HB-08, DR-HB-19).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -32,12 +33,15 @@ impl std::fmt::Display for ObservationError {
     }
 }
 
-/// Live diagnostics for one Project's Herdr session.
+/// Live diagnostics for one Project's Herdr binding: the session the
+/// Project selected (absent for Herdr's default), the product
+/// workspace, and the target Herdr workspace resolved inside that
+/// session.
 #[derive(Debug, Clone, Default)]
 struct SessionDiagnostics {
-    session_name: String,
+    session_name: Option<String>,
     product_workspace: String,
-    herdr_workspace: Option<String>,
+    herdr_workspace: String,
     connected: bool,
     last_snapshot_at: Option<String>,
     last_error: Option<String>,
@@ -80,32 +84,40 @@ impl HerdrObserver {
         }
     }
 
-    /// Start observing one Project's Herdr session.
+    /// Start observing one Project's Herdr binding through its
+    /// effective session.
     pub fn observe_project(&self, project: &Project) {
         if project.is_archived() {
             return;
         }
         let registration = project.registration();
+        let session = registration.effective_herdr_session();
         self.diagnostics.lock().unwrap().insert(
             project.id().value(),
             SessionDiagnostics {
-                session_name: registration.herdr_session().to_owned(),
+                session_name: registration.herdr_session().map(str::to_owned),
                 product_workspace: registration.seed_workspace().to_owned(),
+                herdr_workspace: registration.herdr_workspace().to_owned(),
                 ..SessionDiagnostics::default()
             },
         );
         let handle = HerdrObserverHandle {
             project_id: project.id().value(),
             mapping: SessionMapping::new(
-                registration.herdr_session(),
+                session.clone(),
                 registration.seed_workspace(),
+                registration.herdr_workspace(),
             ),
             socket_root: self.socket_root.clone(),
             database: self.database.clone(),
             diagnostics: self.diagnostics.clone(),
         };
+        let thread_name = session
+            .as_name()
+            .map(|name| format!("herdr-{name}"))
+            .unwrap_or_else(|| "herdr-default".to_owned());
         let thread = thread::Builder::new()
-            .name(format!("herdr-{}", registration.herdr_session()))
+            .name(thread_name)
             .spawn(move || handle.run())
             .expect("a Herdr observation thread starts");
         self.threads.lock().unwrap().push(thread);
@@ -140,9 +152,7 @@ impl HerdrObserverHandle {
                     };
                     first_connect = false;
                     match self.capture_snapshot(&mut client, reason) {
-                        Ok(snapshot) => {
-                            self.update_workspace(snapshot.herdr_workspace, snapshot.captured_at)
-                        }
+                        Ok(snapshot) => self.record_snapshot(snapshot.captured_at),
                         Err(error) => self.mark_error(error),
                     }
                     if client.subscribe().is_ok() {
@@ -206,9 +216,8 @@ impl HerdrObserverHandle {
         self.mark_connected(false, Some(error.to_string()));
     }
 
-    fn update_workspace(&self, herdr_workspace: String, captured_at: String) {
+    fn record_snapshot(&self, captured_at: String) {
         if let Some(entry) = self.diagnostics.lock().unwrap().get_mut(&self.project_id) {
-            entry.herdr_workspace = Some(herdr_workspace);
             entry.last_snapshot_at = Some(captured_at);
             entry.connected = true;
             entry.last_error = None;
@@ -241,8 +250,9 @@ impl HerdrDiagnostics for LiveHerdrDiagnostics {
     fn for_project(
         &self,
         project_id: u64,
-        session_name: &str,
+        session: Option<&str>,
         product_workspace: &str,
+        herdr_workspace: &str,
     ) -> HerdrConnectionDiagnostics {
         self.inner
             .lock()
@@ -250,8 +260,9 @@ impl HerdrDiagnostics for LiveHerdrDiagnostics {
             .get(&project_id)
             .cloned()
             .unwrap_or(SessionDiagnostics {
-                session_name: session_name.to_owned(),
+                session_name: session.map(str::to_owned),
                 product_workspace: product_workspace.to_owned(),
+                herdr_workspace: herdr_workspace.to_owned(),
                 ..SessionDiagnostics::default()
             })
             .into()
@@ -296,13 +307,14 @@ mod tests {
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
     use kanban_storage::{AllowAllMigrations, Database};
 
-    fn project(session: &str, workspace: &str) -> Project {
+    fn project(session: Option<&str>, workspace: &str) -> Project {
         let registration = ProjectRegistration::new(
             "CORE",
             "Control plane",
             "/repositories/kanban",
             workspace,
             "main",
+            "kanban.seed",
             session,
             None,
         )
@@ -328,7 +340,7 @@ mod tests {
         let database = Arc::new(database);
         let _observer = HerdrObserver::start(
             database.clone(),
-            &[project("kanban-main", "/workspaces/kanban.seed")],
+            &[project(Some("kanban-main"), "/workspaces/kanban.seed")],
             socket_root,
         );
         thread::sleep(Duration::from_millis(200));
@@ -345,6 +357,47 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].detail["event"], json!("snapshot"));
         assert_eq!(events[0].detail["reason"], json!("startup"));
+    }
+
+    /// KAN-T100-AC4: a Project without a session is observed through
+    /// Herdr's default session socket, with no session selection.
+    #[test]
+    fn a_sessionless_project_is_observed_through_the_default_session_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind_default(
+            &socket_root,
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let mut database = Database::open(&dir.path().join("kanban.sqlite"))
+            .expect("opening a fresh database succeeds");
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        let database = Arc::new(database);
+        let _observer = HerdrObserver::start(
+            database.clone(),
+            &[project(None, "/workspaces/kanban.seed")],
+            socket_root,
+        );
+        thread::sleep(Duration::from_millis(200));
+        let timeline = StorageTimelineStore::new(database);
+        let events = timeline
+            .query(&TimelineQuery {
+                scope: TimelineScope::Project("1".to_owned()),
+                entity: None,
+                kinds: Some(vec![TimelineEventKind::Telemetry]),
+                since: None,
+                until: None,
+            })
+            .expect("telemetry is queryable");
+        assert_eq!(
+            events.len(),
+            1,
+            "the default session serves the sessionless Project"
+        );
+        assert_eq!(events[0].detail["event"], json!("snapshot"));
     }
 
     #[test]

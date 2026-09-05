@@ -54,6 +54,19 @@ pub enum StorageError {
         /// The underlying SQLite failure.
         source: rusqlite::Error,
     },
+    /// A migration left a foreign key reference dangling, so its
+    /// transaction was refused rather than committed.
+    #[error("migration {version} ({name}) left {table} row {rowid} referencing a missing parent")]
+    ForeignKeyCheck {
+        /// The refusing migration version.
+        version: i64,
+        /// The refusing migration name.
+        name: &'static str,
+        /// The child table holding the dangling reference.
+        table: String,
+        /// The child row holding the dangling reference.
+        rowid: i64,
+    },
     /// A SQLite statement failed outside a named operation.
     #[error("a SQLite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),

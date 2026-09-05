@@ -3,14 +3,16 @@
 //! verdicts.
 
 mod client;
+mod commands;
 mod error;
 mod paths;
 mod protocol;
 mod session;
 
 pub use client::{PromptRequest, SessionClient, WaitRequest};
+pub use commands::session_arguments;
 pub use error::HerdrError;
-pub use paths::{herdr_sessions_dir, session_socket_path};
+pub use paths::{herdr_sessions_dir, session_socket_in, session_socket_path};
 pub use protocol::{HerdrRequest, HerdrResponse, Snapshot};
 pub use session::SessionMapping;
 

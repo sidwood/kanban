@@ -35,13 +35,15 @@ pub struct HerdrGlobalDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HerdrConnectionDiagnostics {
-    /// The exclusive named Herdr session.
-    pub session_name: String,
+    /// The named Herdr session, if the Project selected one; absence
+    /// selects Herdr's default session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
     /// The product Seed Workspace this session maps to.
     pub product_workspace: String,
-    /// The Herdr workspace observed through the socket, if connected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub herdr_workspace: Option<String>,
+    /// The required target Herdr workspace, resolved inside the
+    /// effective session.
+    pub herdr_workspace: String,
     /// Whether the per-session socket is connected.
     pub connected: bool,
     /// When the last full snapshot was captured.
@@ -137,16 +139,20 @@ mod tests {
     #[test]
     fn diagnostics_omit_empty_optional_fields() {
         let diagnostics = HerdrConnectionDiagnostics {
-            session_name: "kanban-main".to_owned(),
+            session_name: None,
             product_workspace: "/workspaces/kanban.seed".to_owned(),
-            herdr_workspace: None,
+            herdr_workspace: "kanban.seed".to_owned(),
             connected: false,
             last_snapshot_at: None,
             last_error: Some("disconnected".to_owned()),
         };
         let encoded = serde_json::to_value(&diagnostics).expect("diagnostics encode");
-        assert!(encoded.get("herdr_workspace").is_none());
+        assert!(
+            encoded.get("session_name").is_none(),
+            "an unnamed session reports nothing, not an empty name"
+        );
         assert!(encoded.get("last_snapshot_at").is_none());
+        assert_eq!(encoded["herdr_workspace"], "kanban.seed");
         assert_eq!(encoded["last_error"], "disconnected");
     }
 

@@ -1,13 +1,16 @@
 //! The Project entity: the unit of work ownership (CONTEXT.md). A
 //! Project anchors all of one repository's work: exactly one target
 //! Git repository, one Seed Workspace, one default branch, and one
-//! exclusive named Herdr session, optionally under one Initiative. It
-//! mints its own Plan, Spec, and Ticket numbers through independent
-//! monotonic counters, carries an immutable globally unique code, and
-//! is archived rather than deleted.
+//! required target Herdr workspace, with an optional Herdr session
+//! whose absence selects Herdr's default session, optionally under one
+//! Initiative. It mints its own Plan, Spec, and Ticket numbers through
+//! independent monotonic counters, carries an immutable globally
+//! unique code, and is archived rather than deleted.
 
 use std::fmt;
 
+use crate::herdr::HerdrSession;
+use crate::herdr::herdr_session_name;
 use crate::initiative::InitiativeId;
 
 /// The identity of one Project. Assigned once by storage and
@@ -201,8 +204,8 @@ impl fmt::Display for RegistrationError {
 impl std::error::Error for RegistrationError {}
 
 /// One validated registration: the anchors a Project owns exactly
-/// one of, plus its optional Initiative. Whitespace is not part of
-/// any field.
+/// one of, plus its optional Initiative and optional Herdr session.
+/// Whitespace is not part of any field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectRegistration {
     code: ProjectCode,
@@ -210,20 +213,24 @@ pub struct ProjectRegistration {
     repository: String,
     seed_workspace: String,
     default_branch: String,
-    herdr_session: String,
+    herdr_workspace: String,
+    herdr_session: Option<String>,
     initiative: Option<InitiativeId>,
 }
 
 impl ProjectRegistration {
     /// Validate a registration: the code pattern and reservation, and
-    /// that every anchor carries text.
+    /// that every anchor carries text. A blank Herdr session name is
+    /// absence, and absence selects Herdr's default session.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         code: &str,
         name: &str,
         repository: &str,
         seed_workspace: &str,
         default_branch: &str,
-        herdr_session: &str,
+        herdr_workspace: &str,
+        herdr_session: Option<&str>,
         initiative: Option<InitiativeId>,
     ) -> Result<Self, RegistrationError> {
         Ok(Self {
@@ -232,7 +239,8 @@ impl ProjectRegistration {
             repository: anchored("target repository", repository)?,
             seed_workspace: anchored("Seed Workspace", seed_workspace)?,
             default_branch: anchored("default branch", default_branch)?,
-            herdr_session: herdr_session_name(herdr_session)?,
+            herdr_workspace: anchored("target Herdr workspace", herdr_workspace)?,
+            herdr_session: optional_herdr_session(herdr_session)?,
             initiative,
         })
     }
@@ -262,9 +270,24 @@ impl ProjectRegistration {
         &self.default_branch
     }
 
-    /// The one exclusive named Herdr session.
-    pub fn herdr_session(&self) -> &str {
-        &self.herdr_session
+    /// The one required target Herdr workspace.
+    pub fn herdr_workspace(&self) -> &str {
+        &self.herdr_workspace
+    }
+
+    /// The named Herdr session, if the Project selected one; absence
+    /// selects Herdr's default session (DR-PH-07).
+    pub fn herdr_session(&self) -> Option<&str> {
+        self.herdr_session.as_deref()
+    }
+
+    /// The session this Project's Herdr observation resolves inside:
+    /// the named session, or Herdr's default when none is named
+    /// (DR-HB-19).
+    pub fn effective_herdr_session(&self) -> HerdrSession {
+        self.herdr_session
+            .clone()
+            .map_or(HerdrSession::Default, HerdrSession::Named)
     }
 
     /// The Initiative the Project sits under, if any.
@@ -273,37 +296,24 @@ impl ProjectRegistration {
     }
 }
 
-/// Reject Herdr session names that are not one safe path segment.
-pub fn validate_herdr_session_name(raw: &str) -> Result<String, RegistrationError> {
-    herdr_session_name(raw)
+/// The named session the text selects, when it names one: a blank
+/// name is absence, not a refusal.
+fn optional_herdr_session(raw: Option<&str>) -> Result<Option<String>, RegistrationError> {
+    match raw {
+        Some(name) if name.trim().is_empty() => Ok(None),
+        Some(name) => Ok(Some(herdr_session_name(name)?)),
+        None => Ok(None),
+    }
 }
 
 /// Accept a field that carries at least one non-whitespace
 /// character; surrounding whitespace is not part of the field.
-fn anchored(field: &'static str, raw: &str) -> Result<String, RegistrationError> {
+pub(crate) fn anchored(field: &'static str, raw: &str) -> Result<String, RegistrationError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(RegistrationError::Blank(field));
     }
     Ok(trimmed.to_owned())
-}
-
-/// Accept one non-empty path segment that cannot escape a parent
-/// directory when joined under the Herdr sessions root.
-fn herdr_session_name(raw: &str) -> Result<String, RegistrationError> {
-    let trimmed = anchored("Herdr session name", raw)?;
-    if !is_single_safe_path_segment(&trimmed) {
-        return Err(RegistrationError::InvalidHerdrSession);
-    }
-    Ok(trimmed)
-}
-
-fn is_single_safe_path_segment(segment: &str) -> bool {
-    !segment.starts_with('/')
-        && !segment.contains('\\')
-        && !segment.contains('/')
-        && segment != "."
-        && segment != ".."
 }
 
 /// The closed lifecycle vocabulary for a Project.
@@ -590,13 +600,11 @@ mod counters {
 }
 
 #[cfg(test)]
-mod tests {
+mod project_registration {
+    use crate::herdr::HerdrSession;
     use crate::initiative::InitiativeId;
 
-    use super::{
-        CodeError, NumberKind, Project, ProjectCounters, ProjectError, ProjectId,
-        ProjectRegistration, ProjectState, RegistrationError,
-    };
+    use super::{CodeError, ProjectRegistration, RegistrationError};
 
     /// A registration attempt with the standard anchors, so a test
     /// can vary the code alone.
@@ -607,7 +615,8 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             None,
         )
     }
@@ -623,7 +632,7 @@ mod tests {
         repository: &str,
         seed_workspace: &str,
         default_branch: &str,
-        herdr_session: &str,
+        herdr_workspace: &str,
     ) -> Result<ProjectRegistration, RegistrationError> {
         ProjectRegistration::new(
             "CORE",
@@ -631,7 +640,8 @@ mod tests {
             repository,
             seed_workspace,
             default_branch,
-            herdr_session,
+            herdr_workspace,
+            Some("kanban-main"),
             None,
         )
     }
@@ -643,7 +653,7 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
         ];
         for blanked in 0..carried.len() {
             let mut fields = carried;
@@ -664,7 +674,8 @@ mod tests {
             " /repositories/kanban ",
             "/workspaces/kanban.seed",
             " main ",
-            " kanban-main ",
+            " kanban.seed ",
+            Some(" kanban-main "),
             None,
         )
         .expect("the anchors carry text");
@@ -672,7 +683,66 @@ mod tests {
         assert_eq!(validated.name(), "Control plane");
         assert_eq!(validated.repository(), "/repositories/kanban");
         assert_eq!(validated.default_branch(), "main");
-        assert_eq!(validated.herdr_session(), "kanban-main");
+        assert_eq!(validated.herdr_workspace(), "kanban.seed");
+        assert_eq!(validated.herdr_session(), Some("kanban-main"));
+    }
+
+    #[test]
+    fn a_registration_stores_one_required_target_herdr_workspace() {
+        let validated = registration("CORE");
+
+        assert_eq!(validated.herdr_workspace(), "kanban.seed");
+    }
+
+    #[test]
+    fn a_registration_without_a_session_selects_the_default_session() {
+        let validated = ProjectRegistration::new(
+            "CORE",
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban.seed",
+            None,
+            None,
+        )
+        .expect("an absent session is a valid registration");
+
+        assert_eq!(validated.herdr_session(), None);
+        assert_eq!(
+            validated.effective_herdr_session(),
+            HerdrSession::Default,
+            "absence selects Herdr's default session (DR-PH-07)"
+        );
+    }
+
+    #[test]
+    fn a_registration_with_a_named_session_selects_that_session() {
+        let validated = registration("CORE");
+
+        assert_eq!(validated.herdr_session(), Some("kanban-main"));
+        assert_eq!(
+            validated.effective_herdr_session(),
+            HerdrSession::Named("kanban-main".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_blank_session_name_is_absence_not_a_refusal() {
+        let validated = ProjectRegistration::new(
+            "CORE",
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban.seed",
+            Some("  "),
+            None,
+        )
+        .expect("a blank session name selects the default session");
+
+        assert_eq!(validated.herdr_session(), None);
+        assert_eq!(validated.effective_herdr_session(), HerdrSession::Default);
     }
 
     #[test]
@@ -691,7 +761,8 @@ mod tests {
                 "/repositories/kanban",
                 "/workspaces/kanban.seed",
                 "main",
-                session,
+                "kanban.seed",
+                Some(session),
                 None,
             );
             assert_eq!(
@@ -710,12 +781,13 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             None,
         )
         .expect("a single safe segment is accepted");
 
-        assert_eq!(validated.herdr_session(), "kanban-main");
+        assert_eq!(validated.herdr_session(), Some("kanban-main"));
     }
 
     #[test]
@@ -742,13 +814,38 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             Some(InitiativeId::new(4)),
         )
         .expect("a well-formed registration is accepted");
 
         assert_eq!(under_initiative.initiative(), Some(InitiativeId::new(4)));
         assert_eq!(registration("CORE").initiative(), None);
+    }
+}
+
+#[cfg(test)]
+mod project_lifecycle {
+    use crate::initiative::InitiativeId;
+
+    use super::{
+        NumberKind, Project, ProjectCounters, ProjectError, ProjectId, ProjectRegistration,
+        ProjectState,
+    };
+
+    fn registration(code: &str) -> ProjectRegistration {
+        ProjectRegistration::new(
+            code,
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban.seed",
+            Some("kanban-main"),
+            None,
+        )
+        .expect("a well-formed registration is accepted")
     }
 
     #[test]
@@ -803,7 +900,8 @@ mod tests {
                 "/repositories/wave",
                 "/workspaces/wave.seed",
                 "trunk",
-                "wave-main",
+                "wave.seed",
+                Some("wave-main"),
                 Some(InitiativeId::new(2)),
             )
             .expect("a well-formed registration is accepted"),
@@ -821,7 +919,8 @@ mod tests {
             "/workspaces/wave.seed"
         );
         assert_eq!(project.registration().default_branch(), "trunk");
-        assert_eq!(project.registration().herdr_session(), "wave-main");
+        assert_eq!(project.registration().herdr_workspace(), "wave.seed");
+        assert_eq!(project.registration().herdr_session(), Some("wave-main"));
         assert_eq!(
             project.registration().initiative(),
             Some(InitiativeId::new(2))

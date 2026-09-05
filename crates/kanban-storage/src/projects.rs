@@ -1,9 +1,9 @@
 //! The SQLite implementation of the Project storage port: rows in
-//! `projects`, the uniqueness rules on codes and Herdr session
-//! names, and the application's timeline envelope landing unchanged
-//! in the same transaction as every change.
+//! `projects`, the global uniqueness of codes, and the application's
+//! timeline envelope landing unchanged in the same transaction as
+//! every change.
 
-use kanban_app::{ProjectStore, TimelineEnvelope, duplicate_code_error, duplicate_session_error};
+use kanban_app::{ProjectStore, TimelineEnvelope, duplicate_code_error};
 use kanban_domain::{
     InitiativeId, NumberKind, Project, ProjectCounters, ProjectId, ProjectRegistration,
     ProjectState,
@@ -16,8 +16,8 @@ use crate::timeline::insert_event;
 
 /// Every stored column of one Project row, in select order.
 const PROJECT_COLUMNS: &str = "id, code, name, repository, seed_workspace, default_branch, \
-                               herdr_session, initiative_id, archived, plan_counter, \
-                               spec_counter, ticket_counter, version";
+                               herdr_session, herdr_workspace, initiative_id, archived, \
+                               plan_counter, spec_counter, ticket_counter, version";
 
 /// The Project port over the authoritative database.
 pub struct SqliteProjectStore {
@@ -46,34 +46,25 @@ impl ProjectStore for SqliteProjectStore {
     ) -> Result<Project, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
-        // The friendly refusals; the UNIQUE constraints below remain
+        // The friendly refusal; the UNIQUE constraint below remains
         // the schema-level guarantee.
         let code = registration.code().as_str();
         if holder_of(&span, "SELECT id FROM projects WHERE code = ?1", code)?.is_some() {
             return Err(duplicate_code_error(code));
         }
-        let session = registration.herdr_session();
-        if holder_of(
-            &span,
-            "SELECT id FROM projects WHERE herdr_session = ?1",
-            session,
-        )?
-        .is_some()
-        {
-            return Err(duplicate_session_error(session));
-        }
         span.execute(
             "INSERT INTO projects
                  (code, name, repository, seed_workspace, default_branch,
-                  herdr_session, initiative_id, archived, version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 1)",
+                  herdr_session, herdr_workspace, initiative_id, archived, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 1)",
             params![
                 code,
                 registration.name(),
                 registration.repository(),
                 registration.seed_workspace(),
                 registration.default_branch(),
-                session,
+                registration.herdr_session(),
+                registration.herdr_workspace(),
                 registration.initiative().map(|id| id.value() as i64),
             ],
         )
@@ -190,24 +181,26 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
     let repository: String = row.get(3)?;
     let seed_workspace: String = row.get(4)?;
     let default_branch: String = row.get(5)?;
-    let herdr_session: String = row.get(6)?;
+    let herdr_session: Option<String> = row.get(6)?;
+    let herdr_workspace: String = row.get(7)?;
     let initiative_id = row
-        .get::<_, Option<i64>>(7)?
+        .get::<_, Option<i64>>(8)?
         .map(|value| value.unsigned_abs());
-    let archived: i64 = row.get(8)?;
+    let archived: i64 = row.get(9)?;
     let counters = ProjectCounters::restore(
-        row.get::<_, i64>(9)?.unsigned_abs(),
         row.get::<_, i64>(10)?.unsigned_abs(),
         row.get::<_, i64>(11)?.unsigned_abs(),
+        row.get::<_, i64>(12)?.unsigned_abs(),
     );
-    let version = row.get::<_, i64>(12)?.unsigned_abs();
+    let version = row.get::<_, i64>(13)?.unsigned_abs();
     let registration = ProjectRegistration::new(
         &code,
         &name,
         &repository,
         &seed_workspace,
         &default_branch,
-        &herdr_session,
+        &herdr_workspace,
+        herdr_session.as_deref(),
         initiative_id.map(InitiativeId::new),
     )
     .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(CorruptRow)))?;
@@ -252,7 +245,7 @@ fn append_timeline(
 }
 
 #[cfg(test)]
-mod tests {
+mod project_repository {
     use kanban_app::{InitiativeStore, ProjectStore, TimelineEnvelope};
     use kanban_domain::{
         InitiativeId, InitiativeName, NumberKind, Project, ProjectCounters, ProjectId,
@@ -279,17 +272,24 @@ mod tests {
         (dir, database, store)
     }
 
-    fn registration(code: &str, session: &str) -> ProjectRegistration {
+    /// A registration bound to the standard workspace, with the
+    /// session tests vary: `None` selects Herdr's default session.
+    fn registration(code: &str, session: Option<&str>) -> ProjectRegistration {
         ProjectRegistration::new(
             code,
             "Control plane",
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
+            "kanban.seed",
             session,
             None,
         )
         .expect("the fixture registration validates")
+    }
+
+    fn named(code: &str, session: &str) -> ProjectRegistration {
+        registration(code, Some(session))
     }
 
     /// The envelope the application layer builds for one Project
@@ -322,12 +322,16 @@ mod tests {
         transition(id, "archived", json!({}))
     }
 
-    fn stored_rows(database: &Database) -> Vec<(i64, String, String, i64, i64, i64, i64)> {
+    /// One stored row's binding facts: the session name, the target
+    /// workspace, and whether the row is archived.
+    type StoredRow = (i64, String, Option<String>, String, i64);
+
+    fn stored_rows(database: &Database) -> Vec<StoredRow> {
         let conn = database.connection();
         let mut statement = conn
             .prepare(
-                "SELECT id, code, herdr_session, archived, plan_counter, spec_counter, \
-                 ticket_counter FROM projects ORDER BY id",
+                "SELECT id, code, herdr_session, herdr_workspace, archived \
+                 FROM projects ORDER BY id",
             )
             .expect("the projects table is readable");
         statement
@@ -338,8 +342,6 @@ mod tests {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
                 ))
             })
             .expect("the row query runs")
@@ -388,13 +390,19 @@ mod tests {
         let (_dir, database, store) = store();
 
         let project = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
 
         assert_eq!(project.id().value(), 1);
         assert_eq!(
             stored_rows(&database),
-            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 0, 0, 0, 0)]
+            vec![(
+                1,
+                "CORE".to_owned(),
+                Some("kanban-main".to_owned()),
+                "kanban.seed".to_owned(),
+                0,
+            )]
         );
         assert_eq!(
             timeline_rows(&database),
@@ -411,14 +419,36 @@ mod tests {
     }
 
     #[test]
+    fn creating_without_a_session_stores_absence() {
+        let (_dir, database, store) = store();
+
+        let project = store
+            .create(&registration("CORE", None), &registered("CORE"))
+            .expect("the sessionless registration lands");
+
+        assert_eq!(project.registration().herdr_session(), None);
+        assert_eq!(
+            stored_rows(&database),
+            vec![(1, "CORE".to_owned(), None, "kanban.seed".to_owned(), 0,)],
+            "absence stores NULL beside the required workspace"
+        );
+        let found = store
+            .find(ProjectId::new(1))
+            .expect("the find serves")
+            .expect("the Project exists");
+        assert_eq!(found.registration().herdr_session(), None);
+        assert_eq!(found.registration().herdr_workspace(), "kanban.seed");
+    }
+
+    #[test]
     fn creating_refuses_a_duplicate_code() {
         let (_dir, database, store) = store();
         store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the first registration lands");
 
         let error = store
-            .create(&registration("CORE", "wave-main"), &registered("CORE"))
+            .create(&named("CORE", "wave-main"), &registered("CORE"))
             .expect_err("the duplicate code is refused");
 
         assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -435,41 +465,22 @@ mod tests {
     }
 
     #[test]
-    fn creating_refuses_a_duplicate_herdr_session_name() {
+    fn creating_allows_two_projects_to_share_a_session_name() {
         let (_dir, database, store) = store();
         store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the first registration lands");
 
-        let error = store
-            .create(&registration("WAVE", "kanban-main"), &registered("WAVE"))
-            .expect_err("the duplicate session name is refused");
-
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
-        assert_eq!(
-            error.message,
-            "the Herdr session name `kanban-main` is already exclusive to another Project"
-        );
-        assert_eq!(stored_rows(&database).len(), 1);
-    }
-
-    #[test]
-    fn an_archived_project_keeps_its_session_name_exclusive() {
-        let (_dir, database, store) = store();
-        let mut first = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
-            .expect("the first registration lands");
-        first.archive().expect("active archives");
         store
-            .save(&first, archived(first.id()))
-            .expect("the archive lands");
+            .create(&named("WAVE", "kanban-main"), &registered("WAVE"))
+            .expect("the shared session name is no longer exclusive");
 
-        let error = store
-            .create(&registration("WAVE", "kanban-main"), &registered("WAVE"))
-            .expect_err("the session name stays exclusive");
-
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
-        assert_eq!(stored_rows(&database).len(), 1);
+        assert_eq!(stored_rows(&database).len(), 2);
+        let found = store
+            .find(ProjectId::new(2))
+            .expect("the find serves")
+            .expect("the Project exists");
+        assert_eq!(found.registration().herdr_session(), Some("kanban-main"));
     }
 
     #[test]
@@ -481,7 +492,8 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             Some(InitiativeId::new(9)),
         )
         .expect("the fixture registration validates");
@@ -521,7 +533,8 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             Some(initiative.id()),
         )
         .expect("the fixture registration validates");
@@ -544,7 +557,7 @@ mod tests {
     fn finding_returns_the_stored_project_or_none() {
         let (_dir, _database, store) = store();
         store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
 
         let found = store
@@ -565,7 +578,7 @@ mod tests {
     fn saving_persists_the_archive_and_its_append() {
         let (_dir, database, store) = store();
         let mut project = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
         project.archive().expect("active archives");
 
@@ -575,7 +588,13 @@ mod tests {
 
         assert_eq!(
             stored_rows(&database),
-            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 0, 0, 0)]
+            vec![(
+                1,
+                "CORE".to_owned(),
+                Some("kanban-main".to_owned()),
+                "kanban.seed".to_owned(),
+                1,
+            )]
         );
         let archived_at: Option<String> = {
             let conn = database.connection();
@@ -608,7 +627,7 @@ mod tests {
     fn archiving_preserves_the_minted_counters() {
         let (_dir, database, store) = store();
         store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
         // Stand in for the later slices that mint numbers: the stored
         // counters move, the aggregate rehydrates them, then the
@@ -639,17 +658,13 @@ mod tests {
         assert_eq!(found.counters().last(NumberKind::Plan), 3);
         assert_eq!(found.counters().last(NumberKind::Spec), 1);
         assert_eq!(found.counters().last(NumberKind::Ticket), 7);
-        assert_eq!(
-            stored_rows(&database),
-            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 3, 1, 7)]
-        );
     }
 
     #[test]
     fn saving_persists_the_counters_the_aggregate_holds() {
-        let (_dir, database, store) = store();
+        let (_dir, _database, store) = store();
         let created = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
         // Stand in for the later slices that mint numbers: the
         // aggregate rehydrates, mints in memory, and saves, so the row
@@ -668,10 +683,6 @@ mod tests {
             .save(&minted, archived(minted.id()))
             .expect("the save lands");
 
-        assert_eq!(
-            stored_rows(&database),
-            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 4, 2, 6)]
-        );
         let found = store
             .find(ProjectId::new(1))
             .expect("the find serves")
@@ -684,7 +695,7 @@ mod tests {
     #[test]
     fn saving_an_unknown_project_is_not_found() {
         let (_dir, _database, store) = store();
-        let ghost = Project::new(ProjectId::new(9), registration("CORE", "kanban-main"));
+        let ghost = Project::new(ProjectId::new(9), named("CORE", "kanban-main"));
 
         let error = store
             .save(&ghost, archived(ghost.id()))
@@ -697,7 +708,7 @@ mod tests {
     fn a_stale_storage_write_returns_stale_version_without_a_timeline_row() {
         let (_dir, database, store) = store();
         let project = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
         let mut stale = project.clone();
         stale.archive().expect("active archives");
@@ -721,7 +732,13 @@ mod tests {
         );
         assert_eq!(
             stored_rows(&database),
-            vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 0, 0, 0)],
+            vec![(
+                1,
+                "CORE".to_owned(),
+                Some("kanban-main".to_owned()),
+                "kanban.seed".to_owned(),
+                1,
+            )],
             "the winning write must remain authoritative"
         );
     }
@@ -734,7 +751,7 @@ mod tests {
     fn project_history_decodes_from_the_projects_own_timeline() {
         let (_dir, database, store) = store();
         let mut project = store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
         project.archive().expect("active archives");
         store
@@ -775,7 +792,7 @@ mod tests {
     #[test]
     fn listing_covers_every_project_in_id_order() {
         let (_dir, _database, store) = store();
-        for (code, session) in [("CORE", "kanban-main"), ("WAVE", "wave-main")] {
+        for (code, session) in [("CORE", Some("kanban-main")), ("WAVE", None)] {
             store
                 .create(&registration(code, session), &move |id| {
                     transition(id, "registered", json!({ "code": code }))
@@ -785,18 +802,30 @@ mod tests {
 
         let listed = store.list().expect("the list serves");
 
-        let codes: Vec<_> = listed
+        let bindings: Vec<_> = listed
             .iter()
-            .map(|project| project.code().as_str())
+            .map(|project| {
+                (
+                    project.code().as_str(),
+                    project.registration().herdr_session(),
+                    project.registration().herdr_workspace(),
+                )
+            })
             .collect();
-        assert_eq!(codes, vec!["CORE", "WAVE"]);
+        assert_eq!(
+            bindings,
+            vec![
+                ("CORE", Some("kanban-main"), "kanban.seed"),
+                ("WAVE", None, "kanban.seed"),
+            ]
+        );
     }
 
     #[test]
     fn deleting_a_project_is_refused_by_the_schema() {
         let (_dir, _database, store) = store();
         store
-            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
             .expect("the registration lands");
 
         let outcome = store
@@ -824,7 +853,7 @@ mod tests {
         // the core serves commands across transport threads.
         let served = std::thread::spawn(move || {
             boxed
-                .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+                .create(&named("CORE", "kanban-main"), &registered("CORE"))
                 .map(|project| project.code().as_str().to_owned())
         })
         .join()

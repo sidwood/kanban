@@ -124,6 +124,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "specs",
         sql: include_str!("../migrations/0014_specs.sql"),
     },
+    Migration {
+        version: 15,
+        name: "project Herdr workspace binding",
+        sql: include_str!("../migrations/0015_project_herdr_binding.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -208,7 +213,34 @@ fn applied_versions(conn: &Connection) -> Result<Vec<i64>, StorageError> {
 /// Applies one migration and records it in the same write: either
 /// the schema change and its bookkeeping land together or neither
 /// does.
+///
+/// A migration may rebuild a table other rows still reference, which
+/// SQLite only allows with foreign key enforcement off. Enforcement
+/// is therefore suspended around the span — the pragma is a no-op
+/// inside a transaction, so it toggles before the span opens — and a
+/// foreign key check inside the span refuses to commit a schema that
+/// left any reference dangling, so the off window never widens past
+/// one validated migration.
 fn apply_one(conn: &Connection, migration: &Migration) -> Result<(), StorageError> {
+    conn.execute_batch("PRAGMA foreign_keys = OFF")
+        .map_err(|source| StorageError::Migration {
+            version: migration.version,
+            name: migration.name,
+            source,
+        })?;
+    let outcome = apply_inside_span(conn, migration);
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|source| StorageError::Migration {
+            version: migration.version,
+            name: migration.name,
+            source,
+        })?;
+    outcome
+}
+
+/// Apply one migration inside its span, with the foreign key check
+/// that gates the commit.
+fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), StorageError> {
     let span = WriteSpan::begin(conn)?;
     span.execute_batch(migration.sql)
         .map_err(|source| StorageError::Migration {
@@ -225,6 +257,37 @@ fn apply_one(conn: &Connection, migration: &Migration) -> Result<(), StorageErro
         "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
         rusqlite::params![migration.version, migration.name],
     )?;
+    let mut statement =
+        span.prepare("PRAGMA foreign_key_check")
+            .map_err(|source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            })?;
+    let violations = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|source| StorageError::Migration {
+            version: migration.version,
+            name: migration.name,
+            source,
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| StorageError::Migration {
+            version: migration.version,
+            name: migration.name,
+            source,
+        })?;
+    drop(statement);
+    if let Some((table, rowid)) = violations.first() {
+        return Err(StorageError::ForeignKeyCheck {
+            version: migration.version,
+            name: migration.name,
+            table: table.clone(),
+            rowid: *rowid,
+        });
+    }
     span.commit()?;
     Ok(())
 }
@@ -281,7 +344,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
             }
         );
         assert_eq!(
@@ -303,7 +366,7 @@ mod tests {
             .expect("versions decode");
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         );
         for table in [
             "audit_events",
@@ -325,6 +388,8 @@ mod tests {
             "plan_version_specs",
             "plan_version_edges",
             "workspaces",
+            "specs",
+            "spec_versions",
         ] {
             let present: i64 = database
                 .connection()
@@ -373,7 +438,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 14, "one event per applied migration");
+        assert_eq!(events.len(), 15, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -444,6 +509,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[13].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 14, "name": "specs" })
         );
+        assert_eq!(events[14].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[14].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 15, "name": "project Herdr workspace binding" })
+        );
     }
 
     #[test]
@@ -468,7 +538,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14]
+                applied: vec![13, 14, 15]
             }
         );
         let present: i64 = database
@@ -493,6 +563,182 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
             serde_json::json!({ "version": 13, "name": "workspaces" })
+        );
+    }
+
+    /// KAN-T100-AC5: the rebinding migration carries every existing
+    /// Project into the replacement binding without a fleet migration.
+    #[test]
+    fn migration_0015_rebinds_existing_projects() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 14).expect("the pre-rebinding schema applies");
+        {
+            let conn = database.connection();
+            for (code, seed, session) in [
+                ("CORE", "/workspaces/kanban.seed", "kanban-main"),
+                ("WAVE", "/workspaces/wave.seed", "wave-main"),
+                ("BARE", "kanban.seed", "bare-main"),
+            ] {
+                conn.execute(
+                    "INSERT INTO projects
+                         (code, name, repository, seed_workspace, default_branch,
+                          herdr_session, archived, version)
+                     VALUES (?1, 'Held over', '/repositories/kanban', ?2, 'main', ?3, 0, 1)",
+                    rusqlite::params![code, seed, session],
+                )
+                .expect("the pre-upgrade Project lands");
+            }
+            conn.execute(
+                "UPDATE projects SET archived = 1, ticket_counter = 5 WHERE code = 'WAVE'",
+                [],
+            )
+            .expect("the archived Project carries facts");
+        }
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the rebinding migration applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![15] });
+        let conn = database.connection();
+        let rebound: Vec<(String, Option<String>, String, i64, i64)> = {
+            let mut statement = conn
+                .prepare(
+                    "SELECT code, herdr_session, herdr_workspace, archived, ticket_counter
+                     FROM projects ORDER BY id",
+                )
+                .expect("the rebound rows are readable");
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })
+                .expect("the row query runs")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("the rows decode")
+        };
+        assert_eq!(
+            rebound,
+            vec![
+                (
+                    "CORE".to_owned(),
+                    Some("kanban-main".to_owned()),
+                    "kanban.seed".to_owned(),
+                    0,
+                    0
+                ),
+                (
+                    "WAVE".to_owned(),
+                    Some("wave-main".to_owned()),
+                    "wave.seed".to_owned(),
+                    1,
+                    5
+                ),
+                // A Seed Workspace without directories keeps its own
+                // text as the workspace identity.
+                (
+                    "BARE".to_owned(),
+                    Some("bare-main".to_owned()),
+                    "kanban.seed".to_owned(),
+                    0,
+                    0
+                ),
+            ],
+            "every recorded fact survives and the workspace binding lands"
+        );
+
+        // Identities continue past the carried rows, and Projects stay
+        // archived, never deleted.
+        let next_id = conn.query_row("SELECT MAX(id) FROM projects", [], |row| {
+            row.get::<_, i64>(0)
+        });
+        conn.execute(
+            "INSERT INTO projects
+                 (code, name, repository, seed_workspace, default_branch,
+                  herdr_session, herdr_workspace, archived, version)
+             VALUES ('FRESH', 'New binding', '/repositories/kanban',
+                     '/workspaces/new.seed', 'main', NULL, 'new.seed', 0, 1)",
+            [],
+        )
+        .expect("a Project may register without a session");
+        assert!(
+            conn.last_insert_rowid() > next_id.expect("the carried rows hold an identity"),
+            "carried identities are never reused"
+        );
+        conn.execute(
+            "INSERT INTO projects
+                 (code, name, repository, seed_workspace, default_branch,
+                  herdr_session, herdr_workspace, archived, version)
+             VALUES ('SHARE', 'Shared session', '/repositories/kanban',
+                     '/workspaces/shared.seed', 'main', 'kanban-main', 'shared.seed', 0, 1)",
+            [],
+        )
+        .expect("the rebuilt table no longer holds session names exclusive");
+        let sessionless: Option<String> = conn
+            .query_row(
+                "SELECT herdr_session FROM projects WHERE code = 'FRESH'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the sessionless Project is readable");
+        assert_eq!(sessionless, None, "absence stores NULL");
+        assert!(
+            conn.execute("DELETE FROM projects WHERE code = 'CORE'", [])
+                .is_err(),
+            "the delete refusal returns with the rebuilt table"
+        );
+    }
+
+    /// The rebuild window suspends foreign key enforcement; the
+    /// runner must hand the connection back enforcing, and the stored
+    /// references must still refuse a dangling insert.
+    #[test]
+    fn migrate_restores_foreign_key_enforcement_after_a_rebuild() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 14).expect("the pre-rebinding schema applies");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_session, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban-main', 0, 1)",
+                [],
+            )
+            .expect("the pre-upgrade Project lands");
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the rebinding migration applies");
+
+        let conn = database.connection();
+        let enforcing: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("the pragma is readable");
+        assert_eq!(enforcing, 1, "enforcement returns after the run");
+        assert!(
+            conn.execute(
+                "INSERT INTO herdr_project_settings (project_id) VALUES (999)",
+                [],
+            )
+            .is_err(),
+            "a dangling reference must refuse after the rebuild"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM herdr_project_settings WHERE project_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("the carried settings row is readable"),
+            0,
+            "this fixture registered no settings; the reference proof stays schema-level"
         );
     }
 
@@ -584,6 +830,10 @@ mod tests {
                     version: 14,
                     name: "specs",
                 },
+                PendingMigration {
+                    version: 15,
+                    name: "project Herdr workspace binding",
+                },
             ]]
         );
     }
@@ -624,9 +874,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0014 apply");
+            .expect("migrations 0010 through 0015 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13, 14]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

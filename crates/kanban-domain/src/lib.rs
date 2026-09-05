@@ -4,6 +4,7 @@
 pub mod comment;
 pub mod deferral;
 pub mod evidence;
+pub mod herdr;
 pub mod initiative;
 pub mod plan;
 pub mod project;
@@ -20,6 +21,7 @@ pub use evidence::{
     CommitIdentity, ContentHash, EvidenceError, EvidenceId, EvidenceItem, EvidenceKind,
     EvidenceShape, RelativePath,
 };
+pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
@@ -29,7 +31,7 @@ pub use plan::{
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,
-    ProjectRegistration, ProjectState, RegistrationError, validate_herdr_session_name,
+    ProjectRegistration, ProjectState, RegistrationError,
 };
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use spec::{

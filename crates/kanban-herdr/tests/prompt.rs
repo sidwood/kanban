@@ -1,3 +1,4 @@
+use kanban_domain::HerdrSession;
 use kanban_herdr::fixture::{ScriptedSession, SessionScript};
 use kanban_herdr::{PromptRequest, SessionClient, SessionMapping};
 use tempfile::TempDir;
@@ -11,7 +12,11 @@ fn prompt_delivers_to_one_role_tab() {
         "/workspaces/kanban.seed",
         SessionScript::default().with_prompt_accepted(true),
     );
-    let mapping = SessionMapping::new("kanban-main", "/workspaces/kanban.seed");
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
     let mut client = SessionClient::connect(mapping, dir.path())
         .expect("the session connects through its socket");
 

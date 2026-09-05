@@ -1,5 +1,6 @@
 mod support;
 
+use kanban_domain::HerdrSession;
 use kanban_herdr::fixture::{ScriptedSession, SessionScript};
 use kanban_herdr::{SessionClient, SessionMapping, WaitRequest};
 use serde_json::json;
@@ -18,7 +19,11 @@ fn subscribe_receives_scripted_push_events() {
             "text": "working"
         })]),
     );
-    let mapping = SessionMapping::new("kanban-main", "/workspaces/kanban.seed");
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
     let mut client = SessionClient::connect(mapping, dir.path())
         .expect("the session connects through its socket");
 
@@ -42,7 +47,11 @@ fn wait_returns_the_scripted_result() {
         "/workspaces/kanban.seed",
         SessionScript::default().with_wait(true, json!({ "role": "implementer" })),
     );
-    let mapping = SessionMapping::new("kanban-main", "/workspaces/kanban.seed");
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
     let mut client = SessionClient::connect(mapping, dir.path())
         .expect("the session connects through its socket");
 

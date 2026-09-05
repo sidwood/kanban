@@ -1,10 +1,11 @@
 //! Project commands and the query behind the register surface:
 //! register, archive, and list (KAN-S1-US4, KAN-S1-US5, KAN-S1-US6).
 //! Registration anchors a Project to exactly one Git repository, one
-//! Seed Workspace, one default branch, and one exclusive named Herdr
-//! session, optionally under one Initiative; every change appends a
-//! timeline event in the same write, archived is terminal, and no
-//! delete exists.
+//! Seed Workspace, one default branch, and one required target Herdr
+//! workspace with an optional Herdr session whose absence selects
+//! Herdr's default session, optionally under one Initiative; every
+//! change appends a timeline event in the same write, archived is
+//! terminal, and no delete exists.
 
 use std::sync::Arc;
 
@@ -40,9 +41,8 @@ pub trait GitObservation: Send + Sync {
 pub trait ProjectStore: Send + Sync {
     /// Insert a fresh Project from a validated registration. Storage
     /// assigns its identity and asks `envelope` for the timeline row
-    /// that identity belongs in. Duplicate codes and duplicate Herdr
-    /// session names are refused, so codes stay globally unique and
-    /// session names exclusive.
+    /// that identity belongs in. Duplicate codes are refused, so
+    /// codes stay globally unique.
     fn create(
         &self,
         registration: &ProjectRegistration,
@@ -60,14 +60,6 @@ pub trait ProjectStore: Send + Sync {
 /// every store refuses duplicates with one voice.
 pub fn duplicate_code_error(code: &str) -> ApiError {
     ApiError::invalid_request(&format!("the project code `{code}` is already registered"))
-}
-
-/// The stable refusal for a Herdr session name another Project holds
-/// exclusively, archived Projects included.
-pub fn duplicate_session_error(session: &str) -> ApiError {
-    ApiError::invalid_request(&format!(
-        "the Herdr session name `{session}` is already exclusive to another Project"
-    ))
 }
 
 /// The timeline row for one Project transition. A Project's own
@@ -155,7 +147,8 @@ impl CommandHandler for RegisterProject {
             &request.repository,
             &request.seed_workspace,
             &request.default_branch,
-            &request.herdr_session,
+            &request.herdr_workspace,
+            request.herdr_session.as_deref(),
             request.initiative_id.map(InitiativeId::new),
         )
         .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
@@ -181,6 +174,7 @@ impl CommandHandler for RegisterProject {
             "repository": registration.repository(),
             "seed_workspace": registration.seed_workspace(),
             "default_branch": registration.default_branch(),
+            "herdr_workspace": registration.herdr_workspace(),
             "herdr_session": registration.herdr_session(),
             "initiative_id": registration.initiative().map(InitiativeId::value),
         });
@@ -257,7 +251,8 @@ fn record_of(project: &Project) -> ProjectRecord {
         repository: registration.repository().to_owned(),
         seed_workspace: registration.seed_workspace().to_owned(),
         default_branch: registration.default_branch().to_owned(),
-        herdr_session: registration.herdr_session().to_owned(),
+        herdr_session: registration.herdr_session().map(str::to_owned),
+        herdr_workspace: registration.herdr_workspace().to_owned(),
         initiative_id: registration.initiative().map(|id| id.value()),
         archived: project.is_archived(),
         counters: ProjectCounters {
@@ -292,7 +287,7 @@ pub(crate) mod testing {
     use kanban_dto::ApiError;
     use serde_json::{Value, json};
 
-    use super::{GitObservation, ProjectStore, duplicate_code_error, duplicate_session_error};
+    use super::{GitObservation, ProjectStore, duplicate_code_error};
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
@@ -359,13 +354,6 @@ pub(crate) mod testing {
                 .any(|stored| stored.code() == registration.code())
             {
                 return Err(duplicate_code_error(registration.code().as_str()));
-            }
-            if state
-                .projects
-                .iter()
-                .any(|stored| stored.registration().herdr_session() == registration.herdr_session())
-            {
-                return Err(duplicate_session_error(registration.herdr_session()));
             }
             state.next_id += 1;
             let id = ProjectId::new(state.next_id);
@@ -602,12 +590,16 @@ pub(crate) mod testing {
 
     /// A register request observing the one known repository, with
     /// the fields tests vary.
+    /// Mirrors the registration command's payload, so its parameters
+    /// match the request fields exactly.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn register(
         code: &str,
         name: &str,
         seed_workspace: &str,
         default_branch: &str,
-        herdr_session: &str,
+        herdr_workspace: &str,
+        herdr_session: Option<&str>,
         initiative_id: Option<u64>,
         key: &str,
     ) -> Value {
@@ -618,19 +610,22 @@ pub(crate) mod testing {
             "repository": "/repositories/kanban",
             "seed_workspace": seed_workspace,
             "default_branch": default_branch,
+            "herdr_workspace": herdr_workspace,
             "herdr_session": herdr_session,
             "initiative_id": initiative_id,
         })
     }
 
     /// The standard registration, with the code, session, and key
-    /// tests vary.
-    pub(crate) fn registering(code: &str, session: &str, key: &str) -> Value {
+    /// tests vary: the session is named when given and omitted for
+    /// `None`.
+    pub(crate) fn registering(code: &str, session: Option<&str>, key: &str) -> Value {
         register(
             code,
             "Control plane",
             "/workspaces/kanban.seed",
             "main",
+            "kanban.seed",
             session,
             None,
             key,
@@ -647,11 +642,20 @@ pub(crate) mod testing {
             "seed_workspace": "/workspaces/kanban.seed",
             "default_branch": "main",
             "herdr_session": "kanban-main",
+            "herdr_workspace": "kanban.seed",
             "initiative_id": null,
             "archived": false,
             "counters": { "plan": 0, "spec": 0, "ticket": 0 },
             "version": 1,
         })
+    }
+
+    /// The standard registration's observable record, without a
+    /// session: absence selects Herdr's default session.
+    pub(super) fn registered_without_session() -> Value {
+        let mut record = registered();
+        record["herdr_session"] = Value::Null;
+        record
     }
 
     /// One stored Project with minted counters, active at version 1.
@@ -662,7 +666,8 @@ pub(crate) mod testing {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            session,
+            "kanban.seed",
+            Some(session),
             None,
         )
         .expect("the fixture registration validates");
@@ -695,7 +700,7 @@ mod project_registration {
 
     use super::testing::{
         Harness, KnownRepositories, RecordingSink, harness, harness_with_observing, register,
-        registered, registering,
+        registered, registered_without_session, registering,
     };
     use crate::catalog::exposed_operations;
 
@@ -715,7 +720,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 
@@ -736,7 +741,8 @@ mod project_registration {
                     "Control plane",
                     "/workspaces/kanban.seed",
                     "main",
-                    "kanban-main",
+                    "kanban.seed",
+                    Some("kanban-main"),
                     Some(initiative.value()),
                     "key-1",
                 ),
@@ -759,7 +765,8 @@ mod project_registration {
                     "Control plane",
                     "/workspaces/kanban.seed",
                     "main",
-                    "kanban-main",
+                    "kanban.seed",
+                    Some("kanban-main"),
                     Some(9),
                     "key-1",
                 ),
@@ -778,7 +785,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect_err("a non-Git target is refused");
 
@@ -793,32 +800,41 @@ mod project_registration {
     }
 
     #[test]
-    fn registering_refuses_a_duplicate_herdr_session_name() {
+    fn registering_allows_a_shared_session_name() {
         let harness = harness();
         harness
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the first registration applies");
 
-        let error = harness
+        let shared = harness
             .core
             .command(
                 "project.register",
-                &registering("WAVE", "kanban-main", "key-2"),
+                &registering("WAVE", Some("kanban-main"), "key-2"),
             )
-            .expect_err("the duplicate session name is refused");
+            .expect("session names are no longer exclusive");
 
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
-        assert_eq!(
-            error.message,
-            "the Herdr session name `kanban-main` is already exclusive to another Project"
-        );
+        assert_eq!(shared["code"], json!("WAVE"));
+        assert_eq!(shared["herdr_session"], json!("kanban-main"));
         let (rows, timeline) = harness.projects.snapshot();
-        assert_eq!(rows.len(), 1, "the refusal recorded nothing");
-        assert_eq!(timeline.len(), 1);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(timeline.len(), 2);
+    }
+
+    #[test]
+    fn registering_without_a_session_selects_the_default_session() {
+        let harness = harness();
+
+        let response = harness
+            .core
+            .command("project.register", &registering("CORE", None, "key-1"))
+            .expect("an omitted session registers");
+
+        assert_eq!(response, registered_without_session());
     }
 
     #[test]
@@ -828,7 +844,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the first registration applies");
 
@@ -836,7 +852,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "wave-main", "key-2"),
+                &registering("CORE", Some("wave-main"), "key-2"),
             )
             .expect_err("the duplicate code is refused");
 
@@ -857,7 +873,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("KAN", "kanban-main", "key-1"),
+                &registering("KAN", Some("kanban-main"), "key-1"),
             )
             .expect_err("the product code is reserved");
 
@@ -873,7 +889,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("core", "kanban-main", "key-1"),
+                &registering("core", Some("kanban-main"), "key-1"),
             )
             .expect_err("the malformed code is refused");
 
@@ -897,7 +913,8 @@ mod project_registration {
                     " ",
                     "/workspaces/kanban.seed",
                     "main",
-                    "kanban-main",
+                    "kanban.seed",
+                    Some("kanban-main"),
                     None,
                     "key-1",
                 ),
@@ -911,7 +928,7 @@ mod project_registration {
     #[test]
     fn registering_rejects_unknown_fields() {
         let harness = harness();
-        let mut request = registering("CORE", "kanban-main", "key-1");
+        let mut request = registering("CORE", Some("kanban-main"), "key-1");
         request["surprise"] = json!(true);
 
         let error = harness
@@ -926,7 +943,7 @@ mod project_registration {
     #[test]
     fn registering_replays_a_retry_without_reapplying() {
         let harness = harness();
-        let request = registering("CORE", "kanban-main", "key-1");
+        let request = registering("CORE", Some("kanban-main"), "key-1");
 
         let first = harness
             .core
@@ -950,7 +967,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 
@@ -978,6 +995,7 @@ mod project_registration {
                     "repository": "/repositories/kanban",
                     "seed_workspace": "/workspaces/kanban.seed",
                     "default_branch": "main",
+                    "herdr_workspace": "kanban.seed",
                     "herdr_session": "kanban-main",
                     "initiative_id": null,
                     "action": "registered",
@@ -1002,7 +1020,7 @@ mod project_registration {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 
@@ -1043,7 +1061,7 @@ mod project_lifecycle {
             .core
             .command(
                 "project.register",
-                &registering("CORE", "kanban-main", "key-1"),
+                &registering("CORE", Some("kanban-main"), "key-1"),
             )
             .expect("the registration applies");
 

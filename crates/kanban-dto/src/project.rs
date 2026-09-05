@@ -36,8 +36,11 @@ pub struct ProjectRecord {
     pub seed_workspace: String,
     /// The one default branch.
     pub default_branch: String,
-    /// The one exclusive named Herdr session.
-    pub herdr_session: String,
+    /// The named Herdr session, if the Project selected one; absence
+    /// selects Herdr's default session.
+    pub herdr_session: Option<String>,
+    /// The one required target Herdr workspace.
+    pub herdr_workspace: String,
     /// The Initiative the Project sits under, if any.
     pub initiative_id: Option<u64>,
     /// Whether the Project is archived. Archived Projects stay
@@ -65,9 +68,11 @@ pub struct ProjectRegisterRequest {
     pub seed_workspace: String,
     /// The default branch.
     pub default_branch: String,
-    /// The exclusive Herdr session name; duplicate session names are
-    /// refused.
-    pub herdr_session: String,
+    /// The required target Herdr workspace.
+    pub herdr_workspace: String,
+    /// The Herdr session name, if one is selected; absence selects
+    /// Herdr's default session.
+    pub herdr_session: Option<String>,
     /// The Initiative the Project sits under, if any.
     pub initiative_id: Option<u64>,
 }
@@ -120,7 +125,8 @@ mod tests {
             repository: "/repositories/kanban".to_owned(),
             seed_workspace: "/workspaces/kanban.seed".to_owned(),
             default_branch: "main".to_owned(),
-            herdr_session: "kanban-main".to_owned(),
+            herdr_session: Some("kanban-main".to_owned()),
+            herdr_workspace: "kanban.seed".to_owned(),
             initiative_id,
             archived: false,
             counters: ProjectCounters {
@@ -145,6 +151,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
                 "initiative_id": null,
                 "archived": false,
                 "counters": { "plan": 1, "spec": 0, "ticket": 4 },
@@ -172,7 +179,8 @@ mod tests {
             repository: "/repositories/kanban".to_owned(),
             seed_workspace: "/workspaces/kanban.seed".to_owned(),
             default_branch: "main".to_owned(),
-            herdr_session: "kanban-main".to_owned(),
+            herdr_workspace: "kanban.seed".to_owned(),
+            herdr_session: Some("kanban-main".to_owned()),
             initiative_id: Some(2),
         };
 
@@ -188,6 +196,7 @@ mod tests {
             "repository": "/repositories/kanban",
             "seed_workspace": "/workspaces/kanban.seed",
             "default_branch": "main",
+            "herdr_workspace": "kanban.seed",
             "herdr_session": "kanban-main",
             "initiative_id": null,
             "delete": true,
@@ -204,11 +213,15 @@ mod tests {
             "repository": "/repositories/kanban",
             "seed_workspace": "/workspaces/kanban.seed",
             "default_branch": "main",
-            "herdr_session": "kanban-main",
+            "herdr_workspace": "kanban.seed",
         }))
-        .expect("the initiative is optional");
+        .expect("the initiative and session are optional");
 
         assert_eq!(decoded.initiative_id, None);
+        assert_eq!(
+            decoded.herdr_session, None,
+            "an omitted session selects Herdr's default session"
+        );
     }
 
     #[test]

@@ -219,7 +219,8 @@ mod tests {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            session,
+            "kanban.seed",
+            Some(session),
             None,
         )
         .expect("the registration validates");

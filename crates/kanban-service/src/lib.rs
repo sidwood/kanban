@@ -512,6 +512,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
             }),
         );
         assert_eq!(registered["code"], json!("CORE"));
@@ -521,9 +522,9 @@ mod tests {
             json!({ "plan": 0, "spec": 0, "ticket": 0 })
         );
 
-        // The same session name is refused for another Project, and a
-        // target that is not a Git repository never registers.
-        let duplicate_session = client.command_error(
+        // Session names are no longer exclusive: a second Project may
+        // select the same one, and a Project may name none at all.
+        let shared_session = client.command(
             "project.register",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
@@ -533,16 +534,25 @@ mod tests {
                 "seed_workspace": "/workspaces/wave.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "wave.seed",
             }),
         );
-        assert_eq!(duplicate_session["code"], json!("invalid_request"));
-        assert!(
-            duplicate_session["message"]
-                .as_str()
-                .expect("the message is text")
-                .contains("kanban-main"),
-            "the refusal names the session: {duplicate_session}"
+        assert_eq!(shared_session["code"], json!("WAVE"));
+        let sessionless = client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-bare" },
+                "code": "BARE",
+                "name": "Default session",
+                "repository": repository,
+                "seed_workspace": "/workspaces/bare.seed",
+                "default_branch": "main",
+                "herdr_workspace": "bare.seed",
+            }),
         );
+        assert_eq!(sessionless["herdr_session"], json!(null));
+        assert_eq!(sessionless["herdr_workspace"], json!("bare.seed"));
+        // A target that is not a Git repository never registers.
         let non_git = client.command_error(
             "project.register",
             json!({
@@ -553,6 +563,7 @@ mod tests {
                 "seed_workspace": "/workspaces/plain.seed",
                 "default_branch": "main",
                 "herdr_session": "plain-main",
+                "herdr_workspace": "plain.seed",
             }),
         );
         assert_eq!(non_git["code"], json!("invalid_request"));
@@ -581,14 +592,43 @@ mod tests {
                         "seed_workspace": "/workspaces/kanban.seed",
                         "default_branch": "main",
                         "herdr_session": "kanban-main",
+                        "herdr_workspace": "kanban.seed",
                         "initiative_id": null,
                         "archived": true,
                         "counters": { "plan": 0, "spec": 0, "ticket": 0 },
                         "version": 2,
+                    },
+                    {
+                        "id": 2,
+                        "code": "WAVE",
+                        "name": "Wave pool",
+                        "repository": repository,
+                        "seed_workspace": "/workspaces/wave.seed",
+                        "default_branch": "main",
+                        "herdr_session": "kanban-main",
+                        "herdr_workspace": "wave.seed",
+                        "initiative_id": null,
+                        "archived": false,
+                        "counters": { "plan": 0, "spec": 0, "ticket": 0 },
+                        "version": 1,
+                    },
+                    {
+                        "id": 3,
+                        "code": "BARE",
+                        "name": "Default session",
+                        "repository": repository,
+                        "seed_workspace": "/workspaces/bare.seed",
+                        "default_branch": "main",
+                        "herdr_session": null,
+                        "herdr_workspace": "bare.seed",
+                        "initiative_id": null,
+                        "archived": false,
+                        "counters": { "plan": 0, "spec": 0, "ticket": 0 },
+                        "version": 1,
                     }
                 ]
             }),
-            "archiving preserves every recorded fact over the wire"
+            "archiving preserves every recorded fact over the wire, and the shared session stays"
         );
 
         // The recorded facts are durable: a fresh core over the same
@@ -629,6 +669,7 @@ mod tests {
                 "seed_workspace": "/workspaces/wave.seed",
                 "default_branch": "main",
                 "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
             }),
         );
         thread::sleep(Duration::from_millis(200));
@@ -700,6 +741,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
             }),
         );
         client.command(
@@ -878,6 +920,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
             }),
         );
         assert_eq!(registered["version"], json!(1));

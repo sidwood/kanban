@@ -487,7 +487,8 @@ mod testing {
             "/repositories/kanban",
             "/workspaces/kanban.seed",
             "main",
-            "kanban-main",
+            "kanban.seed",
+            Some("kanban-main"),
             None,
         )
         .expect("the fixture registration validates");

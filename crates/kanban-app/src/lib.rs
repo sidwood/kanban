@@ -39,7 +39,7 @@ pub use mutation::{
     CommandHandler, IdempotencyStore, MutationSpan, ParsedCommand, RecordedOutcome, parse_payload,
 };
 pub use plan::PlanStore;
-pub use project::{GitObservation, ProjectStore, duplicate_code_error, duplicate_session_error};
+pub use project::{GitObservation, ProjectStore, duplicate_code_error};
 pub use rulings::RulingStore;
 pub use spec::SpecStore;
 pub use timeline::{

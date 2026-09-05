@@ -204,6 +204,63 @@ mod tests {
     }
 
     #[test]
+    fn mtime_dirty_observation_preserves_index_without_lock_contention() {
+        use std::io::Write;
+        use std::os::unix::fs::MetadataExt;
+        use std::time::Duration;
+
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let readme = dir.path().join("README.md");
+        let index_path = dir.path().join(".git").join("index");
+
+        std::thread::sleep(Duration::from_secs(2));
+        let status = Command::new("touch")
+            .arg(&readme)
+            .status()
+            .expect("touch runs");
+        assert!(status.success(), "touch must succeed");
+
+        let index_before = fs::read(&index_path).expect("the index is readable");
+        let meta_before = fs::metadata(&index_path).expect("the index metadata is readable");
+
+        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+
+        assert!(snapshot.present, "mtime-dirty workspaces must still be observed");
+        let index_after = fs::read(&index_path).expect("the index stays readable");
+        assert_eq!(
+            index_before,
+            index_after,
+            "observation must not rewrite index bytes for mtime-dirty tracked files"
+        );
+        let meta_after = fs::metadata(&index_path).expect("the index metadata stays readable");
+        assert_eq!(
+            meta_before.mtime(),
+            meta_after.mtime(),
+            "observation must not rewrite index metadata for mtime-dirty tracked files"
+        );
+        assert_eq!(meta_before.len(), meta_after.len());
+
+        let lock_path = dir.path().join(".git").join("index.lock");
+        let mut lock_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("index.lock can be held for the observation");
+        writeln!(lock_file, "held by test").expect("the lock file is written");
+
+        let snapshot_with_lock = LocalWorkspaceGitObserver.observe(&repository, &repository);
+
+        assert!(
+            snapshot_with_lock.present,
+            "observation must not contend on index.lock for mtime-dirty tracked files"
+        );
+
+        drop(lock_file);
+        fs::remove_file(lock_path).expect("the held lock file is removed");
+    }
+
+    #[test]
     fn sibling_git_status_reads_survive_concurrent_path_poisoning() {
         use std::sync::{Arc, Barrier};
         use std::thread;

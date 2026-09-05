@@ -2134,6 +2134,49 @@ mod backup_restore {
     }
 
     #[test]
+    fn a_foreign_copy_cannot_consume_an_armed_step_gate() {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        // The gate belongs to one copy. A parallel backup from
+        // another test — a copy on a thread that never adopted the
+        // gate — must complete without reporting a step through, or
+        // parking at, a gate it does not own.
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        grow_for_several_bounded_steps(&database);
+        let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+
+        let copying = thread::spawn(move || {
+            // This copy deliberately does not adopt the armed gate:
+            // it stands in for the unrelated backups other tests in
+            // this binary run while a gate is armed.
+            store
+                .create(&database, &overlap_options())
+                .expect("the foreign backup creates")
+        });
+
+        match events.recv_timeout(Duration::from_secs(5)) {
+            Ok((step, done)) => panic!(
+                "a foreign copy consumed an armed gate it does not own: reported step {step}, done {done}"
+            ),
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("the armed gate must outlive the unrelated copy")
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+
+        drop(release);
+        drop(gate);
+        let bundle = copying
+            .join()
+            .expect("the unrelated copy completes without parking");
+        let store = BackupStore::new(dir.path().to_path_buf());
+        store
+            .validate(&bundle, None)
+            .expect("the unrelated bundle still validates");
+    }
+
+    #[test]
     fn a_failed_copy_leaves_no_partial_bundle_or_verified_record() {
         use std::os::unix::fs::PermissionsExt;
 

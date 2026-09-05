@@ -30,12 +30,13 @@ use kanban_dto::{
     SpecCoverageCheckResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
     SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
-    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketCreateRequest,
-    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
-    TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery, TicketListResponse,
-    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TimelineQuery,
-    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketBugFactsRequest,
+    TicketBugQualifyRequest, TicketCreateRequest, TicketDependenciesQuery,
+    TicketDependenciesResponse, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
+    TicketGetQuery, TicketListQuery, TicketListResponse, TicketReadinessQuery,
+    TicketReadinessResponse, TicketRecord, TimelineQuery, TimelineQueryResponse,
+    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
+    WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -553,6 +554,30 @@ async fn ticket_create(
 }
 
 #[tauri::command]
+async fn ticket_bug_qualify(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketBugQualifyRequest,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket bug qualify", |shell| {
+        forward_command(shell, "ticket.bug.qualify", "qualified Bug", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_bug_facts(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketBugFactsRequest,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket bug facts", |shell| {
+        forward_command(shell, "ticket.bug.facts", "recorded Bug facts", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ticket_list(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -975,6 +1000,8 @@ shell_handlers::shell_handler_catalogue! {
     spec_version_get,
     spec_coverage_check,
     ticket_create,
+    ticket_bug_qualify,
+    ticket_bug_facts,
     ticket_list,
     ticket_get,
     ticket_dependency_add,

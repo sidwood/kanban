@@ -25,10 +25,11 @@ use kanban_dto::{
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest,
     SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
     SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketCreateRequest, TicketDependenciesQuery,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery,
-    TicketReadinessQuery, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
-    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
+    TicketCreateRequest, TicketDependenciesQuery, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery, TicketReadinessQuery,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -226,6 +227,42 @@ fn sample_request(schema: &str) -> Value {
             ],
         }),
         "TicketListQuery" => json!({ "project_id": 1 }),
+        "TicketBugQualifyRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "qualification": {
+                "expected_behaviour": "The integration branch survives every landing.",
+                "reproduction": "Re land a reviewed change.",
+                "environment": "macOS 26.",
+                "severity": "critical",
+                "frequency": "Every landing.",
+                "affected_scope": "Landings.",
+                "risk": "Lost review state.",
+                "criteria": [
+                    {
+                        "outcome": "The integration branch survives a landing.",
+                        "stories": ["CORE-S1-US1"],
+                    }
+                ],
+                "verification_steps": [
+                    { "command": "cargo test -p kanban-storage tickets" }
+                ],
+            },
+        }),
+        "TicketBugFactsRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "external_references": [
+                { "uri": "https://example.invalid/issues/12", "label": "The report" }
+            ],
+            "occurrence_snapshots": [
+                {
+                    "observed_at": "2026-09-05T07:41:00Z",
+                    "observation": "The log shows the drop.",
+                }
+            ],
+            "evidence_ids": [2],
+        }),
         "TicketGetQuery" => json!({ "ticket_id": 1 }),
         "TicketDependencyAddRequest" => {
             json!({ "mutation": mutation, "from_ticket": 1, "to_ticket": 2 })
@@ -469,6 +506,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "SpecVersionGetQuery" => decode_invoke_args::<SpecVersionGetQuery>(request).is_err(),
         "SpecCoverageCheckQuery" => decode_invoke_args::<SpecCoverageCheckQuery>(request).is_err(),
         "TicketCreateRequest" => decode_invoke_args::<TicketCreateRequest>(request).is_err(),
+        "TicketBugQualifyRequest" => {
+            decode_invoke_args::<TicketBugQualifyRequest>(request).is_err()
+        }
+        "TicketBugFactsRequest" => decode_invoke_args::<TicketBugFactsRequest>(request).is_err(),
         "TicketListQuery" => decode_invoke_args::<TicketListQuery>(request).is_err(),
         "TicketGetQuery" => decode_invoke_args::<TicketGetQuery>(request).is_err(),
         "TicketDependencyAddRequest" => {

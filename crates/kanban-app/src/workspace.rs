@@ -81,7 +81,7 @@ fn transition(
     workspace_id: WorkspaceId,
     action: &str,
     facts: Value,
-) -> Result<TimelineEnvelope, ApiError> {
+) -> TimelineEnvelope {
     let mut detail = facts;
     let object = detail
         .as_object_mut()
@@ -89,7 +89,7 @@ fn transition(
     object.insert("action".to_owned(), Value::from(action));
     object.insert("id".to_owned(), Value::from(workspace_id.value()));
     let identity = workspace_id.value().to_string();
-    Ok(TimelineEnvelope::project(
+    TimelineEnvelope::project(
         project_id.value(),
         TimelineEventKind::Transition,
         Some(TimelineEntityRef {
@@ -97,7 +97,7 @@ fn transition(
             id: identity.clone(),
         }),
         detail,
-    ))
+    )
 }
 
 fn health_transition(
@@ -106,7 +106,7 @@ fn health_transition(
     from: WorkspaceHealth,
     to: WorkspaceHealth,
     facts: Value,
-) -> Result<TimelineEnvelope, ApiError> {
+) -> TimelineEnvelope {
     let mut detail = facts;
     let object = detail
         .as_object_mut()
@@ -195,7 +195,6 @@ impl CommandHandler for RegisterWorkspace {
         });
         let workspace = self.store.create(&registration, &|id| {
             transition(project_id, id, "registered", facts.clone())
-                .expect("a minted Workspace identity names a Project")
         })?;
         announce(events, LiveEventName::WorkspaceRegistered, &workspace);
         encode_record(&workspace)
@@ -248,14 +247,14 @@ impl CommandHandler for ObserveWorkspace {
                 from,
                 to,
                 observation_facts(&workspace),
-            )?
+            )
         } else {
             transition(
                 project_id,
                 workspace.id(),
                 "observed",
                 observation_facts(&workspace),
-            )?
+            )
         };
         self.store.save(&workspace, envelope)?;
         announce(events, LiveEventName::WorkspaceObserved, &workspace);
@@ -300,14 +299,14 @@ impl CommandHandler for RetireWorkspace {
                 from,
                 to,
                 observation_facts(&workspace),
-            )?
+            )
         } else {
             transition(
                 project_id,
                 workspace.id(),
                 "retired",
                 observation_facts(&workspace),
-            )?
+            )
         };
         self.store.save(&workspace, envelope)?;
         announce(events, LiveEventName::WorkspaceRetired, &workspace);
@@ -614,6 +613,58 @@ mod testing {
             "mutation": { "optimistic_version": version, "idempotency_key": key },
             "workspace_id": workspace_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod workspace_timeline {
+    use kanban_domain::{ProjectId, WorkspaceHealth, WorkspaceId};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
+    use serde_json::json;
+
+    use super::{health_transition, transition};
+
+    #[test]
+    fn registration_transition_names_the_workspace_on_the_project_timeline() {
+        let envelope = transition(
+            ProjectId::new(1),
+            WorkspaceId::new(3),
+            "registered",
+            json!({ "path": "/workspaces/kanban.feature" }),
+        );
+
+        assert_eq!(envelope.kind(), TimelineEventKind::Transition);
+        assert!(matches!(envelope.scope(), TimelineScope::Project(1)));
+        assert_eq!(
+            envelope.entity(),
+            Some(&TimelineEntityRef {
+                kind: TimelineEntityKind::Workspace,
+                id: "3".to_owned(),
+            })
+        );
+        assert_eq!(envelope.detail()["action"], json!("registered"));
+        assert_eq!(envelope.detail()["id"], json!(3));
+        assert_eq!(
+            envelope.detail()["path"],
+            json!("/workspaces/kanban.feature")
+        );
+    }
+
+    #[test]
+    fn health_transition_records_from_and_to_states() {
+        let envelope = health_transition(
+            ProjectId::new(1),
+            WorkspaceId::new(3),
+            WorkspaceHealth::Available,
+            WorkspaceHealth::Dirty,
+            json!({ "path": "/workspaces/kanban.feature" }),
+        );
+
+        assert_eq!(envelope.kind(), TimelineEventKind::Transition);
+        assert_eq!(envelope.detail()["action"], json!("health_changed"));
+        assert_eq!(envelope.detail()["from"], json!("available"));
+        assert_eq!(envelope.detail()["to"], json!("dirty"));
+        assert_eq!(envelope.detail()["id"], json!(3));
     }
 }
 

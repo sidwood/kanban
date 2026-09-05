@@ -221,24 +221,24 @@ export const usePlanEditorStore = defineStore('plan-editor', {
         }),
       )
     },
-    // Run one command; a refusal is reported, a success refreshes the
-    // plans and reopens the selection so new frozen versions show.
+    // Run one command; a refusal is reported, and a success refreshes
+    // the collection and opens the returned Plan — creation included,
+    // which lands with nothing yet selected, so no minted Plan can
+    // stay invisible and new frozen versions show at once.
     async mutate(
       transport: ShellTransport,
       command: (client: KanbanClient) => Promise<PlanRecord>,
     ): Promise<void> {
-      const plan = this.selectedPlan
+      let landed: PlanRecord
       try {
-        await command(new KanbanClient(transport))
+        landed = await command(new KanbanClient(transport))
         this.error = null
       } catch (failure) {
         this.error = asApiError(failure).message
         return
       }
-      if (plan) {
-        await this.refresh(transport, plan.project_id)
-        await this.open(transport, plan.id)
-      }
+      await this.refresh(transport, landed.project_id)
+      await this.open(transport, landed.id)
     },
     // The stored version of the selected Plan, or a reported error
     // when no Plan is open.

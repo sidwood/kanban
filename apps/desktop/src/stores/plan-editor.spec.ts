@@ -86,9 +86,15 @@ describe('plan editor store', () => {
 
   it('creating sends version zero, a fresh idempotency key, and the project', async () => {
     setActivePinia(createPinia())
-    const { transport, operations, command, listing } = harness()
-    listing(record({ spec_numbers: [], edges: [], version: 1 }))
-    command.mockResolvedValue(record({ spec_numbers: [], edges: [], version: 1 }))
+    const fresh = record({ spec_numbers: [], edges: [], version: 1 })
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((name: string) => {
+      if (name === 'plan.get') {
+        return Promise.resolve({ plan: fresh, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [fresh] } satisfies PlanListResponse)
+    })
+    command.mockResolvedValue(fresh)
     const editor = usePlanEditorStore()
     await editor.refresh(transport, 4)
 
@@ -103,6 +109,67 @@ describe('plan editor store', () => {
     expect(request.project_id).toBe(4)
     expect(request.mutation.optimistic_version).toBe(0)
     expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)
+  })
+
+  it('creating with no plan selected refreshes and opens the created plan', async () => {
+    setActivePinia(createPinia())
+    const created = record({ id: 7, number: 2, spec_numbers: [], edges: [], version: 1 })
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((name: string) => {
+      if (name === 'plan.get') {
+        return Promise.resolve({ plan: created, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({
+        plans: [record({ id: 1, number: 1, state: 'complete', version: 12 }), created],
+      } satisfies PlanListResponse)
+    })
+    command.mockResolvedValue(created)
+    const editor = usePlanEditorStore()
+
+    await editor.create(transport, 4)
+
+    expect(editor.error).toBeNull()
+    expect(
+      operations.some((entry) => entry.kind === 'query' && entry.name === 'plan.list'),
+      'the collection refreshes after creation',
+    ).toBe(true)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1, 7])
+    expect(editor.selectedPlanId).toBe(7)
+    expect(editor.selectedVersion).toBeNull()
+    expect(editor.displayed?.spec_numbers).toEqual([])
+  })
+
+  it('repeated creation keeps every minted plan visible and opens the newest', async () => {
+    setActivePinia(createPinia())
+    const { transport, query, command } = harness()
+    const minted = [
+      record({ id: 7, number: 2, spec_numbers: [], edges: [], version: 1 }),
+      record({ id: 8, number: 3, spec_numbers: [], edges: [], version: 1 }),
+    ]
+    const plans = [record({ id: 1, number: 1, state: 'complete', version: 12 })]
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'plan.get') {
+        const asked = request as { plan_id: number }
+        const plan = minted.find((entry) => entry.id === asked.plan_id) ?? minted[0]
+        return Promise.resolve({ plan, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [...plans] } satisfies PlanListResponse)
+    })
+    command.mockImplementation(() => {
+      const next = minted[plans.length - 1]
+      plans.push(next)
+      return Promise.resolve(next)
+    })
+    const editor = usePlanEditorStore()
+
+    await editor.create(transport, 4)
+    expect(editor.selectedPlanId).toBe(7)
+
+    await editor.create(transport, 4)
+
+    expect(editor.selectedPlanId).toBe(8)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1, 7, 8])
+    expect(editor.error).toBeNull()
   })
 
   it('adding a spec carries the stored version and refreshes the record', async () => {

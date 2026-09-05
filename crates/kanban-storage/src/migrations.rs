@@ -113,6 +113,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "plan versions append-only",
         sql: include_str!("../migrations/0012_plan_versions_append_only.sql"),
     },
+    Migration {
+        version: 13,
+        name: "workspaces",
+        sql: include_str!("../migrations/0011_workspaces.sql"),
+    },
 ];
 
 /// Applies every pending migration, newest last, and refuses any

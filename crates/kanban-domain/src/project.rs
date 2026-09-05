@@ -417,6 +417,16 @@ impl Project {
         self.version
     }
 
+    /// Mint the next number for `kind`. Minting is an applied change:
+    /// the counter and the aggregate version move together, so a
+    /// writer holding a stale version can never save a counter that
+    /// rewinds a minted number.
+    pub fn mint(&mut self, kind: NumberKind) -> u64 {
+        let number = self.counters.next(kind);
+        self.version += 1;
+        number
+    }
+
     /// Archive an active Project. Archived is terminal, so a second
     /// archive is refused rather than absorbed.
     pub fn archive(&mut self) -> Result<(), ProjectError> {
@@ -819,6 +829,28 @@ mod tests {
         assert!(project.is_archived());
         assert_eq!(project.counters().last(NumberKind::Ticket), 11);
         assert_eq!(project.version(), 5);
+    }
+
+    #[test]
+    fn minting_a_number_moves_one_counter_and_the_version() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+
+        assert_eq!(project.mint(NumberKind::Plan), 1);
+        assert_eq!(project.mint(NumberKind::Plan), 2);
+        assert_eq!(project.mint(NumberKind::Spec), 1);
+
+        assert_eq!(project.counters().last(NumberKind::Plan), 2);
+        assert_eq!(project.counters().last(NumberKind::Spec), 1);
+        assert_eq!(
+            project.counters().last(NumberKind::Ticket),
+            0,
+            "minting other kinds must not move the Ticket counter"
+        );
+        assert_eq!(
+            project.version(),
+            4,
+            "every mint is an applied change, so a stale writer can never rewind a minted number"
+        );
     }
 
     #[test]

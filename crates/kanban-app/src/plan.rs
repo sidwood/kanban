@@ -216,6 +216,7 @@ impl Core {
             context.plans.clone(),
             context.projects.clone(),
             context.specs.clone(),
+            Arc::new(crate::diagnostics::AbsentCatalogue),
         )?;
         Ok(())
     }

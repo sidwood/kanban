@@ -749,6 +749,25 @@ pub(crate) mod testing {
 
     /// A harness whose event sink the test chooses.
     pub(crate) fn spec_harness_with_sink(events: Arc<dyn EventSink>) -> SpecHarness {
+        spec_harness_composed(events, Arc::new(crate::diagnostics::AbsentCatalogue))
+    }
+
+    /// A harness whose planning diagnostics read the profile catalogue
+    /// given: the seam the execution profile catalogue (KAN-S7, T38)
+    /// fills.
+    pub(crate) fn spec_harness_with_catalogue(
+        profiles: Arc<dyn crate::diagnostics::ProfileCatalogue>,
+    ) -> SpecHarness {
+        spec_harness_composed(Arc::new(crate::events::NoopEventSink), profiles)
+    }
+
+    /// A harness over in-memory stores whose planning diagnostics read
+    /// the catalogue given; registering them again replaces the absent
+    /// catalogue `register_plans` installs.
+    fn spec_harness_composed(
+        events: Arc<dyn EventSink>,
+        profiles: Arc<dyn crate::diagnostics::ProfileCatalogue>,
+    ) -> SpecHarness {
         let projects = Arc::new(MemoryProjects::default());
         projects.seed(crate::plan::testing::active_project(
             1,
@@ -764,6 +783,8 @@ pub(crate) mod testing {
         );
         core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .expect("the plan operations register");
+        core.register_plan_diagnostics(plans.clone(), projects.clone(), specs.clone(), profiles)
+            .expect("the diagnostics register against the catalogue");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
             .expect("the spec operations register");
         SpecHarness {

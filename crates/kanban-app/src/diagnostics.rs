@@ -3,15 +3,17 @@
 //! display — the working shape, or one frozen version — and reports
 //! the dependency cycles, the story coverage gaps, and the invalid
 //! profile references that keep the Plan's Ticket graph from becoming
-//! executable. The invalid-profile list is the interface the execution
-//! profile catalogue feeds (KAN-S7, T38); until the catalogue exists
-//! it rides empty.
+//! executable. The invalid-profile list arrives through the
+//! [`ProfileCatalogue`] seam the execution profile catalogue (KAN-S7,
+//! T38) fills; until the catalogue exists [`AbsentCatalogue`] keeps it
+//! empty.
 
 use std::sync::Arc;
 
-use kanban_domain::{PlanId, Project, ScopeError, SpecNumber, StoryScope};
+use kanban_domain::{Plan, PlanId, Project, ScopeError, SpecNumber, StoryScope};
 use kanban_dto::{
     ApiError, PlanCoverageGap, PlanCycle, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
+    PlanInvalidProfile,
 };
 use serde_json::Value;
 
@@ -21,11 +23,35 @@ use crate::plan::PlanStore;
 use crate::project::ProjectStore;
 use crate::spec::SpecStore;
 
+/// The execution profile catalogue behind the invalid-profile
+/// diagnostics (DR-PS-18): it reads the profile references a Plan's
+/// graph carries and reports every one that resolves to no catalogue
+/// entry. The catalogue itself lands with KAN-S7 (T38); this seam is
+/// the interface its entries feed, so the aggregate already counts
+/// them as blocking.
+pub trait ProfileCatalogue: Send + Sync {
+    /// Every profile reference the Plan's graph carries that resolves
+    /// to no catalogue entry, as written where it was referenced.
+    fn invalid_references(&self, plan: &Plan) -> Result<Vec<String>, ApiError>;
+}
+
+/// The interim catalogue: no profile is referenced anywhere yet, so
+/// nothing resolves and nothing is invalid. Registration installs it
+/// until the real catalogue exists (KAN-S7, T38).
+pub struct AbsentCatalogue;
+
+impl ProfileCatalogue for AbsentCatalogue {
+    fn invalid_references(&self, _plan: &Plan) -> Result<Vec<String>, ApiError> {
+        Ok(Vec::new())
+    }
+}
+
 /// Serves `plan.diagnostics`.
 pub(crate) struct DiagnosePlan {
     plans: Arc<dyn PlanStore>,
     projects: Arc<dyn ProjectStore>,
     specs: Arc<dyn SpecStore>,
+    profiles: Arc<dyn ProfileCatalogue>,
 }
 
 impl QueryHandler for DiagnosePlan {
@@ -59,16 +85,21 @@ impl QueryHandler for DiagnosePlan {
             })
             .collect();
         let coverage_gaps = self.coverage_gaps(&project, order)?;
+        let invalid_profiles: Vec<PlanInvalidProfile> = self
+            .profiles
+            .invalid_references(&plan)?
+            .into_iter()
+            .map(|reference| PlanInvalidProfile { reference })
+            .collect();
         let blocking = !cycles.is_empty()
             || coverage_gaps
                 .iter()
-                .any(|gap| gap.claims_no_stories || !gap.uncovered.is_empty());
+                .any(|gap| gap.claims_no_stories || !gap.uncovered.is_empty())
+            || !invalid_profiles.is_empty();
         let response = PlanDiagnosticsResponse {
             cycles,
             coverage_gaps,
-            // No catalogue exists to resolve profile references
-            // against yet; KAN-S7 (T38) feeds these entries.
-            invalid_profiles: Vec::new(),
+            invalid_profiles,
             blocking,
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
@@ -139,12 +170,14 @@ impl DiagnosePlan {
 
 impl Core {
     /// Register the planning diagnostics query against the stores the
-    /// Plan commands use.
+    /// Plan commands use and the profile catalogue that resolves
+    /// profile references.
     pub fn register_plan_diagnostics(
         &mut self,
         plans: Arc<dyn PlanStore>,
         projects: Arc<dyn ProjectStore>,
         specs: Arc<dyn SpecStore>,
+        profiles: Arc<dyn ProfileCatalogue>,
     ) -> Result<(), RegistrationError> {
         self.register_query(
             "plan.diagnostics",
@@ -152,6 +185,7 @@ impl Core {
                 plans,
                 projects,
                 specs,
+                profiles,
             }),
         )
     }
@@ -159,10 +193,13 @@ impl Core {
 
 #[cfg(test)]
 mod planning_diagnostics {
-    use kanban_dto::ErrorCode;
+    use std::sync::Arc;
+
+    use kanban_dto::{ApiError, ErrorCode};
     use serde_json::{Value, json};
 
-    use crate::spec::testing::spec_harness;
+    use crate::diagnostics::ProfileCatalogue;
+    use crate::spec::testing::{spec_harness, spec_harness_with_catalogue};
 
     /// The PRD wire content with a story section naming `stories`,
     /// varied by name.
@@ -341,6 +378,37 @@ mod planning_diagnostics {
                 "blocking": true,
             }),
             "an empty scope admits no coverage, so the member blocks"
+        );
+    }
+
+    #[test]
+    fn a_fed_invalid_profile_list_blocks_on_its_own() {
+        // The catalogue stand-in: every Plan's graph carries one
+        // reference that resolves to no entry.
+        struct Dangling;
+
+        impl ProfileCatalogue for Dangling {
+            fn invalid_references(
+                &self,
+                _plan: &kanban_domain::Plan,
+            ) -> Result<Vec<String>, ApiError> {
+                Ok(vec!["ghost-profile".to_owned()])
+            }
+        }
+
+        let harness = spec_harness_with_catalogue(Arc::new(Dangling));
+        let (plan, _) = plan_over(&harness.core, &[], &[], "key-plan");
+
+        assert_eq!(
+            diagnose(&harness.core, plan, None),
+            json!({
+                "cycles": [],
+                "coverage_gaps": [],
+                "invalid_profiles": [{ "reference": "ghost-profile" }],
+                "blocking": true,
+            }),
+            "a memberless graph holds no cycle and no gap, so the fed \
+             invalid-profile list alone blocks"
         );
     }
 

@@ -13,5 +13,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = "2.0.20"
 
+[features]
+# Scripted-server fixtures compiled only for tests. Production builds
+# leave it off, and every consumer enables it through dev-dependencies.
+test-support = []
+
 [dev-dependencies]
+# Self dependency so this crate's own integration tests build the
+# fixture; the feature never reaches a production build.
+kanban-herdr = { path = ".", features = ["test-support"] }
 tempfile = "3.27.0"

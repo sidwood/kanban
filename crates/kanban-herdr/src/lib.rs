@@ -16,4 +16,8 @@ pub use paths::{herdr_sessions_dir, session_socket_in, session_socket_path};
 pub use protocol::{HerdrRequest, HerdrResponse, Snapshot};
 pub use session::SessionMapping;
 
+/// Scripted Herdr session socket for tests. Available only behind the
+/// `test-support` feature, which production builds never enable and
+/// consumers reach only through dev-dependencies.
+#[cfg(feature = "test-support")]
 pub mod fixture;

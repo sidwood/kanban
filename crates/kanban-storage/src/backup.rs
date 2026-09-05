@@ -1065,6 +1065,90 @@ mod validation_temp_test_hooks {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)] // the bounded step loop starts reporting through here next
+mod snapshot_step_test_hooks {
+    //! Test-only coordination with the bounded snapshot step loop:
+    //! a test parks the copying snapshot at a step boundary and
+    //! probes the shared live connection while it waits.
+
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    /// The copying snapshot's half of the armed gate, held
+    /// process-globally: the snapshot runs on another thread, so a
+    /// thread-local would be invisible to it.
+    struct StepChannel {
+        events: Sender<(usize, bool)>,
+        release: Receiver<()>,
+    }
+
+    /// One armed gate at a time; parallel tests queue here.
+    static GATE_ORDER: Mutex<()> = Mutex::new(());
+    static STEP_CHANNEL: Mutex<Option<StepChannel>> = Mutex::new(None);
+
+    /// The test half of the armed gate. Every bounded step boundary
+    /// is reported through the receiver and parks the copy until the
+    /// sender lets it continue. Dropping the gate frees a waiting
+    /// copy and disarms it.
+    pub struct StepGate {
+        _order: MutexGuard<'static, ()>,
+    }
+
+    impl StepGate {
+        /// Park every bounded step boundary from now on. The
+        /// receiver reports `(step, done)` pairs, where `done` marks
+        /// the boundary that completed the copy; sending back on the
+        /// sender lets the copy continue.
+        pub fn arm() -> (Receiver<(usize, bool)>, Sender<()>, Self) {
+            let _order = GATE_ORDER
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (events_tx, events_rx) = channel();
+            let (release_tx, release_rx) = channel();
+            let mut slot = STEP_CHANNEL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = Some(StepChannel {
+                events: events_tx,
+                release: release_rx,
+            });
+            (events_rx, release_tx, Self { _order })
+        }
+    }
+
+    impl Drop for StepGate {
+        fn drop(&mut self) {
+            let mut slot = STEP_CHANNEL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = None;
+        }
+    }
+
+    /// Reports step `index` to the armed test and parks until it
+    /// lets the copy continue. A gone or closed test half disarms the
+    /// gate and lets the copy proceed unhindered.
+    pub fn on_step(index: usize, done: bool) {
+        let channel = {
+            let mut slot = STEP_CHANNEL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            slot.take()
+        };
+        let Some(channel) = channel else {
+            return;
+        };
+        if channel.events.send((index, done)).is_ok() && channel.release.recv() == Ok(()) {
+            let mut slot = STEP_CHANNEL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = Some(channel);
+        }
+    }
+}
+
 struct SecureValidationTemp {
     file: tempfile::NamedTempFile,
 }
@@ -1657,6 +1741,8 @@ mod backup_restore {
     use std::{
         num::NonZeroU32,
         path::{Path, PathBuf},
+        thread,
+        time::Duration,
     };
 
     use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -1779,6 +1865,40 @@ mod backup_restore {
         }
     }
 
+    /// Options used by the backup-overlap regressions.
+    fn overlap_options() -> BackupOptions {
+        BackupOptions {
+            retention: BackupRetentionPolicy::keep_most_recent(
+                NonZeroU32::new(3).expect("three is not zero"),
+            ),
+            passphrase: None,
+        }
+    }
+
+    /// Grows the database past a single bounded snapshot step, so a
+    /// copying snapshot necessarily crosses step boundaries.
+    fn grow_for_several_bounded_steps(database: &Database) {
+        let conn = database.connection();
+        conn.execute_batch("CREATE TABLE snapshot_overlap_filler (payload BLOB)")
+            .expect("the filler table creates");
+        let blob = vec![0_u8; 8192];
+        loop {
+            let pages: i64 = conn
+                .query_row("PRAGMA page_count", [], |row| row.get(0))
+                .expect("the page count reads");
+            if pages >= 16 {
+                break;
+            }
+            for _ in 0..4 {
+                conn.execute(
+                    "INSERT INTO snapshot_overlap_filler (payload) VALUES (?1)",
+                    [&blob],
+                )
+                .expect("the filler row inserts");
+            }
+        }
+    }
+
     fn distinct_restore_fixture() -> (tempfile::TempDir, BackupStore, PathBuf) {
         let (dir, database, store) = managed_fixture();
         seed_state(dir.path(), &database);
@@ -1851,6 +1971,133 @@ mod backup_restore {
         assert!(paths.iter().any(|path| path.starts_with("attachments/")));
         assert!(paths.iter().any(|path| *path == config_file_name()));
         assert_eq!(manifest.schema_version, LATEST_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn bounded_snapshot_steps_leave_the_shared_connection_free() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        grow_for_several_bounded_steps(&database);
+        let handle = database.connection_handle();
+        let (events, release, _gate) = super::snapshot_step_test_hooks::StepGate::arm();
+
+        let copying = thread::spawn(move || {
+            store
+                .create(&database, &overlap_options())
+                .expect("the overlapped backup creates")
+        });
+
+        let mut boundaries = 0;
+        loop {
+            let (step, done) = events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the snapshot reports every bounded step boundary");
+            boundaries += 1;
+            assert!(
+                handle.try_lock().is_some(),
+                "step {step} must leave the shared live connection free"
+            );
+            release.send(()).expect("the copy continues");
+            if done {
+                break;
+            }
+        }
+        assert!(
+            boundaries >= 2,
+            "the fixture must span several bounded steps, saw {boundaries}"
+        );
+
+        let bundle = copying.join().expect("the copy thread ends");
+        let store = BackupStore::new(dir.path().to_path_buf());
+        store
+            .validate(&bundle, None)
+            .expect("the overlapped bundle still validates");
+    }
+
+    #[test]
+    fn a_live_write_during_the_snapshot_keeps_the_bundle_restorable() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        grow_for_several_bounded_steps(&database);
+        let handle = database.connection_handle();
+        let (events, release, _gate) = super::snapshot_step_test_hooks::StepGate::arm();
+
+        let copying = thread::spawn(move || {
+            store
+                .create(&database, &overlap_options())
+                .expect("the overlapped backup creates")
+        });
+
+        // The first boundary is mid-copy: a live command writes
+        // through the shared connection while the snapshot copies.
+        let (first, done) = events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the snapshot reports its first step boundary");
+        assert!(first == 1 && !done, "the first boundary must be mid-copy");
+        handle
+            .lock()
+            .execute(
+                "INSERT INTO initiatives (name, archived, version) VALUES ('MidCopy', 0, 1)",
+                [],
+            )
+            .expect("a live write lands while the snapshot copies");
+        release.send(()).expect("the copy continues");
+
+        let mut saw_completion = false;
+        while let Ok((step, done)) = events.recv_timeout(Duration::from_secs(5)) {
+            assert!(
+                handle.try_lock().is_some(),
+                "step {step} must leave the shared live connection free"
+            );
+            release.send(()).expect("the copy continues");
+            if done {
+                saw_completion = true;
+                break;
+            }
+        }
+        assert!(
+            saw_completion,
+            "the overlapped copy must still reach completion"
+        );
+
+        let bundle = copying.join().expect("the copy thread ends");
+        let store = BackupStore::new(dir.path().to_path_buf());
+        let manifest = store
+            .validate(&bundle, None)
+            .expect("the overlapped bundle still validates");
+
+        let fresh = tempfile::tempdir().expect("a fresh directory is available");
+        BackupStore::new(fresh.path().to_path_buf())
+            .restore(&bundle, None)
+            .expect("the overlapped bundle restores");
+        let restored = Database::open(&fresh.path().join(database_file_name()))
+            .expect("the restored database opens");
+        let names: Vec<String> = restored
+            .connection()
+            .prepare("SELECT name FROM initiatives ORDER BY id")
+            .expect("the restored initiatives read")
+            .query_map([], |row| row.get(0))
+            .expect("the restored rows read")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the restored names decode");
+        assert!(
+            names.iter().any(|name| name == "Alpha"),
+            "the restored snapshot carries the committed rows it captured"
+        );
+        assert_eq!(manifest.schema_version, LATEST_SCHEMA_VERSION);
+
+        let live_mid_copy: i64 = handle
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM initiatives WHERE name = 'MidCopy'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the live write reads back");
+        assert_eq!(
+            live_mid_copy, 1,
+            "the concurrent write survives on the live database"
+        );
     }
 
     #[test]

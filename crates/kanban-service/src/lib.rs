@@ -553,6 +553,149 @@ mod tests {
         rebooted.shutdown();
     }
 
+    /// The desktop shell's request deadline (`CoreLink::REQUEST_TIMEOUT`,
+    /// unchanged by this slice): a live command that cannot answer
+    /// inside it is reported as an unresponsive core, so a backup
+    /// copying under the live connection's mutex is a defect, not a
+    /// slow case. `Client`'s own read timeout mirrors the same five
+    /// seconds.
+    const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+
+    /// Enough pages that a copying snapshot's throttled steps alone
+    /// hold the copy for far longer than the request deadline.
+    const PAGES_PAST_THE_REQUEST_DEADLINE: i64 = 1300;
+
+    #[test]
+    fn live_commands_answer_inside_the_request_deadline_while_a_backup_copies() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        grow_the_database_past_the_request_deadline(&dir);
+
+        let core = boot(&dir);
+        wait_for_the_scheduled_backup_to_start_copying(&dir);
+
+        let mut client = Client::connect(core.socket_path());
+        let started = std::time::Instant::now();
+        client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "overlap-1" },
+                "name": "Responsive",
+            }),
+        );
+        let listed = client.query("initiative.list");
+        assert_eq!(
+            listed["initiatives"][0]["name"],
+            json!("Responsive"),
+            "the overlapped command must land"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < REQUEST_DEADLINE,
+            "a live command must answer inside the unchanged {REQUEST_DEADLINE:?} request deadline while a backup copies, took {elapsed:?}"
+        );
+
+        wait_for_the_scheduled_backup_to_settle(&dir);
+        core.shutdown();
+    }
+
+    /// Migrates the scratch database and grows it past
+    /// [`PAGES_PAST_THE_REQUEST_DEADLINE`] pages, so a backup of it
+    /// necessarily spans hundreds of throttled snapshot steps.
+    fn grow_the_database_past_the_request_deadline(dir: &TempDir) {
+        use rusqlite::params;
+
+        let mut database = kanban_storage::Database::open(
+            &dir.path().join(kanban_storage::paths::database_file_name()),
+        )
+        .expect("the scratch database opens");
+        database
+            .migrate(&kanban_storage::AllowAllMigrations)
+            .expect("the migrations apply");
+        drop(database);
+
+        let conn = rusqlite::Connection::open(
+            dir.path().join(kanban_storage::paths::database_file_name()),
+        )
+        .expect("the database reopens for growth");
+        conn.execute_batch("CREATE TABLE backup_overlap_filler (payload BLOB)")
+            .expect("the filler table creates");
+        let blob = vec![0_u8; 8192];
+        loop {
+            let pages: i64 = conn
+                .query_row("PRAGMA page_count", [], |row| row.get(0))
+                .expect("the page count reads");
+            assert!(
+                pages < 100_000,
+                "the filler must stay bounded while growing toward the target"
+            );
+            if pages >= PAGES_PAST_THE_REQUEST_DEADLINE {
+                break;
+            }
+            for _ in 0..25 {
+                conn.execute(
+                    "INSERT INTO backup_overlap_filler (payload) VALUES (?1)",
+                    params![&blob],
+                )
+                .expect("the filler row inserts");
+            }
+        }
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("the grown database checkpoints");
+        drop(conn);
+    }
+
+    /// Waits until the scheduled startup backup is actively copying
+    /// pages, so the overlapped command lands mid-copy and not before
+    /// or after it.
+    fn wait_for_the_scheduled_backup_to_start_copying(dir: &TempDir) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let copying = std::fs::read_dir(dir.path().join("backups"))
+                .map(|entries| {
+                    entries.filter_map(|entry| entry.ok()).any(|entry| {
+                        entry.path().is_dir()
+                            && std::fs::metadata(
+                                entry
+                                    .path()
+                                    .join(kanban_storage::paths::database_file_name()),
+                            )
+                            .map(|metadata| metadata.len() > 0)
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            if copying {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the scheduled startup backup must begin copying"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Waits for the startup backup to succeed, mirroring the burst
+    /// fixture's settle, so shutdown never races a copying backup.
+    fn wait_for_the_scheduled_backup_to_settle(dir: &TempDir) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let settled = std::fs::read_to_string(dir.path().join(".backup-scheduler.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|state| state["last_success_unix_secs"].as_u64())
+                .is_some();
+            if settled {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the scheduled backup must settle before shutdown"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn a_refused_command_leaves_the_core_writable() {
         let dir = TempDir::new().expect("a scratch directory is available");

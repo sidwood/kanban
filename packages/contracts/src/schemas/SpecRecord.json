@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "SpecExecutionState": {
+      "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+      "enum": [
+        "unplanned",
+        "planned",
+        "blocked",
+        "ready",
+        "active",
+        "integration_review",
+        "complete",
+        "cancelled"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+  "properties": {
+    "execution": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SpecExecutionState"
+        }
+      ],
+      "description": "The execution state (DR-PS-12)."
+    },
+    "id": {
+      "description": "The immutable, storage-assigned identity.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "name": {
+      "description": "The Spec's name, from the current content.",
+      "type": "string"
+    },
+    "number": {
+      "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "plan_id": {
+      "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "project_id": {
+      "description": "The Project this Spec belongs to.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "The aggregate version, for optimistic mutation checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "execution",
+    "id",
+    "name",
+    "number",
+    "project_id",
+    "version"
+  ],
+  "title": "SpecRecord",
+  "type": "object"
+}

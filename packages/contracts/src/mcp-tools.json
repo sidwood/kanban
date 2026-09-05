@@ -2848,6 +2848,1389 @@
     }
   },
   {
+    "description": "Author a Spec with its opening PRD content, minting its number from the Project counter.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "SpecContent": {
+          "additionalProperties": false,
+          "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+          "properties": {
+            "further_notes": {
+              "description": "Anything else worth keeping beside the PRD.",
+              "type": "string"
+            },
+            "implementation_decisions": {
+              "description": "The settled implementation decisions.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The Spec's name.",
+              "type": "string"
+            },
+            "out_of_scope": {
+              "description": "What this Spec deliberately does not deliver.",
+              "type": "string"
+            },
+            "problem_statement": {
+              "description": "The problem being solved.",
+              "type": "string"
+            },
+            "short_description": {
+              "description": "The one-line description.",
+              "type": "string"
+            },
+            "solution": {
+              "description": "The chosen solution.",
+              "type": "string"
+            },
+            "testing_decisions": {
+              "description": "The settled testing decisions.",
+              "type": "string"
+            },
+            "user_stories": {
+              "description": "The behaviour claims, one `US` bullet per line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "further_notes",
+            "implementation_decisions",
+            "name",
+            "out_of_scope",
+            "problem_statement",
+            "short_description",
+            "solution",
+            "testing_decisions",
+            "user_stories"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.create` command.",
+      "properties": {
+        "content": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecContent"
+            }
+          ],
+          "description": "The opening PRD content, minted as draft version one."
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "description": "The Project the new Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "content",
+        "mutation",
+        "project_id"
+      ],
+      "title": "SpecCreateRequest",
+      "type": "object"
+    },
+    "name": "spec_create",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Update a Spec's working content; a material change past approval mints a new draft version.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "SpecContent": {
+          "additionalProperties": false,
+          "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+          "properties": {
+            "further_notes": {
+              "description": "Anything else worth keeping beside the PRD.",
+              "type": "string"
+            },
+            "implementation_decisions": {
+              "description": "The settled implementation decisions.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The Spec's name.",
+              "type": "string"
+            },
+            "out_of_scope": {
+              "description": "What this Spec deliberately does not deliver.",
+              "type": "string"
+            },
+            "problem_statement": {
+              "description": "The problem being solved.",
+              "type": "string"
+            },
+            "short_description": {
+              "description": "The one-line description.",
+              "type": "string"
+            },
+            "solution": {
+              "description": "The chosen solution.",
+              "type": "string"
+            },
+            "testing_decisions": {
+              "description": "The settled testing decisions.",
+              "type": "string"
+            },
+            "user_stories": {
+              "description": "The behaviour claims, one `US` bullet per line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "further_notes",
+            "implementation_decisions",
+            "name",
+            "out_of_scope",
+            "problem_statement",
+            "short_description",
+            "solution",
+            "testing_decisions",
+            "user_stories"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.content.update` command.",
+      "properties": {
+        "content": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecContent"
+            }
+          ],
+          "description": "The new content. A draft is edited in place; content that has moved on mints a new draft version (DR-PS-10)."
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec whose working content changes.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "content",
+        "mutation",
+        "spec_id"
+      ],
+      "title": "SpecContentUpdateRequest",
+      "type": "object"
+    },
+    "name": "spec_content_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Approve the working draft into immutable operative content.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.version.approve` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec whose draft version becomes approved.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "spec_id"
+      ],
+      "title": "SpecVersionApproveRequest",
+      "type": "object"
+    },
+    "name": "spec_version_approve",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Supersede one content version explicitly. Superseded versions stay queryable for pinned Tickets.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.version.supersede` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec owning the version being superseded.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The version being superseded, named explicitly (DR-PS-11).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "spec_id",
+        "version"
+      ],
+      "title": "SpecVersionSupersedeRequest",
+      "type": "object"
+    },
+    "name": "spec_version_supersede",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Join an unplanned Spec to the Plan holding its number, planning its execution.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `spec.plan.join` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "plan_id": {
+          "description": "The Plan the Spec joins. Must hold the Spec's number and belong to the same Project.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "description": "The Spec joining a Plan.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "plan_id",
+        "spec_id"
+      ],
+      "title": "SpecPlanJoinRequest",
+      "type": "object"
+    },
+    "name": "spec_plan_join",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Move Spec execution along its closed state set, independently of content.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "Request payload for the `spec.execution.move` command.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The target state, which must be a legal transition away (DR-PS-12). `planned` is reached by joining a Plan, never by this command."
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec whose execution moves.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "mutation",
+        "spec_id"
+      ],
+      "title": "SpecExecutionMoveRequest",
+      "type": "object"
+    },
+    "name": "spec_execution_move",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+      "properties": {
+        "execution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecExecutionState"
+            }
+          ],
+          "description": "The execution state (DR-PS-12)."
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The Spec's name, from the current content.",
+          "type": "string"
+        },
+        "number": {
+          "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "plan_id": {
+          "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Spec belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution",
+        "id",
+        "name",
+        "number",
+        "project_id",
+        "version"
+      ],
+      "title": "SpecRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Spec of a Project, terminal execution states included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `spec.list` query.",
+      "properties": {
+        "project_id": {
+          "description": "The Project whose Specs are listed, terminal execution states included.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "SpecListQuery",
+      "type": "object"
+    },
+    "name": "spec_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "SpecRecord": {
+          "additionalProperties": false,
+          "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+          "properties": {
+            "execution": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/SpecExecutionState"
+                }
+              ],
+              "description": "The execution state (DR-PS-12)."
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "description": "The Spec's name, from the current content.",
+              "type": "string"
+            },
+            "number": {
+              "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "plan_id": {
+              "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "project_id": {
+              "description": "The Project this Spec belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "execution",
+            "id",
+            "name",
+            "number",
+            "project_id",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `spec.list` query.",
+      "properties": {
+        "specs": {
+          "description": "Every Spec of the Project, oldest first, all execution states included.",
+          "items": {
+            "$ref": "#/definitions/SpecRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "specs"
+      ],
+      "title": "SpecListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one Spec with every content version beside it.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `spec.get` query.",
+      "properties": {
+        "spec_id": {
+          "description": "The Spec being read.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "spec_id"
+      ],
+      "title": "SpecGetQuery",
+      "type": "object"
+    },
+    "name": "spec_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecContent": {
+          "additionalProperties": false,
+          "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+          "properties": {
+            "further_notes": {
+              "description": "Anything else worth keeping beside the PRD.",
+              "type": "string"
+            },
+            "implementation_decisions": {
+              "description": "The settled implementation decisions.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The Spec's name.",
+              "type": "string"
+            },
+            "out_of_scope": {
+              "description": "What this Spec deliberately does not deliver.",
+              "type": "string"
+            },
+            "problem_statement": {
+              "description": "The problem being solved.",
+              "type": "string"
+            },
+            "short_description": {
+              "description": "The one-line description.",
+              "type": "string"
+            },
+            "solution": {
+              "description": "The chosen solution.",
+              "type": "string"
+            },
+            "testing_decisions": {
+              "description": "The settled testing decisions.",
+              "type": "string"
+            },
+            "user_stories": {
+              "description": "The behaviour claims, one `US` bullet per line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "further_notes",
+            "implementation_decisions",
+            "name",
+            "out_of_scope",
+            "problem_statement",
+            "short_description",
+            "solution",
+            "testing_decisions",
+            "user_stories"
+          ],
+          "type": "object"
+        },
+        "SpecContentState": {
+          "description": "The closed content-version vocabulary on the wire (DR-PS-08).",
+          "enum": [
+            "draft",
+            "approved",
+            "superseded"
+          ],
+          "type": "string"
+        },
+        "SpecExecutionState": {
+          "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+          "enum": [
+            "unplanned",
+            "planned",
+            "blocked",
+            "ready",
+            "active",
+            "integration_review",
+            "complete",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "SpecRecord": {
+          "additionalProperties": false,
+          "description": "The Spec record as every client sees it: the Project it belongs to, the number that Project minted, the execution tracked separately from content, and the Plan it belongs to once planned.",
+          "properties": {
+            "execution": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/SpecExecutionState"
+                }
+              ],
+              "description": "The execution state (DR-PS-12)."
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "description": "The Spec's name, from the current content.",
+              "type": "string"
+            },
+            "number": {
+              "description": "The number this Project minted for this Spec; rendered with the Project's code, for example `CORE-S1`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "plan_id": {
+              "description": "The Plan this Spec belongs to once planned; `None` while unplanned (DR-PS-06).",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "project_id": {
+              "description": "The Project this Spec belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "execution",
+            "id",
+            "name",
+            "number",
+            "project_id",
+            "version"
+          ],
+          "type": "object"
+        },
+        "SpecVersionRecord": {
+          "additionalProperties": false,
+          "description": "One Spec content version as every client sees it: the PRD exactly as it stood when the version was minted or last drafted. Approved and superseded versions never change again, and superseded ones stay readable so Ticket pins resolve (DR-PS-11).",
+          "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/SpecContent"
+                }
+              ],
+              "description": "The PRD this version carries."
+            },
+            "number": {
+              "description": "The version's number; the first content is one and every material change mints the next.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "state": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/SpecContentState"
+                }
+              ],
+              "description": "The version's lifecycle state."
+            }
+          },
+          "required": [
+            "content",
+            "number",
+            "state"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `spec.get` query: the Spec and every content version beside it, so prior versions stay queryable for diffing and for Ticket pins.",
+      "properties": {
+        "spec": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecRecord"
+            }
+          ],
+          "description": "The Spec's current record."
+        },
+        "versions": {
+          "description": "Every content version, oldest first.",
+          "items": {
+            "$ref": "#/definitions/SpecVersionRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "spec",
+        "versions"
+      ],
+      "title": "SpecGetResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one content version, superseded versions included, as Ticket pins resolve.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `spec.version.get` query.",
+      "properties": {
+        "number": {
+          "description": "The version being read — the pin a Ticket resolves through, superseded versions included.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "description": "The Spec owning the version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "spec_id"
+      ],
+      "title": "SpecVersionGetQuery",
+      "type": "object"
+    },
+    "name": "spec_version_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecContent": {
+          "additionalProperties": false,
+          "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+          "properties": {
+            "further_notes": {
+              "description": "Anything else worth keeping beside the PRD.",
+              "type": "string"
+            },
+            "implementation_decisions": {
+              "description": "The settled implementation decisions.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The Spec's name.",
+              "type": "string"
+            },
+            "out_of_scope": {
+              "description": "What this Spec deliberately does not deliver.",
+              "type": "string"
+            },
+            "problem_statement": {
+              "description": "The problem being solved.",
+              "type": "string"
+            },
+            "short_description": {
+              "description": "The one-line description.",
+              "type": "string"
+            },
+            "solution": {
+              "description": "The chosen solution.",
+              "type": "string"
+            },
+            "testing_decisions": {
+              "description": "The settled testing decisions.",
+              "type": "string"
+            },
+            "user_stories": {
+              "description": "The behaviour claims, one `US` bullet per line.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "further_notes",
+            "implementation_decisions",
+            "name",
+            "out_of_scope",
+            "problem_statement",
+            "short_description",
+            "solution",
+            "testing_decisions",
+            "user_stories"
+          ],
+          "type": "object"
+        },
+        "SpecContentState": {
+          "description": "The closed content-version vocabulary on the wire (DR-PS-08).",
+          "enum": [
+            "draft",
+            "approved",
+            "superseded"
+          ],
+          "type": "string"
+        }
+      },
+      "description": "One Spec content version as every client sees it: the PRD exactly as it stood when the version was minted or last drafted. Approved and superseded versions never change again, and superseded ones stay readable so Ticket pins resolve (DR-PS-11).",
+      "properties": {
+        "content": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecContent"
+            }
+          ],
+          "description": "The PRD this version carries."
+        },
+        "number": {
+          "description": "The version's number; the first content is one and every material change mints the next.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SpecContentState"
+            }
+          ],
+          "description": "The version's lifecycle state."
+        }
+      },
+      "required": [
+        "content",
+        "number",
+        "state"
+      ],
+      "title": "SpecVersionRecord",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Spec execution vocabulary on the wire (DR-PS-12), tracked separately from every content version.",
+  "enum": [
+    "unplanned",
+    "planned",
+    "blocked",
+    "ready",
+    "active",
+    "integration_review",
+    "complete",
+    "cancelled"
+  ],
+  "title": "SpecExecutionState",
+  "type": "string"
+}

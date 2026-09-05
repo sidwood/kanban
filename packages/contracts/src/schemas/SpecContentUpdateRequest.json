@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "SpecContent": {
+      "additionalProperties": false,
+      "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+      "properties": {
+        "further_notes": {
+          "description": "Anything else worth keeping beside the PRD.",
+          "type": "string"
+        },
+        "implementation_decisions": {
+          "description": "The settled implementation decisions.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The Spec's name.",
+          "type": "string"
+        },
+        "out_of_scope": {
+          "description": "What this Spec deliberately does not deliver.",
+          "type": "string"
+        },
+        "problem_statement": {
+          "description": "The problem being solved.",
+          "type": "string"
+        },
+        "short_description": {
+          "description": "The one-line description.",
+          "type": "string"
+        },
+        "solution": {
+          "description": "The chosen solution.",
+          "type": "string"
+        },
+        "testing_decisions": {
+          "description": "The settled testing decisions.",
+          "type": "string"
+        },
+        "user_stories": {
+          "description": "The behaviour claims, one `US` bullet per line.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "further_notes",
+        "implementation_decisions",
+        "name",
+        "out_of_scope",
+        "problem_statement",
+        "short_description",
+        "solution",
+        "testing_decisions",
+        "user_stories"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `spec.content.update` command.",
+  "properties": {
+    "content": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SpecContent"
+        }
+      ],
+      "description": "The new content. A draft is edited in place; content that has moved on mints a new draft version (DR-PS-10)."
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "spec_id": {
+      "description": "The Spec whose working content changes.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "content",
+    "mutation",
+    "spec_id"
+  ],
+  "title": "SpecContentUpdateRequest",
+  "type": "object"
+}

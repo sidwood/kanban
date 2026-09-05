@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "SpecContent": {
+      "additionalProperties": false,
+      "description": "The nine PRD sections one Spec carries (DR-PS-07): the lightweight product requirements document of CONTEXT.md. Every section is free text; the name alone is required.",
+      "properties": {
+        "further_notes": {
+          "description": "Anything else worth keeping beside the PRD.",
+          "type": "string"
+        },
+        "implementation_decisions": {
+          "description": "The settled implementation decisions.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The Spec's name.",
+          "type": "string"
+        },
+        "out_of_scope": {
+          "description": "What this Spec deliberately does not deliver.",
+          "type": "string"
+        },
+        "problem_statement": {
+          "description": "The problem being solved.",
+          "type": "string"
+        },
+        "short_description": {
+          "description": "The one-line description.",
+          "type": "string"
+        },
+        "solution": {
+          "description": "The chosen solution.",
+          "type": "string"
+        },
+        "testing_decisions": {
+          "description": "The settled testing decisions.",
+          "type": "string"
+        },
+        "user_stories": {
+          "description": "The behaviour claims, one `US` bullet per line.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "further_notes",
+        "implementation_decisions",
+        "name",
+        "out_of_scope",
+        "problem_statement",
+        "short_description",
+        "solution",
+        "testing_decisions",
+        "user_stories"
+      ],
+      "type": "object"
+    },
+    "SpecContentState": {
+      "description": "The closed content-version vocabulary on the wire (DR-PS-08).",
+      "enum": [
+        "draft",
+        "approved",
+        "superseded"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "One Spec content version as every client sees it: the PRD exactly as it stood when the version was minted or last drafted. Approved and superseded versions never change again, and superseded ones stay readable so Ticket pins resolve (DR-PS-11).",
+  "properties": {
+    "content": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SpecContent"
+        }
+      ],
+      "description": "The PRD this version carries."
+    },
+    "number": {
+      "description": "The version's number; the first content is one and every material change mints the next.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "state": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/SpecContentState"
+        }
+      ],
+      "description": "The version's lifecycle state."
+    }
+  },
+  "required": [
+    "content",
+    "number",
+    "state"
+  ],
+  "title": "SpecVersionRecord",
+  "type": "object"
+}

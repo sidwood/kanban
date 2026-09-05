@@ -190,7 +190,7 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -344,6 +344,79 @@ export type RulingSupersedeRequest = {
   project_id: string;
   ruling_id: number;
   summary: string;
+};
+export type SpecContent = {
+  further_notes: string;
+  implementation_decisions: string;
+  name: string;
+  out_of_scope: string;
+  problem_statement: string;
+  short_description: string;
+  solution: string;
+  testing_decisions: string;
+  user_stories: string;
+};
+export type SpecContentState = 'draft' | 'approved' | 'superseded';
+export type SpecContentUpdateRequest = {
+  content: SpecContent;
+  mutation: MutationContext;
+  spec_id: number;
+};
+export type SpecCreateRequest = {
+  content: SpecContent;
+  mutation: MutationContext;
+  project_id: number;
+};
+export type SpecExecutionMoveRequest = {
+  execution: SpecExecutionState;
+  mutation: MutationContext;
+  spec_id: number;
+};
+export type SpecExecutionState = 'unplanned' | 'planned' | 'blocked' | 'ready' | 'active' | 'integration_review' | 'complete' | 'cancelled';
+export type SpecGetQuery = {
+  spec_id: number;
+};
+export type SpecGetResponse = {
+  spec: SpecRecord;
+  versions: SpecVersionRecord[];
+};
+export type SpecListQuery = {
+  project_id: number;
+};
+export type SpecListResponse = {
+  specs: SpecRecord[];
+};
+export type SpecPlanJoinRequest = {
+  mutation: MutationContext;
+  plan_id: number;
+  spec_id: number;
+};
+export type SpecRecord = {
+  execution: SpecExecutionState;
+  id: number;
+  name: string;
+  number: number;
+  plan_id?: number | null;
+  project_id: number;
+  version: number;
+};
+export type SpecVersionApproveRequest = {
+  mutation: MutationContext;
+  spec_id: number;
+};
+export type SpecVersionGetQuery = {
+  number: number;
+  spec_id: number;
+};
+export type SpecVersionRecord = {
+  content: SpecContent;
+  number: number;
+  state: SpecContentState;
+};
+export type SpecVersionSupersedeRequest = {
+  mutation: MutationContext;
+  spec_id: number;
+  version: number;
 };
 export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace';
 export type TimelineEntityRef = {

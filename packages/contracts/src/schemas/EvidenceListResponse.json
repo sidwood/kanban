@@ -62,7 +62,7 @@
       "type": "object"
     }
   },
-  "description": "Response payload for the `evidence.list` command.",
+  "description": "Response payload for the `evidence.list` query.",
   "properties": {
     "evidence": {
       "items": {

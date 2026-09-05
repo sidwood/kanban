@@ -1001,11 +1001,10 @@ mod tests {
     }
 
     /// KAN-T10-AC3: every evidence command leaves the per-Project
-    /// timeline readable. A list row once carried half an entity
-    /// reference, which the timeline decoder refuses, so one
-    /// `evidence.list` used to make the whole Project query fail.
-    /// KAN-T79: the evidence now resolves the registered Project's
-    /// numeric identity, so its rows join the Project's own history.
+    /// timeline readable. KAN-T79: the evidence now resolves the
+    /// registered Project's numeric identity, so its rows join the
+    /// Project's own history. KAN-T91: evidence listing is a safe
+    /// read and does not append timeline rows.
     #[test]
     fn evidence_commands_keep_the_project_timeline_readable() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -1038,19 +1037,17 @@ mod tests {
             }),
         );
         assert_eq!(attached["id"], json!(1));
-        client.command(
+        client.query_with(
             "evidence.list",
             json!({
-                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-ticket" },
                 "project_id": 1,
                 "entity_kind": "ticket",
                 "entity_id": "kan-t10",
             }),
         );
-        client.command(
+        client.query_with(
             "evidence.list",
             json!({
-                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-project" },
                 "project_id": 1,
             }),
         );
@@ -1068,10 +1065,8 @@ mod tests {
             vec![
                 json!({ "kind": "project", "id": "1" }),
                 json!({ "kind": "ticket", "id": "kan-t10" }),
-                json!({ "kind": "ticket", "id": "kan-t10" }),
-                Value::Null,
             ],
-            "registration, attach, a filtered list, and a Project-wide list all land on one timeline"
+            "registration and attach land on the timeline; listing stays a safe read"
         );
 
         core.shutdown();

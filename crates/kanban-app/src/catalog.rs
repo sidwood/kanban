@@ -345,11 +345,11 @@ define_exposed_catalogue! {
         description: "Attach managed-file or repository evidence to an entity.",
     },
     "evidence.list" => {
-        kind: Command,
-        request: "EvidenceListRequest",
+        kind: Query,
+        request: "EvidenceListQuery",
         response: "EvidenceListResponse",
         mcp: "evidence_list",
-        description: "List evidence for a Project and append a timeline event.",
+        description: "List evidence for a Project without mutating the timeline.",
     },
     "herdr.settings.get" => {
         kind: Query,

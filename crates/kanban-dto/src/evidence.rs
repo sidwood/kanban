@@ -46,11 +46,10 @@ pub struct EvidenceAttachRequest {
     pub commit_identity: Option<String>,
 }
 
-/// Request payload for the `evidence.list` command.
+/// Request payload for the `evidence.list` query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct EvidenceListRequest {
-    pub mutation: super::MutationContext,
+pub struct EvidenceListQuery {
     pub project_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_kind: Option<String>,
@@ -58,7 +57,7 @@ pub struct EvidenceListRequest {
     pub entity_id: Option<String>,
 }
 
-/// Response payload for the `evidence.list` command.
+/// Response payload for the `evidence.list` query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceListResponse {
@@ -71,7 +70,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
+        EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse,
         EvidenceRecord,
     };
     use crate::mutation::MutationContext;
@@ -134,12 +133,17 @@ mod tests {
         }));
         assert!(refused.is_err(), "unknown fields are rejected");
 
-        let refused: Result<EvidenceListRequest, _> = serde_json::from_value(json!({
-            "mutation": context(),
+        let refused: Result<EvidenceListQuery, _> = serde_json::from_value(json!({
             "project_id": 1,
             "all": true,
         }));
         assert!(refused.is_err(), "unknown fields are rejected");
+
+        let refused: Result<EvidenceListQuery, _> = serde_json::from_value(json!({
+            "mutation": context(),
+            "project_id": 1,
+        }));
+        assert!(refused.is_err(), "mutation context is rejected on queries");
     }
 
     #[test]

@@ -1,23 +1,22 @@
-//! Evidence commands: attach managed files or repository references
-//! and list items, appending timeline events for each (KAN-S2-US4).
+//! Evidence commands and queries: attach managed files or repository
+//! references, and list items as a safe read (KAN-S2-US4).
 
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kanban_domain::{CommitIdentity, EvidenceItem, EvidenceKind, RelativePath, is_entity_kind};
 use kanban_dto::{
-    ApiError, EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceListSummary, EvidenceRecord, LiveEventName, TimelineEntityKind, TimelineEntityRef,
-    TimelineEventKind,
+    ApiError, EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse,
+    EvidenceRecord, LiveEventName, TimelineEventKind,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::dispatch::{Core, RegistrationError};
+use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
-use crate::timeline::{TimelineEnvelope, TimelineFacts};
+use crate::timeline::TimelineFacts;
 
 /// Filter for listing evidence within one Project.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,12 +50,8 @@ pub trait EvidenceStore: Send + Sync {
         facts: TimelineFacts,
     ) -> Result<EvidenceItem, ApiError>;
 
-    /// List evidence for `filter`, appending the list timeline event.
-    fn list(
-        &self,
-        filter: &EvidenceFilter,
-        envelope: TimelineEnvelope,
-    ) -> Result<Vec<EvidenceItem>, ApiError>;
+    /// List evidence for `filter` without mutating the timeline.
+    fn list(&self, filter: &EvidenceFilter) -> Result<Vec<EvidenceItem>, ApiError>;
 }
 
 impl Core {
@@ -74,7 +69,7 @@ impl Core {
                 projects: projects.clone(),
             }),
         )?;
-        self.register_command("evidence.list", Arc::new(ListEvidence { store, projects }))?;
+        self.register_query("evidence.list", Arc::new(ListEvidence { store, projects }))?;
         Ok(())
     }
 }
@@ -176,59 +171,27 @@ struct ListEvidence {
     projects: Arc<dyn ProjectStore>,
 }
 
-impl CommandHandler for ListEvidence {
-    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<EvidenceListRequest>(payload)?;
-        ParsedCommand::lift("evidence", payload)
-    }
-
-    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
-        Ok(0)
-    }
-
-    fn apply(
-        &self,
-        command: &ParsedCommand,
-        effects: &dyn CommandEffects,
-    ) -> Result<Value, ApiError> {
-        let request: EvidenceListRequest = parse_payload(&command.payload)?;
-        let project = resolve_project(self.projects.as_ref(), request.project_id)?;
+impl QueryHandler for ListEvidence {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let query = parse_payload::<EvidenceListQuery>(payload)?;
+        let project = resolve_project(self.projects.as_ref(), query.project_id)?;
         let project_id = project.id().value();
-        let entity_kind = request
+        let entity_kind = query
             .entity_kind
             .as_deref()
             .map(parse_entity_kind)
             .transpose()?;
-        let entity_id = request
+        let entity_id = query
             .entity_id
             .as_deref()
             .map(parse_entity_id)
             .transpose()?;
         let filter = EvidenceFilter {
             project_id,
-            entity_kind: entity_kind.clone(),
-            entity_id: entity_id.clone(),
+            entity_kind,
+            entity_id,
         };
-        let entity = entity_kind
-            .as_deref()
-            .zip(entity_id.as_deref())
-            .map(|(kind, id)| TimelineEntityRef {
-                kind: TimelineEntityKind::parse(kind)
-                    .expect("validated timeline entity kind has a DTO variant"),
-                id: id.to_owned(),
-            });
-        let envelope = TimelineEnvelope::project(
-            project_id,
-            TimelineEventKind::Evidence,
-            entity,
-            json!({
-                "action": "listed",
-                "entity_kind": entity_kind,
-                "entity_id": entity_id,
-            }),
-        );
-        let items = self.store.list(&filter, envelope)?;
-        announce_list(effects, project_id, items.len());
+        let items = self.store.list(&filter)?;
         let response = EvidenceListResponse {
             evidence: items.iter().map(record_of).collect(),
         };
@@ -291,14 +254,6 @@ fn announce(effects: &dyn CommandEffects, kind: LiveEventName, item: &EvidenceIt
     emit_catalogued(effects, kind, &record_of(item));
 }
 
-fn announce_list(effects: &dyn CommandEffects, project_id: u64, count: usize) {
-    emit_catalogued(
-        effects,
-        LiveEventName::EvidenceListed,
-        &EvidenceListSummary { project_id, count },
-    );
-}
-
 fn content_hash(content: &[u8]) -> String {
     format!("{:x}", Sha256::digest(content))
 }
@@ -315,7 +270,7 @@ mod evidence_attach {
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
 
-    use super::{EvidenceFilter, EvidenceStore, TimelineEnvelope, TimelineFacts};
+    use super::{EvidenceFilter, EvidenceStore, TimelineFacts};
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
@@ -412,12 +367,8 @@ mod evidence_attach {
             Ok(item)
         }
 
-        fn list(
-            &self,
-            filter: &EvidenceFilter,
-            append: TimelineEnvelope,
-        ) -> Result<Vec<EvidenceItem>, ApiError> {
-            let mut state = self.state.lock().expect("the memory store lock is sound");
+        fn list(&self, filter: &EvidenceFilter) -> Result<Vec<EvidenceItem>, ApiError> {
+            let state = self.state.lock().expect("the memory store lock is sound");
             let items = state
                 .items
                 .iter()
@@ -438,9 +389,6 @@ mod evidence_attach {
                 })
                 .cloned()
                 .collect();
-            state
-                .timeline
-                .push((append.kind().as_str().to_owned(), append.detail().clone()));
             Ok(items)
         }
     }
@@ -498,9 +446,8 @@ mod evidence_attach {
         })
     }
 
-    fn list(key: &str) -> Value {
+    fn list() -> Value {
         json!({
-            "mutation": { "optimistic_version": 0, "idempotency_key": key },
             "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "kan-t10",
@@ -552,26 +499,53 @@ mod evidence_attach {
     }
 
     #[test]
-    fn listing_evidence_appends_a_timeline_event() {
+    fn listing_evidence_is_a_read_without_timeline_mutation() {
         let store = Arc::new(MemoryEvidenceStore::default());
         let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
         core.command("evidence.attach", &attach_managed("key-1"))
             .expect("the attach applies");
 
-        core.command("evidence.list", &list("key-2"))
-            .expect("the list applies");
+        let (_, timeline_before) = store.snapshot();
+        assert_eq!(timeline_before.len(), 1, "only the attach event exists");
 
-        let (_, timeline) = store.snapshot();
+        let response = core
+            .query("evidence.list", &list())
+            .expect("the list serves");
+        assert_eq!(response["evidence"].as_array().map(Vec::len), Some(1));
+
+        let (_, timeline_after) = store.snapshot();
         assert_eq!(
-            timeline.last().cloned().expect("timeline appended"),
-            (
-                "evidence".to_owned(),
-                json!({
-                    "action": "listed",
-                    "entity_kind": "ticket",
-                    "entity_id": "kan-t10",
-                })
-            )
+            timeline_after, timeline_before,
+            "listing must not append a timeline row"
+        );
+    }
+
+    #[test]
+    fn repeated_listing_stays_current_without_growing_timeline() {
+        let store = Arc::new(MemoryEvidenceStore::default());
+        let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+        core.command("evidence.attach", &attach_managed("key-1"))
+            .expect("the first attach applies");
+        core.command("evidence.attach", &attach_repository("key-2"))
+            .expect("the second attach applies");
+
+        let first = core
+            .query("evidence.list", &list())
+            .expect("the first list serves");
+        assert_eq!(first["evidence"].as_array().map(Vec::len), Some(2));
+
+        let (_, timeline_after_first) = store.snapshot();
+        assert_eq!(timeline_after_first.len(), 2, "only attach events exist");
+
+        let second = core
+            .query("evidence.list", &list())
+            .expect("the second list serves");
+        assert_eq!(second["evidence"], first["evidence"]);
+
+        let (_, timeline_after_second) = store.snapshot();
+        assert_eq!(
+            timeline_after_second, timeline_after_first,
+            "repeated listing must not grow the timeline"
         );
     }
 

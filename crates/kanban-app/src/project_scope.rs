@@ -14,7 +14,7 @@ use kanban_domain::{
 };
 use kanban_dto::{
     ApiError, CommentRecord, CommentRevisionRecord, DeferralListQuery, RulingListQuery,
-    TimelineEntityKind, TimelineEntityRef, TimelineScope,
+    TimelineEntityKind, TimelineEntityRef,
 };
 use serde_json::{Value, json};
 
@@ -26,7 +26,7 @@ use crate::evidence::{EvidenceFilter, EvidenceStore};
 use crate::mutation::MemoryIdempotencyStore;
 use crate::project::testing::{MemoryProjectStore, stored_project};
 use crate::rulings::RulingStore;
-use crate::timeline::{TimelineEnvelope, TimelineFacts};
+use crate::timeline::TimelineFacts;
 
 /// Everything the project-scoped commands asked storage to land, so
 /// the tests can see which Project identity each write carried.
@@ -36,7 +36,6 @@ struct Recorded {
     rulings: Mutex<Vec<u64>>,
     deferrals: Mutex<Vec<u64>>,
     evidence: Mutex<Vec<u64>>,
-    list_scopes: Mutex<Vec<TimelineScope>>,
 }
 
 /// The Comment port that records the Project identity of each write.
@@ -260,21 +259,7 @@ impl EvidenceStore for RecordingEvidence {
         Ok(self.restore(project_id, EvidenceKind::Repository))
     }
 
-    fn list(
-        &self,
-        filter: &EvidenceFilter,
-        envelope: TimelineEnvelope,
-    ) -> Result<Vec<EvidenceItem>, ApiError> {
-        self.recorded
-            .evidence
-            .lock()
-            .expect("the recorder lock is sound")
-            .push(filter.project_id);
-        self.recorded
-            .list_scopes
-            .lock()
-            .expect("the recorder lock is sound")
-            .push(*envelope.scope());
+    fn list(&self, filter: &EvidenceFilter) -> Result<Vec<EvidenceItem>, ApiError> {
         Ok(self
             .items
             .lock()
@@ -419,14 +404,6 @@ mod contract {
             }),
         )
         .expect("the attach applies");
-        core.command(
-            "evidence.list",
-            &json!({
-                "mutation": mutation("list"),
-                "project_id": 1,
-            }),
-        )
-        .expect("the list applies");
 
         let guard = recorded;
         assert_eq!(
@@ -446,16 +423,8 @@ mod contract {
         );
         assert_eq!(
             *guard.evidence.lock().expect("the recorder lock is sound"),
-            vec![1, 1],
-            "attach and list both carry the resolved identity"
-        );
-        assert_eq!(
-            *guard
-                .list_scopes
-                .lock()
-                .expect("the recorder lock is sound"),
-            vec![kanban_dto::TimelineScope::Project(1)],
-            "the timeline scope derives from the resolved numeric identity"
+            vec![1],
+            "only the attach write carries the resolved identity"
         );
     }
 
@@ -501,13 +470,6 @@ mod contract {
                     "content_base64": "cHJvb2Y=",
                 }),
             ),
-            (
-                "evidence.list",
-                json!({
-                    "mutation": mutation("list"),
-                    "project_id": 9,
-                }),
-            ),
         ] {
             let error = core
                 .command(operation, &payload)
@@ -523,6 +485,7 @@ mod contract {
         for (operation, payload) in [
             ("ruling.list", json!({ "project_id": 9 })),
             ("deferral.list", json!({ "project_id": 9 })),
+            ("evidence.list", json!({ "project_id": 9 })),
         ] {
             let refusal = core
                 .query(operation, &payload)
@@ -559,13 +522,6 @@ mod contract {
         assert!(
             recorded
                 .evidence
-                .lock()
-                .expect("the recorder lock is sound")
-                .is_empty()
-        );
-        assert!(
-            recorded
-                .list_scopes
                 .lock()
                 .expect("the recorder lock is sound")
                 .is_empty()

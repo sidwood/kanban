@@ -14,7 +14,7 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
     CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
+    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListQuery,
     EvidenceListResponse, EvidenceRecord, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
     HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
     HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
@@ -613,11 +613,11 @@ async fn evidence_attach(
 #[tauri::command]
 async fn evidence_list(
     shell: State<'_, Arc<Shell>>,
-    request: EvidenceListRequest,
+    request: EvidenceListQuery,
 ) -> Result<EvidenceListResponse, ApiError> {
     let shell = shell.inner().clone();
     run_blocking(shell, "evidence list", |shell| {
-        forward_command(shell, "evidence.list", "evidence list", request)
+        forward_query(shell, "evidence.list", "evidence list", request)
     })
     .await
 }

@@ -39,8 +39,7 @@ pub use event::{
     UnknownLiveEventError, decode_live_event, event_descriptor, live_event_catalog,
 };
 pub use evidence::{
-    EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceRecord,
+    EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
 };
 pub use health::{HealthQuery, HealthResponse};
 pub use herdr::{
@@ -143,7 +142,7 @@ mod tests {
                 "EventEnvelope",
                 "EvidenceAttachRequest",
                 "EvidenceKindDto",
-                "EvidenceListRequest",
+                "EvidenceListQuery",
                 "EvidenceListResponse",
                 "EvidenceListSummary",
                 "EvidenceRecord",

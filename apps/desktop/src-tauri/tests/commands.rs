@@ -11,7 +11,7 @@ use kanban_desktop_lib::Shell;
 use kanban_desktop_lib::commands::{forward_command_value, forward_query_value, install_link};
 use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
-    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
+    DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListQuery,
     HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeRenameRequest, MutationContext, PlanActivateRequest,
@@ -250,7 +250,7 @@ fn sample_request(schema: &str) -> Value {
             "relative_path": "evidence/review.txt",
             "commit_identity": "c9eac24",
         }),
-        "EvidenceListRequest" => json!({ "mutation": mutation, "project_id": 1 }),
+        "EvidenceListQuery" => json!({ "project_id": 1 }),
         "HerdrSettingsGetQuery" => json!({ "project_id": 1 }),
         "HerdrSettingsUpdateRequest" => json!({
             "mutation": mutation,
@@ -490,8 +490,8 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceAttachRequest>,
         >(envelope)
         .is_err(),
-        "EvidenceListRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceListRequest>,
+        "EvidenceListQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceListQuery>,
         >(envelope)
         .is_err(),
         "HerdrSettingsGetQuery" => serde_json::from_value::<

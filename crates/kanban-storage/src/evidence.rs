@@ -100,17 +100,9 @@ impl EvidenceStore for SqliteEvidenceStore {
         )
     }
 
-    fn list(
-        &self,
-        filter: &EvidenceFilter,
-        envelope: TimelineEnvelope,
-    ) -> Result<Vec<EvidenceItem>, ApiError> {
+    fn list(&self, filter: &EvidenceFilter) -> Result<Vec<EvidenceItem>, ApiError> {
         let conn = self.lock();
-        let span = WriteSpan::begin(&conn).map_err(internal)?;
-        let items = query_rows(&span, filter)?;
-        insert_event(&span, &envelope).map_err(internal)?;
-        span.commit().map_err(internal)?;
-        Ok(items)
+        query_rows(&conn, filter)
     }
 }
 
@@ -375,9 +367,9 @@ impl std::error::Error for CorruptEvidence {}
 #[cfg(test)]
 mod evidence_storage {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    use kanban_app::{EvidenceFilter, EvidenceStore, TimelineEnvelope, TimelineFacts};
+    use kanban_app::{EvidenceFilter, EvidenceStore, TimelineFacts};
     use kanban_domain::{CommitIdentity, ContentHash, EvidenceKind, RelativePath};
-    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
+    use kanban_dto::{TimelineEventKind, TimelineScope};
     use serde_json::json;
 
     use super::{SqliteEvidenceStore, attachment_path, content_hash};
@@ -400,18 +392,6 @@ mod evidence_storage {
             kind: TimelineEventKind::Evidence,
             facts,
         }
-    }
-
-    fn list_append(entity: Option<(&str, &str)>, detail: serde_json::Value) -> TimelineEnvelope {
-        TimelineEnvelope::project(
-            1,
-            TimelineEventKind::Evidence,
-            entity.map(|(kind, id)| TimelineEntityRef {
-                kind: TimelineEntityKind::parse(kind).expect("the test kind is valid"),
-                id: id.to_owned(),
-            }),
-            detail,
-        )
     }
 
     /// The Project timeline as the query surface reads it, so every
@@ -664,7 +644,7 @@ mod evidence_storage {
     }
 
     #[test]
-    fn listing_evidence_appends_a_timeline_event() {
+    fn listing_evidence_does_not_append_a_timeline_event() {
         let (_dir, database, store) = store();
         let encoded = STANDARD.encode(b"listed");
         store
@@ -678,106 +658,88 @@ mod evidence_storage {
             .expect("the managed file lands");
 
         let listed = store
-            .list(
-                &EvidenceFilter {
-                    project_id: 1,
-                    entity_kind: Some("ticket".to_owned()),
-                    entity_id: Some("kan-t10".to_owned()),
-                },
-                list_append(
-                    Some(("ticket", "kan-t10")),
-                    json!({
-                        "action": "listed",
-                        "entity_kind": "ticket",
-                        "entity_id": "kan-t10",
-                    }),
-                ),
-            )
+            .list(&EvidenceFilter {
+                project_id: 1,
+                entity_kind: Some("ticket".to_owned()),
+                entity_id: Some("kan-t10".to_owned()),
+            })
             .expect("the list serves");
 
         assert_eq!(listed.len(), 1);
-        let event = last_event(&database);
-        assert_eq!(event.kind, "evidence");
         assert_eq!(
-            event.detail,
-            json!({
-                "action": "listed",
-                "entity_kind": "ticket",
-                "entity_id": "kan-t10",
-            })
-        );
-        assert_eq!(
-            envelope(&event),
-            (Some("ticket"), Some("kan-t10")),
-            "a list filtered to one entity references that entity"
+            timeline_rows(&database).len(),
+            1,
+            "only the attach event exists"
         );
     }
 
     #[test]
-    fn listing_a_whole_project_appends_an_unreferenced_timeline_event() {
+    fn repeated_listing_stays_current_without_growing_timeline() {
         let (_dir, database, store) = store();
-
+        let encoded = STANDARD.encode(b"listed");
         store
-            .list(
-                &EvidenceFilter {
-                    project_id: 1,
-                    entity_kind: None,
-                    entity_id: None,
-                },
-                list_append(
-                    None,
-                    json!({
-                        "action": "listed",
-                        "entity_kind": null,
-                        "entity_id": null,
-                    }),
-                ),
+            .attach_managed_file(
+                1,
+                "ticket",
+                "kan-t10",
+                &encoded,
+                append("evidence", json!({ "action": "attached" })),
             )
-            .expect("the list serves");
+            .expect("the managed file lands");
 
-        let event = last_event(&database);
-        assert_eq!(event.kind, "evidence");
+        let filter = EvidenceFilter {
+            project_id: 1,
+            entity_kind: Some("ticket".to_owned()),
+            entity_id: Some("kan-t10".to_owned()),
+        };
+        let first = store.list(&filter).expect("the first list serves");
+        assert_eq!(first.len(), 1);
+        let timeline_after_first = timeline_rows(&database);
+        assert_eq!(timeline_after_first.len(), 1);
+
+        let second = store.list(&filter).expect("the second list serves");
+        assert_eq!(second, first);
         assert_eq!(
-            event.detail,
-            json!({
-                "action": "listed",
-                "entity_kind": null,
-                "entity_id": null,
-            })
-        );
-        assert_eq!(
-            envelope(&event),
-            (None, None),
-            "a Project-wide list leaves both envelope columns empty"
+            timeline_rows(&database),
+            timeline_after_first,
+            "repeated listing must not grow the timeline"
         );
     }
 
     #[test]
-    fn listing_by_entity_kind_alone_leaves_the_envelope_unreferenced() {
+    fn listing_a_whole_project_returns_every_row_without_timeline_mutation() {
+        let (_dir, database, store) = store();
+
+        let listed = store
+            .list(&EvidenceFilter {
+                project_id: 1,
+                entity_kind: None,
+                entity_id: None,
+            })
+            .expect("the list serves");
+
+        assert!(listed.is_empty());
+        assert!(
+            timeline_rows(&database).is_empty(),
+            "a Project-wide list must not append a timeline event"
+        );
+    }
+
+    #[test]
+    fn listing_by_entity_kind_alone_returns_matching_rows_without_timeline_mutation() {
         let (_dir, database, store) = store();
 
         store
-            .list(
-                &EvidenceFilter {
-                    project_id: 1,
-                    entity_kind: Some("ticket".to_owned()),
-                    entity_id: None,
-                },
-                list_append(
-                    None,
-                    json!({
-                        "action": "listed",
-                        "entity_kind": "ticket",
-                        "entity_id": null,
-                    }),
-                ),
-            )
+            .list(&EvidenceFilter {
+                project_id: 1,
+                entity_kind: Some("ticket".to_owned()),
+                entity_id: None,
+            })
             .expect("the list serves");
 
-        assert_eq!(
-            envelope(&last_event(&database)),
-            (None, None),
-            "half a reference is never written: the decoder refuses it"
+        assert!(
+            timeline_rows(&database).is_empty(),
+            "a partial filter must not append a timeline event"
         );
     }
 

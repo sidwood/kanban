@@ -95,10 +95,9 @@ export type EvidenceAttachRequest = {
   relative_path?: string | null;
 };
 export type EvidenceKindDto = 'managed_file' | 'repository';
-export type EvidenceListRequest = {
+export type EvidenceListQuery = {
   entity_id?: string | null;
   entity_kind?: string | null;
-  mutation: MutationContext;
   project_id: number;
 };
 export type EvidenceListResponse = {

@@ -18,8 +18,7 @@ use crate::event::{
     DeferralIdentity, EventEnvelope, EvidenceListSummary, LiveEventName, RulingIdentity,
 };
 use crate::evidence::{
-    EvidenceAttachRequest, EvidenceKindDto, EvidenceListRequest, EvidenceListResponse,
-    EvidenceRecord,
+    EvidenceAttachRequest, EvidenceKindDto, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
 };
 use crate::health::{HealthQuery, HealthResponse};
 use crate::herdr::{
@@ -84,7 +83,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("EventEnvelope", schema_for!(EventEnvelope)),
         ("EvidenceAttachRequest", schema_for!(EvidenceAttachRequest)),
         ("EvidenceKindDto", schema_for!(EvidenceKindDto)),
-        ("EvidenceListRequest", schema_for!(EvidenceListRequest)),
+        ("EvidenceListQuery", schema_for!(EvidenceListQuery)),
         ("EvidenceListResponse", schema_for!(EvidenceListResponse)),
         ("EvidenceListSummary", schema_for!(EvidenceListSummary)),
         ("EvidenceRecord", schema_for!(EvidenceRecord)),

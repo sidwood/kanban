@@ -1099,80 +1099,136 @@ mod snapshot_step_test_hooks {
     //! Test-only coordination with the bounded snapshot step loop:
     //! a test parks the copying snapshot at a step boundary and
     //! probes the shared live connection while it waits.
+    //!
+    //! A gate belongs to exactly one copy: the copying thread adopts
+    //! the gate before the copy starts, so every other copy in the
+    //! binary — including the unrelated backups other tests run —
+    //! falls through without touching its channel. A gate disarms on
+    //! completion, on the test half going away, and on drop, so a
+    //! parked step never outlives the test that armed it.
 
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::{Receiver, Sender, channel};
 
-    /// The copying snapshot's half of the armed gate, held
-    /// process-globally: the snapshot runs on another thread, so a
-    /// thread-local would be invisible to it.
+    /// Names one armed gate and the single copy that owns it. Keys
+    /// come from a process-wide counter, so gates armed by parallel
+    /// tests never collide.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct GateKey(u64);
+
+    /// The next distinct gate key.
+    static NEXT_GATE_KEY: AtomicU64 = AtomicU64::new(0);
+
+    thread_local! {
+        /// The gate this thread's copy parks at, if any. Only a
+        /// thread that adopted a gate ever waits on it, so the
+        /// adoption travels with the copy's own thread instead of
+        /// process-global state.
+        static ADOPTED_GATE: RefCell<Option<GateKey>> = const { RefCell::new(None) };
+    }
+
+    /// The copying snapshot's half of an armed gate.
     struct StepChannel {
         events: Sender<(usize, bool)>,
         release: Receiver<()>,
     }
 
-    /// One armed gate at a time; parallel tests queue here.
-    static GATE_ORDER: Mutex<()> = Mutex::new(());
-    static STEP_CHANNEL: Mutex<Option<StepChannel>> = Mutex::new(None);
+    /// Every armed gate, keyed by the copy that owns it. Parallel
+    /// gated tests arm independent gates without queuing behind each
+    /// other, and a foreign copy has no key here at all.
+    static ARMED_GATES: LazyLock<Mutex<HashMap<GateKey, StepChannel>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
 
-    /// The test half of the armed gate. Every bounded step boundary
-    /// is reported through the receiver and parks the copy until the
-    /// sender lets it continue. Dropping the gate frees a waiting
-    /// copy and disarms it.
+    fn armed_gates() -> MutexGuard<'static, HashMap<GateKey, StepChannel>> {
+        ARMED_GATES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The test half of an armed gate. Every bounded step boundary of
+    /// the adopting copy is reported through the receiver and parks
+    /// the copy until the sender lets it continue. Dropping the gate
+    /// frees a waiting copy and disarms it.
     pub struct StepGate {
-        _order: MutexGuard<'static, ()>,
+        key: GateKey,
+    }
+
+    /// Marks the one copy a gate belongs to. Hand the token to the
+    /// copying thread and call `adopt` on it before the copy starts.
+    #[derive(Clone, Copy)]
+    pub struct CopyToken {
+        key: GateKey,
+    }
+
+    impl CopyToken {
+        /// Parks this thread's bounded steps at the gate this token
+        /// names. Call once, on the thread the copy runs on, before
+        /// the copy starts; the adoption holds for the thread's
+        /// whole lifetime.
+        pub fn adopt(self) {
+            ADOPTED_GATE.with(|slot| *slot.borrow_mut() = Some(self.key));
+        }
     }
 
     impl StepGate {
-        /// Park every bounded step boundary from now on. The
-        /// receiver reports `(step, done)` pairs, where `done` marks
-        /// the boundary that completed the copy; sending back on the
-        /// sender lets the copy continue.
+        /// Park every bounded step boundary of the copy that adopts
+        /// this gate's token. The receiver reports `(step, done)`
+        /// pairs, where `done` marks the boundary that completed the
+        /// copy; sending back on the sender lets the copy continue.
         pub fn arm() -> (Receiver<(usize, bool)>, Sender<()>, Self) {
-            let _order = GATE_ORDER
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let key = GateKey(NEXT_GATE_KEY.fetch_add(1, Ordering::Relaxed));
             let (events_tx, events_rx) = channel();
             let (release_tx, release_rx) = channel();
-            let mut slot = STEP_CHANNEL
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *slot = Some(StepChannel {
-                events: events_tx,
-                release: release_rx,
-            });
-            (events_rx, release_tx, Self { _order })
+            armed_gates().insert(
+                key,
+                StepChannel {
+                    events: events_tx,
+                    release: release_rx,
+                },
+            );
+            (events_rx, release_tx, Self { key })
+        }
+
+        /// The token the copying thread adopts so that copy, and no
+        /// other, parks at this gate.
+        pub fn copy_token(&self) -> CopyToken {
+            CopyToken { key: self.key }
         }
     }
 
     impl Drop for StepGate {
         fn drop(&mut self) {
-            let mut slot = STEP_CHANNEL
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *slot = None;
+            // Removing the channel drops the release receiver a
+            // parked copy waits on: its recv fails, the copy
+            // continues, and the gate stays disarmed.
+            armed_gates().remove(&self.key);
         }
     }
 
-    /// Reports step `index` to the armed test and parks until it
-    /// lets the copy continue. A gone or closed test half disarms the
-    /// gate and lets the copy proceed unhindered.
+    /// Reports step `index` to the gate this thread adopted, if any,
+    /// and parks until the test lets the copy continue. A copy whose
+    /// thread adopted no gate, whose gate is gone, or whose test half
+    /// closed proceeds unhindered, and a completed copy disarms its
+    /// gate so a leaked gate can never park a later step.
     pub fn on_step(index: usize, done: bool) {
-        let channel = {
-            let mut slot = STEP_CHANNEL
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            slot.take()
-        };
-        let Some(channel) = channel else {
+        let Some(key) = ADOPTED_GATE.with(|slot| *slot.borrow()) else {
             return;
         };
-        if channel.events.send((index, done)).is_ok() && channel.release.recv() == Ok(()) {
-            let mut slot = STEP_CHANNEL
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *slot = Some(channel);
+        let Some(channel) = armed_gates().remove(&key) else {
+            return;
+        };
+        let released =
+            channel.events.send((index, done)).is_ok() && channel.release.recv() == Ok(());
+        if released && !done {
+            // The copy steps again: re-arm so its next boundary parks
+            // too. A done copy never steps again, so its channel is
+            // dropped and the gate disarms.
+            armed_gates().insert(key, channel);
         }
     }
 }
@@ -2012,9 +2068,11 @@ mod backup_restore {
         seed_state(dir.path(), &database);
         grow_for_several_bounded_steps(&database);
         let handle = database.connection_handle();
-        let (events, release, _gate) = super::snapshot_step_test_hooks::StepGate::arm();
+        let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+        let token = gate.copy_token();
 
         let copying = thread::spawn(move || {
+            token.adopt();
             store
                 .create(&database, &overlap_options())
                 .expect("the overlapped backup creates")
@@ -2053,9 +2111,11 @@ mod backup_restore {
         seed_state(dir.path(), &database);
         grow_for_several_bounded_steps(&database);
         let handle = database.connection_handle();
-        let (events, release, _gate) = super::snapshot_step_test_hooks::StepGate::arm();
+        let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+        let token = gate.copy_token();
 
         let copying = thread::spawn(move || {
+            token.adopt();
             store
                 .create(&database, &overlap_options())
                 .expect("the overlapped backup creates")

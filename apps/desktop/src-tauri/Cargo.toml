@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Thin Tauri shell hosting the Kanban desktop application"
 edition = "2024"
 rust-version = "1.85.0"
+license = "MIT"
 publish = false
 default-run = "kanban-desktop"
 

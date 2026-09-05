@@ -18,3 +18,7 @@ Requires Rust, Node.js, pnpm, `just`, and `pre-commit` on `PATH`.
   including a generated file nobody committed.
 - `just build` — debug builds of the core and the desktop app.
 - `just dev` — run the core and the desktop app.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

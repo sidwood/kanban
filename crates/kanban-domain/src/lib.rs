@@ -4,6 +4,7 @@
 pub mod comment;
 pub mod coverage;
 pub mod deferral;
+pub mod dependency;
 pub mod evidence;
 pub mod herdr;
 pub mod initiative;
@@ -24,6 +25,11 @@ pub use coverage::{
     UserStoryRef, VerificationStep, VerificationStepError, enforce_executable,
 };
 pub use deferral::{Deferral, DeferralDraft, DeferralError, DeferralId, DeferralReason};
+pub use dependency::{
+    BlockerDescription, DependencyError, DependencyState, ExternalBlocker, ExternalBlockerId,
+    Readiness, ReadinessBlocker, ReadinessInputs, TicketDependency, TicketDependencyGraph,
+    compute_readiness, dependency_satisfied,
+};
 pub use evidence::{
     CommitIdentity, ContentHash, EvidenceError, EvidenceId, EvidenceItem, EvidenceKind,
     EvidenceShape, RelativePath,

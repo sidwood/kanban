@@ -13,6 +13,7 @@ mod test_client;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use kanban_app::{
     Core, EventSink, GitObservation, ProjectStore, RegistrationError, TimelineQueryHandler,
@@ -37,6 +38,12 @@ use git_observer::LocalWorkspaceGitObserver;
 /// five-figure bound covers every retry that could still arrive
 /// while keeping the table small enough to ignore.
 const RETAINED_OUTCOMES: NonZeroU32 = NonZeroU32::new(10_000).expect("the bound is not zero");
+
+/// The minimum age every replay outcome survives, even when a burst
+/// exceeds the count bound. A client may retry across restarts and
+/// command bursts for up to a day before the table can prune an
+/// outcome on count alone.
+const MINIMUM_REPLAY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The service's git observation: a target is a Git repository when
 /// its path holds a `.git` entry, a directory for a normal clone or a
@@ -114,7 +121,7 @@ fn assemble_core(
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
     let idempotency_store = Arc::new(SqliteIdempotencyStore::new(
         &database,
-        RetentionPolicy::keep_most_recent(RETAINED_OUTCOMES),
+        RetentionPolicy::new(RETAINED_OUTCOMES, MINIMUM_REPLAY_AGE),
     ));
     let evidence_store = Arc::new(SqliteEvidenceStore::new(
         &database,
@@ -269,8 +276,8 @@ mod tests {
     use kanban_app::{GitObservation, NoopEventSink, assert_registered_matches_exposed_catalogue};
 
     use super::{
-        LocalRepositories, ObservationTuning, ServiceError, assemble_core, prepare_database, serve,
-        serve_with_herdr_sessions,
+        LocalRepositories, ObservationTuning, RETAINED_OUTCOMES, ServiceError, assemble_core,
+        prepare_database, serve, serve_with_herdr_sessions,
     };
     use crate::herdr::production_socket_root;
     use crate::test_client::{Client, boot};
@@ -422,6 +429,65 @@ mod tests {
             refused["code"],
             json!("duplicate_idempotency_key"),
             "the spent key refuses a different request across the restart"
+        );
+
+        rebooted.shutdown();
+    }
+
+    #[test]
+    fn restart_replay_survives_a_burst_above_the_count_bound() {
+        use rusqlite::params;
+
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let request = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": "burst-replay-1" },
+            "name": "Reliability",
+        });
+
+        let core = boot(&dir);
+        let created =
+            Client::connect(core.socket_path()).command("initiative.create", request.clone());
+        core.shutdown();
+
+        let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+            .expect("the database reopens for seeding");
+        for index in 0..RETAINED_OUTCOMES.get() {
+            conn.execute(
+                "INSERT INTO idempotency_outcomes (idempotency_key, fingerprint, response, recorded_at)
+                 VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![
+                    format!("burst-{index}"),
+                    format!("fingerprint:{index}"),
+                    "{}",
+                ],
+            )
+            .expect("the burst row inserts");
+        }
+
+        let rebooted = boot(&dir);
+        let mut client = Client::connect(rebooted.socket_path());
+        client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "burst-trigger" },
+                "name": "Trigger",
+            }),
+        );
+        let replayed = client.command("initiative.create", request.clone());
+
+        assert_eq!(
+            replayed, created,
+            "a retry after a burst above the count bound replays when the outcome is still inside the minimum age"
+        );
+        assert_eq!(
+            client.query("initiative.list"),
+            json!({
+                "initiatives": [
+                    { "id": 1, "name": "Reliability", "archived": false, "version": 1 },
+                    { "id": 2, "name": "Trigger", "archived": false, "version": 1 },
+                ]
+            }),
+            "the replay must not have applied the mutation a second time"
         );
 
         rebooted.shutdown();

@@ -3,6 +3,7 @@
 //! the mutation itself (DR-SS-03, KAN-S1-US2).
 
 use std::num::NonZeroU32;
+use std::time::Duration;
 
 use kanban_app::{IdempotencyStore, MutationSpan, RecordedOutcome};
 use kanban_dto::ApiError;
@@ -11,28 +12,48 @@ use rusqlite::{Connection, params};
 
 use crate::db::{self, ConnectionHandle, Database};
 
-/// How many replay outcomes the database keeps.
+/// How many replay outcomes the database keeps and how long each one
+/// survives a count-bound burst.
 ///
-/// A retry follows its original within seconds, so the store holds
-/// far more outcomes than any client could still be retrying and
-/// prunes the rest in the commit that records the newest: replay
-/// stays available and the table cannot grow without end.
+/// A retry follows its original within seconds, but a client may
+/// still be entitled to replay across restarts and command bursts.
+/// The count bound keeps the table bounded; the minimum age keeps
+/// every outcome inside the retry window even when the burst exceeds
+/// the count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetentionPolicy {
     retained: NonZeroU32,
+    minimum_age: Duration,
 }
 
 impl RetentionPolicy {
-    /// Keep the `retained` most recently recorded outcomes. The
-    /// bound is never zero: a store that pruned the outcome it just
-    /// recorded could not replay anything.
-    pub const fn keep_most_recent(retained: NonZeroU32) -> Self {
-        Self { retained }
+    /// Keep the `retained` most recently recorded outcomes and every
+    /// outcome younger than `minimum_age`. The count bound is never
+    /// zero: a store that pruned the outcome it just recorded could
+    /// not replay anything.
+    pub const fn new(retained: NonZeroU32, minimum_age: Duration) -> Self {
+        Self {
+            retained,
+            minimum_age,
+        }
     }
 
-    /// The number of outcomes kept.
+    /// Keep the `retained` most recently recorded outcomes with no
+    /// minimum age. Tests use this when the time floor is not the
+    /// behaviour under proof.
+    pub const fn keep_most_recent(retained: NonZeroU32) -> Self {
+        Self::new(retained, Duration::ZERO)
+    }
+
+    /// The number of outcomes kept by count alone.
     pub const fn retained(self) -> NonZeroU32 {
         self.retained
+    }
+
+    /// The minimum age every outcome survives, even above the count
+    /// bound.
+    pub const fn minimum_age(self) -> Duration {
+        self.minimum_age
     }
 }
 
@@ -122,17 +143,31 @@ impl Drop for SqliteMutationSpan<'_> {
     }
 }
 
-/// Drop every outcome older than the retained bound. It runs inside
-/// the recording span, so the bound holds at every commit.
+/// Drop outcomes beyond both the count bound and the minimum age.
+/// It runs inside the recording span, so the policy holds at every
+/// commit.
 fn prune(conn: &Connection, retention: RetentionPolicy) -> Result<(), ApiError> {
-    conn.execute(
-        "DELETE FROM idempotency_outcomes
-          WHERE id NOT IN (
-              SELECT id FROM idempotency_outcomes ORDER BY id DESC LIMIT ?1
-          )",
-        params![i64::from(retention.retained().get())],
-    )
-    .map_err(internal)?;
+    if retention.minimum_age().is_zero() {
+        conn.execute(
+            "DELETE FROM idempotency_outcomes
+              WHERE id NOT IN (
+                  SELECT id FROM idempotency_outcomes ORDER BY id DESC LIMIT ?1
+              )",
+            params![i64::from(retention.retained().get())],
+        )
+        .map_err(internal)?;
+    } else {
+        let age_modifier = format!("-{} seconds", retention.minimum_age().as_secs());
+        conn.execute(
+            "DELETE FROM idempotency_outcomes
+              WHERE id NOT IN (
+                  SELECT id FROM idempotency_outcomes ORDER BY id DESC LIMIT ?1
+              )
+              AND recorded_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?2)",
+            params![i64::from(retention.retained().get()), age_modifier],
+        )
+        .map_err(internal)?;
+    }
     Ok(())
 }
 
@@ -144,10 +179,12 @@ fn internal(error: rusqlite::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
+    use std::time::Duration;
 
     use kanban_app::{IdempotencyStore, InitiativeStore, RecordedOutcome, TimelineEnvelope};
     use kanban_domain::{InitiativeId, InitiativeName};
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use rusqlite::{Connection, params};
     use serde_json::{Value, json};
     use tempfile::TempDir;
 
@@ -166,9 +203,44 @@ mod tests {
         (dir, database)
     }
 
-    /// Keep the `retained` most recent outcomes.
+    /// Keep the `retained` most recent outcomes, optionally with a
+    /// minimum age.
     fn keep(retained: u32) -> RetentionPolicy {
         RetentionPolicy::keep_most_recent(NonZeroU32::new(retained).expect("the bound is not zero"))
+    }
+
+    /// Keep the `retained` most recent outcomes and every outcome
+    /// younger than `minimum_age_secs`.
+    fn policy(retained: u32, minimum_age_secs: u64) -> RetentionPolicy {
+        RetentionPolicy::new(
+            NonZeroU32::new(retained).expect("the bound is not zero"),
+            Duration::from_secs(minimum_age_secs),
+        )
+    }
+
+    /// Insert one outcome directly, backdating its recorded time.
+    fn insert_outcome(conn: &Connection, key: &str, label: &str, recorded_age_secs: i64) {
+        let recorded = outcome(label);
+        let response = serde_json::to_string(&recorded.response).expect("the response encodes");
+        conn.execute(
+            "INSERT INTO idempotency_outcomes (idempotency_key, fingerprint, response, recorded_at)
+             VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?4))",
+            params![
+                key,
+                recorded.fingerprint,
+                response,
+                format!("-{recorded_age_secs} seconds"),
+            ],
+        )
+        .expect("the row inserts");
+    }
+
+    /// Every key in `keys` that still has a recorded outcome.
+    fn spent_keys<'a>(store: &SqliteIdempotencyStore, keys: &'a [&'a str]) -> Vec<&'a str> {
+        keys.iter()
+            .filter(|key| store.recorded(key).expect("the lookup serves").is_some())
+            .copied()
+            .collect()
     }
 
     /// One recorded outcome, named by `label`.
@@ -345,6 +417,132 @@ mod tests {
             spent,
             vec!["Third", "Fourth"],
             "the bound drops the oldest outcomes and keeps the newest"
+        );
+    }
+
+    #[test]
+    fn retention_keeps_outcomes_within_the_minimum_age_even_when_the_count_bound_is_exceeded() {
+        let (_dir, database) = migrated();
+        let conn = database.connection();
+        let keys: Vec<String> = (1..=12).map(|index| format!("key-{index}")).collect();
+        for (index, key) in keys.iter().enumerate() {
+            insert_outcome(&conn, key, &format!("Outcome-{index}"), 1_800);
+        }
+
+        let store = SqliteIdempotencyStore::new(&database, policy(2, 3_600));
+        store
+            .begin()
+            .expect("the span opens")
+            .commit("trigger", outcome("trigger"))
+            .expect("the span commits");
+
+        let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+        assert_eq!(
+            spent_keys(&store, &key_refs),
+            key_refs,
+            "every outcome inside the minimum age survives the burst"
+        );
+        assert!(
+            store
+                .recorded("trigger")
+                .expect("the lookup serves")
+                .is_some(),
+            "the commit that triggered pruning keeps its own outcome"
+        );
+    }
+
+    #[test]
+    fn retention_prunes_outcomes_beyond_both_the_count_bound_and_minimum_age() {
+        let (_dir, database) = migrated();
+        let conn = database.connection();
+        for index in 1..=8 {
+            insert_outcome(
+                &conn,
+                &format!("old-{index}"),
+                &format!("Old-{index}"),
+                7_200,
+            );
+        }
+        for index in 1..=3 {
+            insert_outcome(&conn, &format!("new-{index}"), &format!("New-{index}"), 0);
+        }
+
+        let store = SqliteIdempotencyStore::new(&database, policy(2, 3_600));
+        store
+            .begin()
+            .expect("the span opens")
+            .commit("trigger", outcome("trigger"))
+            .expect("the span commits");
+
+        for index in 1..=8 {
+            assert!(
+                store
+                    .recorded(&format!("old-{index}"))
+                    .expect("the lookup serves")
+                    .is_none(),
+                "outcomes older than the minimum age are pruned"
+            );
+        }
+        assert_eq!(
+            spent_keys(&store, &["new-1", "new-2", "new-3", "trigger"],),
+            vec!["new-1", "new-2", "new-3", "trigger"],
+            "recent outcomes survive even when they exceed the count bound"
+        );
+    }
+
+    #[test]
+    fn retention_prunes_deterministically_across_repeated_bursts() {
+        let (_dir, database) = migrated();
+        let conn = database.connection();
+        for index in 1..=6 {
+            insert_outcome(
+                &conn,
+                &format!("old-{index}"),
+                &format!("Old-{index}"),
+                7_200,
+            );
+        }
+        for index in 1..=4 {
+            insert_outcome(&conn, &format!("new-{index}"), &format!("New-{index}"), 0);
+        }
+
+        let store = SqliteIdempotencyStore::new(&database, policy(2, 3_600));
+        for label in ["first-trigger", "second-trigger"] {
+            store
+                .begin()
+                .expect("the span opens")
+                .commit(label, outcome(label))
+                .expect("the span commits");
+        }
+
+        let survivors = spent_keys(
+            &store,
+            &[
+                "old-1",
+                "old-2",
+                "old-3",
+                "old-4",
+                "old-5",
+                "old-6",
+                "new-1",
+                "new-2",
+                "new-3",
+                "new-4",
+                "first-trigger",
+                "second-trigger",
+            ],
+        );
+        assert_eq!(
+            survivors,
+            vec![
+                "new-1",
+                "new-2",
+                "new-3",
+                "new-4",
+                "first-trigger",
+                "second-trigger"
+            ],
+            "repeated pruning leaves the same survivors"
         );
     }
 

@@ -8,7 +8,9 @@ use kanban_app::{
     OperationKind, ParsedCommand, QueryHandler, exposed_operations,
 };
 use kanban_desktop_lib::Shell;
-use kanban_desktop_lib::commands::{forward_command_value, forward_query_value, install_link};
+use kanban_desktop_lib::commands::{
+    decode_invoke_args, forward_command_value, forward_query_value, install_link,
+};
 use kanban_dto::{
     CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
     DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest,
@@ -380,232 +382,87 @@ fn commands_forward_catalogued_requests_unchanged() {
 }
 
 fn assert_unknown_fields_refused(schema: &str, request: Value) {
-    let envelope = json!({ "request": request });
     let refused = match schema {
-        "HealthQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<HealthQuery>,
-        >(envelope)
-        .is_err(),
-        "DiagnosticsExportQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<DiagnosticsExportQuery>,
-        >(envelope)
-        .is_err(),
-        "InitiativeCreateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<InitiativeCreateRequest>,
-        >(envelope)
-        .is_err(),
-        "InitiativeRenameRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<InitiativeRenameRequest>,
-        >(envelope)
-        .is_err(),
-        "InitiativeArchiveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<InitiativeArchiveRequest>,
-        >(envelope)
-        .is_err(),
-        "InitiativeListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<InitiativeListQuery>,
-        >(envelope)
-        .is_err(),
-        "ProjectRegisterRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectRegisterRequest>,
-        >(envelope)
-        .is_err(),
-        "ProjectArchiveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectArchiveRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanCreateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCreateRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanSpecAddRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecAddRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanSpecRemoveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecRemoveRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanSpecMoveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanSpecMoveRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanEdgeAddRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanEdgeAddRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanEdgeRemoveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanEdgeRemoveRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanActivateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanActivateRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanReplanRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanReplanRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanCompleteRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCompleteRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanCancelRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanCancelRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanArchiveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanArchiveRequest>,
-        >(envelope)
-        .is_err(),
-        "PlanListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanListQuery>,
-        >(envelope)
-        .is_err(),
-        "PlanGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanGetQuery>,
-        >(envelope)
-        .is_err(),
-        "PlanDiagnosticsQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<PlanDiagnosticsQuery>,
-        >(envelope)
-        .is_err(),
-        "ProjectListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<ProjectListQuery>,
-        >(envelope)
-        .is_err(),
-        "TimelineQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<TimelineQuery>,
-        >(envelope)
-        .is_err(),
-        "CommentCreateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<CommentCreateRequest>,
-        >(envelope)
-        .is_err(),
-        "CommentEditRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<CommentEditRequest>,
-        >(envelope)
-        .is_err(),
-        "CommentRevisionsQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<CommentRevisionsQuery>,
-        >(envelope)
-        .is_err(),
-        "RulingRecordRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<RulingRecordRequest>,
-        >(envelope)
-        .is_err(),
-        "RulingSupersedeRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<RulingSupersedeRequest>,
-        >(envelope)
-        .is_err(),
-        "RulingListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<RulingListQuery>,
-        >(envelope)
-        .is_err(),
-        "DeferralRecordRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<DeferralRecordRequest>,
-        >(envelope)
-        .is_err(),
-        "DeferralSupersedeRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<DeferralSupersedeRequest>,
-        >(envelope)
-        .is_err(),
-        "DeferralListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<DeferralListQuery>,
-        >(envelope)
-        .is_err(),
-        "EvidenceAttachRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceAttachRequest>,
-        >(envelope)
-        .is_err(),
-        "EvidenceListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<EvidenceListQuery>,
-        >(envelope)
-        .is_err(),
-        "HerdrSettingsGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrSettingsGetQuery>,
-        >(envelope)
-        .is_err(),
-        "HerdrSettingsUpdateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrSettingsUpdateRequest>,
-        >(envelope)
-        .is_err(),
-        "HerdrDefaultsGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsGetQuery>,
-        >(envelope)
-        .is_err(),
-        "HerdrDefaultsUpdateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<HerdrDefaultsUpdateRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecCreateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecCreateRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecContentUpdateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecContentUpdateRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecVersionApproveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionApproveRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecVersionSupersedeRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionSupersedeRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecPlanJoinRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecPlanJoinRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecExecutionMoveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecExecutionMoveRequest>,
-        >(envelope)
-        .is_err(),
-        "SpecListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecListQuery>,
-        >(envelope)
-        .is_err(),
-        "SpecGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecGetQuery>,
-        >(envelope)
-        .is_err(),
-        "SpecVersionGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecVersionGetQuery>,
-        >(envelope)
-        .is_err(),
-        "SpecCoverageCheckQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<SpecCoverageCheckQuery>,
-        >(envelope)
-        .is_err(),
-        "TicketCreateRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<TicketCreateRequest>,
-        >(envelope)
-        .is_err(),
-        "TicketListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<TicketListQuery>,
-        >(envelope)
-        .is_err(),
-        "TicketGetQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<TicketGetQuery>,
-        >(envelope)
-        .is_err(),
-        "WorkspaceRegisterRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceRegisterRequest>,
-        >(envelope)
-        .is_err(),
-        "WorkspaceObserveRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceObserveRequest>,
-        >(envelope)
-        .is_err(),
-        "WorkspaceRetireRequest" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceRetireRequest>,
-        >(envelope)
-        .is_err(),
-        "WorkspaceListQuery" => serde_json::from_value::<
-            kanban_desktop_lib::commands::ShellInvokeArgs<WorkspaceListQuery>,
-        >(envelope)
-        .is_err(),
+        "HealthQuery" => decode_invoke_args::<HealthQuery>(request).is_err(),
+        "DiagnosticsExportQuery" => decode_invoke_args::<DiagnosticsExportQuery>(request).is_err(),
+        "InitiativeCreateRequest" => {
+            decode_invoke_args::<InitiativeCreateRequest>(request).is_err()
+        }
+        "InitiativeRenameRequest" => {
+            decode_invoke_args::<InitiativeRenameRequest>(request).is_err()
+        }
+        "InitiativeArchiveRequest" => {
+            decode_invoke_args::<InitiativeArchiveRequest>(request).is_err()
+        }
+        "InitiativeListQuery" => decode_invoke_args::<InitiativeListQuery>(request).is_err(),
+        "ProjectRegisterRequest" => decode_invoke_args::<ProjectRegisterRequest>(request).is_err(),
+        "ProjectArchiveRequest" => decode_invoke_args::<ProjectArchiveRequest>(request).is_err(),
+        "PlanCreateRequest" => decode_invoke_args::<PlanCreateRequest>(request).is_err(),
+        "PlanSpecAddRequest" => decode_invoke_args::<PlanSpecAddRequest>(request).is_err(),
+        "PlanSpecRemoveRequest" => decode_invoke_args::<PlanSpecRemoveRequest>(request).is_err(),
+        "PlanSpecMoveRequest" => decode_invoke_args::<PlanSpecMoveRequest>(request).is_err(),
+        "PlanEdgeAddRequest" => decode_invoke_args::<PlanEdgeAddRequest>(request).is_err(),
+        "PlanEdgeRemoveRequest" => decode_invoke_args::<PlanEdgeRemoveRequest>(request).is_err(),
+        "PlanActivateRequest" => decode_invoke_args::<PlanActivateRequest>(request).is_err(),
+        "PlanReplanRequest" => decode_invoke_args::<PlanReplanRequest>(request).is_err(),
+        "PlanCompleteRequest" => decode_invoke_args::<PlanCompleteRequest>(request).is_err(),
+        "PlanCancelRequest" => decode_invoke_args::<PlanCancelRequest>(request).is_err(),
+        "PlanArchiveRequest" => decode_invoke_args::<PlanArchiveRequest>(request).is_err(),
+        "PlanListQuery" => decode_invoke_args::<PlanListQuery>(request).is_err(),
+        "PlanGetQuery" => decode_invoke_args::<PlanGetQuery>(request).is_err(),
+        "PlanDiagnosticsQuery" => decode_invoke_args::<PlanDiagnosticsQuery>(request).is_err(),
+        "ProjectListQuery" => decode_invoke_args::<ProjectListQuery>(request).is_err(),
+        "TimelineQuery" => decode_invoke_args::<TimelineQuery>(request).is_err(),
+        "CommentCreateRequest" => decode_invoke_args::<CommentCreateRequest>(request).is_err(),
+        "CommentEditRequest" => decode_invoke_args::<CommentEditRequest>(request).is_err(),
+        "CommentRevisionsQuery" => decode_invoke_args::<CommentRevisionsQuery>(request).is_err(),
+        "RulingRecordRequest" => decode_invoke_args::<RulingRecordRequest>(request).is_err(),
+        "RulingSupersedeRequest" => decode_invoke_args::<RulingSupersedeRequest>(request).is_err(),
+        "RulingListQuery" => decode_invoke_args::<RulingListQuery>(request).is_err(),
+        "DeferralRecordRequest" => decode_invoke_args::<DeferralRecordRequest>(request).is_err(),
+        "DeferralSupersedeRequest" => {
+            decode_invoke_args::<DeferralSupersedeRequest>(request).is_err()
+        }
+        "DeferralListQuery" => decode_invoke_args::<DeferralListQuery>(request).is_err(),
+        "EvidenceAttachRequest" => decode_invoke_args::<EvidenceAttachRequest>(request).is_err(),
+        "EvidenceListQuery" => decode_invoke_args::<EvidenceListQuery>(request).is_err(),
+        "HerdrSettingsGetQuery" => decode_invoke_args::<HerdrSettingsGetQuery>(request).is_err(),
+        "HerdrSettingsUpdateRequest" => {
+            decode_invoke_args::<HerdrSettingsUpdateRequest>(request).is_err()
+        }
+        "HerdrDefaultsGetQuery" => decode_invoke_args::<HerdrDefaultsGetQuery>(request).is_err(),
+        "HerdrDefaultsUpdateRequest" => {
+            decode_invoke_args::<HerdrDefaultsUpdateRequest>(request).is_err()
+        }
+        "SpecCreateRequest" => decode_invoke_args::<SpecCreateRequest>(request).is_err(),
+        "SpecContentUpdateRequest" => {
+            decode_invoke_args::<SpecContentUpdateRequest>(request).is_err()
+        }
+        "SpecVersionApproveRequest" => {
+            decode_invoke_args::<SpecVersionApproveRequest>(request).is_err()
+        }
+        "SpecVersionSupersedeRequest" => {
+            decode_invoke_args::<SpecVersionSupersedeRequest>(request).is_err()
+        }
+        "SpecPlanJoinRequest" => decode_invoke_args::<SpecPlanJoinRequest>(request).is_err(),
+        "SpecExecutionMoveRequest" => {
+            decode_invoke_args::<SpecExecutionMoveRequest>(request).is_err()
+        }
+        "SpecListQuery" => decode_invoke_args::<SpecListQuery>(request).is_err(),
+        "SpecGetQuery" => decode_invoke_args::<SpecGetQuery>(request).is_err(),
+        "SpecVersionGetQuery" => decode_invoke_args::<SpecVersionGetQuery>(request).is_err(),
+        "SpecCoverageCheckQuery" => decode_invoke_args::<SpecCoverageCheckQuery>(request).is_err(),
+        "TicketCreateRequest" => decode_invoke_args::<TicketCreateRequest>(request).is_err(),
+        "TicketListQuery" => decode_invoke_args::<TicketListQuery>(request).is_err(),
+        "TicketGetQuery" => decode_invoke_args::<TicketGetQuery>(request).is_err(),
+        "WorkspaceRegisterRequest" => {
+            decode_invoke_args::<WorkspaceRegisterRequest>(request).is_err()
+        }
+        "WorkspaceObserveRequest" => {
+            decode_invoke_args::<WorkspaceObserveRequest>(request).is_err()
+        }
+        "WorkspaceRetireRequest" => decode_invoke_args::<WorkspaceRetireRequest>(request).is_err(),
+        "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };
     assert!(refused, "{schema} should reject unknown request fields");

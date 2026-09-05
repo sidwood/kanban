@@ -3,18 +3,11 @@
 use std::sync::Arc;
 
 use kanban_dto::ApiError;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::Shell;
 use crate::core_link::CoreLink;
-
-/// The IPC envelope every shell command accepts from the WebView.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ShellInvokeArgs<T> {
-    pub request: T,
-}
 
 /// Encode a typed request into its JSON payload for the core.
 pub fn encode_request<T: Serialize>(request: T) -> Result<Value, ApiError> {
@@ -22,12 +15,10 @@ pub fn encode_request<T: Serialize>(request: T) -> Result<Value, ApiError> {
         .map_err(|_| ApiError::internal("the typed request could not be encoded"))
 }
 
-/// Decode the IPC envelope the WebView hands to a shell command.
-pub fn decode_invoke_args<T: DeserializeOwned>(payload: Value) -> Result<T, ApiError> {
-    let envelope: ShellInvokeArgs<T> = serde_json::from_value(payload).map_err(|_| {
-        ApiError::invalid_request("the shell request envelope could not be decoded")
-    })?;
-    Ok(envelope.request)
+/// Decode the `request` field Tauri hands each shell command.
+pub fn decode_invoke_args<T: DeserializeOwned>(request: Value) -> Result<T, ApiError> {
+    serde_json::from_value(request)
+        .map_err(|_| ApiError::invalid_request("the shell request could not be decoded"))
 }
 
 /// Run one named query on the shell's link.
@@ -103,7 +94,7 @@ mod tests {
     use kanban_dto::{HealthQuery, InitiativeCreateRequest, MutationContext};
     use serde_json::json;
 
-    use super::{ShellInvokeArgs, decode_invoke_args};
+    use super::decode_invoke_args;
 
     fn mutation() -> MutationContext {
         MutationContext {
@@ -113,50 +104,33 @@ mod tests {
     }
 
     #[test]
-    fn the_invoke_envelope_rejects_unknown_top_level_fields() {
-        let refused: Result<ShellInvokeArgs<HealthQuery>, _> =
-            serde_json::from_value(json!({ "request": {}, "extra": true }));
-        assert!(refused.is_err(), "unknown top-level fields are rejected");
-    }
-
-    #[test]
-    fn the_invoke_envelope_rejects_unknown_request_fields() {
-        let refused: Result<ShellInvokeArgs<InitiativeCreateRequest>, _> =
-            serde_json::from_value(json!({
-                "request": {
-                    "mutation": mutation(),
-                    "name": "Alpha",
-                    "delete": true,
-                },
-            }));
-        assert!(refused.is_err(), "unknown request fields are rejected");
-    }
-
-    #[test]
-    fn decode_invoke_args_returns_the_inner_request() {
+    fn decode_invoke_args_returns_the_request() {
         let request = InitiativeCreateRequest {
             mutation: mutation(),
             name: "Alpha".to_owned(),
         };
         let decoded = decode_invoke_args::<InitiativeCreateRequest>(json!({
-            "request": {
-                "mutation": mutation(),
-                "name": "Alpha",
-            },
+            "mutation": mutation(),
+            "name": "Alpha",
         }))
-        .expect("the envelope decodes");
+        .expect("the request decodes");
         assert_eq!(decoded, request);
     }
 
     #[test]
     fn decode_invoke_args_refuses_unknown_request_fields() {
         let refused = decode_invoke_args::<InitiativeCreateRequest>(json!({
-            "request": {
-                "mutation": mutation(),
-                "name": "Alpha",
-                "extra": true,
-            },
+            "mutation": mutation(),
+            "name": "Alpha",
+            "extra": true,
         }));
         assert!(refused.is_err(), "unknown request fields are rejected");
+    }
+
+    #[test]
+    fn decode_invoke_args_accepts_an_empty_health_query() {
+        let decoded =
+            decode_invoke_args::<HealthQuery>(json!({})).expect("an empty health query decodes");
+        assert_eq!(decoded, HealthQuery {});
     }
 }

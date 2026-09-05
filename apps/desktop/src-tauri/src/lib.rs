@@ -41,7 +41,7 @@ pub mod commands;
 pub mod core_link;
 mod shell_handlers;
 
-use commands::{forward_command, forward_query};
+use commands::{decode_invoke_args, forward_command, forward_query};
 
 /// The shell emits the core's ordered events under this name.
 pub const CORE_EVENT: &str = "core://event";
@@ -90,9 +90,10 @@ where
 #[tauri::command]
 async fn health_get(
     shell: State<'_, Arc<Shell>>,
-    request: HealthQuery,
+    request: serde_json::Value,
 ) -> Result<HealthResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<HealthQuery>(request)?;
     run_blocking(shell, "health", |shell| {
         forward_query(shell, "health.get", "health", request)
     })
@@ -102,9 +103,10 @@ async fn health_get(
 #[tauri::command]
 async fn diagnostics_export(
     shell: State<'_, Arc<Shell>>,
-    request: DiagnosticsExportQuery,
+    request: serde_json::Value,
 ) -> Result<DiagnosticsExportResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DiagnosticsExportQuery>(request)?;
     run_blocking(shell, "diagnostics export", |shell| {
         forward_query(shell, "diagnostics.export", "diagnostics export", request)
     })
@@ -114,9 +116,10 @@ async fn diagnostics_export(
 #[tauri::command]
 async fn initiative_create(
     shell: State<'_, Arc<Shell>>,
-    request: InitiativeCreateRequest,
+    request: serde_json::Value,
 ) -> Result<InitiativeRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<InitiativeCreateRequest>(request)?;
     run_blocking(shell, "create", |shell| {
         forward_command(shell, "initiative.create", "created Initiative", request)
     })
@@ -126,9 +129,10 @@ async fn initiative_create(
 #[tauri::command]
 async fn initiative_rename(
     shell: State<'_, Arc<Shell>>,
-    request: InitiativeRenameRequest,
+    request: serde_json::Value,
 ) -> Result<InitiativeRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<InitiativeRenameRequest>(request)?;
     run_blocking(shell, "rename", |shell| {
         forward_command(shell, "initiative.rename", "renamed Initiative", request)
     })
@@ -138,9 +142,10 @@ async fn initiative_rename(
 #[tauri::command]
 async fn initiative_archive(
     shell: State<'_, Arc<Shell>>,
-    request: InitiativeArchiveRequest,
+    request: serde_json::Value,
 ) -> Result<InitiativeRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<InitiativeArchiveRequest>(request)?;
     run_blocking(shell, "archive", |shell| {
         forward_command(shell, "initiative.archive", "archived Initiative", request)
     })
@@ -150,9 +155,10 @@ async fn initiative_archive(
 #[tauri::command]
 async fn initiative_list(
     shell: State<'_, Arc<Shell>>,
-    request: InitiativeListQuery,
+    request: serde_json::Value,
 ) -> Result<InitiativeListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<InitiativeListQuery>(request)?;
     run_blocking(shell, "initiative list", |shell| {
         forward_query(shell, "initiative.list", "initiative list", request)
     })
@@ -162,9 +168,10 @@ async fn initiative_list(
 #[tauri::command]
 async fn project_register(
     shell: State<'_, Arc<Shell>>,
-    request: ProjectRegisterRequest,
+    request: serde_json::Value,
 ) -> Result<ProjectRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectRegisterRequest>(request)?;
     run_blocking(shell, "project register", |shell| {
         forward_command(shell, "project.register", "registered Project", request)
     })
@@ -174,9 +181,10 @@ async fn project_register(
 #[tauri::command]
 async fn project_archive(
     shell: State<'_, Arc<Shell>>,
-    request: ProjectArchiveRequest,
+    request: serde_json::Value,
 ) -> Result<ProjectRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectArchiveRequest>(request)?;
     run_blocking(shell, "project archive", |shell| {
         forward_command(shell, "project.archive", "archived Project", request)
     })
@@ -186,9 +194,10 @@ async fn project_archive(
 #[tauri::command]
 async fn project_list(
     shell: State<'_, Arc<Shell>>,
-    request: ProjectListQuery,
+    request: serde_json::Value,
 ) -> Result<ProjectListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectListQuery>(request)?;
     run_blocking(shell, "project list", |shell| {
         forward_query(shell, "project.list", "project list", request)
     })
@@ -198,9 +207,10 @@ async fn project_list(
 #[tauri::command]
 async fn plan_create(
     shell: State<'_, Arc<Shell>>,
-    request: PlanCreateRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanCreateRequest>(request)?;
     run_blocking(shell, "plan create", |shell| {
         forward_command(shell, "plan.create", "created Plan", request)
     })
@@ -210,9 +220,10 @@ async fn plan_create(
 #[tauri::command]
 async fn plan_spec_add(
     shell: State<'_, Arc<Shell>>,
-    request: PlanSpecAddRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanSpecAddRequest>(request)?;
     run_blocking(shell, "plan spec add", |shell| {
         forward_command(shell, "plan.spec.add", "added Spec to Plan", request)
     })
@@ -222,9 +233,10 @@ async fn plan_spec_add(
 #[tauri::command]
 async fn plan_spec_remove(
     shell: State<'_, Arc<Shell>>,
-    request: PlanSpecRemoveRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanSpecRemoveRequest>(request)?;
     run_blocking(shell, "plan spec remove", |shell| {
         forward_command(shell, "plan.spec.remove", "removed Spec from Plan", request)
     })
@@ -234,9 +246,10 @@ async fn plan_spec_remove(
 #[tauri::command]
 async fn plan_spec_move(
     shell: State<'_, Arc<Shell>>,
-    request: PlanSpecMoveRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanSpecMoveRequest>(request)?;
     run_blocking(shell, "plan spec move", |shell| {
         forward_command(shell, "plan.spec.move", "moved Spec within Plan", request)
     })
@@ -246,9 +259,10 @@ async fn plan_spec_move(
 #[tauri::command]
 async fn plan_edge_add(
     shell: State<'_, Arc<Shell>>,
-    request: PlanEdgeAddRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanEdgeAddRequest>(request)?;
     run_blocking(shell, "plan edge add", |shell| {
         forward_command(shell, "plan.edge.add", "added Plan edge", request)
     })
@@ -258,9 +272,10 @@ async fn plan_edge_add(
 #[tauri::command]
 async fn plan_edge_remove(
     shell: State<'_, Arc<Shell>>,
-    request: PlanEdgeRemoveRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanEdgeRemoveRequest>(request)?;
     run_blocking(shell, "plan edge remove", |shell| {
         forward_command(shell, "plan.edge.remove", "removed Plan edge", request)
     })
@@ -270,9 +285,10 @@ async fn plan_edge_remove(
 #[tauri::command]
 async fn plan_activate(
     shell: State<'_, Arc<Shell>>,
-    request: PlanActivateRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanActivateRequest>(request)?;
     run_blocking(shell, "plan activate", |shell| {
         forward_command(shell, "plan.activate", "activated Plan", request)
     })
@@ -282,9 +298,10 @@ async fn plan_activate(
 #[tauri::command]
 async fn plan_replan(
     shell: State<'_, Arc<Shell>>,
-    request: PlanReplanRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanReplanRequest>(request)?;
     run_blocking(shell, "plan replan", |shell| {
         forward_command(shell, "plan.replan", "replanned Plan", request)
     })
@@ -294,9 +311,10 @@ async fn plan_replan(
 #[tauri::command]
 async fn plan_complete(
     shell: State<'_, Arc<Shell>>,
-    request: PlanCompleteRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanCompleteRequest>(request)?;
     run_blocking(shell, "plan complete", |shell| {
         forward_command(shell, "plan.complete", "completed Plan", request)
     })
@@ -306,9 +324,10 @@ async fn plan_complete(
 #[tauri::command]
 async fn plan_cancel(
     shell: State<'_, Arc<Shell>>,
-    request: PlanCancelRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanCancelRequest>(request)?;
     run_blocking(shell, "plan cancel", |shell| {
         forward_command(shell, "plan.cancel", "cancelled Plan", request)
     })
@@ -318,9 +337,10 @@ async fn plan_cancel(
 #[tauri::command]
 async fn plan_archive(
     shell: State<'_, Arc<Shell>>,
-    request: PlanArchiveRequest,
+    request: serde_json::Value,
 ) -> Result<PlanRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanArchiveRequest>(request)?;
     run_blocking(shell, "plan archive", |shell| {
         forward_command(shell, "plan.archive", "archived Plan", request)
     })
@@ -330,9 +350,10 @@ async fn plan_archive(
 #[tauri::command]
 async fn plan_list(
     shell: State<'_, Arc<Shell>>,
-    request: PlanListQuery,
+    request: serde_json::Value,
 ) -> Result<PlanListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanListQuery>(request)?;
     run_blocking(shell, "plan list", |shell| {
         forward_query(shell, "plan.list", "plan list", request)
     })
@@ -342,9 +363,10 @@ async fn plan_list(
 #[tauri::command]
 async fn plan_get(
     shell: State<'_, Arc<Shell>>,
-    request: PlanGetQuery,
+    request: serde_json::Value,
 ) -> Result<PlanGetResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanGetQuery>(request)?;
     run_blocking(shell, "plan get", |shell| {
         forward_query(shell, "plan.get", "plan get", request)
     })
@@ -354,9 +376,10 @@ async fn plan_get(
 #[tauri::command]
 async fn plan_diagnostics(
     shell: State<'_, Arc<Shell>>,
-    request: PlanDiagnosticsQuery,
+    request: serde_json::Value,
 ) -> Result<PlanDiagnosticsResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<PlanDiagnosticsQuery>(request)?;
     run_blocking(shell, "plan diagnostics", |shell| {
         forward_query(shell, "plan.diagnostics", "plan diagnostics", request)
     })
@@ -366,9 +389,10 @@ async fn plan_diagnostics(
 #[tauri::command]
 async fn spec_create(
     shell: State<'_, Arc<Shell>>,
-    request: SpecCreateRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecCreateRequest>(request)?;
     run_blocking(shell, "spec create", |shell| {
         forward_command(shell, "spec.create", "authored Spec", request)
     })
@@ -378,9 +402,10 @@ async fn spec_create(
 #[tauri::command]
 async fn spec_content_update(
     shell: State<'_, Arc<Shell>>,
-    request: SpecContentUpdateRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecContentUpdateRequest>(request)?;
     run_blocking(shell, "spec content update", |shell| {
         forward_command(
             shell,
@@ -395,9 +420,10 @@ async fn spec_content_update(
 #[tauri::command]
 async fn spec_version_approve(
     shell: State<'_, Arc<Shell>>,
-    request: SpecVersionApproveRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecVersionApproveRequest>(request)?;
     run_blocking(shell, "spec version approve", |shell| {
         forward_command(
             shell,
@@ -412,9 +438,10 @@ async fn spec_version_approve(
 #[tauri::command]
 async fn spec_version_supersede(
     shell: State<'_, Arc<Shell>>,
-    request: SpecVersionSupersedeRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecVersionSupersedeRequest>(request)?;
     run_blocking(shell, "spec version supersede", |shell| {
         forward_command(
             shell,
@@ -429,9 +456,10 @@ async fn spec_version_supersede(
 #[tauri::command]
 async fn spec_plan_join(
     shell: State<'_, Arc<Shell>>,
-    request: SpecPlanJoinRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecPlanJoinRequest>(request)?;
     run_blocking(shell, "spec plan join", |shell| {
         forward_command(shell, "spec.plan.join", "planned Spec", request)
     })
@@ -441,9 +469,10 @@ async fn spec_plan_join(
 #[tauri::command]
 async fn spec_execution_move(
     shell: State<'_, Arc<Shell>>,
-    request: SpecExecutionMoveRequest,
+    request: serde_json::Value,
 ) -> Result<SpecRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecExecutionMoveRequest>(request)?;
     run_blocking(shell, "spec execution move", |shell| {
         forward_command(
             shell,
@@ -458,9 +487,10 @@ async fn spec_execution_move(
 #[tauri::command]
 async fn spec_list(
     shell: State<'_, Arc<Shell>>,
-    request: SpecListQuery,
+    request: serde_json::Value,
 ) -> Result<SpecListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecListQuery>(request)?;
     run_blocking(shell, "spec list", |shell| {
         forward_query(shell, "spec.list", "spec list", request)
     })
@@ -470,9 +500,10 @@ async fn spec_list(
 #[tauri::command]
 async fn spec_get(
     shell: State<'_, Arc<Shell>>,
-    request: SpecGetQuery,
+    request: serde_json::Value,
 ) -> Result<SpecGetResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecGetQuery>(request)?;
     run_blocking(shell, "spec get", |shell| {
         forward_query(shell, "spec.get", "spec get", request)
     })
@@ -482,9 +513,10 @@ async fn spec_get(
 #[tauri::command]
 async fn spec_version_get(
     shell: State<'_, Arc<Shell>>,
-    request: SpecVersionGetQuery,
+    request: serde_json::Value,
 ) -> Result<SpecVersionRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecVersionGetQuery>(request)?;
     run_blocking(shell, "spec version get", |shell| {
         forward_query(shell, "spec.version.get", "spec version get", request)
     })
@@ -494,9 +526,10 @@ async fn spec_version_get(
 #[tauri::command]
 async fn spec_coverage_check(
     shell: State<'_, Arc<Shell>>,
-    request: SpecCoverageCheckQuery,
+    request: serde_json::Value,
 ) -> Result<SpecCoverageCheckResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecCoverageCheckQuery>(request)?;
     run_blocking(shell, "spec coverage check", |shell| {
         forward_query(shell, "spec.coverage.check", "spec coverage check", request)
     })
@@ -506,9 +539,10 @@ async fn spec_coverage_check(
 #[tauri::command]
 async fn ticket_create(
     shell: State<'_, Arc<Shell>>,
-    request: TicketCreateRequest,
+    request: serde_json::Value,
 ) -> Result<TicketRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketCreateRequest>(request)?;
     run_blocking(shell, "ticket create", |shell| {
         forward_command(shell, "ticket.create", "created Ticket", request)
     })
@@ -518,9 +552,10 @@ async fn ticket_create(
 #[tauri::command]
 async fn ticket_list(
     shell: State<'_, Arc<Shell>>,
-    request: TicketListQuery,
+    request: serde_json::Value,
 ) -> Result<TicketListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketListQuery>(request)?;
     run_blocking(shell, "ticket list", |shell| {
         forward_query(shell, "ticket.list", "ticket list", request)
     })
@@ -530,9 +565,10 @@ async fn ticket_list(
 #[tauri::command]
 async fn ticket_get(
     shell: State<'_, Arc<Shell>>,
-    request: TicketGetQuery,
+    request: serde_json::Value,
 ) -> Result<TicketRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketGetQuery>(request)?;
     run_blocking(shell, "ticket get", |shell| {
         forward_query(shell, "ticket.get", "ticket get", request)
     })
@@ -542,9 +578,10 @@ async fn ticket_get(
 #[tauri::command]
 async fn timeline_query(
     shell: State<'_, Arc<Shell>>,
-    request: TimelineQuery,
+    request: serde_json::Value,
 ) -> Result<TimelineQueryResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TimelineQuery>(request)?;
     run_blocking(shell, "timeline", |shell| {
         forward_query(shell, "timeline.query", "timeline", request)
     })
@@ -554,9 +591,10 @@ async fn timeline_query(
 #[tauri::command]
 async fn comment_create(
     shell: State<'_, Arc<Shell>>,
-    request: CommentCreateRequest,
+    request: serde_json::Value,
 ) -> Result<CommentRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentCreateRequest>(request)?;
     run_blocking(shell, "comment create", |shell| {
         forward_command(shell, "comment.create", "created Comment", request)
     })
@@ -566,9 +604,10 @@ async fn comment_create(
 #[tauri::command]
 async fn comment_edit(
     shell: State<'_, Arc<Shell>>,
-    request: CommentEditRequest,
+    request: serde_json::Value,
 ) -> Result<CommentRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentEditRequest>(request)?;
     run_blocking(shell, "comment edit", |shell| {
         forward_command(shell, "comment.edit", "edited Comment", request)
     })
@@ -578,9 +617,10 @@ async fn comment_edit(
 #[tauri::command]
 async fn comment_revisions(
     shell: State<'_, Arc<Shell>>,
-    request: CommentRevisionsQuery,
+    request: serde_json::Value,
 ) -> Result<CommentRevisionsResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentRevisionsQuery>(request)?;
     run_blocking(shell, "comment revisions", |shell| {
         forward_query(shell, "comment.revisions", "comment revisions", request)
     })
@@ -590,9 +630,10 @@ async fn comment_revisions(
 #[tauri::command]
 async fn ruling_record(
     shell: State<'_, Arc<Shell>>,
-    request: RulingRecordRequest,
+    request: serde_json::Value,
 ) -> Result<RulingRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<RulingRecordRequest>(request)?;
     run_blocking(shell, "ruling record", |shell| {
         forward_command(shell, "ruling.record", "recorded ruling", request)
     })
@@ -602,9 +643,10 @@ async fn ruling_record(
 #[tauri::command]
 async fn ruling_supersede(
     shell: State<'_, Arc<Shell>>,
-    request: RulingSupersedeRequest,
+    request: serde_json::Value,
 ) -> Result<RulingRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<RulingSupersedeRequest>(request)?;
     run_blocking(shell, "ruling supersede", |shell| {
         forward_command(shell, "ruling.supersede", "superseded ruling", request)
     })
@@ -614,9 +656,10 @@ async fn ruling_supersede(
 #[tauri::command]
 async fn ruling_list(
     shell: State<'_, Arc<Shell>>,
-    request: RulingListQuery,
+    request: serde_json::Value,
 ) -> Result<RulingListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<RulingListQuery>(request)?;
     run_blocking(shell, "ruling list", |shell| {
         forward_query(shell, "ruling.list", "ruling list", request)
     })
@@ -626,9 +669,10 @@ async fn ruling_list(
 #[tauri::command]
 async fn deferral_record(
     shell: State<'_, Arc<Shell>>,
-    request: DeferralRecordRequest,
+    request: serde_json::Value,
 ) -> Result<DeferralRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DeferralRecordRequest>(request)?;
     run_blocking(shell, "deferral record", |shell| {
         forward_command(shell, "deferral.record", "recorded deferral", request)
     })
@@ -638,9 +682,10 @@ async fn deferral_record(
 #[tauri::command]
 async fn deferral_supersede(
     shell: State<'_, Arc<Shell>>,
-    request: DeferralSupersedeRequest,
+    request: serde_json::Value,
 ) -> Result<DeferralRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DeferralSupersedeRequest>(request)?;
     run_blocking(shell, "deferral supersede", |shell| {
         forward_command(shell, "deferral.supersede", "superseded deferral", request)
     })
@@ -650,9 +695,10 @@ async fn deferral_supersede(
 #[tauri::command]
 async fn deferral_list(
     shell: State<'_, Arc<Shell>>,
-    request: DeferralListQuery,
+    request: serde_json::Value,
 ) -> Result<DeferralListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DeferralListQuery>(request)?;
     run_blocking(shell, "deferral list", |shell| {
         forward_query(shell, "deferral.list", "deferral list", request)
     })
@@ -662,9 +708,10 @@ async fn deferral_list(
 #[tauri::command]
 async fn evidence_attach(
     shell: State<'_, Arc<Shell>>,
-    request: EvidenceAttachRequest,
+    request: serde_json::Value,
 ) -> Result<EvidenceRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<EvidenceAttachRequest>(request)?;
     run_blocking(shell, "evidence attach", |shell| {
         forward_command(shell, "evidence.attach", "attached evidence", request)
     })
@@ -674,9 +721,10 @@ async fn evidence_attach(
 #[tauri::command]
 async fn evidence_list(
     shell: State<'_, Arc<Shell>>,
-    request: EvidenceListQuery,
+    request: serde_json::Value,
 ) -> Result<EvidenceListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<EvidenceListQuery>(request)?;
     run_blocking(shell, "evidence list", |shell| {
         forward_query(shell, "evidence.list", "evidence list", request)
     })
@@ -686,9 +734,10 @@ async fn evidence_list(
 #[tauri::command]
 async fn herdr_settings_get(
     shell: State<'_, Arc<Shell>>,
-    request: HerdrSettingsGetQuery,
+    request: serde_json::Value,
 ) -> Result<HerdrSettingsGetResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<HerdrSettingsGetQuery>(request)?;
     run_blocking(shell, "herdr settings", |shell| {
         forward_query(shell, "herdr.settings.get", "herdr settings", request)
     })
@@ -698,9 +747,10 @@ async fn herdr_settings_get(
 #[tauri::command]
 async fn workspace_register(
     shell: State<'_, Arc<Shell>>,
-    request: WorkspaceRegisterRequest,
+    request: serde_json::Value,
 ) -> Result<WorkspaceRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<WorkspaceRegisterRequest>(request)?;
     run_blocking(shell, "workspace register", |shell| {
         forward_command(shell, "workspace.register", "registered Workspace", request)
     })
@@ -710,9 +760,10 @@ async fn workspace_register(
 #[tauri::command]
 async fn herdr_settings_update(
     shell: State<'_, Arc<Shell>>,
-    request: HerdrSettingsUpdateRequest,
+    request: serde_json::Value,
 ) -> Result<HerdrProjectSettings, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<HerdrSettingsUpdateRequest>(request)?;
     run_blocking(shell, "herdr settings update", |shell| {
         forward_command(
             shell,
@@ -727,9 +778,10 @@ async fn herdr_settings_update(
 #[tauri::command]
 async fn workspace_observe(
     shell: State<'_, Arc<Shell>>,
-    request: WorkspaceObserveRequest,
+    request: serde_json::Value,
 ) -> Result<WorkspaceRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<WorkspaceObserveRequest>(request)?;
     run_blocking(shell, "workspace observe", |shell| {
         forward_command(shell, "workspace.observe", "observed Workspace", request)
     })
@@ -739,9 +791,10 @@ async fn workspace_observe(
 #[tauri::command]
 async fn herdr_defaults_get(
     shell: State<'_, Arc<Shell>>,
-    request: HerdrDefaultsGetQuery,
+    request: serde_json::Value,
 ) -> Result<HerdrDefaultsGetResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<HerdrDefaultsGetQuery>(request)?;
     run_blocking(shell, "herdr defaults", |shell| {
         forward_query(shell, "herdr.defaults.get", "herdr defaults", request)
     })
@@ -751,9 +804,10 @@ async fn herdr_defaults_get(
 #[tauri::command]
 async fn herdr_defaults_update(
     shell: State<'_, Arc<Shell>>,
-    request: HerdrDefaultsUpdateRequest,
+    request: serde_json::Value,
 ) -> Result<HerdrGlobalDefaults, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<HerdrDefaultsUpdateRequest>(request)?;
     run_blocking(shell, "herdr defaults update", |shell| {
         forward_command(
             shell,
@@ -768,9 +822,10 @@ async fn herdr_defaults_update(
 #[tauri::command]
 async fn workspace_retire(
     shell: State<'_, Arc<Shell>>,
-    request: WorkspaceRetireRequest,
+    request: serde_json::Value,
 ) -> Result<WorkspaceRecord, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<WorkspaceRetireRequest>(request)?;
     run_blocking(shell, "workspace retire", |shell| {
         forward_command(shell, "workspace.retire", "retired Workspace", request)
     })
@@ -780,9 +835,10 @@ async fn workspace_retire(
 #[tauri::command]
 async fn workspace_list(
     shell: State<'_, Arc<Shell>>,
-    request: WorkspaceListQuery,
+    request: serde_json::Value,
 ) -> Result<WorkspaceListResponse, ApiError> {
     let shell = shell.inner().clone();
+    let request = decode_invoke_args::<WorkspaceListQuery>(request)?;
     run_blocking(shell, "workspace list", |shell| {
         forward_query(shell, "workspace.list", "workspace list", request)
     })

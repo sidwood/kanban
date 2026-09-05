@@ -1720,8 +1720,13 @@ mod ticket_kinds {
             ProjectId::new(1),
             number(4),
             Priority::Normal,
-            TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
         );
         assert_eq!(
             ticket.profile(),
@@ -1743,8 +1748,13 @@ mod ticket_kinds {
             ProjectId::new(1),
             number(4),
             Priority::Normal,
-            TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
         );
         ticket.state = TicketState::Cancelled;
 
@@ -2516,6 +2526,7 @@ mod task_rules {
                 TaskTiming::new(Some("2026-10-01T00:00:00Z".to_owned()), None)
                     .expect("the fixture timing validates"),
             )),
+            None,
             4,
         );
 

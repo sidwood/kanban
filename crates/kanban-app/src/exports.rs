@@ -511,10 +511,10 @@ impl QueryHandler for ExportDrift {
 #[cfg(test)]
 mod testing {
     use kanban_domain::{
-        AcceptanceCriterion, Plan, PlanId, Priority, Project, ProjectCounters, ProjectId,
-        ProjectRegistration, ProjectState, Spec, SpecContent, SpecContentState, SpecExecutionState,
-        SpecId, SpecNumber, SpecVersion, Ticket, TicketBody, TicketId, TicketNumber, TicketState,
-        UserStoryRef,
+        AcceptanceCriterion, CompletionCriterion, Plan, PlanId, Priority, Project, ProjectCounters,
+        ProjectId, ProjectRegistration, ProjectState, Spec, SpecContent, SpecContentState,
+        SpecExecutionState, SpecId, SpecNumber, SpecVersion, TaskMode, TaskSubtype, TaskTiming,
+        Ticket, TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef,
     };
 
     use super::{ExportArtifact, render_project_export};
@@ -647,10 +647,25 @@ mod testing {
             ],
         )
         .expect("the fixture body validates");
-        let bug = TicketBody::bug("Drift report misses a deleted file", Some(SpecId::new(6)))
-            .expect("the fixture body validates");
-        let task =
-            TicketBody::task("Rotate the fleet board", None).expect("the fixture body validates");
+        let bug = TicketBody::bug(
+            "Drift report misses a deleted file",
+            Some(SpecId::new(6)),
+            "The drift report omits the deleted export file.",
+            "The export directory listing no longer names the file.",
+        )
+        .expect("the fixture body validates");
+        let task = TicketBody::task(
+            "Rotate the fleet board",
+            None,
+            Some(TaskSubtype::Operational),
+            Some(TaskMode::Human),
+            vec![
+                CompletionCriterion::new("The board shows the current fleet.")
+                    .expect("the outcome binds"),
+            ],
+            TaskTiming::none(),
+        )
+        .expect("the fixture body validates");
         vec![
             Ticket::restore(
                 TicketId::new(19),
@@ -659,6 +674,7 @@ mod testing {
                 Priority::Low,
                 TicketState::Parked,
                 task,
+                None,
                 3,
             ),
             Ticket::restore(
@@ -668,6 +684,7 @@ mod testing {
                 Priority::Urgent,
                 TicketState::Draft,
                 bug,
+                None,
                 1,
             ),
             Ticket::restore(
@@ -677,6 +694,7 @@ mod testing {
                 Priority::Normal,
                 TicketState::Active,
                 implementation,
+                None,
                 5,
             ),
         ]
@@ -1006,8 +1024,13 @@ mod export_testing {
             .expect("the plan operations register");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
             .expect("the spec operations register");
-        core.register_tickets(tickets.clone(), projects.clone(), specs.clone())
-            .expect("the ticket operations register");
+        core.register_tickets(
+            tickets.clone(),
+            projects.clone(),
+            specs.clone(),
+            Arc::new(crate::ticket::testing::MemoryTicketEvidence::default()),
+        )
+        .expect("the ticket operations register");
         core.register_exports(
             plans.clone(),
             specs.clone(),
@@ -1139,6 +1162,9 @@ mod export_testing {
                     "kind": "task",
                     "priority": "low",
                     "title": "Rotate the fleet board",
+                    "subtype": "operational",
+                    "mode": "human",
+                    "completion": ["The board shows the current fleet."],
                 }),
             )
             .expect("the Task Ticket creates");
@@ -1227,6 +1253,8 @@ mod exports_command {
                     "kind": "bug",
                     "priority": "urgent",
                     "title": "A late Bug",
+                    "actual_behaviour": "The late export omits the Bug.",
+                    "reporter_evidence": "The export directory lists no Bug file.",
                 }),
             )
             .expect("the Bug creates");
@@ -1463,6 +1491,8 @@ mod export_drift {
                     "kind": "bug",
                     "priority": "urgent",
                     "title": "A late Bug",
+                    "actual_behaviour": "The late export omits the Bug.",
+                    "reporter_evidence": "The export directory lists no Bug file.",
                 }),
             )
             .expect("the Bug creates");

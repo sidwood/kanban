@@ -16,7 +16,7 @@ use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_service::LocalRepositories;
 use kanban_service::export_files::LocalExportFiles;
 use kanban_storage::{
-    AllowAllMigrations, Database, RetentionPolicy, SqliteHerdrSettingsStore,
+    AllowAllMigrations, Database, RetentionPolicy, SqliteEvidenceStore, SqliteHerdrSettingsStore,
     SqliteIdempotencyStore, SqliteInitiativeStore, SqlitePlanStore, SqliteProjectStore,
     SqliteSpecStore, SqliteTicketStore,
 };
@@ -64,8 +64,16 @@ fn wired(scratch: &Path) -> Wired {
         .expect("the plan operations register");
     core.register_specs(specs.clone(), projects.clone(), plans.clone())
         .expect("the spec operations register");
-    core.register_tickets(tickets.clone(), projects.clone(), specs.clone())
-        .expect("the ticket operations register");
+    core.register_tickets(
+        tickets.clone(),
+        projects.clone(),
+        specs.clone(),
+        Arc::new(SqliteEvidenceStore::new(
+            &database,
+            scratch.join("attachments"),
+        )),
+    )
+    .expect("the ticket operations register");
     core.register_exports(
         plans,
         specs,
@@ -133,6 +141,9 @@ fn author_planning_state(core: &Core) {
             "kind": "task",
             "priority": "normal",
             "title": "Rotate the fleet board",
+            "subtype": "operational",
+            "mode": "human",
+            "completion": ["The board shows the current fleet."],
         }),
     )
     .expect("the Task Ticket creates");

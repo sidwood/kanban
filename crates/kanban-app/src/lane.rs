@@ -842,6 +842,9 @@ mod lane_assign {
                     "kind": "task",
                     "priority": "normal",
                     "title": title,
+                    "subtype": "operational",
+                    "mode": "agent",
+                    "completion": ["The slot is worked to completion."],
                 }),
             )
             .expect("the ticket creates")
@@ -1277,6 +1280,9 @@ mod lane_assign {
                     "kind": "task",
                     "priority": "normal",
                     "title": "Foreign slice",
+                    "subtype": "operational",
+                    "mode": "agent",
+                    "completion": ["The foreign slice is worked to completion."],
                 }),
             )
             .expect("the foreign Ticket creates");

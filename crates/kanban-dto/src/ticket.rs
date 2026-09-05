@@ -863,6 +863,7 @@ mod tests {
                 "completion": ["The register archive is restorable."],
                 "scheduled_for": "2026-10-01T00:00:00.000Z",
                 "due": "2026-09-30T17:00:00.000Z",
+                "profile": null,
                 "version": 1,
             })
         );

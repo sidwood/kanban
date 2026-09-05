@@ -432,7 +432,7 @@ pub(crate) mod testing {
     use crate::mutation::MemoryIdempotencyStore;
     use crate::plan::testing::{MemoryPlans, MemoryProjects};
     use crate::spec::testing::MemorySpecs;
-    use crate::ticket::testing::MemoryTickets;
+    use crate::ticket::testing::{MemoryTicketEvidence, MemoryTickets};
     use crate::timeline::TimelineEnvelope;
 
     /// An in-memory profile store: rows by name, plus every timeline
@@ -557,8 +557,13 @@ pub(crate) mod testing {
             .expect("the plan operations register");
         core.register_specs(specs.clone(), projects.clone(), plans)
             .expect("the spec operations register");
-        core.register_tickets(tickets.clone(), projects.clone(), specs.clone())
-            .expect("the ticket operations register");
+        core.register_tickets(
+            tickets.clone(),
+            projects.clone(),
+            specs.clone(),
+            Arc::new(MemoryTicketEvidence::default()),
+        )
+        .expect("the ticket operations register");
         core.register_profiles(profiles.clone(), tickets.clone(), projects)
             .expect("the profile operations register");
         (core, profiles, tickets)
@@ -644,6 +649,9 @@ mod catalogue {
                     "kind": "bug",
                     "priority": "normal",
                     "title": "Landing drops the integration branch",
+                    "actual_behaviour": "The integration branch is dropped after a review lands.",
+                    "reporter_evidence":
+                        "The landing log names the drop immediately after the merge.",
                 }),
             )
             .expect("the Ticket creates");

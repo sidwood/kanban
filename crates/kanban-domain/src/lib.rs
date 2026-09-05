@@ -40,7 +40,7 @@ pub use spec::{
 };
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use workspace::{
-    ReuseEvaluation, ReuseInputs, Workspace, WorkspaceHealth, WorkspaceHealthInputs, WorkspaceId,
-    WorkspaceObservation, WorkspaceRegistration, WorkspaceRegistrationError,
-    WorkspaceRetirementError, compute_health, evaluate_reuse,
+    ReuseEvaluation, ReuseInputs, Workspace, WorkspaceCheckout, WorkspaceHealth,
+    WorkspaceHealthInputs, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,
+    WorkspaceRegistrationError, WorkspaceRetirementError, compute_health, evaluate_reuse,
 };

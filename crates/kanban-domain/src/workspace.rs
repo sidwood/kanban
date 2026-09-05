@@ -68,6 +68,38 @@ impl WorkspaceHealth {
     }
 }
 
+/// What a Workspace's HEAD is attached to: a named branch, or the
+/// explicit detached state (DR-LW-05). Git reports a detached HEAD as
+/// the literal `HEAD`; that string is an artifact, never a branch
+/// name, so it maps onto the closed detached state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceCheckout {
+    /// Attached to the named branch.
+    Branch(String),
+    /// Detached: HEAD points at a commit, not a branch.
+    Detached,
+}
+
+impl WorkspaceCheckout {
+    /// Interpret `git rev-parse --abbrev-ref HEAD` output: the literal
+    /// `HEAD` means detached; every other value is a branch name.
+    pub fn from_abbrev_ref(output: &str) -> Self {
+        if output == "HEAD" {
+            Self::Detached
+        } else {
+            Self::Branch(output.to_owned())
+        }
+    }
+
+    /// The attached branch's name, when HEAD is on a branch.
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            Self::Branch(name) => Some(name),
+            Self::Detached => None,
+        }
+    }
+}
+
 /// Inputs the health rule needs: durable flags plus one observation
 /// snapshot. Observation never mutates the repository; it only informs
 /// whether the path is present and what git reports.
@@ -179,7 +211,7 @@ impl WorkspaceRegistration {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceObservation {
     repository_identity: Option<String>,
-    branch: Option<String>,
+    checkout: Option<WorkspaceCheckout>,
     head: Option<String>,
     working_tree_clean: Option<bool>,
     unique_unlanded_commits: Option<bool>,
@@ -198,14 +230,14 @@ impl WorkspaceObservation {
     pub fn apply_git_read(
         &mut self,
         repository_identity: Option<String>,
-        branch: Option<String>,
+        checkout: Option<WorkspaceCheckout>,
         head: Option<String>,
         working_tree_clean: bool,
         unique_unlanded_commits: Option<bool>,
         lane_assignment: Option<u64>,
     ) {
         self.repository_identity = repository_identity;
-        self.branch = branch;
+        self.checkout = checkout;
         self.head = head;
         self.working_tree_clean = Some(working_tree_clean);
         self.unique_unlanded_commits = unique_unlanded_commits;
@@ -215,7 +247,7 @@ impl WorkspaceObservation {
     /// Clear git facts when the path is missing.
     pub fn clear_git_read(&mut self, lane_assignment: Option<u64>) {
         self.repository_identity = None;
-        self.branch = None;
+        self.checkout = None;
         self.head = None;
         self.working_tree_clean = None;
         self.unique_unlanded_commits = None;
@@ -232,9 +264,18 @@ impl WorkspaceObservation {
         self.repository_identity.as_deref()
     }
 
-    /// The checked-out branch, when observed.
+    /// What HEAD is attached to, when observed: a branch or the
+    /// explicit detached state.
+    pub fn checkout(&self) -> Option<&WorkspaceCheckout> {
+        self.checkout.as_ref()
+    }
+
+    /// The checked-out branch's name; `None` when detached or not
+    /// observed.
     pub fn branch(&self) -> Option<&str> {
-        self.branch.as_deref()
+        self.checkout
+            .as_ref()
+            .and_then(WorkspaceCheckout::branch_name)
     }
 
     /// The HEAD commit, when observed.
@@ -348,7 +389,7 @@ impl Workspace {
         &mut self,
         present: bool,
         repository_identity: Option<String>,
-        branch: Option<String>,
+        checkout: Option<WorkspaceCheckout>,
         head: Option<String>,
         working_tree_clean: bool,
         unique_unlanded_commits: Option<bool>,
@@ -357,7 +398,7 @@ impl Workspace {
         if present {
             self.observation.apply_git_read(
                 repository_identity,
-                branch,
+                checkout,
                 head,
                 working_tree_clean,
                 unique_unlanded_commits,
@@ -522,6 +563,99 @@ mod workspace_health {
             assert_eq!(WorkspaceHealth::parse(health.as_str()), Some(health));
         }
         assert_eq!(WorkspaceHealth::parse("ghost"), None);
+    }
+
+    mod checkout {
+        use super::super::super::{Workspace, WorkspaceCheckout, WorkspaceHealth};
+
+        #[test]
+        fn abbrev_ref_head_is_the_detached_state_not_a_branch() {
+            assert_eq!(
+                WorkspaceCheckout::from_abbrev_ref("HEAD"),
+                WorkspaceCheckout::Detached,
+                "the literal `HEAD` must never become a branch name"
+            );
+            assert_eq!(WorkspaceCheckout::Detached.branch_name(), None);
+        }
+
+        #[test]
+        fn abbrev_ref_names_stay_branch_names() {
+            assert_eq!(
+                WorkspaceCheckout::from_abbrev_ref("main"),
+                WorkspaceCheckout::Branch("main".to_owned())
+            );
+            assert_eq!(
+                WorkspaceCheckout::from_abbrev_ref("feature/kan-t98"),
+                WorkspaceCheckout::Branch("feature/kan-t98".to_owned())
+            );
+            assert_eq!(
+                WorkspaceCheckout::from_abbrev_ref("main").branch_name(),
+                Some("main")
+            );
+        }
+
+        #[test]
+        fn observing_a_detached_head_records_the_closed_state() {
+            let mut workspace = Workspace::new(
+                super::super::super::WorkspaceId::new(1),
+                super::super::super::WorkspaceRegistration::new(
+                    super::super::super::ProjectId::new(1),
+                    "/workspaces/core",
+                    false,
+                )
+                .expect("the registration validates"),
+            );
+
+            let transition = workspace.observe(
+                true,
+                Some("identity".to_owned()),
+                Some(WorkspaceCheckout::Detached),
+                Some("abc123".to_owned()),
+                true,
+                Some(false),
+            );
+
+            assert_eq!(
+                transition,
+                Some((WorkspaceHealth::Missing, WorkspaceHealth::Available)),
+                "a clean detached checkout is available"
+            );
+            assert_eq!(
+                workspace.observation().checkout(),
+                Some(&WorkspaceCheckout::Detached)
+            );
+            assert_eq!(workspace.observation().branch(), None);
+        }
+
+        #[test]
+        fn observing_an_attached_head_keeps_the_branch_name() {
+            let mut workspace = Workspace::new(
+                super::super::super::WorkspaceId::new(1),
+                super::super::super::WorkspaceRegistration::new(
+                    super::super::super::ProjectId::new(1),
+                    "/workspaces/core",
+                    false,
+                )
+                .expect("the registration validates"),
+            );
+
+            workspace
+                .observe(
+                    true,
+                    Some("identity".to_owned()),
+                    Some(WorkspaceCheckout::Branch("main".to_owned())),
+                    Some("abc123".to_owned()),
+                    true,
+                    Some(false),
+                )
+                .expect("the observation transitions");
+
+            assert_eq!(
+                workspace.observation().checkout(),
+                Some(&WorkspaceCheckout::Branch("main".to_owned()))
+            );
+            assert_eq!(workspace.observation().branch(), Some("main"));
+        }
     }
 }
 
@@ -737,8 +871,8 @@ mod tests {
     use crate::project::ProjectId;
 
     use super::{
-        Workspace, WorkspaceHealth, WorkspaceId, WorkspaceObservation, WorkspaceRegistration,
-        WorkspaceRegistrationError, WorkspaceRetirementError,
+        Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceObservation,
+        WorkspaceRegistration, WorkspaceRegistrationError, WorkspaceRetirementError,
     };
 
     fn registration(path: &str) -> WorkspaceRegistration {
@@ -780,7 +914,7 @@ mod tests {
         let transition = workspace.observe(
             true,
             Some("identity".to_owned()),
-            Some("main".to_owned()),
+            Some(WorkspaceCheckout::Branch("main".to_owned())),
             Some("abc123".to_owned()),
             true,
             Some(false),
@@ -803,7 +937,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("feature".to_owned()),
+                Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
                 false,
                 Some(false),
@@ -820,7 +954,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("main".to_owned()),
+                Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
                 true,
                 Some(false),
@@ -864,7 +998,7 @@ mod tests {
         let transition = workspace.observe(
             true,
             Some("identity".to_owned()),
-            Some("main".to_owned()),
+            Some(WorkspaceCheckout::Branch("main".to_owned())),
             Some("abc123".to_owned()),
             true,
             Some(false),
@@ -881,7 +1015,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("main".to_owned()),
+                Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
                 true,
                 Some(false),
@@ -906,7 +1040,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("feature".to_owned()),
+                Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
                 true,
                 Some(true),
@@ -926,7 +1060,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("main".to_owned()),
+                Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
                 true,
                 Some(false),
@@ -944,7 +1078,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("feature".to_owned()),
+                Some(WorkspaceCheckout::Branch("feature".to_owned())),
                 Some("def456".to_owned()),
                 true,
                 Some(true),
@@ -961,7 +1095,7 @@ mod tests {
             .observe(
                 true,
                 Some("identity".to_owned()),
-                Some("main".to_owned()),
+                Some(WorkspaceCheckout::Branch("main".to_owned())),
                 Some("abc123".to_owned()),
                 true,
                 Some(false),

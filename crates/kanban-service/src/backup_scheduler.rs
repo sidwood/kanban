@@ -11,6 +11,9 @@ use kanban_storage::{BackupOptions, BackupStore, Database, load_backup_settings}
 /// How often the production scheduler checks for a due backup.
 const DAILY_BACKUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Minimum sleep between retries when a due backup keeps failing.
+const FAILED_BACKUP_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+
 /// Persisted scheduler state under the managed data directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SchedulerState {
@@ -102,31 +105,52 @@ pub(crate) fn sleep_until_due(
     }
 }
 
-fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration) {
-    run_scheduled_backup_if_due(data_dir, database, interval);
-    loop {
-        let last_success = load_scheduler_state(data_dir);
-        let sleep_for = sleep_until_due(last_success, interval, SystemTime::now());
-        if !sleep_for.is_zero() {
-            thread::sleep(sleep_for);
-        }
-        run_scheduled_backup_if_due(data_dir, database, interval);
+pub(crate) fn scheduler_loop_sleep(
+    last_success: Option<SystemTime>,
+    interval: Duration,
+    now: SystemTime,
+    last_attempt_failed: bool,
+) -> Duration {
+    let sleep_for = sleep_until_due(last_success, interval, now);
+    if last_attempt_failed && is_backup_due(last_success, interval, now) {
+        sleep_for.max(FAILED_BACKUP_RETRY_BACKOFF)
+    } else {
+        sleep_for
     }
 }
 
-fn run_scheduled_backup_if_due(data_dir: &Path, database: &Database, interval: Duration) {
+fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration) {
+    let mut last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval);
+    loop {
+        let last_success = load_scheduler_state(data_dir);
+        let now = SystemTime::now();
+        let sleep_for = scheduler_loop_sleep(last_success, interval, now, last_attempt_failed);
+        if !sleep_for.is_zero() {
+            thread::sleep(sleep_for);
+        }
+        last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval);
+    }
+}
+
+fn run_scheduled_backup_if_due(data_dir: &Path, database: &Database, interval: Duration) -> bool {
     let now = SystemTime::now();
     let last_success = load_scheduler_state(data_dir);
     if !is_backup_due(last_success, interval, now) {
-        return;
+        return true;
     }
     match run_due_backup(data_dir, database) {
         Ok(()) => {
             if let Err(error) = save_scheduler_state(data_dir, now) {
                 eprintln!("kanban daily backup state failed: {error}");
+                false
+            } else {
+                true
             }
         }
-        Err(error) => eprintln!("kanban daily backup failed: {error}"),
+        Err(error) => {
+            eprintln!("kanban daily backup failed: {error}");
+            false
+        }
     }
 }
 
@@ -150,7 +174,7 @@ mod tests {
     use std::num::NonZeroU32;
     use std::sync::Arc;
     use std::thread;
-    use std::time::{Duration, SystemTime};
+    use std::time::{Duration, Instant, SystemTime};
 
     use kanban_storage::{
         BackupRetentionPolicy, BackupStore, Database, migrations::AllowAllMigrations,
@@ -158,8 +182,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        BackupScheduler, is_backup_due, load_scheduler_state, run_due_backup,
-        run_scheduled_backup_if_due, save_scheduler_state, scheduler_state_path, sleep_until_due,
+        BackupScheduler, FAILED_BACKUP_RETRY_BACKOFF, is_backup_due, load_scheduler_state,
+        run_due_backup, run_scheduled_backup_if_due, save_scheduler_state, scheduler_loop_sleep,
+        scheduler_state_path, sleep_until_due,
     };
     use crate::serve;
 
@@ -381,6 +406,76 @@ mod tests {
         assert_eq!(
             sleep_until_due(Some(anchor - interval), interval, anchor),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn scheduler_loop_sleep_applies_retry_backoff_after_failed_overdue_attempt() {
+        let interval = Duration::from_secs(60);
+        let overdue = SystemTime::now() - interval * 2;
+        assert_eq!(
+            scheduler_loop_sleep(Some(overdue), interval, SystemTime::now(), false),
+            Duration::ZERO,
+            "overdue backups must still run immediately before a failure"
+        );
+        assert_eq!(
+            scheduler_loop_sleep(Some(overdue), interval, SystemTime::now(), true),
+            FAILED_BACKUP_RETRY_BACKOFF,
+            "failed overdue backups must not spin with zero sleep"
+        );
+    }
+
+    #[test]
+    fn scheduler_loop_bounds_failed_overdue_retries_and_recovers() {
+        let dir = TempDir::new().expect("scratch directory");
+        let database = open_migrated_database(&dir);
+        let interval = Duration::from_secs(60);
+        let overdue = SystemTime::now() - interval * 2;
+        save_scheduler_state(dir.path(), overdue).expect("scheduler state writes");
+        std::fs::write(dir.path().join("backups"), b"blocked").expect("backups path blocks writes");
+
+        let mut attempts = 0_u32;
+        let mut last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+        attempts += 1;
+        let failure_window = Duration::from_millis(400);
+        let window_start = Instant::now();
+        while window_start.elapsed() < failure_window {
+            let last_success = load_scheduler_state(dir.path());
+            let now = SystemTime::now();
+            let sleep_for = scheduler_loop_sleep(last_success, interval, now, last_attempt_failed);
+            if !sleep_for.is_zero() {
+                let remaining = failure_window.saturating_sub(window_start.elapsed());
+                if remaining.is_zero() {
+                    break;
+                }
+                thread::sleep(sleep_for.min(remaining));
+            }
+            if window_start.elapsed() >= failure_window {
+                break;
+            }
+            last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+            attempts += 1;
+        }
+
+        assert!(
+            attempts <= 2,
+            "failed overdue backups must retry with bounded backoff, got {attempts} attempts in 400ms"
+        );
+
+        std::fs::remove_file(dir.path().join("backups")).expect("backups block removed");
+        last_attempt_failed = !run_scheduled_backup_if_due(dir.path(), &database, interval);
+        assert!(
+            !last_attempt_failed,
+            "scheduler must recover once backups succeed again"
+        );
+        assert_eq!(
+            bundle_count(&dir),
+            1,
+            "successful recovery must create a backup bundle"
+        );
+        assert!(
+            load_scheduler_state(dir.path()).is_some(),
+            "successful recovery must persist scheduler state"
         );
     }
 }

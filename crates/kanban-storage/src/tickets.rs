@@ -1,18 +1,24 @@
 //! The SQLite implementation of the Ticket storage port: rows in
 //! `tickets` carrying the Project, the minted number, the kind whose
 //! schema the Ticket holds, the priority, the lifecycle state, and
-//! the kind-specific fields, with the application's timeline envelope
-//! landing unchanged in the same transaction as every change. Creating
-//! a Ticket persists the Project counter its number minted in the same
-//! write. The schema-level CHECK keeps each kind to exactly its own
-//! fields and the trigger keeps Tickets never deleted; every stored
-//! value passed domain validation on the way in, so a row that fails
-//! to rehydrate is corruption the caller must hear about.
+//! the kind-specific fields — including a Bug's capture facts, its
+//! qualification, and the vendor-neutral collections it carries —
+//! with the application's timeline envelope landing unchanged in the
+//! same transaction as every change. Creating a Ticket persists the
+//! Project counter its number minted in the same write; saving an
+//! applied Ticket moves its row under the version the aggregate moved
+//! from. The schema-level CHECK and shape triggers keep each kind to
+//! exactly its own fields and the trigger keeps Tickets never
+//! deleted; every stored value passed domain validation on the way
+//! in, so a row that fails to rehydrate is corruption the caller
+//! must hear about.
 
 use kanban_app::{TicketStore, TimelineEnvelope};
 use kanban_domain::{
-    AcceptanceCriterion, BugTicket, ImplementationTicket, Priority, Project, ProjectId, SpecId,
+    AcceptanceCriterion, BugFacts, BugQualification, BugTicket, EvidenceId, ExternalReference,
+    ImplementationTicket, OccurrenceSnapshot, Priority, Project, ProjectId, Severity, SpecId,
     SpecNumber, TaskTicket, Ticket, TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef,
+    VerificationStep,
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
@@ -22,8 +28,9 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 /// Every stored column of one Ticket row, in select order.
-const TICKET_COLUMNS: &str =
-    "id, project_id, number, kind, priority, state, spec_id, title, slice, criteria, version";
+const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
+                              slice, criteria, actual_behaviour, reporter_evidence, \
+                              bug_qualification, bug_facts, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -83,8 +90,9 @@ impl TicketStore for SqliteTicketStore {
         span.execute(
             "INSERT INTO tickets
                  (project_id, number, kind, priority, state, spec_id, title, slice,
-                  criteria, version)
-             VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, 1)",
+                  criteria, actual_behaviour, reporter_evidence, bug_qualification,
+                  bug_facts, version)
+             VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)",
             params![
                 project.id().value() as i64,
                 number.value() as i64,
@@ -94,6 +102,10 @@ impl TicketStore for SqliteTicketStore {
                 stored.title,
                 stored.slice,
                 stored.criteria,
+                stored.actual_behaviour,
+                stored.reporter_evidence,
+                stored.bug_qualification,
+                stored.bug_facts,
             ],
         )
         .map_err(internal)?;
@@ -111,6 +123,43 @@ impl TicketStore for SqliteTicketStore {
             priority,
             body.clone(),
         ))
+    }
+
+    fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        let stored = StoredTicket::of(ticket.priority(), ticket.body());
+        let preceding_version = ticket.version() - 1;
+        let changed = span
+            .execute(
+                "UPDATE tickets
+                 SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
+                     criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
+                     bug_qualification = ?10, bug_facts = ?11, version = ?12
+                 WHERE id = ?1 AND version = ?13",
+                params![
+                    ticket.id().value() as i64,
+                    stored.priority,
+                    ticket.state().wire_name(),
+                    stored.spec_id,
+                    stored.title,
+                    stored.slice,
+                    stored.criteria,
+                    stored.actual_behaviour,
+                    stored.reporter_evidence,
+                    stored.bug_qualification,
+                    stored.bug_facts,
+                    ticket.version() as i64,
+                    preceding_version as i64,
+                ],
+            )
+            .map_err(internal)?;
+        if changed != 1 {
+            return Err(ticket_write_refused(&span, ticket.id(), preceding_version));
+        }
+        append_timeline(&span, &envelope)?;
+        span.commit().map_err(internal)?;
+        Ok(())
     }
 
     fn find(&self, id: TicketId) -> Result<Option<Ticket>, ApiError> {
@@ -158,6 +207,10 @@ struct LoadedTicket {
     title: Option<String>,
     slice: Option<String>,
     criteria: String,
+    actual_behaviour: Option<String>,
+    reporter_evidence: Option<String>,
+    bug_qualification: Option<String>,
+    bug_facts: Option<String>,
     version: u64,
 }
 
@@ -174,14 +227,20 @@ fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
         title: row.get::<_, Option<String>>(7)?,
         slice: row.get::<_, Option<String>>(8)?,
         criteria: row.get::<_, String>(9)?,
-        version: row.get::<_, i64>(10)?.unsigned_abs(),
+        actual_behaviour: row.get::<_, Option<String>>(10)?,
+        reporter_evidence: row.get::<_, Option<String>>(11)?,
+        bug_qualification: row.get::<_, Option<String>>(12)?,
+        bug_facts: row.get::<_, Option<String>>(13)?,
+        version: row.get::<_, i64>(14)?.unsigned_abs(),
     })
 }
 
 impl LoadedTicket {
     /// Assemble the aggregate. Every stored value passed validation on
     /// the way in, so a failure here is corruption the caller must
-    /// hear about, not silently accept.
+    /// hear about, not silently accept. A Bug row the 0020 schema
+    /// wrote names no capture facts; it rehydrates with empty ones
+    /// until an edit records them.
     fn rehydrate(&self) -> Result<Ticket, rusqlite::Error> {
         let body = match self.kind.as_str() {
             "implementation" => TicketBody::Implementation(ImplementationTicket::restore(
@@ -189,10 +248,17 @@ impl LoadedTicket {
                 self.slice.clone().ok_or_else(corrupt)?,
                 decode_criteria(&self.criteria)?,
             )),
-            "bug" => TicketBody::Bug(BugTicket::restore(
+            "bug" => TicketBody::Bug(Box::new(BugTicket::restore(
                 self.title.clone().ok_or_else(corrupt)?,
                 self.spec_id.map(|spec| SpecId::new(spec.unsigned_abs())),
-            )),
+                self.actual_behaviour.clone().unwrap_or_default(),
+                self.reporter_evidence.clone().unwrap_or_default(),
+                self.bug_qualification
+                    .as_deref()
+                    .map(decode_qualification)
+                    .transpose()?,
+                decode_facts(self.bug_facts.as_deref().unwrap_or("{}"))?,
+            ))),
             "task" => TicketBody::Task(TaskTicket::restore(
                 self.title.clone().ok_or_else(corrupt)?,
                 self.spec_id.map(|spec| SpecId::new(spec.unsigned_abs())),
@@ -219,6 +285,10 @@ struct StoredTicket<'a> {
     title: Option<&'a str>,
     slice: Option<&'a str>,
     criteria: String,
+    actual_behaviour: Option<&'a str>,
+    reporter_evidence: Option<&'a str>,
+    bug_qualification: Option<String>,
+    bug_facts: Option<String>,
 }
 
 impl<'a> StoredTicket<'a> {
@@ -232,6 +302,10 @@ impl<'a> StoredTicket<'a> {
                 title: None,
                 slice: Some(implementation.slice()),
                 criteria: encode_criteria(implementation.criteria()),
+                actual_behaviour: None,
+                reporter_evidence: None,
+                bug_qualification: None,
+                bug_facts: None,
             },
             TicketBody::Bug(bug) => Self {
                 kind: "bug",
@@ -240,6 +314,10 @@ impl<'a> StoredTicket<'a> {
                 title: Some(bug.title()),
                 slice: None,
                 criteria: "[]".to_owned(),
+                actual_behaviour: Some(bug.actual_behaviour()),
+                reporter_evidence: Some(bug.reporter_evidence()),
+                bug_qualification: bug.qualification().map(encode_qualification),
+                bug_facts: Some(encode_facts(bug.facts())),
             },
             TicketBody::Task(task) => Self {
                 kind: "task",
@@ -248,6 +326,10 @@ impl<'a> StoredTicket<'a> {
                 title: Some(task.title()),
                 slice: None,
                 criteria: "[]".to_owned(),
+                actual_behaviour: None,
+                reporter_evidence: None,
+                bug_qualification: None,
+                bug_facts: None,
             },
         }
     }
@@ -293,14 +375,188 @@ fn decode_criteria(stored: &str) -> Result<Vec<AcceptanceCriterion>, rusqlite::E
     let rows: Vec<StoredCriterion> = serde_json::from_str(stored).map_err(|_| corrupt())?;
     let mut criteria = Vec::with_capacity(rows.len());
     for row in rows {
-        let mut stories = Vec::with_capacity(row.stories.len());
-        for story in row.stories {
-            let spec = SpecNumber::new(story.spec).map_err(|_| corrupt())?;
-            stories.push(UserStoryRef::new(spec, story.story).map_err(|_| corrupt())?);
-        }
-        criteria.push(AcceptanceCriterion::new(row.outcome, stories).map_err(|_| corrupt())?);
+        criteria.push(
+            AcceptanceCriterion::new(row.outcome, decode_stories(row.stories)?)
+                .map_err(|_| corrupt())?,
+        );
     }
     Ok(criteria)
+}
+
+/// Decode one stored story-link list into the domain's story refs.
+fn decode_stories(stored: Vec<StoredStory>) -> Result<Vec<UserStoryRef>, rusqlite::Error> {
+    let mut stories = Vec::with_capacity(stored.len());
+    for story in stored {
+        let spec = SpecNumber::new(story.spec).map_err(|_| corrupt())?;
+        stories.push(UserStoryRef::new(spec, story.story).map_err(|_| corrupt())?);
+    }
+    Ok(stories)
+}
+
+/// One qualification's stored form: the ten facts as plain data, so
+/// rehydration needs no Project code.
+#[derive(Serialize, Deserialize)]
+struct StoredQualification {
+    expected_behaviour: String,
+    reproduction: String,
+    environment: String,
+    severity: String,
+    frequency: String,
+    affected_scope: String,
+    risk: String,
+    criteria: Vec<StoredCriterion>,
+    verification_steps: Vec<StoredStep>,
+}
+
+/// One Verification Step's stored form.
+#[derive(Serialize, Deserialize)]
+struct StoredStep {
+    command: String,
+}
+
+/// Encode the qualification the domain validated.
+fn encode_qualification(qualification: &BugQualification) -> String {
+    let stored = StoredQualification {
+        expected_behaviour: qualification.expected_behaviour().to_owned(),
+        reproduction: qualification.reproduction().to_owned(),
+        environment: qualification.environment().to_owned(),
+        severity: qualification.severity().wire_name().to_owned(),
+        frequency: qualification.frequency().to_owned(),
+        affected_scope: qualification.affected_scope().to_owned(),
+        risk: qualification.risk().to_owned(),
+        criteria: qualification
+            .criteria()
+            .iter()
+            .map(|criterion| StoredCriterion {
+                outcome: criterion.outcome().to_owned(),
+                stories: criterion
+                    .stories()
+                    .iter()
+                    .map(|story| StoredStory {
+                        spec: story.spec().value(),
+                        story: story.story(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        verification_steps: qualification
+            .verification_steps()
+            .iter()
+            .map(|step| StoredStep {
+                command: step.command().to_owned(),
+            })
+            .collect(),
+    };
+    serde_json::to_string(&stored).expect("the qualification serialises")
+}
+
+/// Decode a stored qualification back into the domain's rule-valid
+/// form.
+fn decode_qualification(stored: &str) -> Result<BugQualification, rusqlite::Error> {
+    let row: StoredQualification = serde_json::from_str(stored).map_err(|_| corrupt())?;
+    let mut criteria = Vec::with_capacity(row.criteria.len());
+    for criterion in row.criteria {
+        criteria.push(
+            AcceptanceCriterion::new(criterion.outcome, decode_stories(criterion.stories)?)
+                .map_err(|_| corrupt())?,
+        );
+    }
+    let mut steps = Vec::with_capacity(row.verification_steps.len());
+    for step in row.verification_steps {
+        steps.push(VerificationStep::new(step.command).map_err(|_| corrupt())?);
+    }
+    BugQualification::new(
+        row.expected_behaviour,
+        row.reproduction,
+        row.environment,
+        Severity::parse(&row.severity).ok_or_else(corrupt)?,
+        row.frequency,
+        row.affected_scope,
+        row.risk,
+        criteria,
+        steps,
+    )
+    .map_err(|_| corrupt())
+}
+
+/// One Bug facts blob's stored form: the vendor-neutral collections,
+/// evidence items by identity. Every field defaults empty so an
+/// absent blob — a Bug row the 0020 schema wrote — decodes to the
+/// empty facts it means.
+#[derive(Serialize, Deserialize)]
+struct StoredFacts {
+    #[serde(default)]
+    external_references: Vec<StoredReference>,
+    #[serde(default)]
+    occurrence_snapshots: Vec<StoredSnapshot>,
+    #[serde(default)]
+    evidence_items: Vec<u64>,
+}
+
+/// One External Reference's stored form.
+#[derive(Serialize, Deserialize)]
+struct StoredReference {
+    uri: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// One Occurrence Snapshot's stored form.
+#[derive(Serialize, Deserialize)]
+struct StoredSnapshot {
+    observed_at: String,
+    observation: String,
+}
+
+/// Encode the facts the domain validated.
+fn encode_facts(facts: &BugFacts) -> String {
+    let stored = StoredFacts {
+        external_references: facts
+            .external_references()
+            .iter()
+            .map(|reference| StoredReference {
+                uri: reference.uri().to_owned(),
+                label: reference.label().map(str::to_owned),
+            })
+            .collect(),
+        occurrence_snapshots: facts
+            .occurrence_snapshots()
+            .iter()
+            .map(|snapshot| StoredSnapshot {
+                observed_at: snapshot.observed_at().to_owned(),
+                observation: snapshot.observation().to_owned(),
+            })
+            .collect(),
+        evidence_items: facts
+            .evidence_items()
+            .iter()
+            .map(|item| item.value())
+            .collect(),
+    };
+    serde_json::to_string(&stored).expect("the Bug facts serialise")
+}
+
+/// Decode a stored facts blob back into the domain's rule-valid form.
+fn decode_facts(stored: &str) -> Result<BugFacts, rusqlite::Error> {
+    let row: StoredFacts = serde_json::from_str(stored).map_err(|_| corrupt())?;
+    let references = row
+        .external_references
+        .into_iter()
+        .map(|reference| ExternalReference::new(reference.uri, reference.label))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| corrupt())?;
+    let snapshots = row
+        .occurrence_snapshots
+        .into_iter()
+        .map(|snapshot| OccurrenceSnapshot::new(snapshot.observed_at, snapshot.observation))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| corrupt())?;
+    let items = row
+        .evidence_items
+        .into_iter()
+        .map(EvidenceId::new)
+        .collect();
+    BugFacts::new(references, snapshots, items).map_err(|_| corrupt())
 }
 
 /// Why a guarded Project write was refused, read from the row's
@@ -317,6 +573,24 @@ fn project_write_refused(
     ) {
         Ok(current) => ApiError::stale_version(attempted_from, current.unsigned_abs()),
         Err(rusqlite::Error::QueryReturnedNoRows) => ApiError::not_found(&format!("project {id}")),
+        Err(error) => internal(error),
+    }
+}
+
+/// Why a guarded Ticket write was refused, read from the row's
+/// current state.
+fn ticket_write_refused(
+    conn: &rusqlite::Connection,
+    id: TicketId,
+    attempted_from: u64,
+) -> ApiError {
+    match conn.query_row(
+        "SELECT version FROM tickets WHERE id = ?1",
+        params![id.value() as i64],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(current) => ApiError::stale_version(attempted_from, current.unsigned_abs()),
+        Err(rusqlite::Error::QueryReturnedNoRows) => ApiError::not_found(&format!("ticket {id}")),
         Err(error) => internal(error),
     }
 }
@@ -395,6 +669,41 @@ mod tests {
             ],
         )
         .expect("the fixture body validates")
+    }
+
+    /// A quick-captured Bug body, standing alone.
+    fn bug_body() -> Result<TicketBody, kanban_domain::TicketError> {
+        TicketBody::bug(
+            "Landing drops the integration branch",
+            None,
+            "The integration branch is dropped after a review lands.",
+            "The landing log names the drop immediately after the merge.",
+        )
+    }
+
+    /// One complete qualification for the fixture Bug.
+    fn qualification() -> kanban_domain::BugQualification {
+        kanban_domain::BugQualification::new(
+            "The integration branch survives every landing.",
+            "Re land a reviewed change; the branch list still names it.",
+            "macOS 26, Kanban 0.1.0.",
+            kanban_domain::Severity::Critical,
+            "Every landing so far.",
+            "All landing reviews.",
+            "Duplicate landings and lost review state.",
+            vec![
+                kanban_domain::AcceptanceCriterion::new(
+                    "The integration branch survives a landing.",
+                    vec![story(1, 1)],
+                )
+                .expect("the fixture criterion links"),
+            ],
+            vec![
+                kanban_domain::VerificationStep::new("cargo test -p kanban-storage tickets")
+                    .expect("the fixture step carries its command"),
+            ],
+        )
+        .expect("the fixture qualification is complete")
     }
 
     fn store() -> (tempfile::TempDir, Database, SqliteTicketStore) {
@@ -552,8 +861,7 @@ mod tests {
             &store,
             &database,
             Priority::Urgent,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
 
         assert_eq!(ticket.id().value(), 1);
@@ -619,8 +927,7 @@ mod tests {
             &store,
             &database,
             Priority::Low,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
         let task = created(
             &store,
@@ -650,6 +957,191 @@ mod tests {
             Some(spec),
             "a Task may attach to one Spec"
         );
+    }
+
+    #[test]
+    fn a_bugs_qualification_and_facts_round_trip_through_the_row() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        let created = created(
+            &store,
+            &database,
+            Priority::Urgent,
+            &bug_body().expect("the fixture body validates"),
+        );
+
+        // One command, one version bump, one save: the pattern the
+        // application layer drives.
+        let mut bug = created;
+        bug.qualify(qualification()).expect("the Bug qualifies");
+        store
+            .save(
+                &bug,
+                transition(
+                    bug.id(),
+                    "qualified",
+                    json!({ "severity": "critical", "version": bug.version() }),
+                ),
+            )
+            .expect("the qualification saves");
+        bug.record_bug_facts(
+            kanban_domain::BugFacts::new(
+                vec![
+                    kanban_domain::ExternalReference::new(
+                        "https://example.invalid/issues/12",
+                        Some("The report".to_owned()),
+                    )
+                    .expect("the reference is a URI"),
+                ],
+                vec![
+                    kanban_domain::OccurrenceSnapshot::new(
+                        "2026-09-05T07:41:00Z",
+                        "The log shows the drop.",
+                    )
+                    .expect("the snapshot carries its moment"),
+                ],
+                vec![kanban_domain::EvidenceId::new(2)],
+            )
+            .expect("the collections assemble"),
+        )
+        .expect("the Bug carries its facts");
+        store
+            .save(
+                &bug,
+                transition(
+                    bug.id(),
+                    "facts_recorded",
+                    json!({ "version": bug.version() }),
+                ),
+            )
+            .expect("the facts save");
+
+        let found = store
+            .find(bug.id())
+            .expect("the find serves")
+            .expect("the Ticket exists");
+        let body = found.bug().expect("the Bug body rehydrates");
+        assert_eq!(found.version(), 3);
+        assert!(body.is_qualified());
+        assert_eq!(body.severity(), Some(kanban_domain::Severity::Critical));
+        let record = body.qualification().expect("the qualification stands");
+        assert_eq!(
+            record.expected_behaviour(),
+            "The integration branch survives every landing."
+        );
+        assert_eq!(record.criteria()[0].stories(), [story(1, 1)].as_slice());
+        assert_eq!(
+            record.verification_steps()[0].command(),
+            "cargo test -p kanban-storage tickets"
+        );
+        assert_eq!(
+            body.facts().external_references()[0].uri(),
+            "https://example.invalid/issues/12"
+        );
+        assert_eq!(
+            body.facts().occurrence_snapshots()[0].observed_at(),
+            "2026-09-05T07:41:00Z"
+        );
+        assert_eq!(
+            body.facts().evidence_items(),
+            [kanban_domain::EvidenceId::new(2)].as_slice()
+        );
+        assert_eq!(
+            found.state(),
+            kanban_domain::TicketState::Draft,
+            "qualification and facts never move the state"
+        );
+    }
+
+    #[test]
+    fn a_stale_save_is_refused_without_a_row_move_or_a_timeline_append() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        let created = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &bug_body().expect("the fixture body validates"),
+        );
+        let mut bug = created;
+        bug.qualify(qualification()).expect("the fixture qualifies");
+        store
+            .save(
+                &bug,
+                transition(bug.id(), "qualified", json!({ "severity": "critical" })),
+            )
+            .expect("the first save lands");
+        let timeline_before = ticket_timeline(&database).len();
+
+        // The stored row has moved to version 2 while the saved
+        // aggregate claims to save from version 1 again.
+        let stale = bug;
+        let error = store
+            .save(
+                &stale,
+                transition(stale.id(), "qualified", json!({ "severity": "critical" })),
+            )
+            .expect_err("the stale save is refused");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        let row: (i64, bool) = database
+            .connection()
+            .query_row(
+                "SELECT version, bug_qualification IS NOT NULL FROM tickets WHERE id = ?1",
+                rusqlite::params![stale.id().value() as i64],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the row is readable");
+        assert_eq!(
+            row,
+            (2, true),
+            "the refused save must not move the row past the first save"
+        );
+        assert_eq!(
+            ticket_timeline(&database).len(),
+            timeline_before,
+            "a stale save must not append a timeline row"
+        );
+    }
+
+    #[test]
+    fn a_row_the_0020_schema_wrote_rehydrates_with_empty_capture_facts() {
+        let (_dir, mut database) = scratch_database();
+        crate::migrations::apply_through(&database.connection(), 20)
+            .expect("the 0020 schema applies");
+        seeded_project_and_spec(&database);
+        // The 0020 shape: a Bug named no capture columns, because they
+        // did not exist yet.
+        database
+            .connection()
+            .execute(
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, title, slice, criteria,
+                      version)
+                 VALUES (1, 7, 'bug', 'normal', 'draft', 'Legacy Bug', NULL, '[]', 1)",
+                [],
+            )
+            .expect("the legacy row stands");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the 0021 migration applies");
+        assert_eq!(report.applied, vec![21]);
+
+        let store = SqliteTicketStore::new(&database);
+        let found = store
+            .find(kanban_domain::TicketId::new(1))
+            .expect("the find serves")
+            .expect("the legacy row rehydrates");
+        let body = found.bug().expect("the legacy Bug body rehydrates");
+        assert_eq!(body.title(), "Legacy Bug");
+        assert_eq!(
+            body.actual_behaviour(),
+            "",
+            "a 0020 Bug names no capture facts; it rehydrates empty until edited"
+        );
+        assert_eq!(body.reporter_evidence(), "");
+        assert!(!body.is_qualified());
     }
 
     #[test]
@@ -686,8 +1178,7 @@ mod tests {
             &store,
             &database,
             Priority::Normal,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
         let timeline_before = ticket_timeline(&database).len();
 
@@ -726,8 +1217,7 @@ mod tests {
             &store,
             &database,
             Priority::Normal,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
 
         let listed = store.list(ProjectId::new(1)).expect("the list serves");
@@ -754,8 +1244,7 @@ mod tests {
             &store,
             &database,
             Priority::Normal,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
 
         let outcome = store.lock().execute(
@@ -779,13 +1268,15 @@ mod tests {
         let conn = database.connection();
         // A Bug shape carrying the Implementation's slice, an
         // Implementation without its Spec, and one without criteria:
-        // each violates its kind's schema.
+        // each violates its kind's schema. A Bug missing its capture
+        // facts and a Task carrying them violate the shape triggers.
         for (sql, params) in [
             (
                 "INSERT INTO tickets
                      (project_id, number, kind, priority, state, spec_id, title, slice,
-                      criteria, version)
-                 VALUES (1, 9, 'bug', 'normal', 'draft', NULL, 'A title', 'A slice', '[]', 1)",
+                      criteria, actual_behaviour, reporter_evidence, bug_facts, version)
+                 VALUES (1, 9, 'bug', 'normal', 'draft', NULL, 'A title', 'A slice', '[]',
+                         'It drops.', 'The log.', '{}', 1)",
                 Vec::new(),
             ),
             (
@@ -802,6 +1293,20 @@ mod tests {
                  VALUES (1, 9, 'implementation', 'normal', 'draft', ?1, NULL, 'A slice', '[]', 1)",
                 vec![spec.value() as i64],
             ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, spec_id, title,
+                      criteria, bug_facts, version)
+                 VALUES (1, 9, 'bug', 'normal', 'draft', NULL, 'A title', '[]', '{}', 1)",
+                Vec::new(),
+            ),
+            (
+                "INSERT INTO tickets
+                     (project_id, number, kind, priority, state, spec_id, title,
+                      criteria, actual_behaviour, version)
+                 VALUES (1, 9, 'task', 'normal', 'draft', NULL, 'A title', '[]', 'It drops.', 1)",
+                Vec::new(),
+            ),
         ] {
             let outcome = if params.is_empty() {
                 conn.execute(sql, [])
@@ -810,7 +1315,8 @@ mod tests {
             };
             let error = outcome.expect_err("the kind's schema is closed");
             assert!(
-                error.to_string().contains("CHECK constraint failed"),
+                error.to_string().contains("CHECK constraint failed")
+                    || error.to_string().contains("exactly its own fields"),
                 "`{sql}` should refuse, got: {error}"
             );
         }
@@ -861,8 +1367,7 @@ mod tests {
         let mut project = project;
         let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
             .expect("a minted number is positive");
-        let body = TicketBody::bug("Landing drops the integration branch", None)
-            .expect("the fixture body validates");
+        let body = bug_body().expect("the fixture body validates");
 
         let served = std::thread::spawn(move || {
             boxed

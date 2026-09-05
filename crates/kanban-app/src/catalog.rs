@@ -288,6 +288,20 @@ define_exposed_catalogue! {
         mcp: "ticket_create",
         description: "Create a Ticket under its kind's schema, minting its number from the Project counter.",
     },
+    "ticket.bug.qualify" => {
+        kind: Command,
+        request: "TicketBugQualifyRequest",
+        response: "TicketRecord",
+        mcp: "ticket_bug_qualify",
+        description: "Qualify one Bug with its complete qualification, severity included; the Bug stays draft and readiness stays computed.",
+    },
+    "ticket.bug.facts" => {
+        kind: Command,
+        request: "TicketBugFactsRequest",
+        response: "TicketRecord",
+        mcp: "ticket_bug_facts",
+        description: "Record the vendor-neutral External References, Occurrence Snapshots, and Evidence Items one Bug carries.",
+    },
     "ticket.list" => {
         kind: Query,
         request: "TicketListQuery",

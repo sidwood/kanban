@@ -163,7 +163,12 @@ fn assemble_core(
     )?;
     core.register_plans(plan_store.clone(), projects.clone(), spec_store.clone())?;
     core.register_specs(spec_store.clone(), projects.clone(), plan_store)?;
-    core.register_tickets(ticket_store.clone(), projects.clone(), spec_store)?;
+    core.register_tickets(
+        ticket_store.clone(),
+        projects.clone(),
+        spec_store,
+        evidence_store.clone(),
+    )?;
     core.register_dependencies(dependency_store, ticket_store, projects)?;
     core.register_comments(comment_store, project_store.clone())?;
     core.register_rulings(ruling_store, project_store.clone())?;

@@ -1,29 +1,36 @@
 //! Ticket commands and queries: create a Ticket under its kind's
 //! schema — an Implementation attached to exactly one Spec with its
-//! slice and story-linked criteria, a Bug or Task with a title and an
-//! optional attachment — and read Tickets back per Project
-//! (KAN-S4-US1, KAN-S4-US2). Creation mints the Project's next
+//! slice and story-linked criteria, a Bug quick-captured with title,
+//! actual behaviour, and reporter evidence, a Task with a title and
+//! an optional attachment — qualify a Bug and record its
+//! vendor-neutral facts, and read Tickets back per Project
+//! (KAN-S4-US1 through KAN-S4-US3). Creation mints the Project's next
 //! Ticket number, lands the row with the counter move and the
 //! timeline append in one write, and announces live; no delete
-//! exists. Lifecycle transitions, dependencies, and qualification
-//! arrive with their own tickets.
+//! exists. Lifecycle transitions and dependencies arrive with their
+//! own tickets; readiness stays a computed projection, so qualifying
+//! a Bug never moves its state.
 
 use std::sync::Arc;
 
 use kanban_domain::{
-    AcceptanceCriterion, NumberKind, Priority as DomainPriority, Project, ProjectCode, ProjectId,
-    SpecId, Ticket, TicketBody, TicketId, TicketKind as DomainKind, TicketNumber,
-    TicketState as DomainState, UserStoryRef,
+    AcceptanceCriterion, BugFacts, BugQualification, ExternalReference, NumberKind,
+    OccurrenceSnapshot, Priority as DomainPriority, Project, ProjectCode, ProjectId,
+    Severity as DomainSeverity, SpecId, Ticket, TicketBody, TicketId, TicketKind as DomainKind,
+    TicketNumber, TicketState as DomainState, UserStoryRef, VerificationStep,
 };
 use kanban_dto::{
-    ApiError, LiveEventName, TicketCreateRequest, TicketCriterion, TicketGetQuery, TicketKind,
-    TicketListQuery, TicketListResponse, TicketPriority, TicketRecord, TicketState,
-    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    ApiError, LiveEventName, TicketBugFactsRequest, TicketBugQualification,
+    TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
+    TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
+    TicketOccurrenceSnapshot, TicketPriority, TicketRecord, TicketSeverity, TicketState,
+    TicketVerificationStep, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::{EventSink, emit_catalogued};
+use crate::evidence::{EvidenceFilter, EvidenceStore};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
 use crate::spec::SpecStore;
@@ -49,6 +56,10 @@ pub trait TicketStore: Send + Sync {
     ) -> Result<Ticket, ApiError>;
     /// Load one Ticket, if it exists.
     fn find(&self, id: TicketId) -> Result<Option<Ticket>, ApiError>;
+    /// Persist the applied Ticket — its lifecycle state, priority, and
+    /// kind-specific body — with the timeline envelope, all in one
+    /// write, guarded by the version the aggregate moved from.
+    fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError>;
     /// Every Ticket of one Project in id order, terminal lifecycle
     /// states included.
     fn list(&self, project: ProjectId) -> Result<Vec<Ticket>, ApiError>;
@@ -91,24 +102,52 @@ struct TicketContext {
     tickets: Arc<dyn TicketStore>,
     projects: Arc<dyn ProjectStore>,
     specs: Arc<dyn SpecStore>,
+    evidence: Arc<dyn EvidenceStore>,
+}
+
+impl TicketContext {
+    /// The Ticket a command addresses and its Project, refusing an
+    /// unknown Ticket and the terminal archived-Project state.
+    fn open(&self, id: u64) -> Result<(Project, Ticket), ApiError> {
+        let ticket = self
+            .tickets
+            .find(TicketId::new(id))?
+            .ok_or_else(|| ApiError::not_found(&format!("ticket {id}")))?;
+        let project = self.projects.find(ticket.project())?.ok_or_else(|| {
+            ApiError::internal(&format!("ticket {id} belongs to no stored Project"))
+        })?;
+        if project.is_archived() {
+            return Err(ApiError::invalid_request(
+                "archived is terminal; the Project accepts no further changes",
+            ));
+        }
+        Ok((project, ticket))
+    }
 }
 
 impl Core {
     /// Register the Ticket operations against `tickets`, resolving
-    /// Projects through `projects` and Spec attachments through
-    /// `specs`.
+    /// Projects through `projects`, Spec attachments through `specs`,
+    /// and Evidence Item claims through `evidence`.
     pub fn register_tickets(
         &mut self,
         tickets: Arc<dyn TicketStore>,
         projects: Arc<dyn ProjectStore>,
         specs: Arc<dyn SpecStore>,
+        evidence: Arc<dyn EvidenceStore>,
     ) -> Result<(), RegistrationError> {
         let context = TicketContext {
             tickets,
             projects,
             specs,
+            evidence,
         };
         self.register_command("ticket.create", Arc::new(CreateTicket(context.clone())))?;
+        self.register_command("ticket.bug.qualify", Arc::new(QualifyBug(context.clone())))?;
+        self.register_command(
+            "ticket.bug.facts",
+            Arc::new(RecordBugFacts(context.clone())),
+        )?;
         self.register_query(
             "ticket.list",
             Arc::new(ListTickets {
@@ -184,6 +223,115 @@ impl CommandHandler for CreateTicket {
             &ticket,
             project.code(),
         );
+        encode_record(&ticket, project.code())
+    }
+}
+
+/// Serves `ticket.bug.qualify`.
+struct QualifyBug(TicketContext);
+
+impl CommandHandler for QualifyBug {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<TicketBugQualifyRequest>(payload)?;
+        ParsedCommand::lift("ticket", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: TicketBugQualifyRequest = parse_payload(&command.payload)?;
+        Ok(self.0.open(request.ticket_id)?.1.version())
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: TicketBugQualifyRequest = parse_payload(&command.payload)?;
+        let (project, mut ticket) = self.0.open(request.ticket_id)?;
+        let qualification = qualification_of(&request.qualification, &project)?;
+        let severity = qualification.severity();
+        ticket.qualify(qualification).map_err(refuse)?;
+        let facts = json!({
+            "severity": severity.wire_name(),
+            "version": ticket.version(),
+        });
+        self.0.tickets.save(
+            &ticket,
+            transition(project.id(), ticket.id(), "qualified", facts),
+        )?;
+        encode_record(&ticket, project.code())
+    }
+}
+
+/// Serves `ticket.bug.facts`.
+struct RecordBugFacts(TicketContext);
+
+impl CommandHandler for RecordBugFacts {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<TicketBugFactsRequest>(payload)?;
+        ParsedCommand::lift("ticket", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: TicketBugFactsRequest = parse_payload(&command.payload)?;
+        Ok(self.0.open(request.ticket_id)?.1.version())
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: TicketBugFactsRequest = parse_payload(&command.payload)?;
+        let (project, mut ticket) = self.0.open(request.ticket_id)?;
+        let references = request
+            .external_references
+            .iter()
+            .map(|reference| ExternalReference::new(reference.uri.clone(), reference.label.clone()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refuse)?;
+        let snapshots = request
+            .occurrence_snapshots
+            .iter()
+            .map(|snapshot| {
+                OccurrenceSnapshot::new(snapshot.observed_at.clone(), snapshot.observation.clone())
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refuse)?;
+        // A Bug names only the Evidence Items attached to it, so the
+        // claim stays a reference, never a second copy of the truth.
+        let attached = self.0.evidence.list(&EvidenceFilter {
+            project_id: project.id().value(),
+            entity_kind: Some("ticket".to_owned()),
+            entity_id: Some(ticket.id().value().to_string()),
+        })?;
+        if let Some(unknown) = request
+            .evidence_ids
+            .iter()
+            .copied()
+            .find(|claimed| !attached.iter().any(|item| item.id().value() == *claimed))
+        {
+            return Err(ApiError::invalid_request(&format!(
+                "evidence item {unknown} is not attached to ticket {}",
+                ticket.id()
+            )));
+        }
+        let items = request
+            .evidence_ids
+            .iter()
+            .map(|id| kanban_domain::EvidenceId::new(*id))
+            .collect();
+        let facts = BugFacts::new(references, snapshots, items).map_err(refuse)?;
+        let counts = json!({
+            "external_references": request.external_references.len(),
+            "occurrence_snapshots": request.occurrence_snapshots.len(),
+            "evidence_items": request.evidence_ids.len(),
+        });
+        ticket.record_bug_facts(facts).map_err(refuse)?;
+        self.0.tickets.save(
+            &ticket,
+            transition(project.id(), ticket.id(), "facts_recorded", counts),
+        )?;
         encode_record(&ticket, project.code())
     }
 }
@@ -280,6 +428,8 @@ fn body_of(
             TicketBody::bug(
                 request.title.clone().unwrap_or_default(),
                 spec.map(|spec| spec.id()),
+                request.actual_behaviour.clone().unwrap_or_default(),
+                request.reporter_evidence.clone().unwrap_or_default(),
             )
             .map_err(refuse)
         }
@@ -319,6 +469,119 @@ fn priority_of(priority: TicketPriority) -> DomainPriority {
         TicketPriority::High => DomainPriority::High,
         TicketPriority::Normal => DomainPriority::Normal,
         TicketPriority::Low => DomainPriority::Low,
+    }
+}
+
+/// The domain form of one wire severity.
+fn severity_of(severity: TicketSeverity) -> DomainSeverity {
+    match severity {
+        TicketSeverity::Critical => DomainSeverity::Critical,
+        TicketSeverity::High => DomainSeverity::High,
+        TicketSeverity::Medium => DomainSeverity::Medium,
+        TicketSeverity::Low => DomainSeverity::Low,
+    }
+}
+
+/// The wire form of one domain severity.
+fn severity_named(severity: DomainSeverity) -> TicketSeverity {
+    match severity {
+        DomainSeverity::Critical => TicketSeverity::Critical,
+        DomainSeverity::High => TicketSeverity::High,
+        DomainSeverity::Medium => TicketSeverity::Medium,
+        DomainSeverity::Low => TicketSeverity::Low,
+    }
+}
+
+/// Decode one wire qualification into the domain's rule-valid form,
+/// parsing every story link against the Project's code.
+fn qualification_of(
+    record: &TicketBugQualification,
+    project: &Project,
+) -> Result<BugQualification, ApiError> {
+    let criteria = criteria_of(&record.criteria, project)?;
+    let steps = record
+        .verification_steps
+        .iter()
+        .map(|step| VerificationStep::new(step.command.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(refuse)?;
+    BugQualification::new(
+        record.expected_behaviour.clone(),
+        record.reproduction.clone(),
+        record.environment.clone(),
+        severity_of(record.severity),
+        record.frequency.clone(),
+        record.affected_scope.clone(),
+        record.risk.clone(),
+        criteria,
+        steps,
+    )
+    .map_err(refuse)
+}
+
+/// The wire form of one domain criterion, story links rendered with
+/// the Project's code.
+fn criterion_of(criterion: &AcceptanceCriterion, code: &ProjectCode) -> TicketCriterion {
+    TicketCriterion {
+        outcome: criterion.outcome().to_owned(),
+        stories: criterion
+            .stories()
+            .iter()
+            .map(|story| story.render(code))
+            .collect(),
+    }
+}
+
+/// The wire form of one domain Bug body.
+fn bug_record_of(bug: &kanban_domain::BugTicket, code: &ProjectCode) -> TicketBugRecord {
+    TicketBugRecord {
+        actual_behaviour: bug.actual_behaviour().to_owned(),
+        reporter_evidence: bug.reporter_evidence().to_owned(),
+        qualification: bug.qualification().map(|record| TicketBugQualification {
+            expected_behaviour: record.expected_behaviour().to_owned(),
+            reproduction: record.reproduction().to_owned(),
+            environment: record.environment().to_owned(),
+            severity: severity_named(record.severity()),
+            frequency: record.frequency().to_owned(),
+            affected_scope: record.affected_scope().to_owned(),
+            risk: record.risk().to_owned(),
+            criteria: record
+                .criteria()
+                .iter()
+                .map(|criterion| criterion_of(criterion, code))
+                .collect(),
+            verification_steps: record
+                .verification_steps()
+                .iter()
+                .map(|step| TicketVerificationStep {
+                    command: step.command().to_owned(),
+                })
+                .collect(),
+        }),
+        external_references: bug
+            .facts()
+            .external_references()
+            .iter()
+            .map(|reference| TicketExternalReference {
+                uri: reference.uri().to_owned(),
+                label: reference.label().map(str::to_owned),
+            })
+            .collect(),
+        occurrence_snapshots: bug
+            .facts()
+            .occurrence_snapshots()
+            .iter()
+            .map(|snapshot| TicketOccurrenceSnapshot {
+                observed_at: snapshot.observed_at().to_owned(),
+                observation: snapshot.observation().to_owned(),
+            })
+            .collect(),
+        evidence_ids: bug
+            .facts()
+            .evidence_items()
+            .iter()
+            .map(|item| item.value())
+            .collect(),
     }
 }
 
@@ -375,15 +638,9 @@ fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
         criteria: ticket
             .criteria()
             .iter()
-            .map(|criterion| TicketCriterion {
-                outcome: criterion.outcome().to_owned(),
-                stories: criterion
-                    .stories()
-                    .iter()
-                    .map(|story| story.render(code))
-                    .collect(),
-            })
+            .map(|criterion| criterion_of(criterion, code))
             .collect(),
+        bug: ticket.bug().map(|bug| bug_record_of(bug, code)),
         version: ticket.version(),
     }
 }
@@ -404,17 +661,22 @@ fn announce(events: &dyn EventSink, name: LiveEventName, ticket: &Ticket, code: 
 pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
-    use kanban_domain::{ProjectId, Ticket, TicketBody, TicketId, TicketNumber};
+    use kanban_domain::{
+        CommitIdentity, EvidenceId, EvidenceItem, EvidenceKind, EvidenceShape, ProjectId,
+        RelativePath, Ticket, TicketBody, TicketId, TicketNumber,
+    };
     use kanban_dto::ApiError;
 
     use super::TicketStore;
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
+    use crate::evidence::{EvidenceFilter, EvidenceStore};
     use crate::mutation::MemoryIdempotencyStore;
     use crate::plan::testing::{MemoryPlans, MemoryProjects};
     use crate::spec::testing::MemorySpecs;
     use crate::timeline::TimelineEnvelope;
+    use crate::timeline::TimelineFacts;
 
     /// An in-memory Ticket store: rows by id, the timeline envelopes
     /// it was asked to land, and the Project rows its writes moved.
@@ -484,6 +746,18 @@ pub(crate) mod testing {
             Ok(state.tickets.iter().find(|row| row.id() == id).cloned())
         }
 
+        fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError> {
+            let mut state = self.state.lock().expect("the memory ticket lock is sound");
+            let row = state
+                .tickets
+                .iter_mut()
+                .find(|row| row.id() == ticket.id())
+                .ok_or_else(|| ApiError::not_found(&format!("ticket {}", ticket.id())))?;
+            *row = ticket.clone();
+            state.timeline.push(envelope);
+            Ok(())
+        }
+
         fn list(&self, project: ProjectId) -> Result<Vec<Ticket>, ApiError> {
             let state = self.state.lock().expect("the memory ticket lock is sound");
             Ok(state
@@ -495,11 +769,151 @@ pub(crate) mod testing {
         }
     }
 
+    /// An in-memory Evidence store for the evidence claims the Ticket
+    /// commands validate. Items are seeded straight onto entities;
+    /// attaches record the same way the durable store would.
+    #[derive(Default)]
+    pub(crate) struct MemoryTicketEvidence {
+        state: Mutex<MemoryEvidenceState>,
+    }
+
+    #[derive(Default)]
+    struct MemoryEvidenceState {
+        items: Vec<EvidenceItem>,
+        next_id: u64,
+    }
+
+    impl MemoryTicketEvidence {
+        /// Seed one repository evidence item onto `entity` and return
+        /// its identity.
+        pub(crate) fn seed_repository_item(
+            &self,
+            project_id: u64,
+            entity_kind: &str,
+            entity_id: &str,
+        ) -> EvidenceId {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory evidence lock is sound");
+            state.next_id += 1;
+            let item = EvidenceItem::restore(
+                EvidenceId::new(state.next_id),
+                EvidenceShape {
+                    project_id,
+                    entity_kind: entity_kind.to_owned(),
+                    entity_id: entity_id.to_owned(),
+                    kind: EvidenceKind::Repository,
+                    content_hash: None,
+                    relative_path: Some(
+                        RelativePath::new("docs/evidence.md").expect("the fixture path validates"),
+                    ),
+                    commit_identity: Some(
+                        CommitIdentity::new("deadbeef").expect("the fixture commit validates"),
+                    ),
+                },
+            )
+            .expect("the fixture item validates");
+            state.items.push(item);
+            EvidenceId::new(state.next_id)
+        }
+    }
+
+    impl EvidenceStore for MemoryTicketEvidence {
+        fn attach_managed_file(
+            &self,
+            project_id: u64,
+            entity_kind: &str,
+            entity_id: &str,
+            _content_base64: &str,
+            _facts: TimelineFacts,
+        ) -> Result<EvidenceItem, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory evidence lock is sound");
+            state.next_id += 1;
+            let item = EvidenceItem::restore(
+                EvidenceId::new(state.next_id),
+                EvidenceShape {
+                    project_id,
+                    entity_kind: entity_kind.to_owned(),
+                    entity_id: entity_id.to_owned(),
+                    kind: EvidenceKind::ManagedFile,
+                    content_hash: Some(
+                        kanban_domain::ContentHash::new(&"c".repeat(64))
+                            .expect("the fixture digest validates"),
+                    ),
+                    relative_path: None,
+                    commit_identity: None,
+                },
+            )
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            state.items.push(item.clone());
+            Ok(item)
+        }
+
+        fn attach_repository(
+            &self,
+            project_id: u64,
+            entity_kind: &str,
+            entity_id: &str,
+            relative_path: &RelativePath,
+            commit_identity: &CommitIdentity,
+            _facts: TimelineFacts,
+        ) -> Result<EvidenceItem, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory evidence lock is sound");
+            state.next_id += 1;
+            let item = EvidenceItem::restore(
+                EvidenceId::new(state.next_id),
+                EvidenceShape {
+                    project_id,
+                    entity_kind: entity_kind.to_owned(),
+                    entity_id: entity_id.to_owned(),
+                    kind: EvidenceKind::Repository,
+                    content_hash: None,
+                    relative_path: Some(relative_path.clone()),
+                    commit_identity: Some(commit_identity.clone()),
+                },
+            )
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+            state.items.push(item.clone());
+            Ok(item)
+        }
+
+        fn list(&self, filter: &EvidenceFilter) -> Result<Vec<EvidenceItem>, ApiError> {
+            let state = self
+                .state
+                .lock()
+                .expect("the memory evidence lock is sound");
+            Ok(state
+                .items
+                .iter()
+                .filter(|item| {
+                    item.project_id() == filter.project_id
+                        && filter
+                            .entity_kind
+                            .as_deref()
+                            .is_none_or(|kind| kind == item.entity_kind())
+                        && filter
+                            .entity_id
+                            .as_deref()
+                            .is_none_or(|identity| identity == item.entity_id())
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
     /// A core with the Plan, Spec, and Ticket operations wired to
     /// in-memory stores over one active Project.
     pub(crate) struct TicketHarness {
         pub(crate) tickets: Arc<MemoryTickets>,
         pub(crate) projects: Arc<MemoryProjects>,
+        pub(crate) evidence: Arc<MemoryTicketEvidence>,
         pub(crate) core: Core,
     }
 
@@ -514,6 +928,7 @@ pub(crate) mod testing {
         let plans = Arc::new(MemoryPlans::sharing(projects.clone()));
         let specs = Arc::new(MemorySpecs::sharing(projects.clone()));
         let tickets = Arc::new(MemoryTickets::sharing(projects.clone()));
+        let evidence = Arc::new(MemoryTicketEvidence::default());
         let mut core = Core::new(
             exposed_operations(),
             Arc::new(MemoryIdempotencyStore::new()),
@@ -523,11 +938,17 @@ pub(crate) mod testing {
             .expect("the plan operations register");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
             .expect("the spec operations register");
-        core.register_tickets(tickets.clone(), projects.clone(), specs.clone())
-            .expect("the ticket operations register");
+        core.register_tickets(
+            tickets.clone(),
+            projects.clone(),
+            specs.clone(),
+            evidence.clone(),
+        )
+        .expect("the ticket operations register");
         TicketHarness {
             tickets,
             projects,
+            evidence,
             core,
         }
     }
@@ -546,6 +967,50 @@ pub(crate) mod testing {
             )
             .expect("the Spec authors");
         created["id"].as_u64().expect("the identity is a number")
+    }
+
+    /// Quick-capture one Bug on the seeded Project, returning its
+    /// storage identity.
+    pub(crate) fn captured_bug(core: &Core, key: &str) -> u64 {
+        let created = core
+            .command(
+                "ticket.create",
+                &serde_json::json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": key },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour":
+                        "The integration branch is dropped after a review lands.",
+                    "reporter_evidence":
+                        "The landing log names the drop immediately after the merge.",
+                }),
+            )
+            .expect("the Bug quick captures");
+        created["id"].as_u64().expect("the identity is a number")
+    }
+
+    /// One complete wire qualification, varied by severity.
+    pub(crate) fn wire_qualification(severity: &str) -> serde_json::Value {
+        serde_json::json!({
+            "expected_behaviour": "The integration branch survives every landing.",
+            "reproduction": "Re land a reviewed change; the branch list still names it.",
+            "environment": "macOS 26, Kanban 0.1.0.",
+            "severity": severity,
+            "frequency": "Every landing so far.",
+            "affected_scope": "All landing reviews.",
+            "risk": "Duplicate landings and lost review state.",
+            "criteria": [
+                {
+                    "outcome": "The integration branch survives a landing.",
+                    "stories": ["CORE-S1-US1"],
+                }
+            ],
+            "verification_steps": [
+                { "command": "cargo test -p kanban-storage tickets" }
+            ],
+        })
     }
 
     /// The wire PRD content the fixtures author, varied by name.
@@ -589,6 +1054,7 @@ mod ticket_create {
     }
 
     /// A Bug or Task creation request with the fields a test varies.
+    /// A Bug always carries its quick-capture facts (DR-TK-08).
     fn titled(
         kind: &str,
         title: Option<&str>,
@@ -605,6 +1071,16 @@ mod ticket_create {
         let object = request.as_object_mut().expect("the request is an object");
         if let Some(title) = title {
             object.insert("title".to_owned(), json!(title));
+        }
+        if kind == "bug" {
+            object.insert(
+                "actual_behaviour".to_owned(),
+                json!("The integration branch is dropped after a review lands."),
+            );
+            object.insert(
+                "reporter_evidence".to_owned(),
+                json!("The landing log names the drop immediately after the merge."),
+            );
         }
         if let Some(spec_id) = spec_id {
             object.insert("spec_id".to_owned(), json!(spec_id));
@@ -652,6 +1128,7 @@ mod ticket_create {
                 "criteria": [
                     { "outcome": "Specs mint unique numbers.", "stories": ["CORE-S1-US1"] }
                 ],
+                "bug": null,
                 "version": 1,
             })
         );
@@ -689,6 +1166,18 @@ mod ticket_create {
         );
         assert_eq!(standing["spec_id"], json!(null));
         assert_eq!(standing["criteria"], json!([]));
+        assert_eq!(
+            standing["bug"],
+            json!({
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence":
+                    "The landing log names the drop immediately after the merge.",
+                "external_references": [],
+                "occurrence_snapshots": [],
+                "evidence_ids": [],
+            }),
+            "quick capture lands the capture facts and nothing else (DR-TK-08)"
+        );
 
         let attached = harness
             .core
@@ -1104,6 +1593,12 @@ mod ticket_queries {
                 ]);
             } else {
                 request["title"] = json!("Landing drops the integration branch");
+                if kind == "bug" {
+                    request["actual_behaviour"] =
+                        json!("The integration branch is dropped after a review lands.");
+                    request["reporter_evidence"] =
+                        json!("The landing log names the drop immediately after the merge.");
+                }
             }
             harness
                 .core
@@ -1163,5 +1658,479 @@ mod ticket_queries {
             .query("ticket.get", &json!({ "ticket_id": 9 }))
             .expect_err("an unknown Ticket is refused");
         assert_eq!(error.code, kanban_dto::ErrorCode::NotFound);
+    }
+}
+
+#[cfg(test)]
+mod bug_capture {
+    use kanban_dto::ErrorCode;
+    use serde_json::{Value, json};
+
+    use super::testing::{captured_bug, ticket_harness, wire_qualification};
+
+    /// A qualification request body for `ticket`, varied by severity.
+    fn qualify(ticket: u64, severity: &str, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 1, "idempotency_key": key },
+            "ticket_id": ticket,
+            "qualification": wire_qualification(severity),
+        })
+    }
+
+    /// A facts request body for `ticket`.
+    fn facts(ticket: u64, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 1, "idempotency_key": key },
+            "ticket_id": ticket,
+            "external_references": [
+                {
+                    "uri": "https://example.invalid/issues/12",
+                    "label": "The report",
+                }
+            ],
+            "occurrence_snapshots": [
+                {
+                    "observed_at": "2026-09-05T07:41:00Z",
+                    "observation": "The log shows the drop.",
+                }
+            ],
+            "evidence_ids": [],
+        })
+    }
+
+    #[test]
+    fn quick_capture_creates_a_bug_from_three_facts_and_nothing_else() {
+        let harness = ticket_harness();
+
+        let created = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-capture" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "urgent",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour":
+                        "The integration branch is dropped after a review lands.",
+                    "reporter_evidence":
+                        "The landing log names the drop immediately after the merge.",
+                }),
+            )
+            .expect("three facts are the whole of quick capture (DR-TK-08)");
+
+        assert_eq!(created["kind"], json!("bug"));
+        assert_eq!(created["state"], json!("draft"));
+        assert_eq!(created["spec_id"], json!(null), "no Spec is required");
+        assert_eq!(
+            created["bug"]["actual_behaviour"],
+            json!("The integration branch is dropped after a review lands.")
+        );
+        assert_eq!(
+            created["bug"]["reporter_evidence"],
+            json!("The landing log names the drop immediately after the merge.")
+        );
+        assert!(
+            created["bug"].get("qualification").is_none(),
+            "no qualification is required"
+        );
+    }
+
+    #[test]
+    fn quick_capture_refuses_a_missing_capture_fact_without_minting() {
+        let harness = ticket_harness();
+
+        for (field, message) in [
+            (
+                "actual_behaviour",
+                "a Ticket actual behaviour cannot be blank",
+            ),
+            (
+                "reporter_evidence",
+                "a Ticket reporter evidence cannot be blank",
+            ),
+        ] {
+            let mut request = json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "key-refused" },
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "normal",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped.",
+                "reporter_evidence": "The landing log names the drop.",
+            });
+            request[field] = json!("   ");
+            let error = harness.core.command("ticket.create", &request).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.message, message);
+        }
+
+        assert_eq!(
+            harness.projects.rows()[0]
+                .counters()
+                .last(kanban_domain::NumberKind::Ticket),
+            0,
+            "a refused capture consumes no number"
+        );
+    }
+
+    #[test]
+    fn qualifying_records_the_whole_qualification_and_keeps_the_bug_draft() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+
+        let qualified = harness
+            .core
+            .command(
+                "ticket.bug.qualify",
+                &qualify(bug, "critical", "key-qualify"),
+            )
+            .expect("the Bug qualifies");
+
+        assert_eq!(qualified["state"], json!("draft"));
+        assert_eq!(qualified["version"], json!(2));
+        assert_eq!(
+            qualified["bug"]["qualification"]["severity"],
+            json!("critical"),
+            "qualification sets the severity (DR-LC-13)"
+        );
+        assert_eq!(
+            qualified["bug"]["qualification"]["expected_behaviour"],
+            json!("The integration branch survives every landing.")
+        );
+        assert_eq!(
+            qualified["bug"]["qualification"]["criteria"],
+            json!([{
+                "outcome": "The integration branch survives a landing.",
+                "stories": ["CORE-S1-US1"],
+            }])
+        );
+
+        let (_, timeline) = harness.tickets.snapshot();
+        let appended = timeline.last().expect("the qualification appended");
+        assert_eq!(
+            appended.detail(),
+            &json!({
+                "action": "qualified",
+                "id": bug,
+                "severity": "critical",
+                "version": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn an_incomplete_qualification_is_refused_with_its_missing_fact() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+
+        for (field, message) in [
+            ("environment", "a Ticket environment cannot be blank"),
+            ("risk", "a Ticket risk cannot be blank"),
+        ] {
+            let mut request = qualify(bug, "high", "key-refused");
+            request["qualification"][field] = json!("");
+            let error = harness
+                .core
+                .command("ticket.bug.qualify", &request)
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.message, message);
+        }
+
+        let mut no_steps = qualify(bug, "high", "key-refused-steps");
+        no_steps["qualification"]["verification_steps"] = json!([]);
+        let error = harness
+            .core
+            .command("ticket.bug.qualify", &no_steps)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "a Ticket Verification Steps claim cannot be blank"
+        );
+
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": bug }))
+            .expect("the get serves");
+        assert_eq!(
+            read["version"],
+            json!(1),
+            "every refusal left the Bug as it stood"
+        );
+    }
+
+    #[test]
+    fn a_severity_outside_the_closed_vocabulary_is_refused() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+
+        let error = harness
+            .core
+            .command("ticket.bug.qualify", &qualify(bug, "urgent", "key-refused"))
+            .expect_err("urgent is a priority, not a severity");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("urgent"),
+            "the refusal names the unknown value: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn qualifying_a_non_bug_or_unknown_ticket_is_refused() {
+        let harness = ticket_harness();
+        let spec = super::testing::authored_spec(&harness.core, "key-author");
+        let task = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-task" },
+                    "project_id": 1,
+                    "kind": "task",
+                    "priority": "normal",
+                    "title": "Archive the old register",
+                }),
+            )
+            .expect("the Task creates");
+        let _ = spec;
+
+        let not_a_bug = harness
+            .core
+            .command(
+                "ticket.bug.qualify",
+                &qualify(
+                    task["id"].as_u64().expect("the identity is a number"),
+                    "low",
+                    "key-1",
+                ),
+            )
+            .expect_err("only a Bug carries qualification");
+        assert_eq!(not_a_bug.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            not_a_bug.message,
+            "only a Bug Ticket carries qualification and Bug facts"
+        );
+
+        let unknown = harness
+            .core
+            .command("ticket.bug.qualify", &qualify(99, "low", "key-2"))
+            .expect_err("an unknown Ticket is refused");
+        assert_eq!(unknown.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn a_stale_qualification_is_refused_by_the_optimistic_version() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+
+        let mut stale = qualify(bug, "high", "key-stale");
+        stale["mutation"]["optimistic_version"] = json!(0);
+        let error = harness
+            .core
+            .command("ticket.bug.qualify", &stale)
+            .expect_err("the version guard refuses the stale command");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        let (_, timeline) = harness.tickets.snapshot();
+        assert_eq!(
+            timeline.len(),
+            1,
+            "a stale qualification appends no timeline row"
+        );
+    }
+
+    #[test]
+    fn a_qualification_retry_replays_without_reapplying() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+        let request = qualify(bug, "medium", "key-once");
+
+        let first = harness
+            .core
+            .command("ticket.bug.qualify", &request)
+            .expect("the Bug qualifies");
+        let replay = harness
+            .core
+            .command("ticket.bug.qualify", &request)
+            .expect("the retry replays");
+
+        assert_eq!(first, replay);
+        assert_eq!(
+            replay["version"],
+            json!(2),
+            "the retry must not reapply the change"
+        );
+    }
+
+    #[test]
+    fn recording_facts_carries_references_snapshots_and_evidence_items() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+        let evidence = harness
+            .evidence
+            .seed_repository_item(1, "ticket", &bug.to_string());
+
+        let mut request = facts(bug, "key-facts");
+        request["evidence_ids"] = json!([evidence.value()]);
+        let recorded = harness
+            .core
+            .command("ticket.bug.facts", &request)
+            .expect("the Bug carries its facts");
+
+        assert_eq!(recorded["version"], json!(2));
+        assert_eq!(
+            recorded["bug"]["external_references"],
+            json!([{
+                "uri": "https://example.invalid/issues/12",
+                "label": "The report",
+            }]),
+            "the references are vendor-neutral URIs (DR-TK-10)"
+        );
+        assert_eq!(
+            recorded["bug"]["occurrence_snapshots"],
+            json!([{
+                "observed_at": "2026-09-05T07:41:00Z",
+                "observation": "The log shows the drop.",
+            }])
+        );
+        assert_eq!(recorded["bug"]["evidence_ids"], json!([evidence.value()]));
+
+        // Replacing the collections is one whole act: the empty set
+        // clears what stood.
+        let mut replaced = facts(bug, "key-facts-2");
+        replaced["mutation"]["optimistic_version"] = json!(2);
+        replaced["external_references"] = json!([]);
+        replaced["occurrence_snapshots"] = json!([]);
+        let replaced = harness
+            .core
+            .command("ticket.bug.facts", &replaced)
+            .expect("the facts replace whole");
+        assert_eq!(replaced["version"], json!(3));
+        assert_eq!(replaced["bug"]["external_references"], json!([]));
+        assert_eq!(replaced["bug"]["occurrence_snapshots"], json!([]));
+        assert_eq!(replaced["bug"]["evidence_ids"], json!([]));
+    }
+
+    #[test]
+    fn naming_evidence_attached_elsewhere_is_refused() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+        let _other = captured_bug(&harness.core, "key-other");
+        let elsewhere = harness.evidence.seed_repository_item(1, "ticket", "2");
+
+        let mut request = facts(bug, "key-refused");
+        request["evidence_ids"] = json!([elsewhere.value()]);
+        let error = harness
+            .core
+            .command("ticket.bug.facts", &request)
+            .expect_err("a Bug names only its own Evidence Items");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            format!(
+                "evidence item {} is not attached to ticket 1",
+                elsewhere.value()
+            )
+        );
+    }
+
+    #[test]
+    fn recording_facts_on_a_non_bug_is_refused() {
+        let harness = ticket_harness();
+        let task = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-task" },
+                    "project_id": 1,
+                    "kind": "task",
+                    "priority": "normal",
+                    "title": "Archive the old register",
+                }),
+            )
+            .expect("the Task creates");
+
+        let error = harness
+            .core
+            .command(
+                "ticket.bug.facts",
+                &facts(
+                    task["id"].as_u64().expect("the identity is a number"),
+                    "key-1",
+                ),
+            )
+            .expect_err("only a Bug carries Bug facts");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn bug_commands_reject_unknown_fields_and_malformed_entries() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+
+        let mut surprise = qualify(bug, "high", "key-1");
+        surprise["surprise"] = json!(true);
+        let error = harness
+            .core
+            .command("ticket.bug.qualify", &surprise)
+            .expect_err("unknown fields are rejected");
+        assert_eq!(error.code, ErrorCode::UnknownField);
+
+        let mut malformed = facts(bug, "key-2");
+        malformed["external_references"] = json!([{ "uri": "no-scheme-here" }]);
+        let error = harness
+            .core
+            .command("ticket.bug.facts", &malformed)
+            .expect_err("a reference names a URI");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "an External Reference names a URI with a scheme, like `https://example.invalid/1`"
+        );
+
+        let mut malformed = facts(bug, "key-3");
+        malformed["occurrence_snapshots"] =
+            json!([{ "observed_at": "yesterday", "observation": "Seen." }]);
+        let error = harness
+            .core
+            .command("ticket.bug.facts", &malformed)
+            .expect_err("a snapshot names an RFC 3339 moment");
+        assert_eq!(
+            error.message,
+            "an Occurrence Snapshot names an RFC 3339 moment"
+        );
+    }
+
+    #[test]
+    fn the_created_bug_round_trips_through_the_queries() {
+        let harness = ticket_harness();
+        let bug = captured_bug(&harness.core, "key-capture");
+        harness
+            .core
+            .command("ticket.bug.qualify", &qualify(bug, "high", "key-qualify"))
+            .expect("the Bug qualifies");
+
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": bug }))
+            .expect("the get serves");
+        assert_eq!(read["bug"]["qualification"]["severity"], json!("high"));
+
+        let listed = harness
+            .core
+            .query("ticket.list", &json!({ "project_id": 1 }))
+            .expect("the list serves");
+        assert_eq!(
+            listed["tickets"][0]["bug"]["qualification"]["severity"],
+            json!("high")
+        );
     }
 }

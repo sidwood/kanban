@@ -540,8 +540,8 @@ mod tests {
     /// return the aggregate as stored.
     fn authored(store: &SqliteSpecStore, project: &Project, name: &str) -> kanban_domain::Spec {
         let mut project = project.clone();
-        let number =
-            SpecNumber::new(project.mint(NumberKind::Spec)).expect("a minted number is positive");
+        let number = SpecNumber::new(project.mint(NumberKind::Spec).expect("active mints"))
+            .expect("a minted number is positive");
         store
             .create(&project, number, &content(name), &|id| {
                 transition(id, "created", json!({ "number": number.value() }))
@@ -613,8 +613,8 @@ mod tests {
             .expect("the reload serves")
             .expect("the Project exists");
         let mut moved = reloaded.clone();
-        let second_number =
-            SpecNumber::new(moved.mint(NumberKind::Spec)).expect("a minted number is positive");
+        let second_number = SpecNumber::new(moved.mint(NumberKind::Spec).expect("active mints"))
+            .expect("a minted number is positive");
         let second = store
             .create(&moved, second_number, &content("Timeline"), &|id| {
                 transition(id, "created", json!({ "number": second_number.value() }))
@@ -786,7 +786,7 @@ mod tests {
             .find(project.id())
             .expect("the reload serves")
             .expect("the Project exists");
-        let plan_number = project.mint(NumberKind::Plan);
+        let plan_number = project.mint(NumberKind::Plan).expect("active mints");
         let plan = plan_store
             .create(&project, plan_number, &|id| {
                 TimelineEnvelope::project(
@@ -834,7 +834,7 @@ mod tests {
             .find(project.id())
             .expect("the reload serves")
             .expect("the Project exists");
-        let plan_number = project.mint(NumberKind::Plan);
+        let plan_number = project.mint(NumberKind::Plan).expect("active mints");
         let plan = plan_store
             .create(&project, plan_number, &|id| {
                 TimelineEnvelope::project(
@@ -1032,7 +1032,7 @@ mod tests {
         let (_dir, _database, store) = store();
         let mut project = seeded_project(&_database);
         for name in ["Registration", "Timeline"] {
-            let number = SpecNumber::new(project.mint(NumberKind::Spec))
+            let number = SpecNumber::new(project.mint(NumberKind::Spec).expect("active mints"))
                 .expect("a minted number is positive");
             store
                 .create(&project, number, &content(name), &|id| {
@@ -1094,8 +1094,8 @@ mod tests {
     fn the_store_serves_through_a_shared_connection() {
         let (_dir, _database, store) = store();
         let mut project = seeded_project(&_database);
-        let number =
-            SpecNumber::new(project.mint(NumberKind::Spec)).expect("a minted number is positive");
+        let number = SpecNumber::new(project.mint(NumberKind::Spec).expect("active mints"))
+            .expect("a minted number is positive");
         let boxed: Box<dyn SpecStore> = Box::new(store);
 
         let served = std::thread::spawn(move || {

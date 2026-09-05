@@ -159,7 +159,7 @@ impl CommandHandler for CreateTicket {
         }
         let priority = priority_of(request.priority);
         let body = body_of(&request, &project, self.0.specs.as_ref())?;
-        let number = TicketNumber::new(project.mint(NumberKind::Ticket))
+        let number = TicketNumber::new(project.mint(NumberKind::Ticket).map_err(refuse)?)
             .expect("a minted number is positive");
         let identity = project.id();
         let kind = body.kind().wire_name().to_owned();

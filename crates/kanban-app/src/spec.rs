@@ -199,14 +199,9 @@ impl CommandHandler for CreateSpec {
             .projects
             .find(ProjectId::new(request.project_id))?
             .ok_or_else(|| ApiError::not_found(&format!("project {}", request.project_id)))?;
-        if project.is_archived() {
-            return Err(ApiError::invalid_request(
-                "archived is terminal; the Project accepts no further changes",
-            ));
-        }
         let content = content_of(&request.content)?;
-        let number =
-            SpecNumber::new(project.mint(NumberKind::Spec)).expect("a minted number is positive");
+        let number = SpecNumber::new(project.mint(NumberKind::Spec).map_err(refuse)?)
+            .expect("a minted number is positive");
         let identity = project.id();
         let spec = self.0.specs.create(&project, number, &content, &|id| {
             transition(

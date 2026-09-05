@@ -247,12 +247,7 @@ impl CommandHandler for CreatePlan {
             .projects
             .find(ProjectId::new(request.project_id))?
             .ok_or_else(|| ApiError::not_found(&format!("project {}", request.project_id)))?;
-        if project.is_archived() {
-            return Err(ApiError::invalid_request(
-                "archived is terminal; the Project accepts no further changes",
-            ));
-        }
-        let number = project.mint(NumberKind::Plan);
+        let number = project.mint(NumberKind::Plan).map_err(refuse)?;
         let identity = project.id();
         let plan = self.0.plans.create(&project, number, &|id| {
             transition(

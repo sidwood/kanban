@@ -443,19 +443,12 @@ impl Project {
         self.version
     }
 
-    /// Mint the next number for `kind`. Minting is an applied change:
-    /// the counter and the aggregate version move together, so a
-    /// writer holding a stale version can never save a counter that
-    /// rewinds a minted number.
-    pub fn mint(&mut self, kind: NumberKind) -> u64 {
-        let number = self.counters.next(kind);
-        self.version += 1;
-        number
-    }
-
-    /// Mint the next Plan, Spec, or Ticket number. Archived is
-    /// terminal, so an archived Project refuses every mint.
-    pub fn mint_number(&mut self, kind: NumberKind) -> Result<u64, ProjectError> {
+    /// Mint the next Plan, Spec, or Ticket number. Minting is an
+    /// applied change: the counter and the aggregate version move
+    /// together, so a writer holding a stale version can never save a
+    /// counter that rewinds a minted number. Archived is terminal, so
+    /// an archived Project refuses every mint.
+    pub fn mint(&mut self, kind: NumberKind) -> Result<u64, ProjectError> {
         if self.state == ProjectState::Archived {
             return Err(ProjectError::ArchivedIsTerminal);
         }
@@ -939,20 +932,9 @@ mod project_lifecycle {
     fn minting_through_the_aggregate_stays_monotonic_across_restore() {
         let mut project = Project::new(ProjectId::new(1), registration("CORE"));
 
-        assert_eq!(
-            project.mint_number(NumberKind::Plan).expect("active mints"),
-            1
-        );
-        assert_eq!(
-            project.mint_number(NumberKind::Spec).expect("active mints"),
-            1
-        );
-        assert_eq!(
-            project
-                .mint_number(NumberKind::Ticket)
-                .expect("active mints"),
-            1
-        );
+        assert_eq!(project.mint(NumberKind::Plan).expect("active mints"), 1);
+        assert_eq!(project.mint(NumberKind::Spec).expect("active mints"), 1);
+        assert_eq!(project.mint(NumberKind::Ticket).expect("active mints"), 1);
 
         let mut reloaded = Project::restore(
             project.id(),
@@ -963,23 +945,17 @@ mod project_lifecycle {
         );
 
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Plan)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Plan).expect("active mints"),
             2,
             "the Plan counter resumes past the last minted number"
         );
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Spec)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Spec).expect("active mints"),
             2,
             "the Spec counter resumes past the last minted number"
         );
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Ticket)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Ticket).expect("active mints"),
             2,
             "the Ticket counter resumes past the last minted number"
         );
@@ -991,7 +967,7 @@ mod project_lifecycle {
         project.archive().expect("active archives");
 
         assert_eq!(
-            project.mint_number(NumberKind::Plan),
+            project.mint(NumberKind::Plan),
             Err(ProjectError::ArchivedIsTerminal)
         );
         assert_eq!(project.version(), 2, "the refusal changed nothing");
@@ -1041,9 +1017,9 @@ mod project_lifecycle {
     fn minting_a_number_moves_one_counter_and_the_version() {
         let mut project = Project::new(ProjectId::new(1), registration("CORE"));
 
-        assert_eq!(project.mint(NumberKind::Plan), 1);
-        assert_eq!(project.mint(NumberKind::Plan), 2);
-        assert_eq!(project.mint(NumberKind::Spec), 1);
+        assert_eq!(project.mint(NumberKind::Plan).expect("active mints"), 1);
+        assert_eq!(project.mint(NumberKind::Plan).expect("active mints"), 2);
+        assert_eq!(project.mint(NumberKind::Spec).expect("active mints"), 1);
 
         assert_eq!(project.counters().last(NumberKind::Plan), 2);
         assert_eq!(project.counters().last(NumberKind::Spec), 1);

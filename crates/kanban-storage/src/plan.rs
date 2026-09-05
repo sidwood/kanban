@@ -555,7 +555,7 @@ mod tests {
     /// persisting every step.
     fn shaped_draft(store: &SqlitePlanStore, project: &Project) -> Plan {
         let mut project = project.clone();
-        let number = project.mint(NumberKind::Plan);
+        let number = project.mint(NumberKind::Plan).expect("active mints");
         let mut plan = store
             .create(&project, number, &|id| {
                 transition(id, "created", json!({ "number": number }))
@@ -614,7 +614,7 @@ mod tests {
         let (_dir, database, store) = store();
         let mut project = seeded_project(&database);
 
-        let number = project.mint(NumberKind::Plan);
+        let number = project.mint(NumberKind::Plan).expect("active mints");
         let plan = store
             .create(&project, number, &|id| {
                 transition(id, "created", json!({ "number": number }))
@@ -650,13 +650,13 @@ mod tests {
         let (_dir, database, store) = store();
         let mut project = seeded_project(&database);
 
-        let first_number = project.mint(NumberKind::Plan);
+        let first_number = project.mint(NumberKind::Plan).expect("active mints");
         let first = store
             .create(&project, first_number, &|id| {
                 transition(id, "created", json!({ "number": first_number }))
             })
             .expect("the first Plan lands");
-        let second_number = project.mint(NumberKind::Plan);
+        let second_number = project.mint(NumberKind::Plan).expect("active mints");
         let second = store
             .create(&project, second_number, &|id| {
                 transition(id, "created", json!({ "number": second_number }))
@@ -1073,7 +1073,7 @@ mod tests {
         let (_dir, database, store) = store();
         let mut project = seeded_project(&database);
         for _ in 0..2 {
-            let number = project.mint(NumberKind::Plan);
+            let number = project.mint(NumberKind::Plan).expect("active mints");
             store
                 .create(&project, number, &|id| {
                     transition(id, "created", json!({ "number": number }))
@@ -1143,7 +1143,7 @@ mod tests {
     fn the_store_serves_through_a_shared_connection() {
         let (_dir, database, store) = store();
         let mut project = seeded_project(&database);
-        let number = project.mint(NumberKind::Plan);
+        let number = project.mint(NumberKind::Plan).expect("active mints");
         let boxed: Box<dyn PlanStore> = Box::new(store);
 
         let served = std::thread::spawn(move || {

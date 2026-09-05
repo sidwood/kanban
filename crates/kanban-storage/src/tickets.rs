@@ -444,8 +444,8 @@ mod tests {
             1,
         );
         let specs = SqliteSpecStore::new(database);
-        let number =
-            SpecNumber::new(project.mint(NumberKind::Spec)).expect("a minted number is positive");
+        let number = SpecNumber::new(project.mint(NumberKind::Spec).expect("active mints"))
+            .expect("a minted number is positive");
         let spec = specs
             .create(&project, number, &spec_content(), &|id| {
                 TimelineEnvelope::project(
@@ -511,7 +511,7 @@ mod tests {
             .find(ProjectId::new(1))
             .expect("the reload serves")
             .expect("the Project exists");
-        let number = TicketNumber::new(project.mint(NumberKind::Ticket))
+        let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
             .expect("a minted number is positive");
         store
             .create(&project, number, priority, body, &|id| {
@@ -692,8 +692,8 @@ mod tests {
         let timeline_before = ticket_timeline(&database).len();
 
         let mut stale = project.clone();
-        let number =
-            TicketNumber::new(stale.mint(NumberKind::Ticket)).expect("a minted number is positive");
+        let number = TicketNumber::new(stale.mint(NumberKind::Ticket).expect("active mints"))
+            .expect("a minted number is positive");
         let error = store
             .create(
                 &stale,
@@ -859,7 +859,7 @@ mod tests {
         let (project, _spec) = seeded_project_and_spec(&database);
         let boxed: Box<dyn TicketStore> = Box::new(store);
         let mut project = project;
-        let number = TicketNumber::new(project.mint(NumberKind::Ticket))
+        let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
             .expect("a minted number is positive");
         let body = TicketBody::bug("Landing drops the integration branch", None)
             .expect("the fixture body validates");

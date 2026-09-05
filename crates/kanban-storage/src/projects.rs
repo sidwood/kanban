@@ -336,7 +336,7 @@ mod project_repository {
     ) {
         for _ in 0..plan {
             project
-                .mint_number(NumberKind::Plan)
+                .mint(NumberKind::Plan)
                 .expect("active mints a Plan number");
             store
                 .save(project, counters_saved(project.id()))
@@ -344,7 +344,7 @@ mod project_repository {
         }
         for _ in 0..spec {
             project
-                .mint_number(NumberKind::Spec)
+                .mint(NumberKind::Spec)
                 .expect("active mints a Spec number");
             store
                 .save(project, counters_saved(project.id()))
@@ -352,7 +352,7 @@ mod project_repository {
         }
         for _ in 0..ticket {
             project
-                .mint_number(NumberKind::Ticket)
+                .mint(NumberKind::Ticket)
                 .expect("active mints a Ticket number");
             store
                 .save(project, counters_saved(project.id()))
@@ -366,7 +366,7 @@ mod project_repository {
         project: &mut Project,
         kind: NumberKind,
     ) -> u64 {
-        let number = project.mint_number(kind).expect("active mints");
+        let number = project.mint(kind).expect("active mints");
         store
             .save(project, counters_saved(project.id()))
             .expect("the counters persist");
@@ -701,23 +701,17 @@ mod project_repository {
         assert_eq!(reloaded.counters().last(NumberKind::Ticket), 1);
 
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Plan)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Plan).expect("active mints"),
             2,
             "the Plan counter resumes past the last stored number"
         );
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Spec)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Spec).expect("active mints"),
             2,
             "the Spec counter resumes past the last stored number"
         );
         assert_eq!(
-            reloaded
-                .mint_number(NumberKind::Ticket)
-                .expect("active mints"),
+            reloaded.mint(NumberKind::Ticket).expect("active mints"),
             2,
             "the Ticket counter resumes past the last stored number"
         );

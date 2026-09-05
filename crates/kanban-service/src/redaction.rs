@@ -182,6 +182,31 @@ impl Redactor {
     }
 }
 
+/// Every form a value can take inside serialized log text: its raw
+/// bytes, escaped once by JSON, escaped again by JSON inside JSON,
+/// and written with code-point escapes. Tests hunting a planted
+/// secret need all of them, because a value holding a backslash or a
+/// quote never appears as its raw bytes in a JSON line — and this
+/// spells them out rather than borrowing the redactor's own escapers,
+/// so a blind spot in those cannot hide inside the assertion too.
+#[cfg(test)]
+pub(crate) fn serialized_forms(value: &str) -> Vec<String> {
+    let strip = |encoded: String| encoded[1..encoded.len() - 1].to_owned();
+    let once = strip(serde_json::to_string(value).expect("the value serialises"));
+    let twice = strip(serde_json::to_string(&once).expect("the value serialises again"));
+    let code_points: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii() {
+                character.to_string()
+            } else {
+                format!("\\u{:04x}", character as u32)
+            }
+        })
+        .collect();
+    vec![value.to_owned(), once, twice, code_points]
+}
+
 /// Reads the managed configuration, distinguishing an absent file
 /// (nothing to learn) from one that cannot be read or parsed (the
 /// caller decides whether that is survivable).

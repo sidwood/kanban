@@ -41,7 +41,8 @@ const ACTIVE_FILE: &str = "core.log";
 const UNREDACTABLE_COMPONENT: &str = "redaction";
 
 /// What a withheld entry says, in fixed words.
-const UNREDACTABLE_MESSAGE: &str = "log entry withheld: redaction knowledge is unavailable";
+pub(crate) const UNREDACTABLE_MESSAGE: &str =
+    "log entry withheld: redaction knowledge is unavailable";
 
 /// How large one file may grow and how many files rotation keeps, the
 /// active file included.
@@ -269,7 +270,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{LogLevel, LogRecord, LogRotation, LogWriter};
-    use crate::redaction::REDACTED;
+    use crate::redaction::{REDACTED, serialized_forms};
 
     const PLANTED_SECRET: &str = "kct_t61_planted_log_secret";
     const PLANTED_QUOTED: &str = r#"t112 "quoted" log secret"#;
@@ -332,28 +333,6 @@ mod tests {
             "backslash": PLANTED_BACKSLASH,
             "non_ascii": PLANTED_NON_ASCII,
         }))
-    }
-
-    /// Every form a planted value can take inside serialized log
-    /// text: its raw bytes, escaped once by JSON, escaped again by
-    /// JSON inside JSON, and written with code-point escapes. Hunting
-    /// only the raw bytes passes straight over a leaked backslash
-    /// value, which never appears unescaped in a JSON line.
-    fn serialized_forms(value: &str) -> Vec<String> {
-        let strip = |encoded: String| encoded[1..encoded.len() - 1].to_owned();
-        let once = strip(serde_json::to_string(value).expect("the value serialises"));
-        let twice = strip(serde_json::to_string(&once).expect("the value serialises again"));
-        let code_points: String = value
-            .chars()
-            .map(|character| {
-                if character.is_ascii() {
-                    character.to_string()
-                } else {
-                    format!("\\u{:04x}", character as u32)
-                }
-            })
-            .collect();
-        vec![value.to_owned(), once, twice, code_points]
     }
 
     /// Asserts no planted value reached any log file, in any form

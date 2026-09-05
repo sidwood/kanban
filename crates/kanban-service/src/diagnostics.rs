@@ -199,6 +199,86 @@ mod tests {
     const PLANTED_QUOTED: &str = r#"t61 "quoted" bundle secret"#;
     const PLANTED_NON_ASCII: &str = "t61-bündlé-passphrase";
 
+    /// The values whose escaping hides them from a raw-bytes search:
+    /// a quoted value, a backslash value, and a non-ASCII value.
+    const ESCAPING_SECRETS: [(&str, &str); 3] = [
+        ("quoted_secret", r#"t112 "quoted" bundle secret"#),
+        ("backslash_token", r"t112\planted\bundle\secret"),
+        ("non_ascii_passphrase", "t112-bündlé-pässphrase"),
+    ];
+
+    /// Writes a managed configuration, letting the encoder escape the
+    /// planted values so the fixture cannot get its own backslashes
+    /// wrong.
+    fn write_config(data_dir: &Path, configuration: &Value) {
+        let path = data_dir.join("config.json");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            serde_json::to_string(configuration).expect("the configuration encodes"),
+        )
+        .expect("the configuration is written");
+    }
+
+    /// The configuration naming every escaping secret under a
+    /// secret-marked key.
+    fn escaping_secret_config() -> Value {
+        Value::Object(
+            ESCAPING_SECRETS
+                .iter()
+                .map(|(key, secret)| ((*key).to_owned(), json!(secret)))
+                .collect(),
+        )
+    }
+
+    /// A writer over `data_dir` bound tightly enough that a handful of
+    /// entries rotates it.
+    fn rotating_writer(data_dir: &Path) -> LogWriter {
+        LogWriter::with_rotation(
+            data_dir,
+            LogRotation {
+                max_file_bytes: NonZeroU64::new(400).expect("the bound is not zero"),
+                retained_files: NonZeroU32::new(6).expect("the count is not zero"),
+            },
+        )
+        .expect("the log writer opens")
+    }
+
+    /// Appends records carrying every escaping secret in a message and
+    /// in fields, the shape a real caller reaches the writer with.
+    fn append_escaping_secret_records(writer: &LogWriter, marker: &str) {
+        for index in 0..4 {
+            let carried: Vec<&str> = ESCAPING_SECRETS.iter().map(|(_, secret)| *secret).collect();
+            writer
+                .append(
+                    &LogRecord::new(
+                        LogLevel::Warn,
+                        "probe",
+                        format!("{marker} entry {index} saw {}", carried.join(" and ")),
+                    )
+                    .with_fields(json!({ "carried": carried })),
+                )
+                .expect("serving survives: every entry writes");
+        }
+    }
+
+    /// Asserts no escaping secret reached any file under `root`, in
+    /// any form serialization could have written it.
+    fn assert_no_escaping_secret(root: &Path, label: &str) {
+        for path in walk(root) {
+            let text = read(&path);
+            for (_, secret) in ESCAPING_SECRETS {
+                for form in crate::redaction::serialized_forms(secret) {
+                    assert!(
+                        !text.contains(&form),
+                        "with {label}, `{form}` reached {}: {text}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
     /// Every file under `root`, recursively.
     fn walk(root: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
@@ -526,6 +606,110 @@ mod tests {
             );
         }
         assert!(shipped.contains(REDACTED), "the scrub leaves its marker");
+    }
+
+    /// KAN-T112-AC4/AC5: the required boundary coverage for values
+    /// JSON escapes out of sight. A quoted, a backslash, and a
+    /// non-ASCII secret go through the real writer and the real
+    /// export, and appear in neither the live logs nor the bundle —
+    /// proven against every serialized form, not the raw bytes alone.
+    #[test]
+    fn secret_exclusion_holds_for_escaping_secrets_through_the_writer_and_the_export() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        write_config(dir.path(), &escaping_secret_config());
+        let writer = rotating_writer(dir.path());
+        append_escaping_secret_records(&writer, "escaping");
+        let health = json!({
+            "connected": true,
+            "service_version": "0.1.0",
+            "note": format!("installed with {}", ESCAPING_SECRETS[1].1),
+        });
+
+        // The writer scrubs them before the export ever sees them.
+        assert_no_escaping_secret(
+            &kanban_storage::paths::logs_dir(dir.path()),
+            "a healthy configuration",
+        );
+
+        let bundle = export_diagnostic_bundle(dir.path(), &health).expect("the bundle exports");
+
+        assert!(
+            walk(&bundle.join("logs")).len() > 1,
+            "the fixture ships the rotated log beside the active one"
+        );
+        assert_no_escaping_secret(&bundle, "a healthy configuration");
+        assert!(
+            read(&bundle.join("health.json")).contains(REDACTED),
+            "the escaping secret inside free-text health is scrubbed"
+        );
+    }
+
+    /// KAN-T112-AC3/AC4: a configuration broken before the writer
+    /// opened. The entries it withheld ship in the bundle and no
+    /// planted value ships with them — proven with a repaired
+    /// configuration that names no secret at all, so export-time
+    /// redaction cannot rescue a value the log should never have
+    /// held.
+    #[test]
+    fn diagnostic_bundle_ships_entries_withheld_from_a_configuration_broken_at_open() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        std::fs::write(dir.path().join("config.json"), "{ not json")
+            .expect("the malformed configuration is written");
+        let writer = rotating_writer(dir.path());
+        append_escaping_secret_records(&writer, "withheld");
+        write_config(dir.path(), &json!({ "theme": "dark" }));
+        let health = json!({ "connected": true, "service_version": "0.1.0" });
+
+        let bundle = export_diagnostic_bundle(dir.path(), &health).expect("the bundle exports");
+
+        assert_no_escaping_secret(&bundle, "a configuration broken at open");
+        let shipped = read(&bundle.join("logs").join("core.log"));
+        assert!(
+            shipped.contains(crate::logs::UNREDACTABLE_MESSAGE)
+                && shipped.contains("configuration_malformed"),
+            "the bundle ships the fixed diagnostics that stood in for the records: {shipped}"
+        );
+    }
+
+    /// KAN-T112-AC3/AC4: a configuration broken after the writer had
+    /// already rotated. The bundle carries both halves of that life —
+    /// the earlier entries redacted, the later ones withheld — and no
+    /// planted value in either.
+    #[test]
+    fn diagnostic_bundle_ships_entries_withheld_from_a_configuration_broken_after_rotation() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        write_config(dir.path(), &escaping_secret_config());
+        let writer = rotating_writer(dir.path());
+        append_escaping_secret_records(&writer, "healthy");
+        assert!(
+            walk(&kanban_storage::paths::logs_dir(dir.path())).len() > 1,
+            "the configuration must break a writer that has already rotated"
+        );
+
+        std::fs::remove_file(dir.path().join("config.json")).expect("the configuration is removed");
+        std::fs::create_dir(dir.path().join("config.json"))
+            .expect("the unreadable configuration is planted");
+        append_escaping_secret_records(&writer, "withheld");
+        std::fs::remove_dir(dir.path().join("config.json")).expect("the break is cleared");
+        write_config(dir.path(), &json!({ "theme": "dark" }));
+        let health = json!({ "connected": true, "service_version": "0.1.0" });
+
+        let bundle = export_diagnostic_bundle(dir.path(), &health).expect("the bundle exports");
+
+        assert_no_escaping_secret(&bundle, "a configuration broken after rotation");
+        let shipped: String = walk(&bundle.join("logs"))
+            .iter()
+            .map(|path| read(path))
+            .collect();
+        assert!(
+            shipped.contains(crate::logs::UNREDACTABLE_MESSAGE)
+                && shipped.contains("configuration_unreadable"),
+            "the bundle ships the fixed diagnostics that stood in for the later records: {shipped}"
+        );
+        assert!(
+            shipped.contains(REDACTED),
+            "the bundle still ships the earlier entries, redacted: {shipped}"
+        );
     }
 
     /// The typed handler is the narrow boundary: it rejects unknown

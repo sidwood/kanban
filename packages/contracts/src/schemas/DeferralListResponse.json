@@ -18,7 +18,9 @@
         },
         "project_id": {
           "description": "The project the deferral belongs to.",
-          "type": "string"
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
         },
         "reason": {
           "description": "Why the finding was deferred.",

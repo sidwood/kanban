@@ -10,7 +10,7 @@ import type { ShellTransport } from '../core/transport'
 
 export const useRulingsStore = defineStore('rulings', {
   state: () => ({
-    projectId: '' as string,
+    projectId: 0 as number,
     entity: null as TimelineEntityRef | null,
     rulings: [] as RulingRecord[],
     deferrals: [] as DeferralRecord[],
@@ -20,7 +20,7 @@ export const useRulingsStore = defineStore('rulings', {
   actions: {
     async load(
       transport: ShellTransport,
-      projectId: string,
+      projectId: number,
       entity?: TimelineEntityRef | null,
     ): Promise<void> {
       this.projectId = projectId
@@ -28,7 +28,7 @@ export const useRulingsStore = defineStore('rulings', {
       await this.refresh(transport)
     },
     async refresh(transport: ShellTransport): Promise<void> {
-      if (!this.projectId) {
+      if (this.projectId === 0) {
         return
       }
       this.loading = true

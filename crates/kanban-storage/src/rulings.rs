@@ -36,7 +36,7 @@ impl RulingStore for SqliteRulingStore {
             "INSERT INTO rulings (project_id, entity_kind, entity_id, summary, supersedes_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
-                draft.project_id,
+                draft.project_id.to_string(),
                 entity_kind,
                 entity_id,
                 draft.summary.as_str(),
@@ -51,7 +51,7 @@ impl RulingStore for SqliteRulingStore {
         );
         let ruling = Ruling::restore(
             id,
-            draft.project_id.clone(),
+            draft.project_id,
             draft.entity.clone(),
             draft.summary.clone(),
             draft.supersedes,
@@ -62,13 +62,13 @@ impl RulingStore for SqliteRulingStore {
         Ok(ruling)
     }
 
-    fn find(&self, project_id: &str, id: RulingId) -> Result<Option<Ruling>, ApiError> {
+    fn find(&self, project_id: u64, id: RulingId) -> Result<Option<Ruling>, ApiError> {
         let conn = self.lock();
         let row = conn.query_row(
             "SELECT id, project_id, entity_kind, entity_id, summary, supersedes_id, recorded_at
              FROM rulings
              WHERE id = ?1 AND project_id = ?2",
-            params![id.value() as i64, project_id],
+            params![id.value() as i64, project_id.to_string()],
             decode_row,
         );
         match row {
@@ -85,7 +85,7 @@ impl RulingStore for SqliteRulingStore {
              FROM rulings
              WHERE project_id = ?1",
         );
-        let mut bindings: Vec<String> = vec![query.project_id.clone()];
+        let mut bindings: Vec<String> = vec![query.project_id.to_string()];
         if let Some(entity) = &query.entity {
             sql.push_str(" AND entity_kind = ? AND entity_id = ?");
             bindings.push(entity.kind.as_str().to_owned());
@@ -130,7 +130,15 @@ fn entity_parts(entity: &Option<RulingEntityRef>) -> (Option<String>, Option<Str
 
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Ruling> {
     let id = row.get::<_, i64>(0)?.unsigned_abs();
-    let project_id: String = row.get(1)?;
+    // A non-numeric scope is a legacy row migration 0011 missed;
+    // refusing it beats guessing which Project owns it.
+    let project_id: u64 = row.get::<_, String>(1)?.parse().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(CorruptScope),
+        )
+    })?;
     let entity_kind: Option<String> = row.get(2)?;
     let entity_id: Option<String> = row.get(3)?;
     let summary: String = row.get(4)?;
@@ -184,6 +192,18 @@ impl std::fmt::Display for CorruptSummary {
 
 impl std::error::Error for CorruptSummary {}
 
+/// A stored Project scope was not a numeric identity.
+#[derive(Debug)]
+struct CorruptScope;
+
+impl std::fmt::Display for CorruptScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a stored ruling names a non-numeric Project scope")
+    }
+}
+
+impl std::error::Error for CorruptScope {}
+
 fn append_timeline(
     conn: &rusqlite::Connection,
     ruling: &Ruling,
@@ -202,7 +222,7 @@ fn append_timeline(
         facts.kind,
         ruling_entity(ruling)?,
         detail,
-    )?;
+    );
     insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
@@ -235,13 +255,13 @@ mod tests {
     }
 
     fn draft(
-        project_id: &str,
+        project_id: u64,
         summary: &str,
         entity: Option<RulingEntityRef>,
         supersedes: Option<RulingId>,
     ) -> kanban_domain::RulingDraft {
         kanban_domain::RulingDraft {
-            project_id: project_id.to_owned(),
+            project_id,
             entity,
             summary: RulingSummary::new(summary).expect("summary validates"),
             supersedes,
@@ -254,7 +274,7 @@ mod tests {
         let ruling = store
             .insert(
                 &draft(
-                    "kan",
+                    1,
                     "Allow landing",
                     Some(RulingEntityRef {
                         kind: "ticket".to_owned(),
@@ -287,7 +307,7 @@ mod tests {
         let (_dir, database, store) = store();
         store
             .insert(
-                &draft("kan", "Hold", None, None),
+                &draft(1, "Hold", None, None),
                 append(json!({ "summary": "Hold" })),
             )
             .expect("the insert lands");
@@ -308,7 +328,7 @@ mod tests {
         let (_dir, database, store) = store();
         store
             .insert(
-                &draft("kan", "Hold", None, None),
+                &draft(1, "Hold", None, None),
                 append(json!({ "summary": "Hold" })),
             )
             .expect("the insert lands");
@@ -327,20 +347,20 @@ mod tests {
         let (_dir, _database, store) = store();
         let original = store
             .insert(
-                &draft("kan", "Hold", None, None),
+                &draft(1, "Hold", None, None),
                 append(json!({ "summary": "Hold" })),
             )
             .expect("the original lands");
         store
             .insert(
-                &draft("kan", "Proceed", None, Some(original.id())),
+                &draft(1, "Proceed", None, Some(original.id())),
                 append(json!({ "summary": "Proceed", "supersedes_id": original.id().value() })),
             )
             .expect("the superseding record lands");
 
         let listed = store
             .list(&RulingListQuery {
-                project_id: "kan".to_owned(),
+                project_id: 1,
                 entity: None,
             })
             .expect("the list serves");

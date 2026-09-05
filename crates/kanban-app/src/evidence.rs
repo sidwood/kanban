@@ -16,12 +16,13 @@ use crate::dispatch::{Core, RegistrationError};
 use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
+use crate::project::{ProjectStore, resolve_project};
 use crate::timeline::{TimelineEnvelope, TimelineFacts};
 
 /// Filter for listing evidence within one Project.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EvidenceFilter {
-    pub project_id: String,
+    pub project_id: u64,
     pub entity_kind: Option<String>,
     pub entity_id: Option<String>,
 }
@@ -32,7 +33,7 @@ pub trait EvidenceStore: Send + Sync {
     /// Store managed-file bytes and metadata.
     fn attach_managed_file(
         &self,
-        project_id: &str,
+        project_id: u64,
         entity_kind: &str,
         entity_id: &str,
         content_base64: &str,
@@ -42,7 +43,7 @@ pub trait EvidenceStore: Send + Sync {
     /// Record repository evidence without copying content.
     fn attach_repository(
         &self,
-        project_id: &str,
+        project_id: u64,
         entity_kind: &str,
         entity_id: &str,
         relative_path: &RelativePath,
@@ -59,18 +60,21 @@ pub trait EvidenceStore: Send + Sync {
 }
 
 impl Core {
-    /// Register the evidence operations against `store`.
+    /// Register the evidence operations against `store`, resolving
+    /// their Project through `projects`.
     pub fn register_evidence(
         &mut self,
         store: Arc<dyn EvidenceStore>,
+        projects: Arc<dyn ProjectStore>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "evidence.attach",
             Arc::new(AttachEvidence {
                 store: store.clone(),
+                projects: projects.clone(),
             }),
         )?;
-        self.register_command("evidence.list", Arc::new(ListEvidence { store }))?;
+        self.register_command("evidence.list", Arc::new(ListEvidence { store, projects }))?;
         Ok(())
     }
 }
@@ -78,6 +82,7 @@ impl Core {
 /// Serves `evidence.attach`.
 struct AttachEvidence {
     store: Arc<dyn EvidenceStore>,
+    projects: Arc<dyn ProjectStore>,
 }
 
 impl CommandHandler for AttachEvidence {
@@ -96,7 +101,8 @@ impl CommandHandler for AttachEvidence {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: EvidenceAttachRequest = parse_payload(&command.payload)?;
-        let project_id = parse_project_id(&request.project_id)?;
+        let project = resolve_project(self.projects.as_ref(), request.project_id)?;
+        let project_id = project.id().value();
         let (entity_kind, entity_id) = parse_subject(&request.entity_kind, &request.entity_id)?;
         let item = match request.evidence_kind {
             EvidenceKindDto::ManagedFile => {
@@ -108,7 +114,7 @@ impl CommandHandler for AttachEvidence {
                     .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
                 let hash = content_hash(&content);
                 self.store.attach_managed_file(
-                    &project_id,
+                    project_id,
                     &entity_kind,
                     &entity_id,
                     content_base64,
@@ -140,7 +146,7 @@ impl CommandHandler for AttachEvidence {
                 let commit = CommitIdentity::new(commit_identity)
                     .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
                 self.store.attach_repository(
-                    &project_id,
+                    project_id,
                     &entity_kind,
                     &entity_id,
                     &path,
@@ -167,6 +173,7 @@ impl CommandHandler for AttachEvidence {
 /// Serves `evidence.list`.
 struct ListEvidence {
     store: Arc<dyn EvidenceStore>,
+    projects: Arc<dyn ProjectStore>,
 }
 
 impl CommandHandler for ListEvidence {
@@ -185,7 +192,8 @@ impl CommandHandler for ListEvidence {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: EvidenceListRequest = parse_payload(&command.payload)?;
-        let project_id = parse_project_id(&request.project_id)?;
+        let project = resolve_project(self.projects.as_ref(), request.project_id)?;
+        let project_id = project.id().value();
         let entity_kind = request
             .entity_kind
             .as_deref()
@@ -197,7 +205,7 @@ impl CommandHandler for ListEvidence {
             .map(parse_entity_id)
             .transpose()?;
         let filter = EvidenceFilter {
-            project_id: project_id.clone(),
+            project_id,
             entity_kind: entity_kind.clone(),
             entity_id: entity_id.clone(),
         };
@@ -210,7 +218,7 @@ impl CommandHandler for ListEvidence {
                 id: id.to_owned(),
             });
         let envelope = TimelineEnvelope::project(
-            &project_id,
+            project_id,
             TimelineEventKind::Evidence,
             entity,
             json!({
@@ -218,22 +226,14 @@ impl CommandHandler for ListEvidence {
                 "entity_kind": entity_kind,
                 "entity_id": entity_id,
             }),
-        )?;
+        );
         let items = self.store.list(&filter, envelope)?;
-        announce_list(effects, &project_id, items.len());
+        announce_list(effects, project_id, items.len());
         let response = EvidenceListResponse {
             evidence: items.iter().map(record_of).collect(),
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
-}
-
-fn parse_project_id(project_id: &str) -> Result<String, ApiError> {
-    let trimmed = project_id.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::invalid_request("evidence must name its project"));
-    }
-    Ok(trimmed.to_owned())
 }
 
 fn parse_entity_kind(entity_kind: &str) -> Result<String, ApiError> {
@@ -268,7 +268,7 @@ fn validate_entity_kind(entity_kind: &str) -> Result<(), ApiError> {
 fn record_of(item: &EvidenceItem) -> EvidenceRecord {
     EvidenceRecord {
         id: item.id().value(),
-        project_id: item.project_id().to_owned(),
+        project_id: item.project_id(),
         entity_kind: item.entity_kind().to_owned(),
         entity_id: item.entity_id().to_owned(),
         evidence_kind: match item.kind() {
@@ -291,14 +291,11 @@ fn announce(effects: &dyn CommandEffects, kind: &str, item: &EvidenceItem) {
     emit_catalogued(effects, event_descriptor(kind), &record_of(item));
 }
 
-fn announce_list(effects: &dyn CommandEffects, project_id: &str, count: usize) {
+fn announce_list(effects: &dyn CommandEffects, project_id: u64, count: usize) {
     emit_catalogued(
         effects,
         event_descriptor("evidence.listed"),
-        &EvidenceListSummary {
-            project_id: project_id.to_owned(),
-            count,
-        },
+        &EvidenceListSummary { project_id, count },
     );
 }
 
@@ -323,6 +320,7 @@ mod evidence_attach {
     use crate::dispatch::Core;
     use crate::events::EventSink;
     use crate::mutation::MemoryIdempotencyStore;
+    use crate::project::testing::{MemoryProjectStore, stored_project};
 
     #[derive(Default)]
     struct MemoryEvidenceStore {
@@ -346,7 +344,7 @@ mod evidence_attach {
     impl EvidenceStore for MemoryEvidenceStore {
         fn attach_managed_file(
             &self,
-            project_id: &str,
+            project_id: u64,
             entity_kind: &str,
             entity_id: &str,
             content_base64: &str,
@@ -361,7 +359,7 @@ mod evidence_attach {
             let item = EvidenceItem::restore(
                 EvidenceId::new(state.next_id),
                 EvidenceShape {
-                    project_id: project_id.to_owned(),
+                    project_id,
                     entity_kind: entity_kind.to_owned(),
                     entity_id: entity_id.to_owned(),
                     kind: EvidenceKind::ManagedFile,
@@ -384,7 +382,7 @@ mod evidence_attach {
 
         fn attach_repository(
             &self,
-            project_id: &str,
+            project_id: u64,
             entity_kind: &str,
             entity_id: &str,
             relative_path: &RelativePath,
@@ -396,7 +394,7 @@ mod evidence_attach {
             let item = EvidenceItem::restore(
                 EvidenceId::new(state.next_id),
                 EvidenceShape {
-                    project_id: project_id.to_owned(),
+                    project_id,
                     entity_kind: entity_kind.to_owned(),
                     entity_id: entity_id.to_owned(),
                     kind: EvidenceKind::Repository,
@@ -457,12 +455,22 @@ mod evidence_attach {
     }
 
     fn evidence_core(store: Arc<MemoryEvidenceStore>, events: Arc<dyn EventSink>) -> Core {
+        let projects = Arc::new(MemoryProjectStore::default());
+        projects.seed(stored_project(1, "CORE", "kanban-main"));
+        evidence_core_with(store, projects, events)
+    }
+
+    fn evidence_core_with(
+        store: Arc<MemoryEvidenceStore>,
+        projects: Arc<MemoryProjectStore>,
+        events: Arc<dyn EventSink>,
+    ) -> Core {
         let mut core = Core::new(
             exposed_operations(),
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
-        core.register_evidence(store)
+        core.register_evidence(store, projects)
             .expect("the evidence operations register");
         core
     }
@@ -470,7 +478,7 @@ mod evidence_attach {
     fn attach_managed(key: &str) -> Value {
         json!({
             "mutation": { "optimistic_version": 0, "idempotency_key": key },
-            "project_id": "kan-p1",
+            "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "kan-t10",
             "evidence_kind": "managed_file",
@@ -481,7 +489,7 @@ mod evidence_attach {
     fn attach_repository(key: &str) -> Value {
         json!({
             "mutation": { "optimistic_version": 0, "idempotency_key": key },
-            "project_id": "kan-p1",
+            "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "kan-t10",
             "evidence_kind": "repository",
@@ -493,7 +501,7 @@ mod evidence_attach {
     fn list(key: &str) -> Value {
         json!({
             "mutation": { "optimistic_version": 0, "idempotency_key": key },
-            "project_id": "kan-p1",
+            "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "kan-t10",
         })
@@ -577,7 +585,7 @@ mod evidence_attach {
                 "evidence.attach",
                 &json!({
                     "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
-                    "project_id": "kan-p1",
+                    "project_id": 1,
                     "entity_kind": "ticket",
                     "entity_id": "kan-t10",
                     "evidence_kind": "managed_file",
@@ -600,7 +608,7 @@ mod evidence_attach {
                 "evidence.attach",
                 &json!({
                     "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
-                    "project_id": "kan-p1",
+                    "project_id": 1,
                     "entity_kind": "ticket",
                     "entity_id": "kan-t10",
                     "evidence_kind": "managed_file",
@@ -615,7 +623,7 @@ mod evidence_attach {
     }
 
     #[test]
-    fn attaching_with_blank_project_id_is_refused_without_recording_anything() {
+    fn attaching_for_an_unknown_project_is_not_found_without_recording_anything() {
         let store = Arc::new(MemoryEvidenceStore::default());
         let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
 
@@ -624,16 +632,17 @@ mod evidence_attach {
                 "evidence.attach",
                 &json!({
                     "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
-                    "project_id": "   ",
+                    "project_id": 9,
                     "entity_kind": "ticket",
                     "entity_id": "kan-t10",
                     "evidence_kind": "managed_file",
                     "content_base64": STANDARD.encode(b"proof"),
                 }),
             )
-            .expect_err("a blank project is refused");
+            .expect_err("an unresolved Project is refused");
 
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(error.message.contains("project 9"));
         let (items, timeline) = store.snapshot();
         assert!(items.is_empty());
         assert!(timeline.is_empty());
@@ -649,7 +658,7 @@ mod evidence_attach {
                 "evidence.attach",
                 &json!({
                     "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
-                    "project_id": "kan-p1",
+                    "project_id": 1,
                     "entity_kind": "ticket",
                     "entity_id": "   ",
                     "evidence_kind": "managed_file",
@@ -665,7 +674,7 @@ mod evidence_attach {
     }
 
     #[test]
-    fn attaching_canonicalises_untrimmed_identities() {
+    fn attaching_canonicalises_untrimmed_entity_identities() {
         let store = Arc::new(MemoryEvidenceStore::default());
         let core = evidence_core(store.clone(), Arc::new(crate::events::NoopEventSink));
 
@@ -673,7 +682,7 @@ mod evidence_attach {
             "evidence.attach",
             &json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
-                "project_id": " kan-p1 ",
+                "project_id": 1,
                 "entity_kind": "ticket",
                 "entity_id": " kan-t10 ",
                 "evidence_kind": "managed_file",
@@ -683,7 +692,7 @@ mod evidence_attach {
         .expect("the attach applies");
 
         let (items, timeline) = store.snapshot();
-        assert_eq!(items[0].project_id(), "kan-p1");
+        assert_eq!(items[0].project_id(), 1);
         assert_eq!(items[0].entity_id(), "kan-t10");
         assert_eq!(timeline[0].1["entity_kind"], json!("ticket"));
         assert_eq!(timeline[0].1["entity_id"], json!("kan-t10"));

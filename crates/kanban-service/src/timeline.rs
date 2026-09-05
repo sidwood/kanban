@@ -32,7 +32,7 @@ impl StorageTimelineStore {
 impl TimelineStore for StorageTimelineStore {
     fn query(&self, query: &TimelineQuery) -> Result<Vec<TimelineEventRecord>, TimelineError> {
         let filter = TimelineFilter {
-            scope: query.scope.clone(),
+            scope: query.scope,
             entity_kind: query
                 .entity
                 .as_ref()
@@ -85,10 +85,14 @@ fn row_scope(scope: &str, project_id: String) -> Result<TimelineScope, TimelineE
         "global" => Err(TimelineError::Storage(format!(
             "a global timeline row named the Project `{project_id}`"
         ))),
-        "project" if project_id.is_empty() => Err(TimelineError::Storage(
-            "a Project timeline row named no Project".to_owned(),
-        )),
-        "project" => Ok(TimelineScope::Project(project_id)),
+        "project" => {
+            let identity = project_id.parse().map_err(|_| {
+                TimelineError::Storage(format!(
+                    "a timeline row named the non-numeric Project scope `{project_id}`"
+                ))
+            })?;
+            Ok(TimelineScope::Project(identity))
+        }
         other => Err(TimelineError::Storage(format!(
             "unknown stored timeline scope `{other}`"
         ))),
@@ -233,7 +237,7 @@ mod timeline_socket_sqlite {
         let dir = TempDir::new().expect("a scratch directory is available");
         let (core, mut client) = core_with_initiative_history(&dir);
 
-        let answer = client.query_with("timeline.query", json!({ "scope": { "project": "kan" } }));
+        let answer = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
 
         assert!(
             events(&answer).is_empty(),

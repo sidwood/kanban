@@ -419,12 +419,11 @@ mod tests {
         let project = projects
             .create(&registration, &|_| {
                 TimelineEnvelope::project(
-                    "1",
+                    1,
                     TimelineEventKind::Transition,
                     None,
                     json!({ "action": "registered" }),
                 )
-                .expect("the envelope validates")
             })
             .expect("the project registers");
         settings

@@ -85,15 +85,15 @@ fn transition(
     object.insert("action".to_owned(), Value::from(action));
     object.insert("id".to_owned(), Value::from(workspace_id.value()));
     let identity = workspace_id.value().to_string();
-    TimelineEnvelope::project(
-        &project_id.value().to_string(),
+    Ok(TimelineEnvelope::project(
+        project_id.value(),
         TimelineEventKind::Transition,
         Some(TimelineEntityRef {
             kind: TimelineEntityKind::Workspace,
             id: identity.clone(),
         }),
         detail,
-    )
+    ))
 }
 
 fn health_transition(

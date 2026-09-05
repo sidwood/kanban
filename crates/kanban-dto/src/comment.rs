@@ -26,7 +26,7 @@ pub struct CommentRecord {
     /// The immutable, storage-assigned identity.
     pub id: u64,
     /// The owning Project.
-    pub project_id: String,
+    pub project_id: u64,
     /// The entity this Comment attaches to.
     pub target: TimelineEntityRef,
     /// The current text, resolved from the latest revision.
@@ -40,8 +40,8 @@ pub struct CommentRecord {
 #[serde(deny_unknown_fields)]
 pub struct CommentCreateRequest {
     pub mutation: super::MutationContext,
-    /// The owning Project.
-    pub project_id: String,
+    /// The owning Project, resolved before any write.
+    pub project_id: u64,
     /// The entity this Comment attaches to.
     pub target: TimelineEntityRef,
     /// The initial text; blank text is refused.
@@ -107,7 +107,7 @@ mod tests {
     fn a_record_round_trips() {
         let record = CommentRecord {
             id: 3,
-            project_id: "kan".to_owned(),
+            project_id: 1,
             target: target(),
             text: "Ship it".to_owned(),
             version: 2,
@@ -118,7 +118,7 @@ mod tests {
             encoded,
             json!({
                 "id": 3,
-                "project_id": "kan",
+                "project_id": 1,
                 "target": { "kind": "ticket", "id": "kan-t11" },
                 "text": "Ship it",
                 "version": 2,
@@ -133,7 +133,7 @@ mod tests {
     fn create_and_edit_requests_reject_unknown_fields() {
         let create = CommentCreateRequest {
             mutation: context(),
-            project_id: "kan".to_owned(),
+            project_id: 1,
             target: target(),
             text: "First".to_owned(),
         };
@@ -144,7 +144,7 @@ mod tests {
 
         let refused: Result<CommentCreateRequest, _> = serde_json::from_value(json!({
             "mutation": context(),
-            "project_id": "kan",
+            "project_id": 1,
             "target": target(),
             "text": "First",
             "surprise": true,
@@ -167,7 +167,7 @@ mod tests {
         let response = CommentRevisionsResponse {
             comment: CommentRecord {
                 id: 1,
-                project_id: "kan".to_owned(),
+                project_id: 1,
                 target: target(),
                 text: "Latest".to_owned(),
                 version: 2,

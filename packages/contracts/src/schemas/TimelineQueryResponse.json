@@ -91,7 +91,7 @@
       "type": "object"
     },
     "TimelineScope": {
-      "description": "Where a timeline row belongs. Entities that sit above every Project — Initiatives, for one — are recorded globally; everything inside a Project is recorded against that Project's identity.",
+      "description": "Where a timeline row belongs. Entities that sit above every Project — Initiatives, for one — are recorded globally; everything inside a Project is recorded against that Project's numeric identity, resolved through the Project store before any write.",
       "oneOf": [
         {
           "description": "Above every Project.",
@@ -102,10 +102,12 @@
         },
         {
           "additionalProperties": false,
-          "description": "One Project's own timeline, named by its identity.",
+          "description": "One Project's own timeline, named by its numeric identity.",
           "properties": {
             "project": {
-              "type": "string"
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [

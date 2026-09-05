@@ -101,7 +101,7 @@ fn fixture() -> (TempDir, Fixture) {
     projects
         .create(&registration, &|id| {
             kanban_app::timeline::TimelineEnvelope::project(
-                &id.value().to_string(),
+                id.value(),
                 TimelineEventKind::Transition,
                 Some(TimelineEntityRef {
                     kind: TimelineEntityKind::Project,
@@ -109,7 +109,6 @@ fn fixture() -> (TempDir, Fixture) {
                 }),
                 json!({ "action": "registered", "code": "CORE", "id": id.value() }),
             )
-            .expect("a minted Project identity names a Project")
         })
         .expect("the project registers");
 

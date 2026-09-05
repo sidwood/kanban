@@ -499,7 +499,7 @@ mod tests {
         let created = projects
             .create(&registration(), &|id| {
                 TimelineEnvelope::project(
-                    &id.value().to_string(),
+                    id.value(),
                     TimelineEventKind::Transition,
                     Some(TimelineEntityRef {
                         kind: TimelineEntityKind::Project,
@@ -507,7 +507,6 @@ mod tests {
                     }),
                     json!({ "action": "registered", "id": id.value() }),
                 )
-                .expect("a minted Project identity names a Project")
             })
             .expect("the fixture Project lands");
         Project::restore(
@@ -527,7 +526,7 @@ mod tests {
         object.insert("action".to_owned(), serde_json::Value::from(action));
         object.insert("id".to_owned(), serde_json::Value::from(spec.value()));
         TimelineEnvelope::project(
-            "1",
+            1,
             TimelineEventKind::Transition,
             Some(TimelineEntityRef {
                 kind: TimelineEntityKind::Spec,
@@ -535,7 +534,6 @@ mod tests {
             }),
             detail,
         )
-        .expect("a minted Spec identity names a Spec")
     }
 
     /// Author one Spec on the seeded Project, persisting it, and
@@ -792,7 +790,7 @@ mod tests {
         let plan = plan_store
             .create(&project, plan_number, &|id| {
                 TimelineEnvelope::project(
-                    "1",
+                    1,
                     TimelineEventKind::Transition,
                     Some(TimelineEntityRef {
                         kind: TimelineEntityKind::Plan,
@@ -800,7 +798,6 @@ mod tests {
                     }),
                     json!({ "action": "created", "id": id.value() }),
                 )
-                .expect("a minted Plan identity names a Plan")
             })
             .expect("the fixture Plan lands");
 
@@ -841,7 +838,7 @@ mod tests {
         let plan = plan_store
             .create(&project, plan_number, &|id| {
                 TimelineEnvelope::project(
-                    "1",
+                    1,
                     TimelineEventKind::Transition,
                     Some(TimelineEntityRef {
                         kind: TimelineEntityKind::Plan,
@@ -849,7 +846,6 @@ mod tests {
                     }),
                     json!({ "action": "created", "id": id.value() }),
                 )
-                .expect("a minted Plan identity names a Plan")
             })
             .expect("the fixture Plan lands");
 
@@ -1072,7 +1068,7 @@ mod tests {
             .expect("the approval lands");
 
         let rows = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project("1".to_owned())))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("the Project timeline is readable");
 
         let spec_rows: Vec<_> = rows

@@ -301,7 +301,7 @@ mod project_repository {
         object.insert("action".to_owned(), serde_json::Value::from(action));
         object.insert("id".to_owned(), serde_json::Value::from(id.value()));
         TimelineEnvelope::project(
-            &id.value().to_string(),
+            id.value(),
             TimelineEventKind::Transition,
             Some(TimelineEntityRef {
                 kind: TimelineEntityKind::Project,
@@ -309,7 +309,6 @@ mod project_repository {
             }),
             detail,
         )
-        .expect("a minted Project identity names a Project")
     }
 
     /// The envelope builder a registration hands the store.
@@ -759,7 +758,7 @@ mod project_repository {
             .expect("the archive lands");
 
         let rows = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project("1".to_owned())))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("the Project timeline is readable");
 
         assert_eq!(rows.len(), 2, "registration and archive both land");

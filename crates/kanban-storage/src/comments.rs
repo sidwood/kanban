@@ -36,7 +36,7 @@ impl SqliteCommentStore {
 impl CommentStore for SqliteCommentStore {
     fn create(
         &self,
-        project_id: &str,
+        project_id: u64,
         target: &CommentTarget,
         text: &CommentText,
     ) -> Result<Comment, ApiError> {
@@ -45,7 +45,7 @@ impl CommentStore for SqliteCommentStore {
         span.execute(
             "INSERT INTO comments (project_id, entity_kind, entity_id, version)
                  VALUES (?1, ?2, ?3, 1)",
-            params![project_id, target.kind(), target.id()],
+            params![project_id.to_string(), target.kind(), target.id()],
         )
         .map_err(internal)?;
         let id = CommentId::new(
@@ -84,6 +84,7 @@ impl CommentStore for SqliteCommentStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(error) => return Err(ApiError::internal(&error.to_string())),
         };
+        let project_id = decode_project(&project_id)?;
         let target = decode_target(&entity_kind, &entity_id)?;
         let revisions = load_revisions(&conn, id)?;
         Ok(Some(Comment::restore(
@@ -163,6 +164,17 @@ fn internal(error: rusqlite::Error) -> ApiError {
     ApiError::internal(&error.to_string())
 }
 
+/// The numeric Project identity a stored row carries. Anything else is
+/// a legacy scope migration 0011 missed, which is corruption the
+/// caller must hear about rather than quietly reinterpret.
+fn decode_project(project_id: &str) -> Result<u64, ApiError> {
+    project_id.parse().map_err(|_| {
+        ApiError::internal(&format!(
+            "a stored comment names the non-numeric Project scope `{project_id}`"
+        ))
+    })
+}
+
 fn decode_target(entity_kind: &str, entity_id: &str) -> Result<CommentTarget, ApiError> {
     CommentTarget::new(entity_kind, entity_id)
         .map_err(|error| ApiError::internal(&error.to_string()))
@@ -233,7 +245,7 @@ fn append_revision(
 
 fn append_timeline(
     conn: &rusqlite::Connection,
-    project_id: &str,
+    project_id: u64,
     target: &CommentTarget,
     id: CommentId,
     text: &CommentText,
@@ -256,14 +268,14 @@ fn append_timeline(
             "revision": revision,
             "recorded_at": recorded_at,
         }),
-    )?;
+    );
     insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
 fn record_of(comment: &Comment) -> CommentRecord {
     CommentRecord {
         id: comment.id().value(),
-        project_id: comment.project_id().to_owned(),
+        project_id: comment.project_id(),
         target: TimelineEntityRef {
             // The target passed the vocabulary check on the way
             // in; anything else is corruption.
@@ -346,7 +358,7 @@ mod revision_store {
         let (_dir, database, store) = store();
 
         let comment = store
-            .create("kan", &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"))
             .expect("the create lands");
 
         assert_eq!(comment.id().value(), 1);
@@ -369,7 +381,7 @@ mod revision_store {
     fn editing_appends_a_revision_and_updates_current_text() {
         let (_dir, database, store) = store();
         let mut comment = store
-            .create("kan", &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"))
             .expect("the create lands");
         comment
             .edit(text("corrected thought"))
@@ -396,7 +408,7 @@ mod revision_store {
     fn revisions_query_returns_history_in_order() {
         let (_dir, _database, store) = store();
         let mut comment = store
-            .create("kan", &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"))
             .expect("the create lands");
         comment
             .edit(text("second thought"))
@@ -420,7 +432,7 @@ mod revision_store {
     fn updating_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create("kan", &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"))
             .expect("the create lands");
 
         let outcome = database
@@ -438,7 +450,7 @@ mod revision_store {
     fn deleting_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create("kan", &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"))
             .expect("the create lands");
 
         let outcome = database
@@ -455,8 +467,7 @@ mod revision_store {
     #[test]
     fn saving_an_unknown_comment_is_not_found() {
         let (_dir, _database, store) = store();
-        let ghost =
-            kanban_domain::Comment::create(CommentId::new(9), "kan", target(), text("ghost"));
+        let ghost = kanban_domain::Comment::create(CommentId::new(9), 1, target(), text("ghost"));
 
         let error = store
             .save(&ghost)

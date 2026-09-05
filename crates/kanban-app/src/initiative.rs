@@ -626,7 +626,7 @@ mod tests {
             timeline
                 .iter()
                 .map(|envelope| (
-                    envelope.scope().clone(),
+                    *envelope.scope(),
                     envelope.kind(),
                     envelope.entity().cloned(),
                     envelope.detail().clone(),

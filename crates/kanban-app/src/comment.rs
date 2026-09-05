@@ -15,13 +15,15 @@ use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::event_catalog::event_descriptor;
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
+use crate::project::{ProjectStore, resolve_project};
 
 /// The storage port Comment commands call through.
 pub trait CommentStore: Send + Sync {
-    /// Insert a fresh Comment with its first revision.
+    /// Insert a fresh Comment with its first revision, under the
+    /// resolved Project's numeric identity.
     fn create(
         &self,
-        project_id: &str,
+        project_id: u64,
         target: &CommentTarget,
         text: &CommentText,
     ) -> Result<Comment, ApiError>;
@@ -40,15 +42,18 @@ pub trait CommentStore: Send + Sync {
 }
 
 impl Core {
-    /// Register the Comment operations against `store`.
+    /// Register the Comment operations against `store`, resolving
+    /// their Project through `projects`.
     pub fn register_comments(
         &mut self,
         store: Arc<dyn CommentStore>,
+        projects: Arc<dyn ProjectStore>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "comment.create",
             Arc::new(CreateComment {
                 store: store.clone(),
+                projects,
             }),
         )?;
         self.register_command(
@@ -65,6 +70,7 @@ impl Core {
 /// Serves `comment.create`.
 struct CreateComment {
     store: Arc<dyn CommentStore>,
+    projects: Arc<dyn ProjectStore>,
 }
 
 impl CommandHandler for CreateComment {
@@ -83,9 +89,10 @@ impl CommandHandler for CreateComment {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
+        let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_text(&request.text)?;
         let target = parse_target(&request.target)?;
-        let comment = self.store.create(&request.project_id, &target, &text)?;
+        let comment = self.store.create(project.id().value(), &target, &text)?;
         announce(effects, event_descriptor("comment.created"), &comment);
         encode_record(&comment)
     }
@@ -157,7 +164,7 @@ fn parse_target(target: &TimelineEntityRef) -> Result<CommentTarget, ApiError> {
 fn record_of(comment: &Comment) -> CommentRecord {
     CommentRecord {
         id: comment.id().value(),
-        project_id: comment.project_id().to_owned(),
+        project_id: comment.project_id(),
         target: TimelineEntityRef {
             // The target passed the vocabulary check on the way in;
             // anything else is corruption, not a value to carry.
@@ -195,6 +202,7 @@ mod comments {
     use crate::dispatch::Core;
     use crate::events::EventSink;
     use crate::mutation::MemoryIdempotencyStore;
+    use crate::project::testing::MemoryProjectStore;
 
     #[derive(Default)]
     struct MemoryCommentStore {
@@ -221,7 +229,7 @@ mod comments {
     impl CommentStore for MemoryCommentStore {
         fn create(
             &self,
-            project_id: &str,
+            project_id: u64,
             target: &CommentTarget,
             text: &CommentText,
         ) -> Result<Comment, kanban_dto::ApiError> {
@@ -310,21 +318,43 @@ mod comments {
         }
     }
 
-    fn comment_core(store: Arc<MemoryCommentStore>, events: Arc<dyn EventSink>) -> Core {
+    fn comment_core(
+        store: Arc<MemoryCommentStore>,
+        projects: Arc<MemoryProjectStore>,
+        events: Arc<dyn EventSink>,
+    ) -> Core {
         let mut core = Core::new(
             exposed_operations(),
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
-        core.register_comments(store)
+        core.register_comments(store, projects)
             .expect("the comment operations register");
         core
     }
 
+    /// A core with one stored Project (identity 1) and a comment
+    /// store, the fixture every comment test shares.
+    fn fixture(events: Arc<dyn EventSink>) -> (Arc<MemoryCommentStore>, Core) {
+        let store = Arc::new(MemoryCommentStore::default());
+        let projects = Arc::new(MemoryProjectStore::default());
+        projects.seed(crate::project::testing::stored_project(
+            1,
+            "CORE",
+            "kanban-main",
+        ));
+        let core = comment_core(store.clone(), projects, events);
+        (store, core)
+    }
+
     fn create(text: &str, key: &str, version: u64) -> Value {
+        create_for(1, text, key, version)
+    }
+
+    fn create_for(project_id: u64, text: &str, key: &str, version: u64) -> Value {
         json!({
             "mutation": { "optimistic_version": version, "idempotency_key": key },
-            "project_id": "kan",
+            "project_id": project_id,
             "target": target(),
             "text": text,
         })
@@ -340,8 +370,7 @@ mod comments {
 
     #[test]
     fn creating_returns_the_comment_at_revision_one() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
 
         let response = core
             .command("comment.create", &create("First thought", "key-1", 0))
@@ -351,18 +380,31 @@ mod comments {
             response,
             json!({
                 "id": 1,
-                "project_id": "kan",
+                "project_id": 1,
                 "target": target(),
                 "text": "First thought",
                 "version": 1,
             })
         );
+        assert_eq!(store.snapshot()[0].project_id(), 1);
+    }
+
+    #[test]
+    fn creating_for_an_unknown_project_is_not_found_without_recording_anything() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        let error = core
+            .command("comment.create", &create_for(9, "Ghost", "key-1", 0))
+            .expect_err("the unknown Project is refused");
+
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(error.message.contains("project 9"));
+        assert!(store.snapshot().is_empty(), "no row may be written");
     }
 
     #[test]
     fn editing_appends_a_revision_and_updates_current_text() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
         core.command("comment.create", &create("First thought", "key-1", 0))
             .expect("the create applies");
 
@@ -374,7 +416,7 @@ mod comments {
             response,
             json!({
                 "id": 1,
-                "project_id": "kan",
+                "project_id": 1,
                 "target": target(),
                 "text": "Corrected thought",
                 "version": 2,
@@ -391,8 +433,7 @@ mod comments {
 
     #[test]
     fn revisions_query_returns_full_history_in_order() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store, Arc::new(crate::events::NoopEventSink));
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
         core.command("comment.create", &create("First thought", "key-1", 0))
             .expect("the create applies");
         core.command("comment.edit", &edit(1, "Second thought", "key-2", 1))
@@ -409,7 +450,7 @@ mod comments {
             json!({
                 "comment": {
                     "id": 1,
-                    "project_id": "kan",
+                    "project_id": 1,
                     "target": target(),
                     "text": "Latest thought",
                     "version": 3,
@@ -437,8 +478,7 @@ mod comments {
 
     #[test]
     fn editing_with_a_stale_version_is_rejected_with_the_current_one() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store, Arc::new(crate::events::NoopEventSink));
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
         core.command("comment.create", &create("First thought", "key-1", 0))
             .expect("the create applies");
 
@@ -452,8 +492,7 @@ mod comments {
 
     #[test]
     fn editing_an_unknown_comment_is_not_found() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store, Arc::new(crate::events::NoopEventSink));
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
 
         let error = core
             .command("comment.edit", &edit(9, "Ghost", "key-1", 0))
@@ -465,8 +504,7 @@ mod comments {
 
     #[test]
     fn blank_text_is_refused_on_create_and_edit_without_recording_anything() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store.clone(), Arc::new(crate::events::NoopEventSink));
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
 
         let create_error = core
             .command("comment.create", &create("   ", "key-1", 0))
@@ -489,9 +527,8 @@ mod comments {
 
     #[test]
     fn comment_changes_publish_on_the_event_stream() {
-        let store = Arc::new(MemoryCommentStore::default());
         let sink = Arc::new(RecordingSink::default());
-        let core = comment_core(store, sink.clone());
+        let (_, core) = fixture(sink.clone());
         core.command("comment.create", &create("First thought", "key-1", 0))
             .expect("the create applies");
 
@@ -502,7 +539,7 @@ mod comments {
                 "comment.created".to_owned(),
                 json!({
                     "id": 1,
-                    "project_id": "kan",
+                    "project_id": 1,
                     "target": { "kind": "ticket", "id": "kan-t11" },
                     "text": "First thought",
                     "version": 1,
@@ -513,8 +550,7 @@ mod comments {
 
     #[test]
     fn revisions_query_rejects_unknown_fields() {
-        let store = Arc::new(MemoryCommentStore::default());
-        let core = comment_core(store, Arc::new(crate::events::NoopEventSink));
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
 
         let error = core
             .query(

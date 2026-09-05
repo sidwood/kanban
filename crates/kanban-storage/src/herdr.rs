@@ -227,12 +227,11 @@ mod tests {
         let project = store
             .create(&registration, &|_| {
                 kanban_app::TimelineEnvelope::project(
-                    "1",
+                    1,
                     kanban_dto::TimelineEventKind::Transition,
                     None,
                     serde_json::json!({ "action": "registered" }),
                 )
-                .expect("the envelope validates")
             })
             .expect("the project registers");
         herdr

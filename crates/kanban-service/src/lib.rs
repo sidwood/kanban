@@ -140,10 +140,10 @@ fn assemble_core(
     )?;
     core.register_plans(plan_store.clone(), projects.clone(), spec_store.clone())?;
     core.register_specs(spec_store, projects, plan_store)?;
-    core.register_comments(comment_store)?;
-    core.register_rulings(ruling_store)?;
-    core.register_deferrals(deferral_store)?;
-    core.register_evidence(evidence_store)?;
+    core.register_comments(comment_store, project_store.clone())?;
+    core.register_rulings(ruling_store, project_store.clone())?;
+    core.register_deferrals(deferral_store, project_store.clone())?;
+    core.register_evidence(evidence_store, project_store.clone())?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),
@@ -706,7 +706,7 @@ mod tests {
         let answer = client.query_with(
             "timeline.query",
             json!({
-                "scope": { "project": "1" },
+                "scope": { "project": 1 },
                 "kinds": ["telemetry"],
             }),
         );
@@ -782,7 +782,7 @@ mod tests {
             }),
         );
 
-        let answer = client.query_with("timeline.query", json!({ "scope": { "project": "1" } }));
+        let answer = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
 
         let events = answer["events"]
             .as_array()
@@ -802,13 +802,13 @@ mod tests {
             recorded,
             vec![
                 (
-                    json!({ "project": "1" }),
+                    json!({ "project": 1 }),
                     json!("transition"),
                     json!({ "kind": "project", "id": "1" }),
                     json!("registered"),
                 ),
                 (
-                    json!({ "project": "1" }),
+                    json!({ "project": 1 }),
                     json!("transition"),
                     json!({ "kind": "project", "id": "1" }),
                     json!("archived"),
@@ -821,7 +821,7 @@ mod tests {
         let narrowed = client.query_with(
             "timeline.query",
             json!({
-                "scope": { "project": "1" },
+                "scope": { "project": 1 },
                 "entity": { "kind": "project", "id": "1" },
                 "kinds": ["transition"],
             }),
@@ -858,7 +858,7 @@ mod tests {
         let rebooted = boot(&dir);
         let mut second = Client::connect(rebooted.socket_path());
         assert_eq!(
-            second.query_with("timeline.query", json!({ "scope": { "project": "1" } })),
+            second.query_with("timeline.query", json!({ "scope": { "project": 1 } })),
             answer,
             "a restart serves the same typed history"
         );
@@ -870,17 +870,32 @@ mod tests {
     /// timeline readable. A list row once carried half an entity
     /// reference, which the timeline decoder refuses, so one
     /// `evidence.list` used to make the whole Project query fail.
+    /// KAN-T79: the evidence now resolves the registered Project's
+    /// numeric identity, so its rows join the Project's own history.
     #[test]
     fn evidence_commands_keep_the_project_timeline_readable() {
         let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = scratch_repository(&dir, "kanban");
         let core = boot(&dir);
         let mut client = Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-project" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository,
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
 
         let attached = client.command(
             "evidence.attach",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-attach" },
-                "project_id": "kan-p1",
+                "project_id": 1,
                 "entity_kind": "ticket",
                 "entity_id": "kan-t10",
                 "evidence_kind": "managed_file",
@@ -892,7 +907,7 @@ mod tests {
             "evidence.list",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-ticket" },
-                "project_id": "kan-p1",
+                "project_id": 1,
                 "entity_kind": "ticket",
                 "entity_id": "kan-t10",
             }),
@@ -901,14 +916,11 @@ mod tests {
             "evidence.list",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-list-project" },
-                "project_id": "kan-p1",
+                "project_id": 1,
             }),
         );
 
-        let timeline = client.query_with(
-            "timeline.query",
-            json!({ "scope": { "project": "kan-p1" } }),
-        );
+        let timeline = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
         let events = timeline["events"]
             .as_array()
             .expect("the timeline query answers with events");
@@ -919,11 +931,118 @@ mod tests {
         assert_eq!(
             entities,
             vec![
+                json!({ "kind": "project", "id": "1" }),
                 json!({ "kind": "ticket", "id": "kan-t10" }),
                 json!({ "kind": "ticket", "id": "kan-t10" }),
                 Value::Null,
             ],
-            "attach references the subject entity, a filtered list references the filter, a Project-wide list references nothing"
+            "registration, attach, a filtered list, and a Project-wide list all land on one timeline"
+        );
+
+        core.shutdown();
+    }
+
+    /// KAN-T79-AC2: comments, rulings, deferrals, evidence, Project
+    /// transitions, and Herdr telemetry all derive one canonical
+    /// timeline scope, so one query answers a Project's complete
+    /// history. KAN-T79-AC1: every command on the way there resolved
+    /// the numeric Project identity through the store.
+    #[test]
+    fn project_timeline_holds_every_project_scoped_row_under_one_scope() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = scratch_repository(&dir, "kanban");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let core = serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-core" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository,
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
+        client.command(
+            "comment.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "comment-1" },
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": "kan-t10" },
+                "text": "One timeline",
+            }),
+        );
+        client.command(
+            "ruling.record",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "ruling-1" },
+                "project_id": 1,
+                "summary": "Allow landing",
+            }),
+        );
+        client.command(
+            "deferral.record",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "deferral-1" },
+                "project_id": 1,
+                "finding_id": "finding-1",
+                "reason": "Cosmetic only",
+            }),
+        );
+        client.command(
+            "evidence.attach",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "evidence-1" },
+                "project_id": 1,
+                "entity_kind": "ticket",
+                "entity_id": "kan-t10",
+                "evidence_kind": "managed_file",
+                "content_base64": "cHJvb2YgYnl0ZXM=",
+            }),
+        );
+        client.command(
+            "project.archive",
+            json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-core" },
+                "project_id": 1,
+            }),
+        );
+        thread::sleep(Duration::from_millis(200));
+
+        let answer = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
+        let events = answer["events"]
+            .as_array()
+            .expect("the timeline query answers with events");
+        // Herdr telemetry lands on its own observation thread, so the
+        // row order around it races; the contract is the company every
+        // row keeps, not its exact position.
+        let mut recorded: Vec<Value> = events
+            .iter()
+            .map(|event| json!({ "scope": event["scope"], "kind": event["kind"] }))
+            .collect();
+        recorded.sort_by_key(|row| row["kind"].as_str().expect("the kind is text").to_owned());
+        assert_eq!(
+            recorded,
+            vec![
+                json!({ "kind": "comment", "scope": { "project": 1 } }),
+                json!({ "kind": "deferral", "scope": { "project": 1 } }),
+                json!({ "kind": "evidence", "scope": { "project": 1 } }),
+                json!({ "kind": "ruling", "scope": { "project": 1 } }),
+                json!({ "kind": "telemetry", "scope": { "project": 1 } }),
+                json!({ "kind": "transition", "scope": { "project": 1 } }),
+                json!({ "kind": "transition", "scope": { "project": 1 } }),
+            ],
+            "every project-scoped writer lands under the one canonical scope"
         );
 
         core.shutdown();

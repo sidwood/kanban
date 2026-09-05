@@ -453,13 +453,8 @@ impl HerdrObserverHandle {
             "captured_at": snapshot.captured_at,
             "state": snapshot.state,
         });
-        let envelope = TimelineEnvelope::project(
-            &self.project_id.to_string(),
-            TimelineEventKind::Telemetry,
-            None,
-            detail,
-        )
-        .map_err(|error| ObservationError::Timeline(error.message))?;
+        let envelope =
+            TimelineEnvelope::project(self.project_id, TimelineEventKind::Telemetry, None, detail);
         self.database
             .append_timeline_event(&envelope)
             .map_err(|error| ObservationError::Timeline(error.to_string()))?;
@@ -612,7 +607,7 @@ mod tests {
         let timeline = StorageTimelineStore::new(database.clone());
         timeline
             .query(&TimelineQuery {
-                scope: TimelineScope::Project("1".to_owned()),
+                scope: TimelineScope::Project(1),
                 entity: None,
                 kinds: Some(vec![TimelineEventKind::Telemetry]),
                 since: None,
@@ -670,7 +665,7 @@ mod tests {
         let timeline = StorageTimelineStore::new(database);
         let events = timeline
             .query(&TimelineQuery {
-                scope: TimelineScope::Project("1".to_owned()),
+                scope: TimelineScope::Project(1),
                 entity: None,
                 kinds: Some(vec![TimelineEventKind::Telemetry]),
                 since: None,

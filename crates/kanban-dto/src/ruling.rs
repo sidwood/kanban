@@ -13,7 +13,7 @@ pub struct RulingRecord {
     /// The storage-assigned identity.
     pub id: u64,
     /// The project the ruling belongs to.
-    pub project_id: String,
+    pub project_id: u64,
     /// The entity the ruling concerns, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<TimelineEntityRef>,
@@ -31,7 +31,7 @@ pub struct RulingRecord {
 #[serde(deny_unknown_fields)]
 pub struct RulingRecordRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<TimelineEntityRef>,
     pub summary: String,
@@ -42,7 +42,7 @@ pub struct RulingRecordRequest {
 #[serde(deny_unknown_fields)]
 pub struct RulingSupersedeRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     pub ruling_id: u64,
     pub summary: String,
 }
@@ -51,7 +51,7 @@ pub struct RulingSupersedeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RulingListQuery {
-    pub project_id: String,
+    pub project_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<TimelineEntityRef>,
 }

@@ -63,9 +63,10 @@ pub fn duplicate_code_error(code: &str) -> ApiError {
 }
 
 /// The timeline row for one Project transition. A Project's own
-/// history belongs on that Project's timeline, named by its identity,
-/// and `action` names which transition it was inside the closed
-/// `transition` kind, so every row decodes on the way back out.
+/// history belongs on that Project's timeline, named by its numeric
+/// identity, and `action` names which transition it was inside the
+/// closed `transition` kind, so every row decodes on the way back
+/// out.
 fn transition(id: ProjectId, action: &str, facts: Value) -> TimelineEnvelope {
     let mut detail = facts;
     let object = detail
@@ -73,17 +74,15 @@ fn transition(id: ProjectId, action: &str, facts: Value) -> TimelineEnvelope {
         .expect("Project transition facts are a JSON object");
     object.insert("action".to_owned(), Value::from(action));
     object.insert("id".to_owned(), Value::from(id.value()));
-    let identity = id.value().to_string();
     TimelineEnvelope::project(
-        &identity,
+        id.value(),
         TimelineEventKind::Transition,
         Some(TimelineEntityRef {
             kind: TimelineEntityKind::Project,
-            id: identity.clone(),
+            id: id.value().to_string(),
         }),
         detail,
     )
-    .expect("a minted Project identity names a Project")
 }
 
 impl Core {
@@ -255,11 +254,20 @@ impl QueryHandler for ListProjects {
     }
 }
 
-/// The Project a command addresses, or the stable not-found refusal.
-fn load(store: &Arc<dyn ProjectStore>, id: u64) -> Result<Project, ApiError> {
+/// The Project a project-scoped request addresses, resolved through
+/// the Project store before any durable write, or the stable
+/// not-found refusal. Every project-scoped command derives its
+/// timeline scope from the identity this returns, so one Project owns
+/// exactly one scope (KAN-T79-AC1, KAN-T79-AC2).
+pub fn resolve_project(store: &dyn ProjectStore, id: u64) -> Result<Project, ApiError> {
     store
         .find(ProjectId::new(id))?
         .ok_or_else(|| ApiError::not_found(&format!("project {id}")))
+}
+
+/// The Project an archive command addresses.
+fn load(store: &Arc<dyn ProjectStore>, id: u64) -> Result<Project, ApiError> {
+    resolve_project(store.as_ref(), id)
 }
 
 /// The DTO record for one Project.
@@ -346,7 +354,7 @@ pub(crate) mod testing {
 
     impl MemoryProjectStore {
         /// The stored rows and timeline envelopes, for assertions.
-        pub(super) fn snapshot(&self) -> (Vec<Project>, Vec<TimelineEnvelope>) {
+        pub(crate) fn snapshot(&self) -> (Vec<Project>, Vec<TimelineEnvelope>) {
             let state = self.state.lock().expect("the memory store lock is sound");
             (state.projects.clone(), state.timeline.clone())
         }
@@ -734,7 +742,7 @@ pub(crate) mod testing {
     }
 
     /// One stored Project with minted counters, active at version 1.
-    pub(super) fn stored_project(id: u64, code: &str, session: &str) -> Project {
+    pub(crate) fn stored_project(id: u64, code: &str, session: &str) -> Project {
         let registration = ProjectRegistration::new(
             code,
             "Control plane",
@@ -1051,14 +1059,14 @@ mod project_registration {
             timeline
                 .iter()
                 .map(|envelope| (
-                    envelope.scope().clone(),
+                    *envelope.scope(),
                     envelope.kind(),
                     envelope.entity().cloned(),
                     envelope.detail().clone(),
                 ))
                 .collect::<Vec<_>>(),
             vec![(
-                TimelineScope::Project("1".to_owned()),
+                TimelineScope::Project(1),
                 TimelineEventKind::Transition,
                 Some(TimelineEntityRef {
                     kind: TimelineEntityKind::Project,
@@ -1439,14 +1447,14 @@ mod project_lifecycle {
             timeline
                 .iter()
                 .map(|envelope| (
-                    envelope.scope().clone(),
+                    *envelope.scope(),
                     envelope.kind(),
                     envelope.entity().cloned(),
                     envelope.detail().clone(),
                 ))
                 .collect::<Vec<_>>(),
             vec![(
-                TimelineScope::Project("1".to_owned()),
+                TimelineScope::Project(1),
                 TimelineEventKind::Transition,
                 Some(TimelineEntityRef {
                     kind: TimelineEntityKind::Project,

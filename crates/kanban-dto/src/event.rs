@@ -161,7 +161,7 @@ pub struct DeferralIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceListSummary {
-    pub project_id: String,
+    pub project_id: u64,
     pub count: usize,
 }
 
@@ -653,7 +653,7 @@ mod tests {
             event_type: "comment.edited".to_owned(),
             payload: json!({
                 "id": 4,
-                "project_id": "kan",
+                "project_id": 1,
                 "target": { "kind": "ticket", "id": "kan-t11" },
                 "text": "Updated",
                 "version": 2,
@@ -667,7 +667,7 @@ mod tests {
                 sequence: 2,
                 payload: CommentRecord {
                     id: 4,
-                    project_id: "kan".to_owned(),
+                    project_id: 1,
                     target: TimelineEntityRef {
                         kind: crate::timeline::TimelineEntityKind::Ticket,
                         id: "kan-t11".to_owned(),
@@ -724,7 +724,7 @@ mod tests {
         let envelope = EventEnvelope {
             sequence: 5,
             event_type: "evidence.listed".to_owned(),
-            payload: json!({ "project_id": "kan-p1", "count": 2 }),
+            payload: json!({ "project_id": 1, "count": 2 }),
         };
 
         let event = decode_live_event(&envelope).expect("the envelope decodes");
@@ -733,7 +733,7 @@ mod tests {
             LiveEvent::EvidenceListed {
                 sequence: 5,
                 payload: EvidenceListSummary {
-                    project_id: "kan-p1".to_owned(),
+                    project_id: 1,
                     count: 2,
                 },
             }

@@ -51,12 +51,14 @@ impl TimelineFilter {
     }
 }
 
-/// The scope's two stored columns: which scope, and the Project it
-/// names when it names one.
-fn scope_columns(scope: &TimelineScope) -> (&'static str, &str) {
+/// The scope's two stored columns: which scope, and the decimal text
+/// of the numeric Project identity it names when it names one. The
+/// column stays TEXT because legacy rows hold arbitrary strings until
+/// the identity migration reunifies them.
+fn scope_columns(scope: &TimelineScope) -> (&'static str, String) {
     match scope {
-        TimelineScope::Global => ("global", ""),
-        TimelineScope::Project(project_id) => ("project", project_id.as_str()),
+        TimelineScope::Global => ("global", String::new()),
+        TimelineScope::Project(project_id) => ("project", project_id.to_string()),
     }
 }
 
@@ -88,12 +90,6 @@ pub(crate) fn query_events(
     filter: &TimelineFilter,
 ) -> Result<Vec<TimelineRow>, StorageError> {
     let (scope, project_id) = scope_columns(&filter.scope);
-    if matches!(filter.scope, TimelineScope::Project(_)) && project_id.is_empty() {
-        return Err(StorageError::InvalidTimeline {
-            reason: "a Project timeline scope must name a Project".to_owned(),
-        });
-    }
-
     let mut sql = String::from(
         "SELECT id, scope, project_id, kind, entity_kind, entity_id, recorded_at, detail
          FROM timeline_events
@@ -183,7 +179,7 @@ mod query_filters {
     }
 
     fn ticket_event(
-        project_id: &str,
+        project_id: u64,
         kind: TimelineEventKind,
         ticket: &str,
         detail: serde_json::Value,
@@ -194,7 +190,6 @@ mod query_filters {
             Some(entity(TimelineEntityKind::Ticket, ticket)),
             detail,
         )
-        .expect("a named Project is accepted")
     }
 
     #[test]
@@ -203,7 +198,7 @@ mod query_filters {
         append(
             &database,
             ticket_event(
-                "kan",
+                1,
                 TimelineEventKind::Transition,
                 "kan-t9",
                 json!({ "action": "started", "to": "in_progress" }),
@@ -211,14 +206,12 @@ mod query_filters {
         );
 
         let rows = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project(
-                "kan".to_owned(),
-            )))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("the timeline is readable");
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].scope, "project");
-        assert_eq!(rows[0].project_id, "kan");
+        assert_eq!(rows[0].project_id, "1");
         assert_eq!(rows[0].kind, "transition");
         assert_eq!(rows[0].entity_kind.as_deref(), Some("ticket"));
         assert_eq!(rows[0].entity_id.as_deref(), Some("kan-t9"));
@@ -243,7 +236,7 @@ mod query_filters {
         append(
             &database,
             ticket_event(
-                "kan",
+                1,
                 TimelineEventKind::Transition,
                 "kan-t9",
                 json!({ "action": "started" }),
@@ -254,9 +247,7 @@ mod query_filters {
             .query_timeline(&TimelineFilter::of(TimelineScope::Global))
             .expect("the global timeline is readable");
         let project = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project(
-                "kan".to_owned(),
-            )))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("the Project timeline is readable");
 
         assert_eq!(global.len(), 1);
@@ -266,26 +257,12 @@ mod query_filters {
     }
 
     #[test]
-    fn a_project_scope_without_an_identity_is_refused() {
-        let database = migrated_database();
-
-        let error = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project(String::new())))
-            .expect_err("a Project scope must name a Project");
-
-        assert!(matches!(
-            error,
-            crate::error::StorageError::InvalidTimeline { .. }
-        ));
-    }
-
-    #[test]
     fn query_filters_by_entity_kind_and_id() {
         let database = migrated_database();
         append(
             &database,
             ticket_event(
-                "kan",
+                1,
                 TimelineEventKind::Transition,
                 "kan-t9",
                 json!({ "to": "in_progress" }),
@@ -294,7 +271,7 @@ mod query_filters {
         append(
             &database,
             ticket_event(
-                "kan",
+                1,
                 TimelineEventKind::Comment,
                 "kan-t10",
                 json!({ "text": "elsewhere" }),
@@ -305,7 +282,7 @@ mod query_filters {
             .query_timeline(&TimelineFilter {
                 entity_kind: Some("ticket".to_owned()),
                 entity_id: Some("kan-t9".to_owned()),
-                ..TimelineFilter::of(TimelineScope::Project("kan".to_owned()))
+                ..TimelineFilter::of(TimelineScope::Project(1))
             })
             .expect("entity filter applies");
 
@@ -326,7 +303,7 @@ mod query_filters {
                 .execute(
                     "INSERT INTO timeline_events
                      (scope, project_id, kind, entity_kind, entity_id, detail, recorded_at)
-                     VALUES ('project', 'kan', ?1, 'ticket', 'kan-t9', '{}', ?2)",
+                     VALUES ('project', '1', ?1, 'ticket', 'kan-t9', '{}', ?2)",
                     rusqlite::params![kind, recorded_at],
                 )
                 .expect("fixture row lands");
@@ -337,7 +314,7 @@ mod query_filters {
                 kinds: vec!["run".to_owned(), "review".to_owned()],
                 since: Some("2026-02-01T00:00:00.000000Z".to_owned()),
                 until: Some("2026-11-01T00:00:00.000000Z".to_owned()),
-                ..TimelineFilter::of(TimelineScope::Project("kan".to_owned()))
+                ..TimelineFilter::of(TimelineScope::Project(1))
             })
             .expect("kind and time filters apply");
 
@@ -351,7 +328,7 @@ mod query_filters {
         append(
             &database,
             ticket_event(
-                "kan",
+                1,
                 TimelineEventKind::Transition,
                 "kan-t9",
                 json!({ "to": "done" }),
@@ -380,7 +357,7 @@ mod query_filters {
             .query_timeline(&TimelineFilter {
                 entity_kind: Some("ticket".to_owned()),
                 entity_id: Some("kan-t9".to_owned()),
-                ..TimelineFilter::of(TimelineScope::Project("kan".to_owned()))
+                ..TimelineFilter::of(TimelineScope::Project(1))
             })
             .expect("archived entities remain queryable");
 
@@ -494,7 +471,7 @@ mod scope_migration {
             .connection()
             .execute(
                 "INSERT INTO timeline_events (project_id, kind, detail)
-                 VALUES ('kan', 'comment', '{\"text\":\"noted\"}')",
+                 VALUES ('1', 'comment', '{\"text\":\"noted\"}')",
                 [],
             )
             .expect("the legacy row lands");
@@ -504,9 +481,7 @@ mod scope_migration {
             .expect("the scope migration applies");
 
         let rows = database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project(
-                "kan".to_owned(),
-            )))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("Project history is queryable");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].scope, "project");

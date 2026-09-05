@@ -17,7 +17,7 @@ pub enum EvidenceKindDto {
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRecord {
     pub id: u64,
-    pub project_id: String,
+    pub project_id: u64,
     pub entity_kind: String,
     pub entity_id: String,
     pub evidence_kind: EvidenceKindDto,
@@ -34,7 +34,7 @@ pub struct EvidenceRecord {
 #[serde(deny_unknown_fields)]
 pub struct EvidenceAttachRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     pub entity_kind: String,
     pub entity_id: String,
     pub evidence_kind: EvidenceKindDto,
@@ -51,7 +51,7 @@ pub struct EvidenceAttachRequest {
 #[serde(deny_unknown_fields)]
 pub struct EvidenceListRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,7 +87,7 @@ mod tests {
     fn a_managed_file_attach_request_round_trips() {
         let request = EvidenceAttachRequest {
             mutation: context(),
-            project_id: "kan-p1".to_owned(),
+            project_id: 1,
             entity_kind: "ticket".to_owned(),
             entity_id: "kan-t10".to_owned(),
             evidence_kind: EvidenceKindDto::ManagedFile,
@@ -106,7 +106,7 @@ mod tests {
     fn a_repository_attach_request_round_trips() {
         let request = EvidenceAttachRequest {
             mutation: context(),
-            project_id: "kan-p1".to_owned(),
+            project_id: 1,
             entity_kind: "ticket".to_owned(),
             entity_id: "kan-t10".to_owned(),
             evidence_kind: EvidenceKindDto::Repository,
@@ -125,7 +125,7 @@ mod tests {
     fn attach_and_list_requests_reject_unknown_fields() {
         let refused: Result<EvidenceAttachRequest, _> = serde_json::from_value(json!({
             "mutation": context(),
-            "project_id": "kan-p1",
+            "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "kan-t10",
             "evidence_kind": "managed_file",
@@ -136,7 +136,7 @@ mod tests {
 
         let refused: Result<EvidenceListRequest, _> = serde_json::from_value(json!({
             "mutation": context(),
-            "project_id": "kan-p1",
+            "project_id": 1,
             "all": true,
         }));
         assert!(refused.is_err(), "unknown fields are rejected");
@@ -147,7 +147,7 @@ mod tests {
         let response = EvidenceListResponse {
             evidence: vec![EvidenceRecord {
                 id: 1,
-                project_id: "kan-p1".to_owned(),
+                project_id: 1,
                 entity_kind: "ticket".to_owned(),
                 entity_id: "kan-t10".to_owned(),
                 evidence_kind: EvidenceKindDto::Repository,

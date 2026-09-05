@@ -15,7 +15,7 @@ export type ApiError = {
 };
 export type CommentCreateRequest = {
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   target: TimelineEntityRef;
   text: string;
 };
@@ -26,7 +26,7 @@ export type CommentEditRequest = {
 };
 export type CommentRecord = {
   id: number;
-  project_id: string;
+  project_id: number;
   target: TimelineEntityRef;
   text: string;
   version: number;
@@ -48,7 +48,7 @@ export type DeferralIdentity = {
 };
 export type DeferralListQuery = {
   finding_id?: string | null;
-  project_id: string;
+  project_id: number;
 };
 export type DeferralListResponse = {
   deferrals: DeferralRecord[];
@@ -56,7 +56,7 @@ export type DeferralListResponse = {
 export type DeferralRecord = {
   finding_id: string;
   id: number;
-  project_id: string;
+  project_id: number;
   reason: string;
   recorded_at: string;
   supersedes_id?: number | null;
@@ -64,13 +64,13 @@ export type DeferralRecord = {
 export type DeferralRecordRequest = {
   finding_id: string;
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   reason: string;
 };
 export type DeferralSupersedeRequest = {
   deferral_id: number;
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   reason: string;
 };
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
@@ -86,7 +86,7 @@ export type EvidenceAttachRequest = {
   entity_kind: string;
   evidence_kind: EvidenceKindDto;
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   relative_path?: string | null;
 };
 export type EvidenceKindDto = 'managed_file' | 'repository';
@@ -94,14 +94,14 @@ export type EvidenceListRequest = {
   entity_id?: string | null;
   entity_kind?: string | null;
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
 };
 export type EvidenceListResponse = {
   evidence: EvidenceRecord[];
 };
 export type EvidenceListSummary = {
   count: number;
-  project_id: string;
+  project_id: number;
 };
 export type EvidenceRecord = {
   commit_identity?: string | null;
@@ -110,7 +110,7 @@ export type EvidenceRecord = {
   entity_kind: string;
   evidence_kind: EvidenceKindDto;
   id: number;
-  project_id: string;
+  project_id: number;
   relative_path?: string | null;
 };
 export type HealthQuery = Record<string, never>;
@@ -322,7 +322,7 @@ export type RulingIdentity = {
 };
 export type RulingListQuery = {
   entity?: TimelineEntityRef | null;
-  project_id: string;
+  project_id: number;
 };
 export type RulingListResponse = {
   rulings: RulingRecord[];
@@ -330,7 +330,7 @@ export type RulingListResponse = {
 export type RulingRecord = {
   entity?: TimelineEntityRef | null;
   id: number;
-  project_id: string;
+  project_id: number;
   recorded_at: string;
   summary: string;
   supersedes_id?: number | null;
@@ -338,12 +338,12 @@ export type RulingRecord = {
 export type RulingRecordRequest = {
   entity?: TimelineEntityRef | null;
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   summary: string;
 };
 export type RulingSupersedeRequest = {
   mutation: MutationContext;
-  project_id: string;
+  project_id: number;
   ruling_id: number;
   summary: string;
 };
@@ -445,7 +445,7 @@ export type TimelineQueryResponse = {
   events: TimelineEventRecord[];
 };
 export type TimelineScope = 'global' | {
-  project: string;
+  project: number;
 };
 export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired';
 export type WorkspaceListQuery = {

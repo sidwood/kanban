@@ -29,8 +29,6 @@ impl fmt::Display for RulingId {
 /// Why a ruling payload was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RulingError {
-    /// The project identity was blank.
-    BlankProject,
     /// The summary held nothing but whitespace.
     BlankSummary,
 }
@@ -38,7 +36,6 @@ pub enum RulingError {
 impl fmt::Display for RulingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BlankProject => write!(f, "a ruling must name its project"),
             Self::BlankSummary => write!(f, "a ruling summary cannot be blank"),
         }
     }
@@ -78,7 +75,7 @@ pub struct RulingEntityRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ruling {
     id: RulingId,
-    project_id: String,
+    project_id: u64,
     entity: Option<RulingEntityRef>,
     summary: RulingSummary,
     supersedes: Option<RulingId>,
@@ -89,7 +86,7 @@ impl Ruling {
     /// Restore a ruling that storage already persisted.
     pub fn restore(
         id: RulingId,
-        project_id: String,
+        project_id: u64,
         entity: Option<RulingEntityRef>,
         summary: RulingSummary,
         supersedes: Option<RulingId>,
@@ -105,25 +102,26 @@ impl Ruling {
         }
     }
 
-    /// Validate a fresh ruling before storage assigns its identity.
+    /// Start a fresh ruling before storage assigns its identity. The
+    /// caller has already resolved the Project, so its numeric
+    /// identity is carried, not parsed.
     pub fn record(
-        project_id: &str,
+        project_id: u64,
         summary: RulingSummary,
         entity: Option<RulingEntityRef>,
-    ) -> Result<RulingDraft, RulingError> {
-        let project_id = validate_project(project_id)?;
-        Ok(RulingDraft {
+    ) -> RulingDraft {
+        RulingDraft {
             project_id,
             entity,
             summary,
             supersedes: None,
-        })
+        }
     }
 
     /// Validate a superseding ruling that references this record.
     pub fn supersede(&self, summary: RulingSummary) -> RulingDraft {
         RulingDraft {
-            project_id: self.project_id.clone(),
+            project_id: self.project_id,
             entity: self.entity.clone(),
             summary,
             supersedes: Some(self.id),
@@ -136,8 +134,8 @@ impl Ruling {
     }
 
     /// The project the ruling belongs to.
-    pub fn project_id(&self) -> &str {
-        &self.project_id
+    pub fn project_id(&self) -> u64 {
+        self.project_id
     }
 
     /// The entity the ruling concerns, if any.
@@ -164,18 +162,10 @@ impl Ruling {
 /// A validated ruling waiting for storage to assign its identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RulingDraft {
-    pub project_id: String,
+    pub project_id: u64,
     pub entity: Option<RulingEntityRef>,
     pub summary: RulingSummary,
     pub supersedes: Option<RulingId>,
-}
-
-fn validate_project(project_id: &str) -> Result<String, RulingError> {
-    let trimmed = project_id.trim();
-    if trimmed.is_empty() {
-        return Err(RulingError::BlankProject);
-    }
-    Ok(trimmed.to_owned())
 }
 
 #[cfg(test)]
@@ -189,17 +179,10 @@ mod tests {
     }
 
     #[test]
-    fn recording_rejects_blank_projects() {
-        let summary = RulingSummary::new("Allow landing").expect("the summary validates");
-        let error = Ruling::record("  ", summary, None).expect_err("blank projects are refused");
-        assert_eq!(error, RulingError::BlankProject);
-    }
-
-    #[test]
     fn superseding_creates_a_new_draft_referencing_the_original() {
         let original = Ruling::restore(
             RulingId::new(1),
-            "kan".to_owned(),
+            1,
             Some(RulingEntityRef {
                 kind: "ticket".to_owned(),
                 id: "kan-t12".to_owned(),
@@ -211,7 +194,7 @@ mod tests {
         let replacement = original
             .supersede(RulingSummary::new("Proceed with landing").expect("the summary validates"));
 
-        assert_eq!(replacement.project_id, "kan");
+        assert_eq!(replacement.project_id, 1);
         assert_eq!(replacement.supersedes, Some(RulingId::new(1)));
         assert_eq!(replacement.summary.as_str(), "Proceed with landing");
         assert_eq!(

@@ -5,6 +5,7 @@ use kanban_dto::{
     ApiError, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
 };
+
 use serde_json::Value;
 
 use crate::dispatch::QueryHandler;
@@ -37,21 +38,22 @@ impl TimelineEnvelope {
         }
     }
 
-    /// An event inside one Project, which must name that Project.
+    /// An event inside one Project. The scope is the Project's
+    /// numeric identity, already resolved through the Project store;
+    /// every project-scoped writer derives its row from this one
+    /// constructor, so one Project owns exactly one timeline scope.
     pub fn project(
-        project_id: &str,
+        project_id: u64,
         kind: TimelineEventKind,
         entity: Option<TimelineEntityRef>,
         detail: Value,
-    ) -> Result<Self, ApiError> {
-        let scope = TimelineScope::Project(project_id.to_owned());
-        require_named_project(&scope)?;
-        Ok(Self {
-            scope,
+    ) -> Self {
+        Self {
+            scope: TimelineScope::Project(project_id),
             kind,
             entity,
             detail,
-        })
+        }
     }
 
     /// Where the row belongs.
@@ -83,16 +85,6 @@ pub struct TimelineFacts {
     pub kind: TimelineEventKind,
     /// The change's facts, e.g. a Ruling's summary.
     pub facts: Value,
-}
-
-/// A Project scope that names no Project addresses no timeline.
-fn require_named_project(scope: &TimelineScope) -> Result<(), ApiError> {
-    match scope {
-        TimelineScope::Project(project_id) if project_id.is_empty() => Err(
-            ApiError::invalid_request("a Project timeline scope must name a Project"),
-        ),
-        _ => Ok(()),
-    }
 }
 
 /// The storage port for reading the append-only timeline. Rows are
@@ -139,7 +131,6 @@ impl<S: TimelineStore> TimelineQueryHandler<S> {
 impl<S: TimelineStore + 'static> QueryHandler for TimelineQueryHandler<S> {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query = parse_payload::<TimelineQuery>(payload)?;
-        require_named_project(&query.scope)?;
         let events = self.store.query(&query).map_err(map_timeline_error)?;
         let response = TimelineQueryResponse { events };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
@@ -155,7 +146,7 @@ fn map_timeline_error(error: TimelineError) -> ApiError {
 
 #[cfg(test)]
 mod envelope {
-    use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::json;
 
     use super::TimelineEnvelope;
@@ -185,22 +176,13 @@ mod envelope {
     #[test]
     fn a_project_envelope_carries_its_project_identity() {
         let envelope = TimelineEnvelope::project(
-            "kan",
+            1,
             TimelineEventKind::Comment,
             None,
             json!({ "text": "noted" }),
-        )
-        .expect("a named Project is accepted");
+        );
 
-        assert_eq!(envelope.scope(), &TimelineScope::Project("kan".to_owned()));
-    }
-
-    #[test]
-    fn a_project_envelope_refuses_an_empty_project_identity() {
-        let error = TimelineEnvelope::project("", TimelineEventKind::Comment, None, json!({}))
-            .expect_err("a Project scope must name a Project");
-
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(envelope.scope(), &TimelineScope::Project(1));
     }
 }
 
@@ -251,7 +233,7 @@ mod timeline_query {
             let id = events.len() as u64 + 1;
             events.push(TimelineEventRecord {
                 id,
-                scope: envelope.scope().clone(),
+                scope: *envelope.scope(),
                 kind: envelope.kind(),
                 entity: envelope.entity().cloned(),
                 recorded_at: format!("2026-09-04T12:00:{id:02}Z"),
@@ -314,8 +296,7 @@ mod timeline_query {
         entity: TimelineEntityRef,
         detail: Value,
     ) -> TimelineEnvelope {
-        TimelineEnvelope::project("kan", kind, Some(entity), detail)
-            .expect("a named Project is accepted")
+        TimelineEnvelope::project(1, kind, Some(entity), detail)
     }
 
     #[test]
@@ -338,7 +319,7 @@ mod timeline_query {
         let handler = TimelineQueryHandler::new(store);
         let response = handler
             .handle(&json!({
-                "scope": { "project": "kan" },
+                "scope": { "project": 1 },
                 "entity": ticket_entity(),
                 "kinds": ["transition"],
                 "since": "2026-09-04T12:00:00Z",
@@ -351,7 +332,7 @@ mod timeline_query {
             json!({
                 "events": [{
                     "id": 1,
-                    "scope": { "project": "kan" },
+                    "scope": { "project": 1 },
                     "kind": "transition",
                     "entity": ticket_entity(),
                     "recorded_at": "2026-09-04T12:00:01Z",
@@ -400,18 +381,6 @@ mod timeline_query {
     }
 
     #[test]
-    fn timeline_query_refuses_a_project_scope_without_an_identity() {
-        let store = std::sync::Arc::new(MemoryTimelineStore::default());
-        let handler = TimelineQueryHandler::new(store);
-
-        let error = handler
-            .handle(&json!({ "scope": { "project": "" } }))
-            .expect_err("a Project scope must name a Project");
-
-        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
-    }
-
-    #[test]
     fn timeline_query_rejects_unknown_fields() {
         let store = std::sync::Arc::new(MemoryTimelineStore::default());
         let handler = TimelineQueryHandler::new(store);
@@ -440,7 +409,7 @@ mod timeline_query {
         let response = core
             .query(
                 "timeline.query",
-                &json!({ "scope": { "project": "kan" }, "kinds": ["transition"] }),
+                &json!({ "scope": { "project": 1 }, "kinds": ["transition"] }),
             )
             .expect("the core serves timeline queries");
 
@@ -460,7 +429,7 @@ mod timeline_query {
 
         let events = store
             .query(&TimelineQuery {
-                scope: TimelineScope::Project("kan".to_owned()),
+                scope: TimelineScope::Project(1),
                 entity: None,
                 kinds: None,
                 since: None,

@@ -28,7 +28,9 @@
       "$ref": "#/definitions/MutationContext"
     },
     "project_id": {
-      "type": "string"
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "ruling_id": {
       "format": "uint64",

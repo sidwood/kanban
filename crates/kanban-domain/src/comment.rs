@@ -143,7 +143,7 @@ impl CommentRevision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comment {
     id: CommentId,
-    project_id: String,
+    project_id: u64,
     target: CommentTarget,
     revisions: Vec<CommentRevision>,
     version: u64,
@@ -153,13 +153,13 @@ impl Comment {
     /// Create a fresh Comment with its first revision at version 1.
     pub fn create(
         id: CommentId,
-        project_id: &str,
+        project_id: u64,
         target: CommentTarget,
         text: CommentText,
     ) -> Self {
         Self {
             id,
-            project_id: project_id.to_owned(),
+            project_id,
             target,
             revisions: vec![CommentRevision { number: 1, text }],
             version: 1,
@@ -169,7 +169,7 @@ impl Comment {
     /// Restore a Comment from durable storage.
     pub fn restore(
         id: CommentId,
-        project_id: String,
+        project_id: u64,
         target: CommentTarget,
         revisions: Vec<CommentRevision>,
         version: u64,
@@ -189,8 +189,8 @@ impl Comment {
     }
 
     /// The owning Project.
-    pub fn project_id(&self) -> &str {
-        &self.project_id
+    pub fn project_id(&self) -> u64 {
+        self.project_id
     }
 
     /// The entity this Comment attaches to.
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn creating_starts_at_revision_one_and_version_one() {
-        let comment = Comment::create(CommentId::new(1), "kan", target(), text("first thought"));
+        let comment = Comment::create(CommentId::new(1), 1, target(), text("first thought"));
 
         assert_eq!(comment.version(), 1);
         assert_eq!(comment.revisions().len(), 1);
@@ -255,8 +255,7 @@ mod tests {
 
     #[test]
     fn editing_appends_a_revision_and_bumps_the_version() {
-        let mut comment =
-            Comment::create(CommentId::new(1), "kan", target(), text("first thought"));
+        let mut comment = Comment::create(CommentId::new(1), 1, target(), text("first thought"));
 
         comment
             .edit(text("corrected thought"))

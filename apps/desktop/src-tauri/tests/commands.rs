@@ -106,7 +106,7 @@ fn entity() -> TimelineEntityRef {
 
 fn production_timeline_query_fixture() -> Value {
     serde_json::to_value(TimelineQuery {
-        scope: TimelineScope::Project("kan".to_owned()),
+        scope: TimelineScope::Project(1),
         entity: None,
         kinds: None,
         since: None,
@@ -196,7 +196,7 @@ fn sample_request(schema: &str) -> Value {
         "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "target": entity(),
             "text": "hello",
         }),
@@ -208,39 +208,39 @@ fn sample_request(schema: &str) -> Value {
         "CommentRevisionsQuery" => json!({ "comment_id": 1 }),
         "RulingRecordRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "summary": "ship it",
         }),
         "RulingSupersedeRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "ruling_id": 1,
             "summary": "revise it",
         }),
-        "RulingListQuery" => json!({ "project_id": "kan" }),
+        "RulingListQuery" => json!({ "project_id": 1 }),
         "DeferralRecordRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "finding_id": "f-1",
             "reason": "later",
         }),
         "DeferralSupersedeRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "deferral_id": 1,
             "reason": "still later",
         }),
-        "DeferralListQuery" => json!({ "project_id": "kan" }),
+        "DeferralListQuery" => json!({ "project_id": 1 }),
         "EvidenceAttachRequest" => json!({
             "mutation": mutation,
-            "project_id": "kan",
+            "project_id": 1,
             "entity_kind": "ticket",
             "entity_id": "KAN-T1",
             "evidence_kind": "repository",
             "relative_path": "evidence/review.txt",
             "commit_identity": "c9eac24",
         }),
-        "EvidenceListRequest" => json!({ "mutation": mutation, "project_id": "kan" }),
+        "EvidenceListRequest" => json!({ "mutation": mutation, "project_id": 1 }),
         "HerdrSettingsGetQuery" => json!({ "project_id": 1 }),
         "HerdrSettingsUpdateRequest" => json!({
             "mutation": mutation,

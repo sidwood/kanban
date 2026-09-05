@@ -6,7 +6,7 @@ import { kanbanTransportKey } from '../core/transport'
 import { useRulingsStore } from '../stores/rulings'
 
 const props = defineProps<{
-  projectId: string
+  projectId: number
   entityKind?: TimelineEntityKind | null
   entityId?: string
 }>()

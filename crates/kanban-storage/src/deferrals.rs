@@ -37,7 +37,7 @@ impl DeferralStore for SqliteDeferralStore {
             "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
                  VALUES (?1, ?2, ?3, ?4)",
             params![
-                draft.project_id,
+                draft.project_id.to_string(),
                 draft.finding_id,
                 draft.reason.as_str(),
                 draft.supersedes.map(|id| id.value() as i64),
@@ -51,7 +51,7 @@ impl DeferralStore for SqliteDeferralStore {
         );
         let deferral = Deferral::restore(
             id,
-            draft.project_id.clone(),
+            draft.project_id,
             draft.finding_id.clone(),
             draft.reason.clone(),
             draft.supersedes,
@@ -62,13 +62,13 @@ impl DeferralStore for SqliteDeferralStore {
         Ok(deferral)
     }
 
-    fn find(&self, project_id: &str, id: DeferralId) -> Result<Option<Deferral>, ApiError> {
+    fn find(&self, project_id: u64, id: DeferralId) -> Result<Option<Deferral>, ApiError> {
         let conn = self.lock();
         let row = conn.query_row(
             "SELECT id, project_id, finding_id, reason, supersedes_id, recorded_at
              FROM deferrals
              WHERE id = ?1 AND project_id = ?2",
-            params![id.value() as i64, project_id],
+            params![id.value() as i64, project_id.to_string()],
             decode_row,
         );
         match row {
@@ -85,7 +85,7 @@ impl DeferralStore for SqliteDeferralStore {
              FROM deferrals
              WHERE project_id = ?1",
         );
-        let mut bindings: Vec<String> = vec![query.project_id.clone()];
+        let mut bindings: Vec<String> = vec![query.project_id.to_string()];
         if let Some(finding_id) = &query.finding_id {
             sql.push_str(" AND finding_id = ?");
             bindings.push(finding_id.clone());
@@ -108,7 +108,15 @@ impl DeferralStore for SqliteDeferralStore {
 
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Deferral> {
     let id = row.get::<_, i64>(0)?.unsigned_abs();
-    let project_id: String = row.get(1)?;
+    // A non-numeric scope is a legacy row migration 0011 missed;
+    // refusing it beats guessing which Project owns it.
+    let project_id: u64 = row.get::<_, String>(1)?.parse().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(CorruptScope),
+        )
+    })?;
     let finding_id: String = row.get(2)?;
     let reason: String = row.get(3)?;
     let supersedes: Option<i64> = row.get(4)?;
@@ -141,6 +149,18 @@ fn internal(error: rusqlite::Error) -> ApiError {
 
 #[derive(Debug)]
 struct CorruptReason;
+
+/// A stored Project scope was not a numeric identity.
+#[derive(Debug)]
+struct CorruptScope;
+
+impl std::fmt::Display for CorruptScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a stored deferral names a non-numeric Project scope")
+    }
+}
+
+impl std::error::Error for CorruptScope {}
 
 impl std::fmt::Display for CorruptReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
@@ -175,7 +195,7 @@ fn append_timeline(
             id: deferral.finding_id().to_owned(),
         }),
         detail,
-    )?;
+    );
     insert_event(conn, &envelope).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
@@ -208,13 +228,13 @@ mod tests {
     }
 
     fn draft(
-        project_id: &str,
+        project_id: u64,
         finding_id: &str,
         reason: &str,
         supersedes: Option<DeferralId>,
     ) -> kanban_domain::DeferralDraft {
         kanban_domain::DeferralDraft {
-            project_id: project_id.to_owned(),
+            project_id,
             finding_id: finding_id.to_owned(),
             reason: DeferralReason::new(reason).expect("reason validates"),
             supersedes,
@@ -226,7 +246,7 @@ mod tests {
         let (_dir, database, store) = store();
         let deferral = store
             .insert(
-                &draft("kan", "finding-1", "Cosmetic only", None),
+                &draft(1, "finding-1", "Cosmetic only", None),
                 append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
@@ -246,7 +266,7 @@ mod tests {
         let (_dir, database, store) = store();
         store
             .insert(
-                &draft("kan", "finding-1", "Cosmetic only", None),
+                &draft(1, "finding-1", "Cosmetic only", None),
                 append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
@@ -267,7 +287,7 @@ mod tests {
         let (_dir, database, store) = store();
         store
             .insert(
-                &draft("kan", "finding-1", "Cosmetic only", None),
+                &draft(1, "finding-1", "Cosmetic only", None),
                 append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the insert lands");
@@ -286,13 +306,13 @@ mod tests {
         let (_dir, _database, store) = store();
         let original = store
             .insert(
-                &draft("kan", "finding-1", "Cosmetic only", None),
+                &draft(1, "finding-1", "Cosmetic only", None),
                 append(json!({ "reason": "Cosmetic only" })),
             )
             .expect("the original lands");
         store
             .insert(
-                &draft("kan", "finding-1", "Accepted risk", Some(original.id())),
+                &draft(1, "finding-1", "Accepted risk", Some(original.id())),
                 append(json!({
                     "reason": "Accepted risk",
                     "supersedes_id": original.id().value(),
@@ -302,7 +322,7 @@ mod tests {
 
         let listed = store
             .list(&DeferralListQuery {
-                project_id: "kan".to_owned(),
+                project_id: 1,
                 finding_id: None,
             })
             .expect("the list serves");

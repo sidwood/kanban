@@ -42,13 +42,13 @@ describe('rulings surface', () => {
         rulings: [
           {
             id: 1,
-            project_id: 'kan',
+            project_id: 1,
             summary: 'Hold',
             recorded_at: '2026-09-04T12:00:01Z',
           },
           {
             id: 2,
-            project_id: 'kan',
+            project_id: 1,
             summary: 'Proceed',
             supersedes_id: 1,
             recorded_at: '2026-09-04T12:00:02Z',
@@ -59,14 +59,14 @@ describe('rulings surface', () => {
         deferrals: [
           {
             id: 1,
-            project_id: 'kan',
+            project_id: 1,
             finding_id: 'finding-1',
             reason: 'Cosmetic only',
             recorded_at: '2026-09-04T12:00:03Z',
           },
           {
             id: 2,
-            project_id: 'kan',
+            project_id: 1,
             finding_id: 'finding-1',
             reason: 'Accepted risk',
             supersedes_id: 1,
@@ -78,7 +78,7 @@ describe('rulings surface', () => {
 
     const wrapper = mount(RulingsSurface, {
       props: {
-        projectId: 'kan',
+        projectId: 1,
         entityKind: 'ticket',
         entityId: 'kan-t12',
       },
@@ -117,7 +117,7 @@ describe('rulings surface', () => {
     }
 
     mount(RulingsSurface, {
-      props: { projectId: 'kan', entityKind: 'ticket', entityId: 'kan-t12' },
+      props: { projectId: 1, entityKind: 'ticket', entityId: 'kan-t12' },
       global: {
         provide: {
           [kanbanTransportKey as symbol]: transport,
@@ -127,11 +127,11 @@ describe('rulings surface', () => {
     await flushPromises()
 
     expect(query).toHaveBeenCalledWith('ruling.list', {
-      project_id: 'kan',
+      project_id: 1,
       entity: { kind: 'ticket', id: 'kan-t12' },
     })
     expect(query).toHaveBeenCalledWith('deferral.list', {
-      project_id: 'kan',
+      project_id: 1,
     })
   })
 })

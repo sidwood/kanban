@@ -58,7 +58,9 @@
     },
     "project_id": {
       "description": "The project the ruling belongs to.",
-      "type": "string"
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "recorded_at": {
       "description": "When the ruling was recorded.",

@@ -81,7 +81,7 @@ pub(crate) fn transition(
     object.insert("action".to_owned(), Value::from(action));
     object.insert("id".to_owned(), Value::from(spec.value()));
     TimelineEnvelope::project(
-        &project.value().to_string(),
+        project.value(),
         TimelineEventKind::Transition,
         Some(TimelineEntityRef {
             kind: TimelineEntityKind::Spec,
@@ -89,7 +89,6 @@ pub(crate) fn transition(
         }),
         detail,
     )
-    .expect("a minted Spec identity names a Spec")
 }
 
 /// Report a refused domain rule as the stable invalid-request code.

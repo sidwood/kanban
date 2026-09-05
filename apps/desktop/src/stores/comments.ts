@@ -38,7 +38,7 @@ export const useCommentsStore = defineStore('comments', {
     },
     async create(
       transport: ShellTransport,
-      projectId: string,
+      projectId: number,
       target: TimelineEntityRef,
       text: string,
     ): Promise<CommentRecord | null> {

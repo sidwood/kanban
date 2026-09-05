@@ -47,7 +47,9 @@
     },
     "project_id": {
       "description": "The owning Project.",
-      "type": "string"
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "target": {
       "allOf": [

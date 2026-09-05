@@ -11,7 +11,7 @@ import { useCommentsStore } from './comments'
 function record(overrides: Partial<CommentRecord> = {}): CommentRecord {
   return {
     id: 1,
-    project_id: 'kan',
+    project_id: 1,
     target: { kind: 'ticket', id: 'kan-t11' },
     text: 'First thought',
     version: 1,
@@ -73,16 +73,16 @@ describe('comments store', () => {
     } satisfies CommentRevisionsResponse)
     const comments = useCommentsStore()
 
-    await comments.create(transport, 'kan', target(), 'First thought')
+    await comments.create(transport, 1, target(), 'First thought')
 
     const create = operations.find((entry) => entry.name === 'comment.create')
     expect(create?.kind).toBe('command')
     const request = create?.request as {
       mutation: { optimistic_version: number; idempotency_key: string }
-      project_id: string
+      project_id: number
       text: string
     }
-    expect(request.project_id).toBe('kan')
+    expect(request.project_id).toBe(1)
     expect(request.text).toBe('First thought')
     expect(request.mutation.optimistic_version).toBe(0)
     expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)

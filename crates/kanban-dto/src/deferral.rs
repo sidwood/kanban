@@ -11,7 +11,7 @@ pub struct DeferralRecord {
     /// The storage-assigned identity.
     pub id: u64,
     /// The project the deferral belongs to.
-    pub project_id: String,
+    pub project_id: u64,
     /// The finding that was deferred.
     pub finding_id: String,
     /// Why the finding was deferred.
@@ -28,7 +28,7 @@ pub struct DeferralRecord {
 #[serde(deny_unknown_fields)]
 pub struct DeferralRecordRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     pub finding_id: String,
     pub reason: String,
 }
@@ -38,7 +38,7 @@ pub struct DeferralRecordRequest {
 #[serde(deny_unknown_fields)]
 pub struct DeferralSupersedeRequest {
     pub mutation: super::MutationContext,
-    pub project_id: String,
+    pub project_id: u64,
     pub deferral_id: u64,
     pub reason: String,
 }
@@ -47,7 +47,7 @@ pub struct DeferralSupersedeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeferralListQuery {
-    pub project_id: String,
+    pub project_id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finding_id: Option<String>,
 }

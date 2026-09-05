@@ -19,6 +19,9 @@ pub mod spec;
 pub mod timeline;
 pub mod workspace;
 
+#[cfg(test)]
+mod project_scope;
+
 pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, EXPOSED_OPERATION_COUNT, OperationDescriptor, OperationKind,
     assert_registered_matches_exposed_catalogue, exposed_operations,

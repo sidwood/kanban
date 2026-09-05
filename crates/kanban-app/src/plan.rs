@@ -68,7 +68,7 @@ fn transition(project: ProjectId, plan: PlanId, action: &str, facts: Value) -> T
     object.insert("action".to_owned(), Value::from(action));
     object.insert("id".to_owned(), Value::from(plan.value()));
     TimelineEnvelope::project(
-        &project.value().to_string(),
+        project.value(),
         TimelineEventKind::Transition,
         Some(TimelineEntityRef {
             kind: TimelineEntityKind::Plan,
@@ -76,7 +76,6 @@ fn transition(project: ProjectId, plan: PlanId, action: &str, facts: Value) -> T
         }),
         detail,
     )
-    .expect("a minted Plan identity names a Plan")
 }
 
 /// Report a refused domain rule as the stable invalid-request code.

@@ -1701,7 +1701,7 @@ mod backup_restore {
         let evidence = SqliteEvidenceStore::new(database, attachments_dir(managed_root));
         evidence
             .attach_managed_file(
-                "proj",
+                1,
                 "ticket",
                 "1",
                 &STANDARD.encode(b"evidence-bytes"),
@@ -1710,7 +1710,7 @@ mod backup_restore {
             .expect("evidence attaches");
         evidence
             .attach_repository(
-                "proj",
+                1,
                 "ticket",
                 "2",
                 &RelativePath::new("docs/readme.md").expect("path is valid"),
@@ -1801,7 +1801,7 @@ mod backup_restore {
         let evidence = SqliteEvidenceStore::new(&database, attachments_dir(dir.path()));
         evidence
             .attach_managed_file(
-                "proj",
+                1,
                 "ticket",
                 "3",
                 &STANDARD.encode(b"pre-restore-only"),

@@ -111,23 +111,24 @@ impl TimelineEntityKind {
 
 /// Where a timeline row belongs. Entities that sit above every
 /// Project — Initiatives, for one — are recorded globally; everything
-/// inside a Project is recorded against that Project's identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// inside a Project is recorded against that Project's numeric
+/// identity, resolved through the Project store before any write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TimelineScope {
     /// Above every Project.
     Global,
-    /// One Project's own timeline, named by its identity.
-    Project(String),
+    /// One Project's own timeline, named by its numeric identity.
+    Project(u64),
 }
 
 impl TimelineScope {
     /// The Project identity this scope names, or `None` when the
     /// scope is global.
-    pub fn project_id(&self) -> Option<&str> {
+    pub fn project_id(&self) -> Option<u64> {
         match self {
             Self::Global => None,
-            Self::Project(project_id) => Some(project_id),
+            Self::Project(project_id) => Some(*project_id),
         }
     }
 }
@@ -241,24 +242,29 @@ mod vocabulary {
 
         assert_eq!(scope.project_id(), None);
         assert_eq!(
-            serde_json::to_value(&scope).expect("the scope encodes"),
+            serde_json::to_value(scope).expect("the scope encodes"),
             serde_json::json!("global")
         );
     }
 
     #[test]
     fn a_project_scope_carries_its_identity() {
-        let scope = TimelineScope::Project("kan".to_owned());
+        let scope = TimelineScope::Project(1);
 
-        assert_eq!(scope.project_id(), Some("kan"));
+        assert_eq!(scope.project_id(), Some(1));
         assert_eq!(
-            serde_json::to_value(&scope).expect("the scope encodes"),
-            serde_json::json!({ "project": "kan" })
+            serde_json::to_value(scope).expect("the scope encodes"),
+            serde_json::json!({ "project": 1 })
         );
         assert_eq!(
-            serde_json::from_value::<TimelineScope>(serde_json::json!({ "project": "kan" }))
+            serde_json::from_value::<TimelineScope>(serde_json::json!({ "project": 1 }))
                 .expect("the scope decodes"),
             scope
+        );
+        assert!(
+            serde_json::from_value::<TimelineScope>(serde_json::json!({ "project": "kan" }))
+                .is_err(),
+            "a scope may only name a Project numerically"
         );
     }
 

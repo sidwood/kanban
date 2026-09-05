@@ -34,7 +34,7 @@ describe('timeline store', () => {
     }
     const store = useTimelineStore()
 
-    await store.load(transportRejectingWith(refusal), { project: 'kan' })
+    await store.load(transportRejectingWith(refusal), { project: 1 })
 
     expect(store.error).toBe('a Project timeline scope must name a Project')
     expect(store.events).toEqual([])

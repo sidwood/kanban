@@ -46,7 +46,7 @@ impl SqliteEvidenceStore {
 impl EvidenceStore for SqliteEvidenceStore {
     fn attach_managed_file(
         &self,
-        project_id: &str,
+        project_id: u64,
         entity_kind: &str,
         entity_id: &str,
         content_base64: &str,
@@ -77,7 +77,7 @@ impl EvidenceStore for SqliteEvidenceStore {
 
     fn attach_repository(
         &self,
-        project_id: &str,
+        project_id: u64,
         entity_kind: &str,
         entity_id: &str,
         relative_path: &RelativePath,
@@ -140,7 +140,7 @@ impl SqliteEvidenceStore {
                      content_hash, relative_path, commit_identity
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                shape.project_id,
+                shape.project_id.to_string(),
                 shape.entity_kind,
                 shape.entity_id,
                 kind_wire,
@@ -174,7 +174,7 @@ impl SqliteEvidenceStore {
                 id: item.entity_id().to_owned(),
             }),
             detail,
-        )?;
+        );
         insert_event(&span, &envelope).map_err(internal)?;
         span.commit().map_err(internal)?;
         Ok(item)
@@ -251,7 +251,7 @@ fn query_rows(
          FROM evidence_items
          WHERE project_id = ?1",
     );
-    let mut bindings: Vec<String> = vec![filter.project_id.clone()];
+    let mut bindings: Vec<String> = vec![filter.project_id.to_string()];
 
     if let Some(entity_kind) = &filter.entity_kind {
         sql.push_str(" AND entity_kind = ?");
@@ -278,7 +278,15 @@ fn query_rows(
 
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceItem> {
     let id = row.get::<_, i64>(0)?.unsigned_abs();
-    let project_id: String = row.get(1)?;
+    // A non-numeric scope is a legacy row migration 0011 missed;
+    // refusing it beats guessing which Project owns it.
+    let project_id: u64 = row.get::<_, String>(1)?.parse().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(CorruptEvidence),
+        )
+    })?;
     let entity_kind: String = row.get(2)?;
     let entity_id: String = row.get(3)?;
     let kind_wire: String = row.get(4)?;
@@ -335,14 +343,10 @@ fn internal(error: impl std::fmt::Display) -> ApiError {
 }
 
 fn canonicalise_identities(
-    project_id: &str,
+    project_id: u64,
     entity_kind: &str,
     entity_id: &str,
-) -> Result<(String, String, String), ApiError> {
-    let project_id = project_id.trim();
-    if project_id.is_empty() {
-        return Err(ApiError::invalid_request("evidence must name its project"));
-    }
+) -> Result<(u64, String, String), ApiError> {
     if !kanban_domain::is_entity_kind(entity_kind) {
         return Err(ApiError::invalid_request(&format!(
             "unknown entity kind `{entity_kind}`"
@@ -354,11 +358,7 @@ fn canonicalise_identities(
             "an entity identity cannot be blank",
         ));
     }
-    Ok((
-        project_id.to_owned(),
-        entity_kind.to_owned(),
-        entity_id.to_owned(),
-    ))
+    Ok((project_id, entity_kind.to_owned(), entity_id.to_owned()))
 }
 
 #[derive(Debug)]
@@ -404,7 +404,7 @@ mod evidence_storage {
 
     fn list_append(entity: Option<(&str, &str)>, detail: serde_json::Value) -> TimelineEnvelope {
         TimelineEnvelope::project(
-            "kan-p1",
+            1,
             TimelineEventKind::Evidence,
             entity.map(|(kind, id)| TimelineEntityRef {
                 kind: TimelineEntityKind::parse(kind).expect("the test kind is valid"),
@@ -412,16 +412,13 @@ mod evidence_storage {
             }),
             detail,
         )
-        .expect("the test Project scope is valid")
     }
 
     /// The Project timeline as the query surface reads it, so every
     /// test sees the envelope columns and not only the detail.
     fn timeline_rows(database: &Database) -> Vec<TimelineRow> {
         database
-            .query_timeline(&TimelineFilter::of(TimelineScope::Project(
-                "kan-p1".to_owned(),
-            )))
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project(1)))
             .expect("the timeline is readable")
     }
 
@@ -441,7 +438,7 @@ mod evidence_storage {
         let hash = content_hash(content);
         let item = store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -490,7 +487,7 @@ mod evidence_storage {
         let encoded = STANDARD.encode(content);
         store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -509,7 +506,7 @@ mod evidence_storage {
             .query_timeline(&TimelineFilter {
                 entity_kind: Some("ticket".to_owned()),
                 entity_id: Some("kan-t10".to_owned()),
-                ..TimelineFilter::of(TimelineScope::Project("kan-p1".to_owned()))
+                ..TimelineFilter::of(TimelineScope::Project(1))
             })
             .expect("the subject filter applies");
 
@@ -530,7 +527,7 @@ mod evidence_storage {
         let encoded = STANDARD.encode(content);
         let item = store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -551,7 +548,7 @@ mod evidence_storage {
         let encoded = STANDARD.encode(content);
         let item = store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -585,7 +582,7 @@ mod evidence_storage {
 
         let item = store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &STANDARD.encode(content),
@@ -620,7 +617,7 @@ mod evidence_storage {
         let commit = CommitIdentity::new("deadbeef").expect("the commit validates");
         let item = store
             .attach_repository(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &path,
@@ -672,7 +669,7 @@ mod evidence_storage {
         let encoded = STANDARD.encode(b"listed");
         store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -683,7 +680,7 @@ mod evidence_storage {
         let listed = store
             .list(
                 &EvidenceFilter {
-                    project_id: "kan-p1".to_owned(),
+                    project_id: 1,
                     entity_kind: Some("ticket".to_owned()),
                     entity_id: Some("kan-t10".to_owned()),
                 },
@@ -723,7 +720,7 @@ mod evidence_storage {
         store
             .list(
                 &EvidenceFilter {
-                    project_id: "kan-p1".to_owned(),
+                    project_id: 1,
                     entity_kind: None,
                     entity_id: None,
                 },
@@ -762,7 +759,7 @@ mod evidence_storage {
         store
             .list(
                 &EvidenceFilter {
-                    project_id: "kan-p1".to_owned(),
+                    project_id: 1,
                     entity_kind: Some("ticket".to_owned()),
                     entity_id: None,
                 },
@@ -789,7 +786,7 @@ mod evidence_storage {
         let encoded = STANDARD.encode(b"immutable");
         store
             .attach_managed_file(
-                "kan-p1",
+                1,
                 "ticket",
                 "kan-t10",
                 &encoded,
@@ -822,7 +819,7 @@ mod evidence_storage {
         let outcome = store.lock().execute(
             "INSERT OR REPLACE INTO evidence_items
                  (id, project_id, entity_kind, entity_id, kind)
-             VALUES (1, 'kan-p1', 'ticket', 'tampered', 'repository')",
+             VALUES (1, '1', 'ticket', 'tampered', 'repository')",
             [],
         );
 
@@ -864,9 +861,9 @@ mod evidence_storage {
         let encoded = STANDARD.encode(b"proof");
         let facts = append("evidence", json!({ "action": "attached" }));
 
-        for (project_id, entity_id) in [("", "kan-t10"), ("kan-p1", "   ")] {
+        for entity_id in ["   ", ""] {
             let error = store
-                .attach_managed_file(project_id, "ticket", entity_id, &encoded, facts.clone())
+                .attach_managed_file(1, "ticket", entity_id, &encoded, facts.clone())
                 .expect_err("blank identities are refused");
             assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
         }

@@ -29,8 +29,6 @@ impl fmt::Display for DeferralId {
 /// Why a deferral payload was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeferralError {
-    /// The project identity was blank.
-    BlankProject,
     /// The finding identity was blank.
     BlankFinding,
     /// The reason held nothing but whitespace.
@@ -40,7 +38,6 @@ pub enum DeferralError {
 impl fmt::Display for DeferralError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BlankProject => write!(f, "a deferral must name its project"),
             Self::BlankFinding => write!(f, "a deferral must name its finding"),
             Self::BlankReason => write!(f, "a deferral reason cannot be blank"),
         }
@@ -74,7 +71,7 @@ impl DeferralReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deferral {
     id: DeferralId,
-    project_id: String,
+    project_id: u64,
     finding_id: String,
     reason: DeferralReason,
     supersedes: Option<DeferralId>,
@@ -85,7 +82,7 @@ impl Deferral {
     /// Restore a deferral that storage already persisted.
     pub fn restore(
         id: DeferralId,
-        project_id: String,
+        project_id: u64,
         finding_id: String,
         reason: DeferralReason,
         supersedes: Option<DeferralId>,
@@ -101,14 +98,16 @@ impl Deferral {
         }
     }
 
-    /// Validate a fresh deferral before storage assigns its identity.
+    /// Start a fresh deferral before storage assigns its identity.
+    /// The caller has already resolved the Project, so its numeric
+    /// identity is carried, not parsed.
     pub fn record(
-        project_id: &str,
+        project_id: u64,
         finding_id: &str,
         reason: DeferralReason,
     ) -> Result<DeferralDraft, DeferralError> {
         Ok(DeferralDraft {
-            project_id: validate_project(project_id)?,
+            project_id,
             finding_id: validate_finding(finding_id)?,
             reason,
             supersedes: None,
@@ -118,7 +117,7 @@ impl Deferral {
     /// Validate a superseding deferral that references this record.
     pub fn supersede(&self, reason: DeferralReason) -> DeferralDraft {
         DeferralDraft {
-            project_id: self.project_id.clone(),
+            project_id: self.project_id,
             finding_id: self.finding_id.clone(),
             reason,
             supersedes: Some(self.id),
@@ -131,8 +130,8 @@ impl Deferral {
     }
 
     /// The project the deferral belongs to.
-    pub fn project_id(&self) -> &str {
-        &self.project_id
+    pub fn project_id(&self) -> u64 {
+        self.project_id
     }
 
     /// The finding that was deferred.
@@ -159,18 +158,10 @@ impl Deferral {
 /// A validated deferral waiting for storage to assign its identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeferralDraft {
-    pub project_id: String,
+    pub project_id: u64,
     pub finding_id: String,
     pub reason: DeferralReason,
     pub supersedes: Option<DeferralId>,
-}
-
-fn validate_project(project_id: &str) -> Result<String, DeferralError> {
-    let trimmed = project_id.trim();
-    if trimmed.is_empty() {
-        return Err(DeferralError::BlankProject);
-    }
-    Ok(trimmed.to_owned())
 }
 
 fn validate_finding(finding_id: &str) -> Result<String, DeferralError> {
@@ -194,7 +185,7 @@ mod tests {
     #[test]
     fn recording_rejects_blank_findings() {
         let reason = DeferralReason::new("Out of scope for this plan").expect("reason validates");
-        let error = Deferral::record("kan", "  ", reason).expect_err("blank findings are refused");
+        let error = Deferral::record(1, "  ", reason).expect_err("blank findings are refused");
         assert_eq!(error, DeferralError::BlankFinding);
     }
 
@@ -202,7 +193,7 @@ mod tests {
     fn superseding_creates_a_new_draft_referencing_the_original() {
         let original = Deferral::restore(
             DeferralId::new(1),
-            "kan".to_owned(),
+            1,
             "finding-1".to_owned(),
             DeferralReason::new("Cosmetic only").expect("reason validates"),
             None,
@@ -212,7 +203,7 @@ mod tests {
             DeferralReason::new("Accepted risk for this release").expect("reason validates"),
         );
 
-        assert_eq!(replacement.project_id, "kan");
+        assert_eq!(replacement.project_id, 1);
         assert_eq!(replacement.finding_id, "finding-1");
         assert_eq!(replacement.supersedes, Some(DeferralId::new(1)));
         assert_eq!(

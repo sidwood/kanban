@@ -159,7 +159,7 @@ impl CommitIdentity {
 /// The durable fields of one evidence item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceShape {
-    pub project_id: String,
+    pub project_id: u64,
     pub entity_kind: String,
     pub entity_id: String,
     pub kind: EvidenceKind,
@@ -189,8 +189,8 @@ impl EvidenceItem {
     }
 
     /// The owning Project.
-    pub fn project_id(&self) -> &str {
-        &self.shape.project_id
+    pub fn project_id(&self) -> u64 {
+        self.shape.project_id
     }
 
     /// The entity kind this evidence is attached to.
@@ -292,7 +292,7 @@ mod tests {
         let item = EvidenceItem::restore(
             EvidenceId::new(1),
             EvidenceShape {
-                project_id: "kan-p1".to_owned(),
+                project_id: 1,
                 entity_kind: "ticket".to_owned(),
                 entity_id: "kan-t10".to_owned(),
                 kind: EvidenceKind::ManagedFile,
@@ -312,7 +312,7 @@ mod tests {
         let item = EvidenceItem::restore(
             EvidenceId::new(2),
             EvidenceShape {
-                project_id: "kan-p1".to_owned(),
+                project_id: 1,
                 entity_kind: "ticket".to_owned(),
                 entity_id: "kan-t10".to_owned(),
                 kind: EvidenceKind::Repository,

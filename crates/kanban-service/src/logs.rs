@@ -11,6 +11,14 @@
 //! the managed configuration at every append, so a secret added or
 //! rotated after the writer opened is still scrubbed, and a value the
 //! configuration rotated away from is never forgotten.
+//!
+//! An append whose configuration cannot feed redaction fails closed:
+//! the record is withheld and a fixed diagnostic is written in its
+//! place. Knowing nothing is not the same as having nothing to
+//! scrub, so a writer that cannot vouch for a record must not write
+//! it — but it must keep writing something, because the core goes on
+//! serving either way, and the Operator still needs to see that
+//! entries are being lost and why.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -23,10 +31,17 @@ use serde_json::{Value, json};
 
 use kanban_storage::paths::logs_dir;
 
-use crate::redaction::Redactor;
+use crate::redaction::{RedactionSourceError, Redactor};
 
 /// The active log file inside the logs directory.
 const ACTIVE_FILE: &str = "core.log";
+
+/// The component a withheld entry names: the record it stands in for
+/// is gone, so redaction itself is what the entry is about.
+const UNREDACTABLE_COMPONENT: &str = "redaction";
+
+/// What a withheld entry says, in fixed words.
+const UNREDACTABLE_MESSAGE: &str = "log entry withheld: redaction knowledge is unavailable";
 
 /// How large one file may grow and how many files rotation keeps, the
 /// active file included.
@@ -145,29 +160,37 @@ impl LogWriter {
 
     /// Re-reads the managed configuration and unions it into the held
     /// knowledge, so this append scrubs every secret the
-    /// configuration carries now plus every one it carried before. A
-    /// configuration that cannot be read keeps the knowledge already
-    /// held: refresh must never know less than the last refresh.
-    fn refresh_redaction(&self) -> Redactor {
+    /// configuration carries now plus every one it carried before, or
+    /// reports why the configuration can no longer be trusted to say.
+    /// A configuration that cannot be read leaves the knowledge
+    /// already held untouched: refresh must never know less than the
+    /// last refresh.
+    fn refresh_redaction(&self) -> Result<Redactor, RedactionSourceError> {
+        let refreshed = Redactor::from_config(&self.data_dir)?;
         let mut held = self
             .redaction
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *held = held.union(&Redactor::from_config(&self.data_dir).unwrap_or_default());
-        held.clone()
+        *held = held.union(&refreshed);
+        Ok(held.clone())
     }
 
     /// Appends one entry as a redacted JSON line, rotating first when
-    /// the line would pass the active file's bound.
+    /// the line would pass the active file's bound. A configuration
+    /// that cannot feed redaction withholds the record instead: the
+    /// writer would be guessing that it holds every secret the record
+    /// might carry, and a wrong guess is a secret on disk.
     pub fn append(&self, record: &LogRecord) -> std::io::Result<()> {
-        let redactor = self.refresh_redaction();
-        let entry = json!({
-            "ts": unix_millis(),
-            "level": record.level.as_str(),
-            "component": record.component,
-            "message": redactor.redact_text(&record.message),
-            "fields": redactor.redact_json(&record.fields),
-        });
+        let entry = match self.refresh_redaction() {
+            Ok(redactor) => json!({
+                "ts": unix_millis(),
+                "level": record.level.as_str(),
+                "component": record.component,
+                "message": redactor.redact_text(&record.message),
+                "fields": redactor.redact_json(&record.fields),
+            }),
+            Err(source) => withheld_entry(record.level, &source),
+        };
         let mut line = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
         line.push('\n');
 
@@ -185,6 +208,21 @@ impl LogWriter {
         let mut file = OpenOptions::new().create(true).append(true).open(&active)?;
         file.write_all(line.as_bytes())
     }
+}
+
+/// The fixed entry standing in for a record redaction could not vouch
+/// for. Only the record's level survives, because a level is a closed
+/// set of three words and cannot carry content; the component, the
+/// message, and the fields are all caller-supplied text, and any of
+/// them could be holding the secret nobody can find.
+fn withheld_entry(level: LogLevel, source: &RedactionSourceError) -> Value {
+    json!({
+        "ts": unix_millis(),
+        "level": level.as_str(),
+        "component": UNREDACTABLE_COMPONENT,
+        "message": UNREDACTABLE_MESSAGE,
+        "fields": { "reason": source.reason() },
+    })
 }
 
 /// The path of the rotated file at `index`, where 1 is the most
@@ -234,6 +272,146 @@ mod tests {
     use crate::redaction::REDACTED;
 
     const PLANTED_SECRET: &str = "kct_t61_planted_log_secret";
+    const PLANTED_QUOTED: &str = r#"t112 "quoted" log secret"#;
+    const PLANTED_BACKSLASH: &str = r"t112\planted\log\secret";
+    const PLANTED_NON_ASCII: &str = "t112-planted-pässphrase";
+
+    /// The planted values a broken configuration must never let
+    /// through, chosen for the escapes JSON hides them behind.
+    const PLANTED_VALUES: [&str; 3] = [PLANTED_QUOTED, PLANTED_BACKSLASH, PLANTED_NON_ASCII];
+
+    /// One way the managed configuration can stop feeding redaction.
+    struct BrokenConfiguration {
+        /// How the failure reads in an assertion message.
+        label: &'static str,
+        /// Plants the break in a scratch data directory.
+        plant: fn(&std::path::Path),
+        /// The fixed reason the writer must record for it.
+        reason: &'static str,
+    }
+
+    /// Every way the managed configuration can stop feeding redaction.
+    const BROKEN_CONFIGURATIONS: [BrokenConfiguration; 2] = [
+        BrokenConfiguration {
+            label: "a malformed configuration",
+            plant: plant_malformed_config,
+            reason: "configuration_malformed",
+        },
+        BrokenConfiguration {
+            label: "an unreadable configuration",
+            plant: plant_unreadable_config,
+            reason: "configuration_unreadable",
+        },
+    ];
+
+    /// Plants a configuration whose bytes are not JSON.
+    fn plant_malformed_config(data_dir: &std::path::Path) {
+        let path = data_dir.join("config.json");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "{ not json").expect("the malformed configuration is written");
+    }
+
+    /// Plants a configuration that cannot be read at all: a directory
+    /// standing where the file belongs.
+    fn plant_unreadable_config(data_dir: &std::path::Path) {
+        let path = data_dir.join("config.json");
+        let _ = std::fs::remove_file(&path);
+        std::fs::create_dir(&path).expect("the unreadable configuration is planted");
+    }
+
+    /// A record carrying every planted value in its message and its
+    /// fields, the shape a real caller reaches the writer with.
+    fn planted_record(index: usize) -> LogRecord {
+        LogRecord::new(
+            LogLevel::Warn,
+            "probe",
+            format!("entry {index} saw {PLANTED_QUOTED} and {PLANTED_BACKSLASH}"),
+        )
+        .with_fields(json!({
+            "quoted": PLANTED_QUOTED,
+            "backslash": PLANTED_BACKSLASH,
+            "non_ascii": PLANTED_NON_ASCII,
+        }))
+    }
+
+    /// Every form a planted value can take inside serialized log
+    /// text: its raw bytes, escaped once by JSON, escaped again by
+    /// JSON inside JSON, and written with code-point escapes. Hunting
+    /// only the raw bytes passes straight over a leaked backslash
+    /// value, which never appears unescaped in a JSON line.
+    fn serialized_forms(value: &str) -> Vec<String> {
+        let strip = |encoded: String| encoded[1..encoded.len() - 1].to_owned();
+        let once = strip(serde_json::to_string(value).expect("the value serialises"));
+        let twice = strip(serde_json::to_string(&once).expect("the value serialises again"));
+        let code_points: String = value
+            .chars()
+            .map(|character| {
+                if character.is_ascii() {
+                    character.to_string()
+                } else {
+                    format!("\\u{:04x}", character as u32)
+                }
+            })
+            .collect();
+        vec![value.to_owned(), once, twice, code_points]
+    }
+
+    /// Asserts no planted value reached any log file, in any form
+    /// serialization could have written it.
+    fn assert_no_planted_value(dir: &TempDir, label: &str) {
+        for file in log_files(dir) {
+            let text = std::fs::read_to_string(&file).expect("the log file reads");
+            for value in PLANTED_VALUES {
+                for form in serialized_forms(value) {
+                    assert!(
+                        !text.contains(&form),
+                        "with {label}, `{form}` reached {}: {text}",
+                        file.display()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every entry across the rotated files and the active file, in
+    /// write order.
+    fn all_entries(dir: &TempDir) -> Vec<serde_json::Value> {
+        let logs = super::logs_dir(dir.path());
+        let mut entries = Vec::new();
+        for index in (1..10).rev() {
+            let rotated = super::rotated_path(&logs, index);
+            if rotated.is_file() {
+                entries.extend(read_lines(&rotated));
+            }
+        }
+        entries.extend(read_lines(&logs.join("core.log")));
+        entries
+    }
+
+    /// Asserts one entry is the fixed replacement: the level survives
+    /// because it is a closed set of three words that cannot carry
+    /// content, and nothing else the caller supplied does.
+    fn assert_withheld(entry: &serde_json::Value, reason: &str) {
+        let fields = entry.as_object().expect("the entry is an object");
+        let mut keys: Vec<&str> = fields.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["component", "fields", "level", "message", "ts"],
+            "a withheld entry carries exactly the fixed keys: {entry}"
+        );
+        assert_eq!(entry["component"], json!("redaction"));
+        assert_eq!(entry["message"], json!(super::UNREDACTABLE_MESSAGE));
+        assert_eq!(
+            entry["fields"],
+            json!({ "reason": reason }),
+            "the replacement names why, in fixed words: {entry}"
+        );
+        assert!(
+            entry["ts"].as_u64().is_some_and(|ts| ts > 0),
+            "the replacement still carries its timestamp: {entry}"
+        );
+    }
 
     /// A writer bound to `max_file_bytes` per file and `retained_files`
     /// total, matching lines roughly this long.
@@ -509,6 +687,117 @@ mod tests {
                 !text.contains(PLANTED_SECRET) && !text.contains(rotated_in),
                 "the retired and the rotated-in secret must never land in {}: {text}",
                 file.display()
+            );
+        }
+    }
+
+    /// KAN-T112-AC1/AC2/AC4: a configuration that cannot feed
+    /// redaction when the writer opens leaves it knowing no secrets
+    /// at all, so every append withholds its record. Serving survives
+    /// — the append still succeeds, and rotation still bounds the
+    /// directory — but nothing a caller supplied reaches the file, in
+    /// any escaping.
+    #[test]
+    fn an_unredactable_configuration_at_open_withholds_every_record() {
+        for BrokenConfiguration {
+            label,
+            plant,
+            reason,
+        } in BROKEN_CONFIGURATIONS
+        {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            plant(dir.path());
+            let writer = bounded_writer(&dir, 220, 3);
+
+            for index in 0..8 {
+                writer
+                    .append(&planted_record(index))
+                    .expect("serving survives: every append still writes");
+            }
+
+            assert_no_planted_value(&dir, label);
+            let entries = all_entries(&dir);
+            assert!(
+                entries.len() > 1,
+                "{label} must still produce a bounded log, found {}",
+                entries.len()
+            );
+            for entry in &entries {
+                assert_withheld(entry, reason);
+            }
+            assert!(
+                log_files(&dir).len() > 1,
+                "{label} must still rotate: the fixture outgrows one file"
+            );
+        }
+    }
+
+    /// KAN-T112-AC1/AC3: the core outlives its configuration. A
+    /// configuration that breaks after the writer has already opened,
+    /// written, and rotated must withhold from that moment on, while
+    /// the entries written before the break keep the real, redacted
+    /// content they were always allowed.
+    #[test]
+    fn a_configuration_broken_after_rotation_withholds_from_then_on() {
+        for BrokenConfiguration {
+            label,
+            plant,
+            reason,
+        } in BROKEN_CONFIGURATIONS
+        {
+            let dir = TempDir::new().expect("a scratch directory is available");
+            std::fs::write(
+                dir.path().join("config.json"),
+                format!(r#"{{"mcp_install_token":"{PLANTED_SECRET}"}}"#),
+            )
+            .expect("the configuration plants a secret");
+            // Room enough that nothing written before the break is
+            // rotated away, so the entries either side of it can be
+            // compared.
+            let writer = bounded_writer(&dir, 400, 6);
+            for index in 0..4 {
+                writer
+                    .append(&LogRecord::new(
+                        LogLevel::Info,
+                        "probe",
+                        format!("healthy entry {index} saw {PLANTED_SECRET} pass by"),
+                    ))
+                    .expect("every healthy entry writes");
+            }
+            assert!(
+                log_files(&dir).len() > 1,
+                "{label} must break a writer that has already rotated"
+            );
+
+            plant(dir.path());
+            for index in 0..4 {
+                writer
+                    .append(&planted_record(index))
+                    .expect("serving survives the break: every append still writes");
+            }
+
+            assert_no_planted_value(&dir, label);
+            let entries = all_entries(&dir);
+            let withheld = entries
+                .iter()
+                .filter(|entry| entry["component"] == json!("redaction"))
+                .count();
+            assert_eq!(withheld, 4, "every entry after the break is withheld");
+            for entry in entries.iter().skip(entries.len() - withheld) {
+                assert_withheld(entry, reason);
+            }
+            let healthy: Vec<&serde_json::Value> = entries
+                .iter()
+                .filter(|entry| entry["component"] == json!("probe"))
+                .collect();
+            assert!(
+                !healthy.is_empty()
+                    && healthy.iter().all(|entry| {
+                        entry["message"]
+                            .as_str()
+                            .is_some_and(|message| message.contains(REDACTED))
+                    }),
+                "{label} must leave successful redaction before it untouched: {healthy:?}"
             );
         }
     }

@@ -49,6 +49,19 @@ pub enum RedactionSourceError {
     },
 }
 
+impl RedactionSourceError {
+    /// A fixed, content-free label naming which failure this is. A
+    /// caller that had to withhold a record carries this instead of
+    /// the error's own message, because that message is built from
+    /// the very source nobody could vouch for.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Read { .. } => "configuration_unreadable",
+            Self::Parse { .. } => "configuration_malformed",
+        }
+    }
+}
+
 /// Scrubs a fixed set of secret values from text and JSON.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Redactor {

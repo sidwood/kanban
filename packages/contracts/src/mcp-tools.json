@@ -380,7 +380,14 @@
           "type": "string"
         },
         "herdr_session": {
-          "description": "The exclusive Herdr session name; duplicate session names are refused.",
+          "description": "The Herdr session name, if one is selected; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "herdr_workspace": {
+          "description": "The required target Herdr workspace.",
           "type": "string"
         },
         "initiative_id": {
@@ -411,7 +418,7 @@
       "required": [
         "code",
         "default_branch",
-        "herdr_session",
+        "herdr_workspace",
         "mutation",
         "name",
         "repository",
@@ -479,7 +486,14 @@
           "type": "string"
         },
         "herdr_session": {
-          "description": "The one exclusive named Herdr session.",
+          "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "herdr_workspace": {
+          "description": "The one required target Herdr workspace.",
           "type": "string"
         },
         "id": {
@@ -521,7 +535,7 @@
         "code",
         "counters",
         "default_branch",
-        "herdr_session",
+        "herdr_workspace",
         "id",
         "name",
         "repository",
@@ -636,7 +650,14 @@
           "type": "string"
         },
         "herdr_session": {
-          "description": "The one exclusive named Herdr session.",
+          "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "herdr_workspace": {
+          "description": "The one required target Herdr workspace.",
           "type": "string"
         },
         "id": {
@@ -678,7 +699,7 @@
         "code",
         "counters",
         "default_branch",
-        "herdr_session",
+        "herdr_workspace",
         "id",
         "name",
         "repository",
@@ -758,7 +779,14 @@
               "type": "string"
             },
             "herdr_session": {
-              "description": "The one exclusive named Herdr session.",
+              "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "herdr_workspace": {
+              "description": "The one required target Herdr workspace.",
               "type": "string"
             },
             "id": {
@@ -800,7 +828,7 @@
             "code",
             "counters",
             "default_branch",
-            "herdr_session",
+            "herdr_workspace",
             "id",
             "name",
             "repository",
@@ -6043,11 +6071,8 @@
               "type": "boolean"
             },
             "herdr_workspace": {
-              "description": "The Herdr workspace observed through the socket, if connected.",
-              "type": [
-                "string",
-                "null"
-              ]
+              "description": "The required target Herdr workspace, resolved inside the effective session.",
+              "type": "string"
             },
             "last_error": {
               "description": "The last connection or mapping error, if any.",
@@ -6068,14 +6093,17 @@
               "type": "string"
             },
             "session_name": {
-              "description": "The exclusive named Herdr session.",
-              "type": "string"
+              "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
             "connected",
-            "product_workspace",
-            "session_name"
+            "herdr_workspace",
+            "product_workspace"
           ],
           "type": "object"
         },

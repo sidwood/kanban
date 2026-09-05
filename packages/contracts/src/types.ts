@@ -120,11 +120,11 @@ export type HealthResponse = {
 };
 export type HerdrConnectionDiagnostics = {
   connected: boolean;
-  herdr_workspace?: string | null;
+  herdr_workspace: string;
   last_error?: string | null;
   last_snapshot_at?: string | null;
   product_workspace: string;
-  session_name: string;
+  session_name?: string | null;
 };
 export type HerdrDefaultsGetQuery = Record<string, never>;
 export type HerdrDefaultsGetResponse = {
@@ -297,7 +297,8 @@ export type ProjectRecord = {
   code: string;
   counters: ProjectCounters;
   default_branch: string;
-  herdr_session: string;
+  herdr_session?: string | null;
+  herdr_workspace: string;
   id: number;
   initiative_id?: number | null;
   name: string;
@@ -308,7 +309,8 @@ export type ProjectRecord = {
 export type ProjectRegisterRequest = {
   code: string;
   default_branch: string;
-  herdr_session: string;
+  herdr_session?: string | null;
+  herdr_workspace: string;
   initiative_id?: number | null;
   mutation: MutationContext;
   name: string;

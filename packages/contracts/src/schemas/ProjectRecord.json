@@ -56,7 +56,14 @@
       "type": "string"
     },
     "herdr_session": {
-      "description": "The one exclusive named Herdr session.",
+      "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "herdr_workspace": {
+      "description": "The one required target Herdr workspace.",
       "type": "string"
     },
     "id": {
@@ -98,7 +105,7 @@
     "code",
     "counters",
     "default_branch",
-    "herdr_session",
+    "herdr_workspace",
     "id",
     "name",
     "repository",

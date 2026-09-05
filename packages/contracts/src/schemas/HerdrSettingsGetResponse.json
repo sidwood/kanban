@@ -11,11 +11,8 @@
           "type": "boolean"
         },
         "herdr_workspace": {
-          "description": "The Herdr workspace observed through the socket, if connected.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "The required target Herdr workspace, resolved inside the effective session.",
+          "type": "string"
         },
         "last_error": {
           "description": "The last connection or mapping error, if any.",
@@ -36,14 +33,17 @@
           "type": "string"
         },
         "session_name": {
-          "description": "The exclusive named Herdr session.",
-          "type": "string"
+          "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "connected",
-        "product_workspace",
-        "session_name"
+        "herdr_workspace",
+        "product_workspace"
       ],
       "type": "object"
     },

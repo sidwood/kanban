@@ -4,8 +4,11 @@
 
 use std::fs;
 use std::num::NonZeroU32;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
@@ -69,8 +72,38 @@ pub struct BackupManifest {
     pub schema_version: i64,
     /// Whether file payloads are encrypted in the bundle.
     pub encrypted: bool,
+    /// Hex-encoded Argon2 salt; present when encrypted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption_salt: Option<String>,
     /// Every file in the bundle and its content hash.
     pub files: Vec<ManifestEntry>,
+}
+
+/// Operator backup settings read from managed configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackupSettings {
+    /// How many verified bundles to keep.
+    pub retention: BackupRetentionPolicy,
+}
+
+impl BackupSettings {
+    /// The default retention when configuration is absent.
+    pub const fn default_retention() -> BackupRetentionPolicy {
+        BackupRetentionPolicy::keep_most_recent(NonZeroU32::new(7).expect("seven is not zero"))
+    }
+
+    /// The product default settings.
+    pub const fn product_default() -> Self {
+        Self {
+            retention: Self::default_retention(),
+        }
+    }
+}
+
+impl Default for BackupSettings {
+    fn default() -> Self {
+        Self::product_default()
+    }
 }
 
 /// A read-only summary of a bundle for operator preview.
@@ -130,9 +163,11 @@ impl BackupStore {
         passphrase: Option<&str>,
     ) -> Result<BackupManifest, StorageError> {
         let manifest = read_manifest(bundle_path)?;
+        validate_manifest(&manifest)?;
+        let salt = encryption_salt_bytes(&manifest)?;
         for entry in &manifest.files {
             let path = bundle_path.join(&entry.path);
-            let bytes = read_payload(&path, manifest.encrypted, passphrase)?;
+            let bytes = read_payload(&path, manifest.encrypted, passphrase, salt.as_deref())?;
             let digest = content_hash(&bytes);
             if digest != entry.sha256 {
                 return Err(StorageError::BackupHashMismatch {
@@ -151,23 +186,23 @@ impl BackupStore {
         }
         let database_path = bundle_path.join(database_file_name());
         if manifest.encrypted {
-            let staging = bundle_path.join(".validate-staging.sqlite");
-            let bytes = read_payload(&database_path, true, passphrase)?;
-            fs::write(&staging, &bytes).map_err(|source| StorageError::BackupIo {
-                path: staging.clone(),
+            let staging = SecureValidationTemp::new(bundle_path)?;
+            let bytes = read_payload(&database_path, true, passphrase, salt.as_deref())?;
+            fs::write(staging.path(), &bytes).map_err(|source| StorageError::BackupIo {
+                path: staging.path().to_path_buf(),
                 source,
             })?;
-            let conn = Connection::open(&staging).map_err(|source| StorageError::BackupOpen {
-                path: staging.clone(),
-                source,
-            })?;
+            let conn =
+                Connection::open(staging.path()).map_err(|source| StorageError::BackupOpen {
+                    path: staging.path().to_path_buf(),
+                    source,
+                })?;
             let check: String = conn
                 .query_row("PRAGMA integrity_check", [], |row| row.get(0))
                 .map_err(|source| StorageError::BackupOpen {
-                    path: staging.clone(),
+                    path: staging.path().to_path_buf(),
                     source,
                 })?;
-            let _ = fs::remove_file(&staging);
             if check != "ok" {
                 return Err(StorageError::BackupIntegrity { detail: check });
             }
@@ -245,6 +280,15 @@ impl BackupStore {
             })?;
             removed.push(path);
         }
+        let removed_ids: Vec<String> = removed
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            })
+            .collect();
+        self.prune_verified_records(&removed_ids)?;
         Ok(removed)
     }
 
@@ -254,9 +298,18 @@ impl BackupStore {
         schema_version: i64,
     ) -> Result<Option<VerifiedBackupRecord>, StorageError> {
         let records = self.load_verified_records()?;
-        Ok(records
+        let Some(record) = records
             .into_iter()
-            .find(|record| record.schema_version == schema_version))
+            .find(|record| record.schema_version == schema_version)
+        else {
+            return Ok(None);
+        };
+        let bundle_path = backups_dir(&self.managed_root).join(&record.bundle_id);
+        if bundle_path.exists() {
+            return Ok(Some(record));
+        }
+        self.prune_verified_records(&[record.bundle_id])?;
+        Ok(None)
     }
 
     fn write_bundle(
@@ -272,6 +325,15 @@ impl BackupStore {
         })?;
         let schema_version = current_schema_version(database)?;
         let encrypted = options.passphrase.is_some();
+        let encryption_salt = if encrypted {
+            Some(generate_encryption_salt())
+        } else {
+            None
+        };
+        let salt_bytes = encryption_salt
+            .as_deref()
+            .map(encryption_salt_from_hex)
+            .transpose()?;
         let mut files = Vec::new();
 
         let database_target = bundle_path.join(database_file_name());
@@ -289,7 +351,11 @@ impl BackupStore {
                 .expect("encrypted needs passphrase");
             fs::write(
                 &database_target,
-                encrypt_bytes(passphrase, &database_bytes)?,
+                encrypt_bytes(
+                    passphrase,
+                    salt_bytes.as_deref().expect("encrypted needs salt"),
+                    &database_bytes,
+                )?,
             )
             .map_err(|source| StorageError::BackupIo {
                 path: database_target.clone(),
@@ -305,6 +371,7 @@ impl BackupStore {
                 &bundle_attachments,
                 encrypted,
                 options.passphrase.as_deref(),
+                salt_bytes.as_deref(),
                 &mut files,
             )?;
         }
@@ -327,12 +394,18 @@ impl BackupStore {
                     .passphrase
                     .as_deref()
                     .expect("encrypted needs passphrase");
-                fs::write(&bundle_config, encrypt_bytes(passphrase, &config_bytes)?).map_err(
-                    |source| StorageError::BackupIo {
-                        path: bundle_config.clone(),
-                        source,
-                    },
-                )?;
+                fs::write(
+                    &bundle_config,
+                    encrypt_bytes(
+                        passphrase,
+                        salt_bytes.as_deref().expect("encrypted needs salt"),
+                        &config_bytes,
+                    )?,
+                )
+                .map_err(|source| StorageError::BackupIo {
+                    path: bundle_config.clone(),
+                    source,
+                })?;
             }
         }
 
@@ -341,6 +414,7 @@ impl BackupStore {
             created_at: rfc3339_now(),
             schema_version,
             encrypted,
+            encryption_salt,
             files,
         };
         write_manifest(&bundle_path, &manifest)?;
@@ -353,8 +427,9 @@ impl BackupStore {
         manifest: &BackupManifest,
         _passphrase: Option<&str>,
     ) -> Result<(), StorageError> {
+        validate_manifest(manifest)?;
         for entry in &manifest.files {
-            let path = staging.join(&entry.path);
+            let path = resolve_under(staging, &entry.path)?;
             let bytes = fs::read(&path).map_err(|source| StorageError::BackupIo {
                 path: path.clone(),
                 source,
@@ -368,6 +443,14 @@ impl BackupStore {
             }
         }
         let database_path = staging.join(database_file_name());
+        if !database_path.is_file() {
+            return Err(StorageError::BackupInvalid {
+                reason: format!(
+                    "restore staging is missing required file {}",
+                    database_file_name()
+                ),
+            });
+        }
         let conn = Connection::open(&database_path).map_err(|source| StorageError::BackupOpen {
             path: database_path.clone(),
             source,
@@ -439,6 +522,19 @@ impl BackupStore {
         fs::write(&path, text).map_err(|source| StorageError::BackupIo { path, source })
     }
 
+    fn prune_verified_records(&self, removed_bundle_ids: &[String]) -> Result<(), StorageError> {
+        if removed_bundle_ids.is_empty() {
+            return Ok(());
+        }
+        let mut records = self.load_verified_records()?;
+        let before = records.len();
+        records.retain(|record| !removed_bundle_ids.contains(&record.bundle_id));
+        if records.len() != before {
+            self.save_verified_records(&records)?;
+        }
+        Ok(())
+    }
+
     /// Creates a bundle from an open connection, for hooks that already
     /// hold the authoritative connection.
     pub fn create_from_connection(
@@ -466,6 +562,15 @@ impl BackupStore {
         })?;
         let schema_version = current_schema_version_from(conn)?;
         let encrypted = options.passphrase.is_some();
+        let encryption_salt = if encrypted {
+            Some(generate_encryption_salt())
+        } else {
+            None
+        };
+        let salt_bytes = encryption_salt
+            .as_deref()
+            .map(encryption_salt_from_hex)
+            .transpose()?;
         let mut files = Vec::new();
 
         let database_target = bundle_path.join(database_file_name());
@@ -483,7 +588,11 @@ impl BackupStore {
                 .expect("encrypted needs passphrase");
             fs::write(
                 &database_target,
-                encrypt_bytes(passphrase, &database_bytes)?,
+                encrypt_bytes(
+                    passphrase,
+                    salt_bytes.as_deref().expect("encrypted needs salt"),
+                    &database_bytes,
+                )?,
             )
             .map_err(|source| StorageError::BackupIo {
                 path: database_target.clone(),
@@ -499,6 +608,7 @@ impl BackupStore {
                 &bundle_attachments,
                 encrypted,
                 options.passphrase.as_deref(),
+                salt_bytes.as_deref(),
                 &mut files,
             )?;
         }
@@ -521,12 +631,18 @@ impl BackupStore {
                     .passphrase
                     .as_deref()
                     .expect("encrypted needs passphrase");
-                fs::write(&bundle_config, encrypt_bytes(passphrase, &config_bytes)?).map_err(
-                    |source| StorageError::BackupIo {
-                        path: bundle_config.clone(),
-                        source,
-                    },
-                )?;
+                fs::write(
+                    &bundle_config,
+                    encrypt_bytes(
+                        passphrase,
+                        salt_bytes.as_deref().expect("encrypted needs salt"),
+                        &config_bytes,
+                    )?,
+                )
+                .map_err(|source| StorageError::BackupIo {
+                    path: bundle_config.clone(),
+                    source,
+                })?;
             }
         }
 
@@ -535,6 +651,7 @@ impl BackupStore {
             created_at: rfc3339_now(),
             schema_version,
             encrypted,
+            encryption_salt,
             files,
         };
         write_manifest(&bundle_path, &manifest)?;
@@ -709,6 +826,443 @@ fn manifest_entry(relative: &str, plaintext: &[u8]) -> ManifestEntry {
     }
 }
 
+/// Reads operator backup settings from managed configuration.
+pub fn load_backup_settings(managed_root: &Path) -> BackupSettings {
+    let config_path = managed_root.join(config_file_name());
+    let Ok(text) = fs::read_to_string(&config_path) else {
+        return BackupSettings::default();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return BackupSettings::default();
+    };
+    let Some(retained) = value
+        .get("backup_retention")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| NonZeroU32::new(count as u32))
+    else {
+        return BackupSettings::default();
+    };
+    BackupSettings {
+        retention: BackupRetentionPolicy::keep_most_recent(retained),
+    }
+}
+
+fn validate_manifest(manifest: &BackupManifest) -> Result<(), StorageError> {
+    ensure_database_in_manifest(manifest)?;
+    for entry in &manifest.files {
+        validate_manifest_path(&entry.path)?;
+    }
+    if manifest.encrypted && manifest.encryption_salt.is_none() {
+        return Err(StorageError::BackupInvalid {
+            reason: "encrypted bundle is missing its authentication salt".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_database_in_manifest(manifest: &BackupManifest) -> Result<(), StorageError> {
+    let database_name = database_file_name();
+    if manifest
+        .files
+        .iter()
+        .any(|entry| entry.path == database_name)
+    {
+        Ok(())
+    } else {
+        Err(StorageError::BackupInvalid {
+            reason: format!("bundle manifest is missing required file {database_name}"),
+        })
+    }
+}
+
+fn validate_manifest_path(path: &str) -> Result<(), StorageError> {
+    if path.is_empty() {
+        return Err(StorageError::BackupInvalid {
+            reason: "manifest path is empty".to_string(),
+        });
+    }
+    if path.starts_with('/') || path.contains('\\') {
+        return Err(StorageError::BackupInvalid {
+            reason: format!("manifest path is not bundle-relative: {path}"),
+        });
+    }
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => {
+                return Err(StorageError::BackupInvalid {
+                    reason: format!("manifest path escapes the bundle root: {path}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_under(base: &Path, relative: &str) -> Result<PathBuf, StorageError> {
+    validate_manifest_path(relative)?;
+    let mut resolved = base.to_path_buf();
+    for component in Path::new(relative).components() {
+        match component {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {}
+            _ => {
+                return Err(StorageError::BackupInvalid {
+                    reason: format!("manifest path escapes the bundle root: {relative}"),
+                });
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+fn sqlite_sidecar_paths(database_path: &Path) -> [PathBuf; 2] {
+    let path = database_path.to_string_lossy();
+    [
+        PathBuf::from(format!("{path}-wal")),
+        PathBuf::from(format!("{path}-shm")),
+    ]
+}
+
+fn remove_sqlite_sidecars(database_path: &Path) -> Result<(), StorageError> {
+    for sidecar in sqlite_sidecar_paths(database_path) {
+        if sidecar.exists() {
+            fs::remove_file(&sidecar).map_err(|source| StorageError::BackupIo {
+                path: sidecar,
+                source,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+struct SecureValidationTemp {
+    file: tempfile::NamedTempFile,
+}
+
+impl SecureValidationTemp {
+    fn new(bundle_path: &Path) -> Result<Self, StorageError> {
+        let file = tempfile::Builder::new()
+            .prefix("kanban-validate-")
+            .suffix(".sqlite")
+            .tempfile_in(std::env::temp_dir())
+            .map_err(|source| StorageError::BackupIo {
+                path: bundle_path.to_path_buf(),
+                source,
+            })?;
+        #[cfg(unix)]
+        {
+            fs::set_permissions(file.path(), fs::Permissions::from_mode(0o600)).map_err(
+                |source| StorageError::BackupIo {
+                    path: file.path().to_path_buf(),
+                    source,
+                },
+            )?;
+        }
+        Ok(Self { file })
+    }
+
+    fn path(&self) -> &Path {
+        self.file.path()
+    }
+}
+
+fn generate_encryption_salt() -> String {
+    let mut salt = [0_u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    encode_hex(&salt)
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn is_hex_digit(ch: char) -> bool {
+    ch.is_ascii_digit() || matches!(ch, 'a'..='f' | 'A'..='F')
+}
+
+fn encryption_salt_from_hex(encoded: &str) -> Result<Vec<u8>, StorageError> {
+    if encoded.len() != 32 || !encoded.chars().all(is_hex_digit) {
+        return Err(StorageError::BackupInvalid {
+            reason: "encryption salt must be 16 bytes encoded as hex".to_string(),
+        });
+    }
+    let mut salt = Vec::with_capacity(16);
+    let bytes = encoded.as_bytes();
+    for index in (0..bytes.len()).step_by(2) {
+        let pair = std::str::from_utf8(&bytes[index..index + 2]).map_err(|error| {
+            StorageError::BackupInvalid {
+                reason: error.to_string(),
+            }
+        })?;
+        salt.push(
+            u8::from_str_radix(pair, 16).map_err(|error| StorageError::BackupInvalid {
+                reason: error.to_string(),
+            })?,
+        );
+    }
+    Ok(salt)
+}
+
+fn encryption_salt_bytes(manifest: &BackupManifest) -> Result<Option<Vec<u8>>, StorageError> {
+    if !manifest.encrypted {
+        return Ok(None);
+    }
+    let encoded =
+        manifest
+            .encryption_salt
+            .as_deref()
+            .ok_or_else(|| StorageError::BackupInvalid {
+                reason: "encrypted bundle is missing its authentication salt".to_string(),
+            })?;
+    Ok(Some(encryption_salt_from_hex(encoded)?))
+}
+
+#[cfg(test)]
+pub(crate) mod restore_swap_test_hooks {
+    use std::cell::Cell;
+
+    pub const PHASE_QUARANTINE_READY: usize = 1;
+    pub const PHASE_AFTER_DB_QUARANTINE: usize = 2;
+    pub const PHASE_AFTER_ATTACHMENTS_QUARANTINE: usize = 3;
+    pub const PHASE_AFTER_CONFIG_QUARANTINE: usize = 4;
+    pub const PHASE_AFTER_DB_SWAP: usize = 5;
+    pub const PHASE_AFTER_ATTACHMENTS_SWAP: usize = 6;
+    pub const PHASE_AFTER_CONFIG_SWAP: usize = 7;
+
+    thread_local! {
+        static FAIL_AFTER_PHASE: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn set_fail_after_phase(phase: usize) {
+        FAIL_AFTER_PHASE.with(|flag| flag.set(phase));
+    }
+
+    pub fn clear_fail_after_phase() {
+        FAIL_AFTER_PHASE.with(|flag| flag.set(0));
+    }
+
+    pub struct FailAfterPhaseGuard {
+        active: bool,
+    }
+
+    impl FailAfterPhaseGuard {
+        pub fn set(phase: usize) -> Self {
+            set_fail_after_phase(phase);
+            Self { active: true }
+        }
+    }
+
+    impl Drop for FailAfterPhaseGuard {
+        fn drop(&mut self) {
+            if self.active {
+                clear_fail_after_phase();
+            }
+        }
+    }
+
+    pub fn maybe_fail(phase: usize) -> Result<(), super::StorageError> {
+        let should_fail = FAIL_AFTER_PHASE.with(|flag| flag.get() == phase);
+        if should_fail {
+            return Err(super::StorageError::BackupInvalid {
+                reason: format!("injected restore swap failure at phase {phase}"),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(test))]
+mod restore_swap_test_hooks {
+    pub fn maybe_fail(_phase: usize) -> Result<(), super::StorageError> {
+        Ok(())
+    }
+}
+
+use restore_swap_test_hooks::maybe_fail;
+
+struct RestoreSwapState {
+    quarantined_database: bool,
+    quarantined_attachments: bool,
+    quarantined_config: bool,
+    swapped_database: bool,
+    swapped_attachments: bool,
+    swapped_config: bool,
+}
+
+fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), StorageError> {
+    let database_live = managed_root.join(database_file_name());
+    let attachments_live = attachments_dir(managed_root);
+    let config_live = managed_root.join(config_file_name());
+    let quarantine = managed_root.join(".pre-restore-quarantine");
+    let mut state = RestoreSwapState {
+        quarantined_database: false,
+        quarantined_attachments: false,
+        quarantined_config: false,
+        swapped_database: false,
+        swapped_attachments: false,
+        swapped_config: false,
+    };
+
+    let result = (|| {
+        if quarantine.exists() {
+            fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
+                path: quarantine.clone(),
+                source,
+            })?;
+        }
+        fs::create_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
+            path: quarantine.clone(),
+            source,
+        })?;
+        maybe_fail(1)?;
+
+        remove_sqlite_sidecars(&database_live)?;
+
+        if database_live.exists() {
+            fs::rename(&database_live, quarantine.join(database_file_name())).map_err(
+                |source| StorageError::BackupIo {
+                    path: database_live.clone(),
+                    source,
+                },
+            )?;
+            state.quarantined_database = true;
+            remove_sqlite_sidecars(&database_live)?;
+        }
+        maybe_fail(2)?;
+
+        if attachments_live.exists() {
+            fs::rename(&attachments_live, quarantine.join("attachments")).map_err(|source| {
+                StorageError::BackupIo {
+                    path: attachments_live.clone(),
+                    source,
+                }
+            })?;
+            state.quarantined_attachments = true;
+        }
+        maybe_fail(3)?;
+
+        if config_live.exists() {
+            fs::rename(&config_live, quarantine.join(config_file_name())).map_err(|source| {
+                StorageError::BackupIo {
+                    path: config_live.clone(),
+                    source,
+                }
+            })?;
+            state.quarantined_config = true;
+        }
+        maybe_fail(4)?;
+
+        fs::rename(
+            staging.join(database_file_name()),
+            managed_root.join(database_file_name()),
+        )
+        .map_err(|source| StorageError::BackupIo {
+            path: managed_root.join(database_file_name()),
+            source,
+        })?;
+        state.swapped_database = true;
+        remove_sqlite_sidecars(&database_live)?;
+        maybe_fail(5)?;
+
+        if staging.join("attachments").exists() {
+            fs::rename(staging.join("attachments"), attachments_dir(managed_root)).map_err(
+                |source| StorageError::BackupIo {
+                    path: attachments_dir(managed_root),
+                    source,
+                },
+            )?;
+            state.swapped_attachments = true;
+        }
+        maybe_fail(6)?;
+
+        let staged_config = staging.join(config_file_name());
+        if staged_config.exists() {
+            fs::rename(&staged_config, managed_root.join(config_file_name())).map_err(
+                |source| StorageError::BackupIo {
+                    path: managed_root.join(config_file_name()),
+                    source,
+                },
+            )?;
+            state.swapped_config = true;
+        }
+        maybe_fail(7)?;
+
+        fs::remove_dir_all(staging).map_err(|source| StorageError::BackupIo {
+            path: staging.to_path_buf(),
+            source,
+        })?;
+        fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
+            path: quarantine.clone(),
+            source,
+        })?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        rollback_restore_swap(managed_root, staging, &quarantine, &state)?;
+    }
+    result
+}
+
+fn rollback_restore_swap(
+    managed_root: &Path,
+    staging: &Path,
+    quarantine: &Path,
+    state: &RestoreSwapState,
+) -> Result<(), StorageError> {
+    let database_live = managed_root.join(database_file_name());
+    let attachments_live = attachments_dir(managed_root);
+    let config_live = managed_root.join(config_file_name());
+
+    if state.swapped_config && config_live.exists() {
+        let _ = fs::rename(&config_live, staging.join(config_file_name()));
+    }
+    if state.swapped_attachments && attachments_live.exists() {
+        let _ = fs::rename(&attachments_live, staging.join("attachments"));
+    }
+    if state.swapped_database && database_live.exists() {
+        remove_sqlite_sidecars(&database_live)?;
+        let _ = fs::rename(&database_live, staging.join(database_file_name()));
+    }
+
+    if state.quarantined_config && !config_live.exists() {
+        let quarantined = quarantine.join(config_file_name());
+        if quarantined.exists() {
+            fs::rename(&quarantined, &config_live).map_err(|source| StorageError::BackupIo {
+                path: config_live.clone(),
+                source,
+            })?;
+        }
+    }
+    if state.quarantined_attachments && !attachments_live.exists() {
+        let quarantined = quarantine.join("attachments");
+        if quarantined.exists() {
+            fs::rename(&quarantined, &attachments_live).map_err(|source| {
+                StorageError::BackupIo {
+                    path: attachments_live.clone(),
+                    source,
+                }
+            })?;
+        }
+    }
+    if state.quarantined_database && !database_live.exists() {
+        let quarantined = quarantine.join(database_file_name());
+        if quarantined.exists() {
+            fs::rename(&quarantined, &database_live).map_err(|source| StorageError::BackupIo {
+                path: database_live.clone(),
+                source,
+            })?;
+            remove_sqlite_sidecars(&database_live)?;
+        }
+    }
+
+    if quarantine.exists() {
+        let _ = fs::remove_dir_all(quarantine);
+    }
+    Ok(())
+}
+
 fn list_bundle_dirs(root: &Path) -> Result<Vec<PathBuf>, StorageError> {
     let mut bundles = Vec::new();
     for entry in fs::read_dir(root).map_err(|source| StorageError::BackupIo {
@@ -732,6 +1286,7 @@ fn copy_tree(
     target_root: &Path,
     encrypted: bool,
     passphrase: Option<&str>,
+    salt: Option<&[u8]>,
     files: &mut Vec<ManifestEntry>,
 ) -> Result<(), StorageError> {
     fs::create_dir_all(target_root).map_err(|source| StorageError::BackupIo {
@@ -751,7 +1306,14 @@ fn copy_tree(
         let relative = format!("attachments/{}", file_name.to_string_lossy());
         let target_path = target_root.join(&file_name);
         if source_path.is_dir() {
-            copy_tree(&source_path, &target_path, encrypted, passphrase, files)?;
+            copy_tree(
+                &source_path,
+                &target_path,
+                encrypted,
+                passphrase,
+                salt,
+                files,
+            )?;
             continue;
         }
         fs::copy(&source_path, &target_path).map_err(|source| StorageError::BackupIo {
@@ -764,11 +1326,13 @@ fn copy_tree(
         })?;
         if encrypted {
             let passphrase = passphrase.expect("encrypted needs passphrase");
-            fs::write(&target_path, encrypt_bytes(passphrase, &bytes)?).map_err(|source| {
-                StorageError::BackupIo {
-                    path: target_path.clone(),
-                    source,
-                }
+            fs::write(
+                &target_path,
+                encrypt_bytes(passphrase, salt.expect("encrypted needs salt"), &bytes)?,
+            )
+            .map_err(|source| StorageError::BackupIo {
+                path: target_path.clone(),
+                source,
             })?;
         }
         files.push(manifest_entry(&relative, &bytes));
@@ -782,16 +1346,17 @@ fn extract_bundle(
     manifest: &BackupManifest,
     passphrase: Option<&str>,
 ) -> Result<(), StorageError> {
+    let salt = encryption_salt_bytes(manifest)?;
     for entry in &manifest.files {
         let source = bundle_path.join(&entry.path);
-        let target = staging.join(&entry.path);
+        let target = resolve_under(staging, &entry.path)?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|source| StorageError::BackupIo {
                 path: parent.to_path_buf(),
                 source,
             })?;
         }
-        let bytes = read_payload(&source, manifest.encrypted, passphrase)?;
+        let bytes = read_payload(&source, manifest.encrypted, passphrase, salt.as_deref())?;
         fs::write(&target, bytes).map_err(|source| StorageError::BackupIo {
             path: target,
             source,
@@ -804,6 +1369,7 @@ fn read_payload(
     path: &Path,
     encrypted: bool,
     passphrase: Option<&str>,
+    salt: Option<&[u8]>,
 ) -> Result<Vec<u8>, StorageError> {
     let bytes = fs::read(path).map_err(|source| StorageError::BackupIo {
         path: path.to_path_buf(),
@@ -813,14 +1379,17 @@ fn read_payload(
         let passphrase = passphrase.ok_or_else(|| StorageError::BackupInvalid {
             reason: "encrypted bundle requires a passphrase".to_string(),
         })?;
-        decrypt_bytes(passphrase, &bytes)
+        let salt = salt.ok_or_else(|| StorageError::BackupInvalid {
+            reason: "encrypted bundle is missing its authentication salt".to_string(),
+        })?;
+        decrypt_bytes(passphrase, salt, &bytes)
     } else {
         Ok(bytes)
     }
 }
 
-fn encrypt_bytes(passphrase: &str, plaintext: &[u8]) -> Result<Vec<u8>, StorageError> {
-    let key = Key::from(derive_key(passphrase)?);
+fn encrypt_bytes(passphrase: &str, salt: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, StorageError> {
+    let key = Key::from(derive_key(passphrase, salt)?);
     let cipher = ChaCha20Poly1305::new(&key);
     let mut nonce_bytes = [0_u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -837,14 +1406,14 @@ fn encrypt_bytes(passphrase: &str, plaintext: &[u8]) -> Result<Vec<u8>, StorageE
     Ok(payload)
 }
 
-fn decrypt_bytes(passphrase: &str, payload: &[u8]) -> Result<Vec<u8>, StorageError> {
+fn decrypt_bytes(passphrase: &str, salt: &[u8], payload: &[u8]) -> Result<Vec<u8>, StorageError> {
     if payload.len() < 12 {
         return Err(StorageError::BackupInvalid {
             reason: "encrypted payload is too short".to_string(),
         });
     }
     let (nonce_bytes, ciphertext) = payload.split_at(12);
-    let key = Key::from(derive_key(passphrase)?);
+    let key = Key::from(derive_key(passphrase, salt)?);
     let cipher = ChaCha20Poly1305::new(&key);
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher
@@ -854,8 +1423,7 @@ fn decrypt_bytes(passphrase: &str, payload: &[u8]) -> Result<Vec<u8>, StorageErr
         })
 }
 
-fn derive_key(passphrase: &str) -> Result<[u8; 32], StorageError> {
-    let salt = b"kanban-backup-v1";
+fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], StorageError> {
     let mut key = [0_u8; 32];
     Argon2::default()
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
@@ -863,84 +1431,6 @@ fn derive_key(passphrase: &str) -> Result<[u8; 32], StorageError> {
             reason: error.to_string(),
         })?;
     Ok(key)
-}
-
-fn atomic_swap_restore(managed_root: &Path, staging: &Path) -> Result<(), StorageError> {
-    let database_live = managed_root.join(database_file_name());
-    let attachments_live = attachments_dir(managed_root);
-    let config_live = managed_root.join(config_file_name());
-    let quarantine = managed_root.join(".pre-restore-quarantine");
-    if quarantine.exists() {
-        fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
-            path: quarantine.clone(),
-            source,
-        })?;
-    }
-    fs::create_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
-        path: quarantine.clone(),
-        source,
-    })?;
-
-    if database_live.exists() {
-        fs::rename(&database_live, quarantine.join(database_file_name())).map_err(|source| {
-            StorageError::BackupIo {
-                path: database_live.clone(),
-                source,
-            }
-        })?;
-    }
-    if attachments_live.exists() {
-        fs::rename(&attachments_live, quarantine.join("attachments")).map_err(|source| {
-            StorageError::BackupIo {
-                path: attachments_live.clone(),
-                source,
-            }
-        })?;
-    }
-    if config_live.exists() {
-        fs::rename(&config_live, quarantine.join(config_file_name())).map_err(|source| {
-            StorageError::BackupIo {
-                path: config_live.clone(),
-                source,
-            }
-        })?;
-    }
-
-    fs::rename(
-        staging.join(database_file_name()),
-        managed_root.join(database_file_name()),
-    )
-    .map_err(|source| StorageError::BackupIo {
-        path: managed_root.join(database_file_name()),
-        source,
-    })?;
-    if staging.join("attachments").exists() {
-        fs::rename(staging.join("attachments"), attachments_dir(managed_root)).map_err(
-            |source| StorageError::BackupIo {
-                path: attachments_dir(managed_root),
-                source,
-            },
-        )?;
-    }
-    let staged_config = staging.join(config_file_name());
-    if staged_config.exists() {
-        fs::rename(&staged_config, managed_root.join(config_file_name())).map_err(|source| {
-            StorageError::BackupIo {
-                path: managed_root.join(config_file_name()),
-                source,
-            }
-        })?;
-    }
-
-    fs::remove_dir_all(staging).map_err(|source| StorageError::BackupIo {
-        path: staging.to_path_buf(),
-        source,
-    })?;
-    fs::remove_dir_all(&quarantine).map_err(|source| StorageError::BackupIo {
-        path: quarantine,
-        source,
-    })?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1182,6 +1672,481 @@ mod backup_restore {
             super::list_bundle_dirs(&crate::paths::backups_dir(dir.path())).expect("bundles list");
         assert_eq!(bundles.len(), 2);
     }
+
+    #[test]
+    fn restore_removes_stale_wal_and_shm_and_recovers_database() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        database
+            .connection()
+            .execute("UPDATE initiatives SET name = 'Beta' WHERE id = 1", [])
+            .expect("live data mutates");
+        let database_path = dir.path().join(database_file_name());
+        let wal_path = super::sqlite_sidecar_paths(&database_path)[0].clone();
+        let shm_path = super::sqlite_sidecar_paths(&database_path)[1].clone();
+        assert!(
+            wal_path.exists(),
+            "WAL mode leaves a sidecar after mutation"
+        );
+        std::fs::write(&wal_path, b"stale-wal-frames").expect("wal tampers");
+        std::fs::write(&shm_path, b"stale-shm").expect("shm tampers");
+
+        store.restore(&bundle, None).expect("restore succeeds");
+
+        for sidecar in super::sqlite_sidecar_paths(&database_path) {
+            assert!(
+                !sidecar.exists(),
+                "restore must remove stale sidecars: {}",
+                sidecar.display()
+            );
+        }
+        let restored = Database::open(&database_path).expect("restored database opens");
+        let name: String = restored
+            .connection()
+            .query_row("SELECT name FROM initiatives", [], |row| row.get(0))
+            .expect("initiative reads");
+        assert_eq!(name, "Alpha");
+    }
+
+    #[test]
+    fn validate_rejects_bundle_missing_database_payload() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        std::fs::remove_file(bundle.join(database_file_name())).expect("database payload removed");
+        let manifest_path = bundle.join("manifest.json");
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest reads");
+        let mut manifest: super::BackupManifest =
+            serde_json::from_str(&manifest_text).expect("manifest decodes");
+        manifest
+            .files
+            .retain(|entry| entry.path != database_file_name());
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let outcome = store.validate(&bundle, None);
+        assert!(matches!(
+            outcome,
+            Err(crate::error::StorageError::BackupInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn restore_rejects_bundle_missing_database_manifest_entry() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        std::fs::remove_file(bundle.join(database_file_name())).expect("database payload removed");
+        let manifest_path = bundle.join("manifest.json");
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest reads");
+        let mut manifest: super::BackupManifest =
+            serde_json::from_str(&manifest_text).expect("manifest decodes");
+        manifest
+            .files
+            .retain(|entry| entry.path != database_file_name());
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let outcome = store.restore(&bundle, None);
+        assert!(matches!(
+            outcome,
+            Err(crate::error::StorageError::BackupInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn prune_removes_verified_records_for_removed_bundles() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let options = BackupOptions {
+            retention: BackupRetentionPolicy::keep_most_recent(
+                NonZeroU32::new(1).expect("one is not zero"),
+            ),
+            passphrase: None,
+        };
+        store.create(&database, &options).expect("first backup");
+        store.create(&database, &options).expect("second backup");
+
+        assert!(
+            store
+                .verified_record_for(9)
+                .expect("records read")
+                .is_some(),
+            "the surviving bundle keeps a verified record"
+        );
+        let records_path = crate::paths::backups_dir(dir.path()).join("verified-records.json");
+        let records_text = std::fs::read_to_string(&records_path).expect("records read");
+        let records: Vec<super::VerifiedBackupRecord> =
+            serde_json::from_str(&records_text).expect("records decode");
+        assert_eq!(records.len(), 1);
+        let bundles =
+            super::list_bundle_dirs(&crate::paths::backups_dir(dir.path())).expect("bundles list");
+        assert_eq!(bundles.len(), 1);
+    }
+
+    #[test]
+    fn verified_record_for_ignores_pruned_bundle() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let options = BackupOptions {
+            retention: BackupRetentionPolicy::keep_most_recent(
+                NonZeroU32::new(1).expect("one is not zero"),
+            ),
+            passphrase: None,
+        };
+        store.create(&database, &options).expect("first backup");
+        store.create(&database, &options).expect("second backup");
+
+        let record = store
+            .verified_record_for(9)
+            .expect("record reads")
+            .expect("verified record exists");
+        let bundle_path = crate::paths::backups_dir(dir.path()).join(&record.bundle_id);
+        assert!(bundle_path.exists());
+
+        std::fs::remove_dir_all(&bundle_path).expect("bundle removed manually");
+        assert!(
+            store
+                .verified_record_for(9)
+                .expect("record reads")
+                .is_none(),
+            "a missing bundle must not satisfy migration"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_absolute_manifest_path() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        let manifest_path = bundle.join("manifest.json");
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest reads");
+        let mut manifest: super::BackupManifest =
+            serde_json::from_str(&manifest_text).expect("manifest decodes");
+        manifest.files.push(super::ManifestEntry {
+            path: "/etc/passwd".to_string(),
+            sha256: "00".repeat(32),
+            size: 1,
+        });
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let outcome = store.validate(&bundle, None);
+        assert!(matches!(
+            outcome,
+            Err(crate::error::StorageError::BackupInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_traversal_manifest_path() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("backup creates");
+
+        let manifest_path = bundle.join("manifest.json");
+        let manifest_text = std::fs::read_to_string(&manifest_path).expect("manifest reads");
+        let mut manifest: super::BackupManifest =
+            serde_json::from_str(&manifest_text).expect("manifest decodes");
+        manifest.files.push(super::ManifestEntry {
+            path: "../escape.txt".to_string(),
+            sha256: "00".repeat(32),
+            size: 1,
+        });
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+        std::fs::write(bundle.join("../escape.txt"), b"escaped").expect("escape writes");
+
+        let outcome = store.validate(&bundle, None);
+        assert!(matches!(
+            outcome,
+            Err(crate::error::StorageError::BackupInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn restore_swap_rolls_back_on_injected_failures() {
+        use super::restore_swap_test_hooks::{
+            FailAfterPhaseGuard, PHASE_AFTER_ATTACHMENTS_QUARANTINE, PHASE_AFTER_ATTACHMENTS_SWAP,
+            PHASE_AFTER_CONFIG_QUARANTINE, PHASE_AFTER_CONFIG_SWAP, PHASE_AFTER_DB_QUARANTINE,
+            PHASE_AFTER_DB_SWAP, PHASE_QUARANTINE_READY,
+        };
+
+        let phases = [
+            PHASE_QUARANTINE_READY,
+            PHASE_AFTER_DB_QUARANTINE,
+            PHASE_AFTER_ATTACHMENTS_QUARANTINE,
+            PHASE_AFTER_CONFIG_QUARANTINE,
+            PHASE_AFTER_DB_SWAP,
+            PHASE_AFTER_ATTACHMENTS_SWAP,
+            PHASE_AFTER_CONFIG_SWAP,
+        ];
+
+        for phase in phases {
+            let (dir, database, store) = managed_fixture();
+            seed_state(dir.path(), &database);
+            let bundle = store
+                .create(
+                    &database,
+                    &BackupOptions {
+                        retention: BackupRetentionPolicy::keep_most_recent(
+                            NonZeroU32::new(3).expect("three is not zero"),
+                        ),
+                        passphrase: None,
+                    },
+                )
+                .expect("backup creates");
+            let managed_root = dir.path();
+            let database_path = managed_root.join(database_file_name());
+            let config_path = managed_root.join(config_file_name());
+            let attachments_path = attachments_dir(managed_root);
+
+            let _guard = FailAfterPhaseGuard::set(phase);
+            let outcome = store.restore(&bundle, None);
+
+            assert!(
+                outcome.is_err(),
+                "phase {phase} must inject a restore failure"
+            );
+            assert!(
+                database_path.is_file(),
+                "phase {phase} must roll the database back"
+            );
+            let name: String = database
+                .connection()
+                .query_row("SELECT name FROM initiatives", [], |row| row.get(0))
+                .expect("live initiative reads");
+            assert_eq!(name, "Alpha", "phase {phase} must preserve live data");
+            assert!(config_path.is_file(), "phase {phase} must keep config");
+            assert!(
+                attachments_path.is_dir(),
+                "phase {phase} must keep attachments"
+            );
+            assert!(
+                !managed_root.join(".pre-restore-quarantine").exists(),
+                "phase {phase} must clean quarantine"
+            );
+        }
+    }
+
+    #[test]
+    fn encrypted_validation_leaves_no_plaintext_or_sidecars_in_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let passphrase = "operator-secret";
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: Some(passphrase.to_string()),
+                },
+            )
+            .expect("encrypted backup creates");
+
+        store
+            .validate(&bundle, Some(passphrase))
+            .expect("encrypted validation succeeds");
+
+        let forbidden = [
+            ".validate-staging.sqlite",
+            ".validate-staging.sqlite-wal",
+            ".validate-staging.sqlite-shm",
+        ];
+        for name in forbidden {
+            let path = bundle.join(name);
+            assert!(
+                !path.exists(),
+                "validation must not leave artifacts in the bundle: {}",
+                path.display()
+            );
+        }
+        for entry in std::fs::read_dir(&bundle).expect("bundle lists") {
+            let path = entry.expect("entry").path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("sqlite")
+                && path.file_name() != Some(std::ffi::OsStr::new(database_file_name()))
+            {
+                panic!(
+                    "unexpected plaintext sqlite artifact in bundle: {}",
+                    path.display()
+                );
+            }
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("validate-staging"))
+            {
+                panic!("validation artifact leaked into bundle: {}", path.display());
+            }
+            if path.is_file() {
+                let mode = std::fs::metadata(&path)
+                    .expect("metadata reads")
+                    .permissions()
+                    .mode()
+                    & 0o777;
+                assert_ne!(
+                    mode & 0o077,
+                    0o077,
+                    "bundle files must not be world-accessible: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn encrypted_bundles_use_distinct_authenticated_salts() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let passphrase = "operator-secret";
+        let first = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: Some(passphrase.to_string()),
+                },
+            )
+            .expect("first encrypted backup");
+        let second = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: Some(passphrase.to_string()),
+                },
+            )
+            .expect("second encrypted backup");
+
+        let first_manifest = store
+            .validate(&first, Some(passphrase))
+            .expect("first validates");
+        let second_manifest = store
+            .validate(&second, Some(passphrase))
+            .expect("second validates");
+        let first_salt = first_manifest
+            .encryption_salt
+            .expect("first bundle carries salt");
+        let second_salt = second_manifest
+            .encryption_salt
+            .expect("second bundle carries salt");
+        assert_ne!(first_salt, second_salt);
+        assert_eq!(first_salt.len(), 32);
+    }
+
+    #[test]
+    fn encrypted_validation_cleans_up_on_integrity_failure() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        let passphrase = "operator-secret";
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: Some(passphrase.to_string()),
+                },
+            )
+            .expect("encrypted backup creates");
+
+        let database_path = bundle.join(database_file_name());
+        let mut payload = std::fs::read(&database_path).expect("payload reads");
+        if let Some(byte) = payload.last_mut() {
+            *byte ^= 0xFF;
+        }
+        std::fs::write(&database_path, payload).expect("payload tampers");
+
+        assert!(store.validate(&bundle, Some(passphrase)).is_err());
+        for entry in std::fs::read_dir(std::env::temp_dir()).expect("temp lists") {
+            let path = entry.expect("entry").path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.starts_with("kanban-validate-") {
+                panic!(
+                    "validation must remove temporary artifacts on error: {}",
+                    path.display()
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1273,6 +2238,41 @@ mod migration_requires_backup {
             })
             .expect("schema version reads");
         assert_eq!(version, 9);
+        let _ = dir;
+    }
+
+    #[test]
+    fn refuses_when_verified_record_points_at_pruned_bundle() {
+        let (dir, mut database, store) = database_at_schema(8);
+        let bundle = store
+            .create(
+                &database,
+                &BackupOptions {
+                    retention: BackupRetentionPolicy::keep_most_recent(
+                        NonZeroU32::new(3).expect("three is not zero"),
+                    ),
+                    passphrase: None,
+                },
+            )
+            .expect("verified backup exists");
+        std::fs::remove_dir_all(&bundle).expect("bundle pruned without record cleanup");
+        let hook = VerifiedBackupHook::refuse_without_backup(&store, &database);
+
+        let outcome = database.migrate(&hook);
+
+        assert!(matches!(outcome, Err(StorageError::HookRefused { .. })));
+        let present: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(
+            present, 0,
+            "a stale verified record must not unlock migration"
+        );
         let _ = dir;
     }
 }

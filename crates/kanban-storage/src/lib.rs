@@ -23,8 +23,8 @@ pub mod workspaces;
 mod test_support;
 
 pub use backup::{
-    BackupManifest, BackupOptions, BackupPreview, BackupRetentionPolicy, BackupStore,
-    VerifiedBackupHook, VerifiedBackupRecord,
+    BackupManifest, BackupOptions, BackupPreview, BackupRetentionPolicy, BackupSettings,
+    BackupStore, VerifiedBackupHook, VerifiedBackupRecord, load_backup_settings,
 };
 pub use comments::SqliteCommentStore;
 pub use db::Database;

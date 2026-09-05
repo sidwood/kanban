@@ -560,6 +560,120 @@ mod tests {
         );
     }
 
+    /// KAN-T8-AC4: a Project's registration and archive are its own
+    /// durable history, queryable on the Project's timeline. Every row
+    /// must decode through the typed timeline path as it was written,
+    /// with no migration repairing it into the vocabulary.
+    #[test]
+    fn project_history_is_queryable_on_the_projects_own_timeline() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = scratch_repository(&dir, "kanban");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-core" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository,
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+            }),
+        );
+        client.command(
+            "project.archive",
+            json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-core" },
+                "project_id": 1,
+            }),
+        );
+
+        let answer = client.query_with("timeline.query", json!({ "scope": { "project": "1" } }));
+
+        let events = answer["events"]
+            .as_array()
+            .expect("the Project timeline query answers with events");
+        let recorded: Vec<(Value, Value, Value, Value)> = events
+            .iter()
+            .map(|event| {
+                (
+                    event["scope"].clone(),
+                    event["kind"].clone(),
+                    event["entity"].clone(),
+                    event["detail"]["action"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            recorded,
+            vec![
+                (
+                    json!({ "project": "1" }),
+                    json!("transition"),
+                    json!({ "kind": "project", "id": "1" }),
+                    json!("registered"),
+                ),
+                (
+                    json!({ "project": "1" }),
+                    json!("transition"),
+                    json!({ "kind": "project", "id": "1" }),
+                    json!("archived"),
+                ),
+            ],
+            "both Project history rows decode as typed transitions"
+        );
+        assert_eq!(events[0]["detail"]["code"], json!("CORE"));
+        assert_eq!(events[0]["detail"]["herdr_session"], json!("kanban-main"));
+        let narrowed = client.query_with(
+            "timeline.query",
+            json!({
+                "scope": { "project": "1" },
+                "entity": { "kind": "project", "id": "1" },
+                "kinds": ["transition"],
+            }),
+        );
+        assert_eq!(
+            narrowed["events"].as_array().map(Vec::len),
+            Some(2),
+            "the entity and kind filters reach the same rows"
+        );
+
+        // The rows are durable as written: a fresh core over the same
+        // file applies no migration and still decodes every row.
+        core.shutdown();
+        let stored_kinds: Vec<String> = {
+            let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+                .expect("a second connection opens");
+            let mut statement = conn
+                .prepare(
+                    "SELECT kind FROM timeline_events
+                     WHERE scope = 'project' AND project_id = '1' ORDER BY id",
+                )
+                .expect("the timeline is readable");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("the query runs")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("the kinds decode")
+        };
+        assert_eq!(
+            stored_kinds,
+            vec!["transition".to_owned(), "transition".to_owned()],
+            "the stored kinds are already inside the closed vocabulary"
+        );
+        let rebooted = boot(&dir);
+        let mut second = Client::connect(rebooted.socket_path());
+        assert_eq!(
+            second.query_with("timeline.query", json!({ "scope": { "project": "1" } })),
+            answer,
+            "a restart serves the same typed history"
+        );
+
+        rebooted.shutdown();
+    }
+
     /// KAN-T10-AC3: every evidence command leaves the per-Project
     /// timeline readable. A list row once carried half an entity
     /// reference, which the timeline decoder refuses, so one

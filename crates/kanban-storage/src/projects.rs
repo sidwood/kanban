@@ -258,7 +258,9 @@ mod tests {
         InitiativeId, InitiativeName, NumberKind, Project, ProjectCounters, ProjectId,
         ProjectRegistration, ProjectState,
     };
-    use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use kanban_dto::{
+        ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
+    };
     use serde_json::json;
 
     use super::SqliteProjectStore;
@@ -266,6 +268,7 @@ mod tests {
     use crate::initiatives::SqliteInitiativeStore;
     use crate::migrations::AllowAllMigrations;
     use crate::test_support::scratch_database;
+    use crate::timeline::TimelineFilter;
 
     fn store() -> (tempfile::TempDir, Database, SqliteProjectStore) {
         let (dir, mut database) = scratch_database();
@@ -720,6 +723,52 @@ mod tests {
             stored_rows(&database),
             vec![(1, "CORE".to_owned(), "kanban-main".to_owned(), 1, 0, 0, 0)],
             "the winning write must remain authoritative"
+        );
+    }
+
+    /// A Project's own history is read back through the timeline query
+    /// surface, so every row it lands must sit inside the closed
+    /// vocabulary the query decodes. Rows outside it would make the
+    /// whole Project query fail and need a migration to repair.
+    #[test]
+    fn project_history_decodes_from_the_projects_own_timeline() {
+        let (_dir, database, store) = store();
+        let mut project = store
+            .create(&registration("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+        project.archive().expect("active archives");
+        store
+            .save(&project, archived(project.id()))
+            .expect("the archive lands");
+
+        let rows = database
+            .query_timeline(&TimelineFilter::of(TimelineScope::Project("1".to_owned())))
+            .expect("the Project timeline is readable");
+
+        assert_eq!(rows.len(), 2, "registration and archive both land");
+        for row in &rows {
+            assert_eq!(row.scope, "project");
+            assert_eq!(row.project_id, "1");
+            assert_eq!(
+                TimelineEventKind::parse(&row.kind),
+                Some(TimelineEventKind::Transition),
+                "`{}` must decode without migration repair",
+                row.kind
+            );
+            assert_eq!(
+                row.entity_kind
+                    .as_deref()
+                    .and_then(TimelineEntityKind::parse),
+                Some(TimelineEntityKind::Project)
+            );
+            assert_eq!(row.entity_id.as_deref(), Some("1"));
+        }
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.detail["action"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("registered"), json!("archived")],
+            "the action names each transition"
         );
     }
 

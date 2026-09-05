@@ -39,6 +39,9 @@ pub trait HerdrSettingsStore: Send + Sync {
 pub trait HerdrProjectObserver: Send + Sync {
     /// Observe one active Project's Herdr session.
     fn observe(&self, project: &Project);
+    /// Stop observing one Project's session, releasing its socket
+    /// and database references.
+    fn stop_observing(&self, project_id: u64);
 }
 
 /// A test double that records no observation.
@@ -47,6 +50,8 @@ pub struct NoopHerdrProjectObserver;
 
 impl HerdrProjectObserver for NoopHerdrProjectObserver {
     fn observe(&self, _project: &Project) {}
+
+    fn stop_observing(&self, _project_id: u64) {}
 }
 
 /// Live connection diagnostics maintained by the service observer.

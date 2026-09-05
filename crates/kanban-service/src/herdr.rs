@@ -242,6 +242,10 @@ impl HerdrProjectObserver for HerdrObserver {
     fn observe(&self, project: &Project) {
         self.observe_project(project);
     }
+
+    fn stop_observing(&self, project_id: u64) {
+        HerdrObserver::stop_observing(self, project_id);
+    }
 }
 
 struct HerdrObserverHandle {
@@ -785,5 +789,65 @@ mod tests {
             !observer.is_observing(1),
             "core shutdown stops the owned observer and joins its thread"
         );
+    }
+
+    #[test]
+    fn observer_stops_when_the_project_archives() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default(),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+            }),
+        );
+        thread::sleep(Duration::from_millis(200));
+        let observer = core.herdr.clone();
+        assert!(observer.is_observing(1));
+
+        client.command(
+            "project.archive",
+            json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-wave" },
+                "project_id": 1,
+            }),
+        );
+
+        assert!(
+            !observer.is_observing(1),
+            "the landed archive releases the owned observer"
+        );
+        thread::sleep(Duration::from_millis(150));
+        let answer = client.query_with(
+            "timeline.query",
+            json!({
+                "scope": { "project": "1" },
+                "kinds": ["telemetry"],
+            }),
+        );
+        assert_eq!(
+            answer["events"].as_array().map(Vec::len),
+            Some(1),
+            "no snapshot lands after the archive stops observation"
+        );
+
+        core.shutdown();
     }
 }

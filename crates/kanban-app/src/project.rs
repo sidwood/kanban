@@ -105,13 +105,14 @@ impl Core {
                 git,
                 initiatives,
                 herdr_settings,
-                herdr_observer,
+                herdr_observer: herdr_observer.clone(),
             }),
         )?;
         self.register_command(
             "project.archive",
             Arc::new(ArchiveProject {
                 store: projects.clone(),
+                herdr_observer,
             }),
         )?;
         self.register_query("project.list", Arc::new(ListProjects { store: projects }))?;
@@ -192,6 +193,7 @@ impl CommandHandler for RegisterProject {
 /// Serves `project.archive`.
 struct ArchiveProject {
     store: Arc<dyn ProjectStore>,
+    herdr_observer: Arc<dyn HerdrProjectObserver>,
 }
 
 impl CommandHandler for ArchiveProject {
@@ -214,6 +216,9 @@ impl CommandHandler for ArchiveProject {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         self.store
             .save(&project, transition(project.id(), "archived", json!({})))?;
+        // The archive landed, so the session it anchored stops being
+        // observed: the owner releases its socket and thread.
+        self.herdr_observer.stop_observing(project.id().value());
         announce(events, event_descriptor("project.archived"), &project);
         encode_record(&project)
     }
@@ -291,7 +296,7 @@ pub(crate) mod testing {
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
-    use crate::herdr::HerdrSettingsStore;
+    use crate::herdr::{HerdrProjectObserver, HerdrSettingsStore};
     use crate::initiative::InitiativeStore;
     use crate::mutation::MemoryIdempotencyStore;
     use crate::timeline::TimelineEnvelope;
@@ -472,6 +477,29 @@ pub(crate) mod testing {
         }
     }
 
+    /// The Herdr observer the tests steer: it records every start and
+    /// stop it was asked for.
+    #[derive(Default)]
+    pub(super) struct RecordingHerdrObserver {
+        pub(super) calls: Mutex<Vec<(&'static str, u64)>>,
+    }
+
+    impl HerdrProjectObserver for RecordingHerdrObserver {
+        fn observe(&self, project: &Project) {
+            self.calls
+                .lock()
+                .expect("the recorder lock is sound")
+                .push(("observe", project.id().value()));
+        }
+
+        fn stop_observing(&self, project_id: u64) {
+            self.calls
+                .lock()
+                .expect("the recorder lock is sound")
+                .push(("stop", project_id));
+        }
+    }
+
     /// A core with the Project and Initiative operations wired to
     /// in-memory stores and one known repository.
     pub(crate) struct Harness {
@@ -563,6 +591,30 @@ pub(crate) mod testing {
         git: KnownRepositories,
         events: Arc<dyn EventSink>,
     ) -> Harness {
+        harness_with_parts(
+            git,
+            events,
+            Arc::new(crate::herdr::NoopHerdrProjectObserver),
+        )
+    }
+
+    /// A core observing the one known repository whose Herdr observer
+    /// the test chooses.
+    pub(super) fn harness_with_herdr(herdr: Arc<dyn HerdrProjectObserver>) -> Harness {
+        harness_with_parts(
+            KnownRepositories {
+                repositories: vec!["/repositories/kanban".to_owned()],
+            },
+            Arc::new(crate::events::NoopEventSink),
+            herdr,
+        )
+    }
+
+    fn harness_with_parts(
+        git: KnownRepositories,
+        events: Arc<dyn EventSink>,
+        herdr: Arc<dyn HerdrProjectObserver>,
+    ) -> Harness {
         let projects = Arc::new(MemoryProjectStore::default());
         let initiatives = Arc::new(MemoryInitiatives::default());
         let herdr_settings = Arc::new(MemoryHerdrSettings::default());
@@ -578,7 +630,7 @@ pub(crate) mod testing {
             Arc::new(git),
             initiatives.clone(),
             herdr_settings.clone(),
-            Arc::new(crate::herdr::NoopHerdrProjectObserver),
+            herdr,
         )
         .expect("the project operations register");
         Harness {
@@ -1047,12 +1099,72 @@ mod project_registration {
 
 #[cfg(test)]
 mod project_lifecycle {
+    use std::sync::Arc;
+
     use kanban_dto::{
         ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
     };
     use serde_json::json;
 
-    use super::testing::{archive, harness, registering, stored_project};
+    use super::testing::{
+        RecordingHerdrObserver, archive, harness, harness_with_herdr, registering, stored_project,
+    };
+
+    #[test]
+    fn archiving_stops_herdr_observation() {
+        let observer = Arc::new(RecordingHerdrObserver::default());
+        let harness = harness_with_herdr(observer.clone());
+        harness
+            .core
+            .command(
+                "project.register",
+                &registering("CORE", "kanban-main", "key-1"),
+            )
+            .expect("the registration applies");
+
+        harness
+            .core
+            .command("project.archive", &archive(1, "key-2", 1))
+            .expect("the archive applies");
+
+        let calls = observer.calls.lock().expect("the recorder lock is sound");
+        assert_eq!(
+            *calls,
+            vec![("observe", 1), ("stop", 1)],
+            "registration starts observation and the landed archive releases it"
+        );
+    }
+
+    #[test]
+    fn a_refused_archive_does_not_stop_observation_again() {
+        let observer = Arc::new(RecordingHerdrObserver::default());
+        let harness = harness_with_herdr(observer.clone());
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+        harness
+            .core
+            .command("project.archive", &archive(1, "key-1", 1))
+            .expect("the first archive applies");
+
+        let refused = harness
+            .core
+            .command("project.archive", &archive(1, "key-2", 2))
+            .expect_err("the second archive is refused");
+        assert_eq!(refused.code, ErrorCode::InvalidRequest);
+        let unknown = harness
+            .core
+            .command("project.archive", &archive(9, "key-3", 0))
+            .expect_err("the unknown Project is refused");
+        assert_eq!(unknown.code, ErrorCode::NotFound);
+
+        let calls = observer.calls.lock().expect("the recorder lock is sound");
+        assert_eq!(
+            *calls,
+            vec![("stop", 1)],
+            "only the landed archive stops observation"
+        );
+    }
 
     #[test]
     fn archiving_is_terminal_and_preserves_every_fact() {

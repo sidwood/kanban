@@ -191,6 +191,7 @@ fn moved(waiting: &Ticket) -> Ticket {
         waiting.priority(),
         waiting.state(),
         waiting.body().clone(),
+        waiting.profile().cloned(),
         waiting.version() + 1,
     )
 }
@@ -252,7 +253,7 @@ fn load_blocker_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(u64, String)> 
 
 #[cfg(test)]
 mod tests {
-    use kanban_app::{DependencyStore, ProjectStore, TicketStore, TimelineEnvelope};
+    use kanban_app::{DependencyStore, ProfileStore, ProjectStore, TicketStore, TimelineEnvelope};
     use kanban_domain::{
         BlockerDescription, NumberKind, Priority, Project, ProjectId, ProjectRegistration,
         TicketBody, TicketId, TicketNumber,
@@ -377,6 +378,7 @@ mod tests {
             ticket.priority(),
             ticket.state(),
             ticket.body().clone(),
+            ticket.profile().cloned(),
             ticket.version() + 1,
         )
     }
@@ -561,6 +563,78 @@ mod tests {
                 "from_ticket": core_ticket.id().value(),
             }),
             "the envelope reaches the waiting Ticket's own timeline unchanged"
+        );
+    }
+
+    #[test]
+    fn a_change_returns_the_waiting_ticket_with_its_assignment_intact() {
+        let (_dir, database, store, core_ticket, edge_ticket) = harness();
+        let tickets = SqliteTicketStore::new(&database);
+        // The assignment is a stored name guarded at the schema
+        // level, so the named entry exists before the reference.
+        let profile = kanban_domain::ExecutionProfile::define(
+            kanban_domain::ProfileName::new("standard").expect("the fixture name validates"),
+            kanban_domain::ProfileDefinition::new("claude-code", "opus", "high", "operator", None)
+                .expect("the fixture definition validates"),
+        )
+        .expect("the fixture entry validates");
+        crate::profiles::SqliteProfileStore::new(&database)
+            .define(
+                &profile,
+                &TimelineEnvelope::global(
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Profile,
+                        id: profile.name().as_str().to_owned(),
+                    }),
+                    json!({ "action": "defined", "name": profile.name().as_str() }),
+                ),
+            )
+            .expect("the named entry lands");
+        let mut assigned = edge_ticket.clone();
+        assigned
+            .assign(profile.name().clone())
+            .expect("the assignment applies");
+        tickets
+            .save(
+                &assigned,
+                transition(
+                    2,
+                    assigned.id(),
+                    "assigned",
+                    json!({ "profile": "standard" }),
+                ),
+            )
+            .expect("the assignment persists");
+
+        let waiting = store
+            .add_dependency(
+                &assigned,
+                kanban_domain::TicketDependency::new(core_ticket.id(), assigned.id()),
+                &|| {
+                    transition(
+                        2,
+                        assigned.id(),
+                        "dependency_added",
+                        json!({ "from_ticket": core_ticket.id().value() }),
+                    )
+                },
+            )
+            .expect("the edge lands");
+
+        assert_eq!(
+            waiting.profile().map(|name| name.as_str()),
+            Some("standard"),
+            "the applied change returns the assignment it never touched"
+        );
+        assert_eq!(waiting, moved(&assigned));
+        assert_eq!(
+            tickets
+                .find(assigned.id())
+                .expect("the find serves")
+                .expect("the Ticket exists"),
+            waiting,
+            "the returned Ticket and the stored row agree on the assignment"
         );
     }
 

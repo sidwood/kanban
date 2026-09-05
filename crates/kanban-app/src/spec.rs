@@ -66,8 +66,14 @@ pub trait SpecStore: Send + Sync {
 
 /// The timeline row for one Spec change: on the Project's own
 /// timeline, about the Spec, with `action` naming the change inside
-/// the closed `transition` kind.
-fn transition(project: ProjectId, spec: SpecId, action: &str, facts: Value) -> TimelineEnvelope {
+/// the closed `transition` kind. Shared with the Plan commands that
+/// free a Spec a Plan gave up.
+pub(crate) fn transition(
+    project: ProjectId,
+    spec: SpecId,
+    action: &str,
+    facts: Value,
+) -> TimelineEnvelope {
     let mut detail = facts;
     let object = detail
         .as_object_mut()
@@ -1408,6 +1414,95 @@ mod spec_planning {
 
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(error.message, "the Spec already belongs to Plan 1");
+    }
+
+    #[test]
+    fn removing_a_joined_spec_frees_it_to_join_another_plan() {
+        let harness = spec_harness();
+        let (id, version) = authored(&harness.core, "Registration", "key-author");
+        let plan = plan_holding(&harness.core, &[1], "key-plan");
+        joined(&harness.core, id, plan, version);
+
+        // A joined Spec can only leave through a draft Plan, so the
+        // Plan activates and replans first.
+        let mut plan_version = harness
+            .core
+            .query("plan.get", &json!({ "plan_id": plan }))
+            .expect("the Plan reads")["plan"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        for (name, key) in [
+            ("plan.activate", "key-activate"),
+            ("plan.replan", "key-replan"),
+        ] {
+            let response = harness
+                .core
+                .command(
+                    name,
+                    &serde_json::json!({
+                        "mutation": { "optimistic_version": plan_version, "idempotency_key": key },
+                        "plan_id": plan,
+                    }),
+                )
+                .expect("the Plan reopens as a draft");
+            plan_version = response["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+
+        let removed = harness
+            .core
+            .command(
+                "plan.spec.remove",
+                &serde_json::json!({
+                    "mutation": { "optimistic_version": plan_version, "idempotency_key": "key-remove" },
+                    "plan_id": plan,
+                    "spec_number": 1,
+                }),
+            )
+            .expect("the joined Spec leaves the Plan");
+
+        assert_eq!(removed["spec_numbers"], json!([]));
+        let detail = harness
+            .core
+            .query("spec.get", &json!({ "spec_id": id }))
+            .expect("the Spec reads");
+        assert_eq!(
+            detail["spec"]["plan_id"],
+            json!(null),
+            "the removal clears the binding"
+        );
+        assert_eq!(
+            detail["spec"]["execution"],
+            json!("unplanned"),
+            "the removal clears the execution state"
+        );
+        let (_, timeline) = harness.specs.snapshot();
+        let unplanned = timeline.last().expect("the removal appended");
+        assert_eq!(unplanned.detail()["action"], json!("unplanned"));
+        assert_eq!(unplanned.detail()["plan_id"], json!(plan));
+
+        // The freed Spec plans again, onto a Plan that could not have
+        // taken it while the stale binding stood.
+        let second = plan_holding(&harness.core, &[1], "key-plan-2");
+        let freed_version = detail["spec"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let response = harness
+            .core
+            .command(
+                "spec.plan.join",
+                &command(
+                    id,
+                    json!({ "plan_id": second }),
+                    freed_version,
+                    "key-join-2",
+                ),
+            )
+            .expect("the freed Spec joins another Plan");
+
+        assert_eq!(response["plan_id"], json!(second));
+        assert_eq!(response["execution"], json!("planned"));
     }
 }
 

@@ -69,6 +69,12 @@ pub enum SpecError {
         /// The Plan the Spec already belongs to.
         plan: PlanId,
     },
+    /// The Spec does not belong to the named Plan, so it holds no
+    /// binding there to leave.
+    NotBoundTo {
+        /// The Plan the caller named.
+        plan: PlanId,
+    },
     /// The execution move is not in the closed transition set.
     IllegalExecutionMove {
         /// The state the Spec is in.
@@ -98,6 +104,9 @@ impl fmt::Display for SpecError {
             Self::RequiresUnplanned => write!(f, "only an unplanned Spec joins a Plan"),
             Self::AlreadyPlanned { plan } => {
                 write!(f, "the Spec already belongs to Plan {plan}")
+            }
+            Self::NotBoundTo { plan } => {
+                write!(f, "the Spec does not belong to Plan {plan}")
             }
             Self::IllegalExecutionMove { from, to } => write!(
                 f,
@@ -669,6 +678,23 @@ impl Spec {
         Ok(())
     }
 
+    /// Leave `plan`: the binding clears and the execution track
+    /// restarts at unplanned, leaving the Spec free to join another
+    /// Plan later (DR-PS-06). Refused when the Spec does not belong to
+    /// `plan` — a binding to another Plan is not this call's to clear.
+    /// This is unbinding, not an execution move: the vocabulary's
+    /// terminal states govern moves alone, and the record of the
+    /// attempt stays on the timeline.
+    pub fn leave_plan(&mut self, plan: PlanId) -> Result<(), SpecError> {
+        if self.plan != Some(plan) {
+            return Err(SpecError::NotBoundTo { plan });
+        }
+        self.plan = None;
+        self.execution = SpecExecutionState::Unplanned;
+        self.applied();
+        Ok(())
+    }
+
     /// Move the execution state along the closed transition set,
     /// independently of every content version. Moving into `planned`
     /// belongs to joining a Plan alone.
@@ -1142,6 +1168,46 @@ mod spec_execution {
                 plan: PlanId::new(1)
             },
             "a Spec belongs to one Plan at a time"
+        );
+        assert_eq!(spec.plan(), Some(PlanId::new(1)));
+        assert_eq!(spec.version(), version, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn leaving_a_plan_frees_the_spec_to_join_another() {
+        let mut spec = planned();
+        spec.transition_execution(SpecExecutionState::Blocked)
+            .expect("the fixture work blocks");
+        let version = spec.version();
+
+        spec.leave_plan(PlanId::new(1))
+            .expect("a bound Spec leaves its Plan");
+
+        assert_eq!(spec.plan(), None);
+        assert_eq!(
+            spec.execution(),
+            SpecExecutionState::Unplanned,
+            "leaving restarts the execution track from wherever it stood"
+        );
+        assert_eq!(spec.version(), version + 1);
+
+        spec.assign_to_plan(PlanId::new(2))
+            .expect("the freed Spec joins another Plan");
+        assert_eq!(spec.plan(), Some(PlanId::new(2)));
+        assert_eq!(spec.execution(), SpecExecutionState::Planned);
+    }
+
+    #[test]
+    fn leaving_a_plan_the_spec_does_not_hold_is_refused() {
+        let mut spec = planned();
+        let version = spec.version();
+
+        assert_eq!(
+            spec.leave_plan(PlanId::new(9)).unwrap_err(),
+            SpecError::NotBoundTo {
+                plan: PlanId::new(9)
+            },
+            "a binding to another Plan is not this call's to clear"
         );
         assert_eq!(spec.plan(), Some(PlanId::new(1)));
         assert_eq!(spec.version(), version, "the refusal changed nothing");

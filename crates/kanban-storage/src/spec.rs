@@ -825,6 +825,67 @@ mod tests {
     }
 
     #[test]
+    fn leaving_a_plan_persists_the_cleared_binding() {
+        let (_dir, database, store) = store();
+        let project = seeded_project(&database);
+        let mut spec = authored(&store, &project, "Registration");
+        // A Plan row to join, created through the plan store's own
+        // tables, because the binding's foreign key must resolve.
+        let plan_store = crate::plan::SqlitePlanStore::new(&database);
+        let mut project = SqliteProjectStore::new(&database)
+            .find(project.id())
+            .expect("the reload serves")
+            .expect("the Project exists");
+        let plan_number = project.mint(NumberKind::Plan);
+        let plan = plan_store
+            .create(&project, plan_number, &|id| {
+                TimelineEnvelope::project(
+                    "1",
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Plan,
+                        id: id.value().to_string(),
+                    }),
+                    json!({ "action": "created", "id": id.value() }),
+                )
+                .expect("a minted Plan identity names a Plan")
+            })
+            .expect("the fixture Plan lands");
+
+        spec.assign_to_plan(plan.id())
+            .expect("the Spec joins its Plan");
+        store
+            .save(
+                &spec,
+                transition(
+                    spec.id(),
+                    "planned",
+                    json!({ "plan_id": plan.id().value() }),
+                ),
+            )
+            .expect("the join lands");
+        spec.leave_plan(plan.id())
+            .expect("the Spec leaves its Plan");
+        store
+            .save(
+                &spec,
+                transition(
+                    spec.id(),
+                    "unplanned",
+                    json!({ "plan_id": plan.id().value() }),
+                ),
+            )
+            .expect("the leave lands");
+
+        let found = store
+            .find(spec.id())
+            .expect("the find serves")
+            .expect("the Spec exists");
+        assert_eq!(found.execution(), SpecExecutionState::Unplanned);
+        assert_eq!(found.plan(), None);
+    }
+
+    #[test]
     fn a_stale_save_is_refused_without_a_timeline_row() {
         let (_dir, database, store) = store();
         let project = seeded_project(&database);

@@ -1504,6 +1504,212 @@ mod spec_planning {
         assert_eq!(response["plan_id"], json!(second));
         assert_eq!(response["execution"], json!("planned"));
     }
+
+    #[test]
+    fn removing_a_complete_spec_keeps_its_terminal_execution() {
+        let harness = spec_harness();
+        let (id, mut version) = authored(&harness.core, "Registration", "key-author");
+        let plan = plan_holding(&harness.core, &[1], "key-plan");
+        version = joined(&harness.core, id, plan, version);
+        for to in ["ready", "active", "integration_review", "complete"] {
+            version = harness
+                .core
+                .command(
+                    "spec.execution.move",
+                    &command(
+                        id,
+                        json!({ "execution": to }),
+                        version,
+                        &format!("key-{to}"),
+                    ),
+                )
+                .expect("the execution walks to complete")["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+
+        // A joined Spec can only leave through a draft Plan, so the
+        // Plan activates and replans first.
+        let mut plan_version = harness
+            .core
+            .query("plan.get", &json!({ "plan_id": plan }))
+            .expect("the Plan reads")["plan"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        for (name, key) in [
+            ("plan.activate", "key-activate"),
+            ("plan.replan", "key-replan"),
+        ] {
+            let response = harness
+                .core
+                .command(
+                    name,
+                    &serde_json::json!({
+                        "mutation": { "optimistic_version": plan_version, "idempotency_key": key },
+                        "plan_id": plan,
+                    }),
+                )
+                .expect("the Plan reopens as a draft");
+            plan_version = response["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+
+        let removed = harness
+            .core
+            .command(
+                "plan.spec.remove",
+                &serde_json::json!({
+                    "mutation": { "optimistic_version": plan_version, "idempotency_key": "key-remove" },
+                    "plan_id": plan,
+                    "spec_number": 1,
+                }),
+            )
+            .expect("the complete Spec leaves the Plan");
+
+        assert_eq!(removed["spec_numbers"], json!([]));
+        let detail = harness
+            .core
+            .query("spec.get", &json!({ "spec_id": id }))
+            .expect("the Spec reads");
+        assert_eq!(
+            detail["spec"]["plan_id"],
+            json!(null),
+            "the removal clears the binding"
+        );
+        assert_eq!(
+            detail["spec"]["execution"],
+            json!("complete"),
+            "the removal preserves terminal execution"
+        );
+        let (_, timeline) = harness.specs.snapshot();
+        let released = timeline.last().expect("the removal appended");
+        assert_eq!(released.detail()["action"], json!("complete"));
+        assert_eq!(released.detail()["plan_id"], json!(plan));
+
+        // Preserved terminal execution admits no silent rescheduling:
+        // the complete Spec joins no further Plan.
+        let second = plan_holding(&harness.core, &[1], "key-plan-2");
+        let freed_version = detail["spec"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let error = harness
+            .core
+            .command(
+                "spec.plan.join",
+                &command(
+                    id,
+                    json!({ "plan_id": second }),
+                    freed_version,
+                    "key-join-2",
+                ),
+            )
+            .expect_err("complete work joins no further Plan");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.message, "only an unplanned Spec joins a Plan");
+    }
+
+    #[test]
+    fn removing_a_cancelled_spec_keeps_its_terminal_execution() {
+        let harness = spec_harness();
+        let (id, version) = authored(&harness.core, "Registration", "key-author");
+        let plan = plan_holding(&harness.core, &[1], "key-plan");
+        let version = joined(&harness.core, id, plan, version);
+        harness
+            .core
+            .command(
+                "spec.execution.move",
+                &command(
+                    id,
+                    json!({ "execution": "cancelled" }),
+                    version,
+                    "key-cancel",
+                ),
+            )
+            .expect("planned work may cancel");
+
+        // A joined Spec can only leave through a draft Plan, so the
+        // Plan activates and replans first.
+        let mut plan_version = harness
+            .core
+            .query("plan.get", &json!({ "plan_id": plan }))
+            .expect("the Plan reads")["plan"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        for (name, key) in [
+            ("plan.activate", "key-activate"),
+            ("plan.replan", "key-replan"),
+        ] {
+            let response = harness
+                .core
+                .command(
+                    name,
+                    &serde_json::json!({
+                        "mutation": { "optimistic_version": plan_version, "idempotency_key": key },
+                        "plan_id": plan,
+                    }),
+                )
+                .expect("the Plan reopens as a draft");
+            plan_version = response["version"]
+                .as_u64()
+                .expect("the version is a number");
+        }
+
+        let removed = harness
+            .core
+            .command(
+                "plan.spec.remove",
+                &serde_json::json!({
+                    "mutation": { "optimistic_version": plan_version, "idempotency_key": "key-remove" },
+                    "plan_id": plan,
+                    "spec_number": 1,
+                }),
+            )
+            .expect("the cancelled Spec leaves the Plan");
+
+        assert_eq!(removed["spec_numbers"], json!([]));
+        let detail = harness
+            .core
+            .query("spec.get", &json!({ "spec_id": id }))
+            .expect("the Spec reads");
+        assert_eq!(
+            detail["spec"]["plan_id"],
+            json!(null),
+            "the removal clears the binding"
+        );
+        assert_eq!(
+            detail["spec"]["execution"],
+            json!("cancelled"),
+            "the removal preserves terminal execution"
+        );
+        let (_, timeline) = harness.specs.snapshot();
+        let released = timeline.last().expect("the removal appended");
+        assert_eq!(released.detail()["action"], json!("cancelled"));
+        assert_eq!(released.detail()["plan_id"], json!(plan));
+
+        // Preserved terminal execution admits no silent rescheduling:
+        // the cancelled Spec joins no further Plan.
+        let second = plan_holding(&harness.core, &[1], "key-plan-2");
+        let freed_version = detail["spec"]["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let error = harness
+            .core
+            .command(
+                "spec.plan.join",
+                &command(
+                    id,
+                    json!({ "plan_id": second }),
+                    freed_version,
+                    "key-join-2",
+                ),
+            )
+            .expect_err("cancelled work joins no further Plan");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.message, "only an unplanned Spec joins a Plan");
+    }
 }
 
 #[cfg(test)]

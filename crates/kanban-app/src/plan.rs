@@ -150,9 +150,11 @@ impl PlanContext {
 
     /// Free the Spec a Plan just gave up: a member holding this Plan's
     /// binding loses it and its execution restarts at unplanned, so
-    /// the Spec may join another Plan later (DR-PS-06). A member bound
-    /// to another Plan — one that joined elsewhere — keeps its
-    /// binding, and an unbound member writes nothing.
+    /// the Spec may join another Plan later (DR-PS-06). A member whose
+    /// execution already ended keeps that terminal state, so finished
+    /// work cannot be rescheduled by a removal. A member bound to
+    /// another Plan — one that joined elsewhere — keeps its binding,
+    /// and an unbound member writes nothing.
     fn release_spec(
         &self,
         project: &Project,
@@ -162,12 +164,13 @@ impl PlanContext {
         if let Some(mut held) = self.specs.find_by_number(project.id(), spec)? {
             if held.plan() == Some(plan) {
                 held.leave_plan(plan).map_err(refuse)?;
+                let execution = held.execution().wire_name();
                 return self.specs.save(
                     &held,
                     crate::spec::transition(
                         project.id(),
                         held.id(),
-                        "unplanned",
+                        execution,
                         json!({ "plan_id": plan.value() }),
                     ),
                 );

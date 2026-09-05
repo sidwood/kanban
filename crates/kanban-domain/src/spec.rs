@@ -678,10 +678,13 @@ impl Spec {
         Ok(())
     }
 
-    /// Leave `plan`: the binding clears and the execution track
-    /// restarts at unplanned, leaving the Spec free to join another
-    /// Plan later (DR-PS-06). Refused when the Spec does not belong to
-    /// `plan` — a binding to another Plan is not this call's to clear.
+    /// Leave `plan`: the binding clears and a Spec still on the
+    /// execution track restarts at unplanned, free to join another
+    /// Plan later (DR-PS-06). Complete and cancelled execution stays
+    /// as it ended — those states are terminal, so unbinding cannot
+    /// restart the track, and the preserved state keeps the next join
+    /// refused. Refused when the Spec does not belong to `plan` — a
+    /// binding to another Plan is not this call's to clear.
     /// This is unbinding, not an execution move: the vocabulary's
     /// terminal states govern moves alone, and the record of the
     /// attempt stays on the timeline.
@@ -690,7 +693,9 @@ impl Spec {
             return Err(SpecError::NotBoundTo { plan });
         }
         self.plan = None;
-        self.execution = SpecExecutionState::Unplanned;
+        if !self.execution.is_terminal() {
+            self.execution = SpecExecutionState::Unplanned;
+        }
         self.applied();
         Ok(())
     }

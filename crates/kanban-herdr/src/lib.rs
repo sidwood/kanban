@@ -16,8 +16,8 @@ pub use error::HerdrError;
 pub use paths::{herdr_sessions_dir, session_socket_in, session_socket_path};
 pub use protocol::{HerdrRequest, HerdrResponse, Snapshot};
 pub use reconcile::{
-    DEFAULT_RECONCILIATION_INTERVAL, Reconciler, ReconciliationPlan, SnapshotDifference,
-    StateDifference, diff_state,
+    DEFAULT_POLLING_FALLBACK_INTERVAL, DEFAULT_RECONCILIATION_INTERVAL, PollingFallback,
+    Reconciler, ReconciliationPlan, SnapshotDifference, StateDifference, diff_state,
 };
 pub use session::SessionMapping;
 

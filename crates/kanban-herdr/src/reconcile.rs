@@ -1,7 +1,9 @@
 //! Reconciliation (DR-HB-09): full session state is compared on a
 //! fixed cadence — every five minutes by default — and every
 //! difference the comparison finds is reported, so observation
-//! survives the push events a session missed.
+//! survives the push events a session missed. A per-Project polling
+//! fallback (DR-HB-10) tightens that cadence to whole-session
+//! captures every ten seconds for Projects that opt in.
 
 use std::time::{Duration, SystemTime};
 
@@ -16,21 +18,96 @@ use crate::protocol::Snapshot;
 /// (DR-HB-09): every five minutes.
 pub const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// The whole-session polling fallback's interval (DR-HB-10): ten
+/// seconds.
+pub const DEFAULT_POLLING_FALLBACK_INTERVAL: Duration = Duration::from_secs(10);
+
+/// The per-Project whole-session polling fallback (DR-HB-10):
+/// available to every Project, off until one opts in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollingFallback {
+    enabled: bool,
+    interval: Duration,
+}
+
+impl PollingFallback {
+    /// The disabled fallback: available, waiting for opt-in, and
+    /// carrying the ten-second interval an opt-in will run.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            interval: DEFAULT_POLLING_FALLBACK_INTERVAL,
+        }
+    }
+
+    /// An enabled fallback polling the whole session every `interval`.
+    pub fn every(interval: Duration) -> Self {
+        Self {
+            enabled: true,
+            interval,
+        }
+    }
+
+    /// Whether the fallback polls.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// The interval the fallback polls on.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+}
+
+impl Default for PollingFallback {
+    fn default() -> Self {
+        Self::off()
+    }
+}
+
 /// The whole-session comparison cadence one Project follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconciliationPlan {
     interval: Duration,
+    fallback: PollingFallback,
 }
 
 impl ReconciliationPlan {
-    /// A plan comparing every `interval`.
+    /// A plan comparing every `interval`, fallback off.
     pub fn new(interval: Duration) -> Self {
-        Self { interval }
+        Self {
+            interval,
+            fallback: PollingFallback::off(),
+        }
+    }
+
+    /// The same plan with `fallback` deciding the whole-session
+    /// cadence while enabled.
+    pub fn with_fallback(mut self, fallback: PollingFallback) -> Self {
+        self.fallback = fallback;
+        self
     }
 
     /// The interval this plan compares on.
     pub fn interval(&self) -> Duration {
         self.interval
+    }
+
+    /// The fallback this plan carries.
+    pub fn fallback(&self) -> PollingFallback {
+        self.fallback
+    }
+
+    /// The cadence the plan actually follows: the reconciliation
+    /// interval, tightened to the polling fallback while one is
+    /// enabled. A fallback slower than the reconciliation interval
+    /// cannot slow the cadence down.
+    pub fn effective_interval(&self) -> Duration {
+        if self.fallback.is_enabled() {
+            self.fallback.interval().min(self.interval)
+        } else {
+            self.interval
+        }
     }
 }
 
@@ -38,6 +115,7 @@ impl Default for ReconciliationPlan {
     fn default() -> Self {
         Self {
             interval: DEFAULT_RECONCILIATION_INTERVAL,
+            fallback: PollingFallback::off(),
         }
     }
 }
@@ -161,22 +239,23 @@ impl Reconciler {
     }
 
     /// Whether a whole-session capture is due at `now`: immediately
-    /// when no baseline exists, and once the plan's interval has
-    /// elapsed since the last capture otherwise.
+    /// when no baseline exists, and once the plan's effective cadence
+    /// has elapsed since the last capture otherwise.
     pub fn due(&self, now: SystemTime) -> bool {
         self.remaining_until(now).is_zero()
     }
 
-    /// How much longer until a whole-session capture is due at `now`.
-    /// A clock reading from before the last capture waits out a full
-    /// interval rather than firing a capture per tick.
+    /// How much longer until a whole-session capture is due at `now`,
+    /// following the plan's effective cadence. A clock reading from
+    /// before the last capture waits out a full interval rather than
+    /// firing a capture per tick.
     pub fn remaining_until(&self, now: SystemTime) -> Duration {
         let Some(last) = self.last_capture else {
             return Duration::ZERO;
         };
         match now.duration_since(last) {
-            Ok(elapsed) => self.plan.interval().saturating_sub(elapsed),
-            Err(_) => self.plan.interval(),
+            Ok(elapsed) => self.plan.effective_interval().saturating_sub(elapsed),
+            Err(_) => self.plan.effective_interval(),
         }
     }
 

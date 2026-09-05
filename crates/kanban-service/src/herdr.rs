@@ -1350,7 +1350,22 @@ mod tests {
                 "herdr_workspace": "wave.seed",
             }),
         );
-        thread::sleep(Duration::from_millis(200));
+        // The startup snapshot row lands in its own time, not in a
+        // fixed budget a loaded host can miss.
+        assert!(
+            soon_enough(Duration::from_secs(2), || {
+                client.query_with(
+                    "timeline.query",
+                    json!({
+                        "scope": { "project": 1 },
+                        "kinds": ["telemetry"],
+                    }),
+                )["events"]
+                    .as_array()
+                    .is_some_and(|events| !events.is_empty())
+            }),
+            "the startup snapshot lands before the archive"
+        );
         let observer = core.herdr.clone();
         assert!(observer.is_observing(1));
 
@@ -1366,7 +1381,9 @@ mod tests {
             !observer.is_observing(1),
             "the landed archive releases the owned observer"
         );
-        thread::sleep(Duration::from_millis(150));
+        // The archive's post-commit release joins the observer thread
+        // before the command returns, so no row can land after it;
+        // no fixed wait is needed to prove one absent.
         let answer = client.query_with(
             "timeline.query",
             json!({
@@ -1384,14 +1401,16 @@ mod tests {
     }
 
     /// Sleep in small steps until `condition` holds or `limit`
-    /// elapses, reporting whether the condition was met.
+    /// elapses, reporting whether the condition was met. The step is
+    /// coarse enough that several tests waiting in parallel do not
+    /// busy-spin the shared host against each other.
     fn soon_enough(limit: Duration, mut condition: impl FnMut() -> bool) -> bool {
         let deadline = Instant::now() + limit;
         while Instant::now() < deadline {
             if condition() {
                 return true;
             }
-            thread::sleep(Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(25));
         }
         condition()
     }
@@ -1411,7 +1430,7 @@ mod tests {
             if finished.load(Ordering::SeqCst) {
                 return true;
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(25));
         }
         false
     }
@@ -1777,27 +1796,52 @@ mod tests {
     fn a_role_whose_result_was_observed_emits_no_deadline_signal() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let socket_root = dir.path().join("sessions");
-        let _fixture = ScriptedSession::bind(
+        let fixture = ScriptedSession::bind(
             &socket_root,
             "kanban-main",
             "/workspaces/kanban.seed",
-            SessionScript::default().with_events(vec![
-                json!({ "kind": "role.output", "role": "implementer", "text": "working" }),
-                json!({ "kind": "role.settled", "role": "implementer" }),
-                json!({ "kind": "role.result", "role": "implementer", "outcome": "done" }),
-            ]),
+            // The captures keep listing the role, so only the observed
+            // result can retire its deadlines.
+            SessionScript::default()
+                .with_snapshot_states(vec![json!({ "roles": [{ "name": "implementer" }] })])
+                .with_events(vec![
+                    json!({ "kind": "role.output", "role": "implementer", "text": "working" }),
+                    json!({ "kind": "role.settled", "role": "implementer" }),
+                    json!({ "kind": "role.result", "role": "implementer", "outcome": "done" }),
+                ]),
         );
         let database = migrated_database(&dir);
         seed_herdr_settings(&database);
         retune_herdr_settings(&database, |request| {
+            request.reconciliation_interval_secs = 1;
             request.stall_deadline_secs = 1;
             request.missing_result_deadline_secs = 1;
         });
         let observer =
             HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
-        thread::sleep(Duration::from_millis(2_500));
 
+        // The observed result, not a fixed wait, is the premise: the
+        // signal cannot be checked before the monitor has seen it.
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                telemetry_details(&database)
+                    .iter()
+                    .any(|detail| detail["event"] == json!("role.result"))
+            }),
+            "the role's result was observed"
+        );
+        // Two whole-session captures past the result prove the quiet
+        // session was re-evaluated across a full stall window — every
+        // capture follows at least one evaluation — with nothing to
+        // report.
+        let captured = fixture.requests_seen();
+        assert!(
+            soon_enough(Duration::from_secs(6), || {
+                fixture.requests_seen() >= captured + 2
+            }),
+            "the session was captured and re-evaluated past the deadline"
+        );
         assert!(
             observer.attention_signals(1).is_empty(),
             "an observed result retires both deadlines"
@@ -1828,9 +1872,18 @@ mod tests {
         let observer =
             HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
-        // The seeded stall deadline of an hour cannot breach; only the
-        // tightened one can.
-        thread::sleep(Duration::from_millis(300));
+        // The role's output must already be observed under the seeded
+        // stall deadline of an hour — only the tightened one can ever
+        // breach — so the retune proves the live path, not a fresh
+        // connect.
+        assert!(
+            soon_enough(Duration::from_secs(2), || {
+                telemetry_details(&database)
+                    .iter()
+                    .any(|detail| detail["payload"]["text"] == json!("working"))
+            }),
+            "the role's output is observed under the seeded deadline before the retune"
+        );
         retune_herdr_settings(&database, |request| {
             request.stall_deadline_secs = 1;
         });

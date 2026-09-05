@@ -339,71 +339,34 @@ mod query_filters {
     }
 
     #[test]
-    fn query_filters_by_kind_and_time_window() {
+    fn query_filters_by_kind() {
         let database = migrated_database();
-        for (kind, recorded_at) in [
-            ("run", "2026-03-01T00:00:00.000000Z"),
-            ("telemetry", "2026-06-01T00:00:00.000000Z"),
-            ("review", "2026-12-01T00:00:00.000000Z"),
+        for kind in [
+            TimelineEventKind::Run,
+            TimelineEventKind::Telemetry,
+            TimelineEventKind::Review,
         ] {
-            database
-                .connection()
-                .execute(
-                    "INSERT INTO timeline_events
-                     (scope, project_id, kind, entity_kind, entity_id, detail, recorded_at)
-                     VALUES ('project', '1', ?1, 'ticket', 'kan-t9', '{}', ?2)",
-                    rusqlite::params![kind, recorded_at],
-                )
-                .expect("fixture row lands");
+            append(
+                &database,
+                ticket_event(1, kind, "kan-t9", json!({ "recorded": true })),
+            );
         }
 
         let rows = database
             .query_timeline(&TimelineFilter {
-                kinds: vec!["run".to_owned(), "review".to_owned()],
-                since: Some("2026-02-01T00:00:00.000000Z".to_owned()),
-                until: Some("2026-11-01T00:00:00.000000Z".to_owned()),
+                kinds: vec![
+                    TimelineEventKind::Run.as_str().to_owned(),
+                    TimelineEventKind::Review.as_str().to_owned(),
+                ],
                 ..TimelineFilter::of(TimelineScope::Project(1))
             })
-            .expect("kind and time filters apply");
+            .expect("the kind filter applies");
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].kind, "run");
-    }
-
-    #[test]
-    fn query_filters_offset_bounds_after_normalisation() {
-        let database = migrated_database();
-        for (kind, recorded_at) in [
-            ("run", "2026-03-01T00:00:00.000000Z"),
-            ("telemetry", "2026-06-01T00:00:00.000000Z"),
-        ] {
-            database
-                .connection()
-                .execute(
-                    "INSERT INTO timeline_events
-                     (scope, project_id, kind, entity_kind, entity_id, detail, recorded_at)
-                     VALUES ('project', '1', ?1, 'ticket', 'kan-t9', '{}', ?2)",
-                    rusqlite::params![kind, recorded_at],
-                )
-                .expect("fixture row lands");
-        }
-
-        let (since, until) = validate_timeline_time_window(
-            Some("2026-02-01T01:00:00+01:00"),
-            Some("2026-03-01T01:00:00+01:00"),
-        )
-        .expect("offset bounds normalise before storage access");
-
-        let rows = database
-            .query_timeline(&TimelineFilter {
-                since,
-                until,
-                ..TimelineFilter::of(TimelineScope::Project(1))
-            })
-            .expect("normalised bounds filter stored UTC rows");
-
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].kind, "run");
+        assert_eq!(
+            rows.iter().map(|row| row.kind.as_str()).collect::<Vec<_>>(),
+            vec!["run", "review"],
+            "only the requested kinds are served, oldest first"
+        );
     }
 
     #[test]

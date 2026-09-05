@@ -49,7 +49,7 @@ fn main() {
         bin.join("git"),
         format!(
             "#!/bin/sh\n\
-             if [ \"$1\" = \"-C\" ] && [ \"$3\" = \"status\" ] && [ \"$4\" = \"--porcelain\" ]; then\n\
+             if [ \"$1\" = \"--no-optional-locks\" ] && [ \"$2\" = \"-C\" ] && [ \"$4\" = \"status\" ] && [ \"$5\" = \"--porcelain\" ]; then\n\
                exit 1\n\
              fi\n\
              exec \"{real_git}\" \"$@\"\n"

@@ -129,7 +129,13 @@ fn origin_url(path: &str) -> Option<String> {
 
 fn working_tree_clean(workspace_path: &str) -> bool {
     Command::new("git")
-        .args(["-C", workspace_path, "status", "--porcelain"])
+        .args([
+            "--no-optional-locks",
+            "-C",
+            workspace_path,
+            "status",
+            "--porcelain",
+        ])
         .output()
         .map(|output| output.status.success() && output.stdout.is_empty())
         .unwrap_or(false)
@@ -226,11 +232,13 @@ mod tests {
 
         let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
 
-        assert!(snapshot.present, "mtime-dirty workspaces must still be observed");
+        assert!(
+            snapshot.present,
+            "mtime-dirty workspaces must still be observed"
+        );
         let index_after = fs::read(&index_path).expect("the index stays readable");
         assert_eq!(
-            index_before,
-            index_after,
+            index_before, index_after,
             "observation must not rewrite index bytes for mtime-dirty tracked files"
         );
         let meta_after = fs::metadata(&index_path).expect("the index metadata stays readable");
@@ -244,6 +252,7 @@ mod tests {
         let lock_path = dir.path().join(".git").join("index.lock");
         let mut lock_file = fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&lock_path)
             .expect("index.lock can be held for the observation");

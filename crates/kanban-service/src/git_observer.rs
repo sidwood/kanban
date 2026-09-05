@@ -88,7 +88,11 @@ fn repository_identity(path: &str) -> Option<String> {
 }
 
 fn canonical_path(path: &str) -> Option<String> {
-    Path::new(path).canonicalize().ok()?.to_str().map(str::to_owned)
+    Path::new(path)
+        .canonicalize()
+        .ok()?
+        .to_str()
+        .map(str::to_owned)
 }
 
 fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {

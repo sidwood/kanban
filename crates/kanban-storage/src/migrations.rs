@@ -593,9 +593,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0010 applies");
+            .expect("migrations 0010 through 0013 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

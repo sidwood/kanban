@@ -492,7 +492,7 @@ pub(crate) mod testing {
         pub(crate) core: Core,
     }
 
-    struct MemoryHerdrSettings {
+    pub(crate) struct MemoryHerdrSettings {
         projects: Mutex<HashMap<u64, kanban_dto::HerdrProjectSettings>>,
         defaults: kanban_dto::HerdrGlobalDefaults,
     }

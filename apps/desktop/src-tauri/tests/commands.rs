@@ -19,8 +19,8 @@ use kanban_dto::{
     PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
-    WorkspaceObserveRequest, WorkspaceRegisterRequest,
+    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};

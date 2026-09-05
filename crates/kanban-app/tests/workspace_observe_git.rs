@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use kanban_app::catalog::exposed_operations;
 use kanban_app::dispatch::Core;
+use kanban_app::herdr::NoopHerdrProjectObserver;
 use kanban_app::project::ProjectStore;
 use kanban_app::workspace::WorkspaceStore;
 use kanban_domain::{ProjectRegistration, WorkspaceHealth, WorkspaceId};
@@ -15,8 +16,8 @@ use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_service::LocalRepositories;
 use kanban_service::git_observer::LocalWorkspaceGitObserver;
 use kanban_storage::{
-    AllowAllMigrations, Database, RetentionPolicy, SqliteIdempotencyStore, SqliteInitiativeStore,
-    SqliteProjectStore, SqliteWorkspaceStore,
+    AllowAllMigrations, Database, RetentionPolicy, SqliteHerdrSettingsStore,
+    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteProjectStore, SqliteWorkspaceStore,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -79,8 +80,14 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
     );
     core.register_initiatives(initiatives.clone())
         .expect("the initiative operations register");
-    core.register_projects(projects.clone(), Arc::new(LocalRepositories), initiatives)
-        .expect("the project operations register");
+    core.register_projects(
+        projects.clone(),
+        Arc::new(LocalRepositories),
+        initiatives,
+        Arc::new(SqliteHerdrSettingsStore::new(&database)),
+        Arc::new(NoopHerdrProjectObserver),
+    )
+    .expect("the project operations register");
     core.register_workspaces(
         workspaces.clone(),
         projects.clone(),

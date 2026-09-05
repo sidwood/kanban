@@ -467,6 +467,8 @@ mod testing {
                 repositories: vec!["/repositories/kanban".to_owned()],
             }),
             initiatives,
+            Arc::new(crate::project::testing::MemoryHerdrSettings::default()),
+            Arc::new(crate::herdr::NoopHerdrProjectObserver),
         )
         .expect("the project operations register");
         core.register_workspaces(workspaces.clone(), projects.clone(), observer)

@@ -1160,6 +1160,8 @@ mod snapshot_step_test_hooks {
 
     /// Marks the one copy a gate belongs to. Hand the token to the
     /// copying thread and call `adopt` on it before the copy starts.
+    /// Adopt a token on one copy thread only: copies sharing a token
+    /// would interleave on a single gate.
     #[derive(Clone, Copy)]
     pub struct CopyToken {
         key: GateKey,
@@ -1203,9 +1205,10 @@ mod snapshot_step_test_hooks {
 
     impl Drop for StepGate {
         fn drop(&mut self) {
-            // Removing the channel drops the release receiver a
-            // parked copy waits on: its recv fails, the copy
-            // continues, and the gate stays disarmed.
+            // Disarms the gate. A parked copy holds its channel off
+            // the map and is freed by the test half dropping the
+            // release sender; removing the entry here drops any
+            // channel still waiting for the copy's next step.
             armed_gates().remove(&self.key);
         }
     }

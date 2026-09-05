@@ -5,7 +5,10 @@
 //! every field whose key marks it a secret contributes its value, and
 //! both the log write path and the diagnostic bundle assembly path
 //! scrub those values before anything reaches disk or leaves the
-//! machine.
+//! machine. A secret also carries the forms it takes inside
+//! serialized JSON — escaped quotes, escaped backslashes, and
+//! `\u`-escaped non-ASCII included — because the bundle copies
+//! serialized log text, where the raw bytes never appear.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -29,50 +32,105 @@ const SECRET_KEY_MARKERS: &[&str] = &[
     "privatekey",
 ];
 
+/// Why the managed configuration could not feed the redactor.
+#[derive(Debug, thiserror::Error)]
+pub enum RedactionSourceError {
+    /// The configuration file refused to be read.
+    #[error("the configuration could not be read: {source}")]
+    Read {
+        /// The underlying failure.
+        source: std::io::Error,
+    },
+    /// The configuration is not valid JSON.
+    #[error("the configuration is not valid JSON: {source}")]
+    Parse {
+        /// The underlying failure.
+        source: serde_json::Error,
+    },
+}
+
 /// Scrubs a fixed set of secret values from text and JSON.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Redactor {
     secret_values: Vec<String>,
+    /// Every form the secrets take on disk, ordered so the form that
+    /// carries more escaping replaces first: substituting a raw form
+    /// inside an escaped occurrence would leave broken halves behind.
+    scrub_forms: Vec<String>,
 }
 
 impl Redactor {
-    /// A redactor scrubbing exactly the given values.
+    /// A redactor scrubbing exactly the given values, in every
+    /// serialized form each of them can take.
     pub fn new(secret_values: Vec<String>) -> Self {
+        let secret_values: Vec<String> = secret_values
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect();
+        let mut scrub_forms = Vec::new();
+        for secret in &secret_values {
+            for form in [
+                json_escaped(&json_escaped(secret)),
+                json_escaped(secret),
+                unicode_escaped(secret),
+                secret.clone(),
+            ] {
+                if !scrub_forms.contains(&form) {
+                    scrub_forms.push(form);
+                }
+            }
+        }
+        scrub_forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
         Self {
-            secret_values: secret_values
-                .into_iter()
-                .filter(|v| !v.is_empty())
-                .collect(),
+            secret_values,
+            scrub_forms,
         }
     }
 
     /// A redactor carrying every secret-valued field in the managed
-    /// configuration; an absent or unreadable configuration redacts
-    /// nothing.
+    /// configuration; an absent, unreadable, or malformed
+    /// configuration redacts nothing, so serving keeps working while
+    /// export refuses separately.
     pub fn from_config(data_dir: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(data_dir.join(config_file_name())) else {
-            return Self::default();
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&text) else {
-            return Self::default();
-        };
+        match read_managed_config(data_dir) {
+            Ok(Some(configuration)) => Self::from_config_json(&configuration),
+            Ok(None) | Err(_) => Self::default(),
+        }
+    }
+
+    /// A redactor carrying every secret-valued field in an already
+    /// parsed configuration.
+    pub fn from_config_json(configuration: &Value) -> Self {
         let mut secret_values = Vec::new();
-        collect_secret_values(&value, &mut secret_values);
+        collect_secret_values(configuration, &mut secret_values);
         Self::new(secret_values)
     }
 
-    /// Replaces every known secret value in `text`.
+    /// A redactor scrubbing everything either side knows. Refreshed
+    /// knowledge must never forget a value the configuration rotated
+    /// away from: a retired secret is still a secret.
+    pub(crate) fn union(&self, other: &Redactor) -> Redactor {
+        let mut secret_values = self.secret_values.clone();
+        for secret in &other.secret_values {
+            if !secret_values.contains(secret) {
+                secret_values.push(secret.clone());
+            }
+        }
+        Redactor::new(secret_values)
+    }
+
+    /// Replaces every known form of every known secret in `text`.
     pub fn redact_text<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let carries_secret = self
-            .secret_values
+        if !self
+            .scrub_forms
             .iter()
-            .any(|secret| text.contains(secret.as_str()));
-        if !carries_secret {
+            .any(|form| text.contains(form.as_str()))
+        {
             return Cow::Borrowed(text);
         }
         let mut scrubbed = text.to_owned();
-        for secret in &self.secret_values {
-            scrubbed = scrubbed.replace(secret.as_str(), REDACTED);
+        for form in &self.scrub_forms {
+            scrubbed = scrubbed.replace(form.as_str(), REDACTED);
         }
         Cow::Owned(scrubbed)
     }
@@ -109,6 +167,20 @@ impl Redactor {
     }
 }
 
+/// Reads the managed configuration, distinguishing an absent file
+/// (nothing to learn) from one that cannot be read or parsed (the
+/// caller decides whether that is survivable).
+pub(crate) fn read_managed_config(data_dir: &Path) -> Result<Option<Value>, RedactionSourceError> {
+    let path = data_dir.join(config_file_name());
+    match std::fs::read_to_string(&path) {
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(RedactionSourceError::Read { source }),
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|source| RedactionSourceError::Parse { source }),
+    }
+}
+
 /// Whether a configuration key marks its field as a secret.
 fn is_secret_key(key: &str) -> bool {
     let normalised: String = key
@@ -121,17 +193,19 @@ fn is_secret_key(key: &str) -> bool {
         .any(|marker| normalised.contains(marker))
 }
 
-/// Collects every string under a secret-marked key inside `value`.
+/// Collects every string a secret-marked key covers: a direct string
+/// value, and every string under a secret-marked container, because a
+/// whole subtree flagged as credentials is secret material even when
+/// its inner keys carry no marker of their own.
 fn collect_secret_values(value: &Value, secret_values: &mut Vec<String>) {
     match value {
         Value::Object(fields) => {
             for (key, field) in fields {
-                if is_secret_key(key)
-                    && let Value::String(secret) = field
-                {
-                    secret_values.push(secret.clone());
+                if is_secret_key(key) {
+                    collect_every_string(field, secret_values);
+                } else {
+                    collect_secret_values(field, secret_values);
                 }
-                collect_secret_values(field, secret_values);
             }
         }
         Value::Array(items) => {
@@ -141,6 +215,62 @@ fn collect_secret_values(value: &Value, secret_values: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+/// Collects every string inside `value`.
+fn collect_every_string(value: &Value, secret_values: &mut Vec<String>) {
+    match value {
+        Value::Object(fields) => {
+            for field in fields.values() {
+                collect_every_string(field, secret_values);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_every_string(item, secret_values);
+            }
+        }
+        Value::String(text) => secret_values.push(text.clone()),
+        _ => {}
+    }
+}
+
+/// The secret as it appears inside a JSON string literal, without the
+/// surrounding quotes: quotes and backslashes doubled, control
+/// characters escaped, non-ASCII left as UTF-8, exactly as
+/// `serde_json` writes it.
+fn json_escaped(secret: &str) -> String {
+    let encoded = serde_json::to_string(secret).expect("a string always serialises");
+    encoded[1..encoded.len() - 1].to_owned()
+}
+
+/// The secret as it appears inside a JSON string literal written by an
+/// escaper that also encodes non-ASCII as `\u` escapes, astral
+/// characters as surrogate pairs.
+fn unicode_escaped(secret: &str) -> String {
+    let mut escaped = String::with_capacity(secret.len());
+    for character in secret.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\u{c}' => escaped.push_str("\\f"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other if (other as u32) > 0xFFFF => {
+                let supplementary = (other as u32) - 0x1_0000;
+                let high = 0xD800 + (supplementary >> 10);
+                let low = 0xDC00 + (supplementary & 0x3FF);
+                escaped.push_str(&format!("\\u{high:04x}\\u{low:04x}"));
+            }
+            other if (other as u32) < 0x20 || (other as u32) > 0x7E => {
+                escaped.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -155,6 +285,10 @@ mod tests {
 
     const PLANTED_TOKEN: &str = "kct_t61_planted_install_token";
     const PLANTED_PASSPHRASE: &str = "t61-planted-backup-passphrase";
+    const PLANTED_QUOTED: &str = r#"t61 "quoted" planted secret"#;
+    const PLANTED_BACKSLASH: &str = r"t61\planted\secret";
+    const PLANTED_NON_ASCII: &str = "t61-planted-pässphrase-café";
+    const PLANTED_ASTRAL: &str = "t61-planted-🔐-key";
 
     #[test]
     fn secret_keys_mark_secret_valued_fields() {
@@ -232,6 +366,106 @@ mod tests {
         );
     }
 
+    /// A secret nested under a secret-marked container key is learned
+    /// even when its own key carries no marker, and the container
+    /// still collapses wholesale in exported JSON.
+    #[test]
+    fn secret_exclusion_learns_values_nested_under_secret_keys() {
+        let configuration = json!({
+            "theme": "dark",
+            "credentials": {
+                "herdr": "hct_live_t61_planted",
+                "mcp": { "install_token": PLANTED_TOKEN },
+            },
+        });
+        let redactor = Redactor::from_config_json(&configuration);
+
+        assert_eq!(redactor.secret_count(), 2, "the whole subtree is learned");
+        assert!(
+            !redactor
+                .redact_text("held hct_live_t61_planted and more")
+                .contains("hct_live_t61_planted"),
+            "a string with no marker of its own, under a secret-marked container, scrubs from free text"
+        );
+        let redacted = redactor.redact_json(&configuration);
+        assert_eq!(redacted["credentials"], json!(REDACTED));
+        assert_eq!(redacted["theme"], json!("dark"));
+    }
+
+    /// Serialized JSON never carries the raw bytes of a secret holding
+    /// quotes, backslashes, or non-ASCII text: it carries the escaped
+    /// form, once per level of nesting, and `\u`-escaping serializers
+    /// carry code-point escapes instead.
+    #[test]
+    fn secret_exclusion_scrubs_serialized_forms_with_quotes_backslashes_and_non_ascii() {
+        let redactor = Redactor::new(vec![
+            PLANTED_QUOTED.into(),
+            PLANTED_BACKSLASH.into(),
+            PLANTED_NON_ASCII.into(),
+            PLANTED_ASTRAL.into(),
+        ]);
+        let embedded = json!({
+            "quoted": PLANTED_QUOTED,
+            "backslash": PLANTED_BACKSLASH,
+            "non_ascii": PLANTED_NON_ASCII,
+            "astral": PLANTED_ASTRAL,
+        });
+        let serialized = serde_json::to_string(&embedded).expect("the fixture serialises");
+        let double_serialized =
+            serde_json::to_string(&serialized).expect("the fixture serialises again");
+        let unicode_serialized = serialized.replace(
+            &super::json_escaped(PLANTED_NON_ASCII),
+            &super::unicode_escaped(PLANTED_NON_ASCII),
+        );
+
+        for (label, text) in [
+            ("once-escaped", serialized.as_str()),
+            ("twice-escaped", double_serialized.as_str()),
+            ("code-point-escaped", unicode_serialized.as_str()),
+        ] {
+            let scrubbed = redactor.redact_text(text);
+            for secret in [
+                PLANTED_QUOTED,
+                PLANTED_BACKSLASH,
+                PLANTED_NON_ASCII,
+                PLANTED_ASTRAL,
+            ] {
+                assert!(
+                    !scrubbed.contains(secret),
+                    "the {label} form of `{secret}` must vanish: {scrubbed}"
+                );
+                assert!(
+                    !scrubbed.contains(&super::json_escaped(secret)),
+                    "the {label} escaped form of `{secret}` must vanish: {scrubbed}"
+                );
+            }
+            assert!(
+                scrubbed.contains(REDACTED),
+                "the {label} scrub leaves the marker behind: {scrubbed}"
+            );
+        }
+    }
+
+    /// Refreshed knowledge extends what was held: a value added to the
+    /// configuration after the redactor was built is scrubbed, and a
+    /// value the configuration rotated away from stays scrubbed.
+    #[test]
+    fn secret_exclusion_union_keeps_rotated_values_and_learns_new_ones() {
+        let held = Redactor::new(vec![PLANTED_TOKEN.into()]);
+        let rotated_to = Redactor::new(vec![PLANTED_PASSPHRASE.into()]);
+
+        let refreshed = held.union(&rotated_to);
+
+        assert_eq!(refreshed.secret_count(), 2);
+        let text = format!("{PLANTED_TOKEN} then {PLANTED_PASSPHRASE}");
+        let scrubbed = refreshed.redact_text(&text);
+        assert_eq!(
+            scrubbed,
+            format!("{REDACTED} then {REDACTED}"),
+            "both the retired and the rotated-in value must scrub"
+        );
+    }
+
     #[test]
     fn from_config_collects_nested_secret_values_only() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -258,6 +492,22 @@ mod tests {
             empty.secret_count(),
             0,
             "absent configuration redacts nothing"
+        );
+    }
+
+    /// The best-effort constructor stays best-effort: a malformed
+    /// configuration redacts nothing rather than failing the caller,
+    /// because serving outranks diagnostics on the log path.
+    #[test]
+    fn from_config_tolerates_a_malformed_configuration() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        std::fs::write(dir.path().join("config.json"), "{ not json")
+            .expect("the malformed configuration is written");
+
+        assert_eq!(
+            Redactor::from_config(dir.path()).secret_count(),
+            0,
+            "a malformed configuration redacts nothing on the log path"
         );
     }
 }

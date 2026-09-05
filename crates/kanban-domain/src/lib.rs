@@ -11,6 +11,7 @@ pub mod plan;
 pub mod project;
 pub mod ruling;
 pub mod spec;
+pub mod ticket;
 pub mod timeline;
 pub mod timeline_time;
 pub mod workspace;
@@ -43,6 +44,10 @@ pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, Ru
 pub use spec::{
     ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,
     SpecVersion,
+};
+pub use ticket::{
+    BugTicket, ImplementationTicket, Priority, TaskTicket, Ticket, TicketBody, TicketError,
+    TicketId, TicketKind, TicketNumber, TicketNumberError, TicketState,
 };
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use timeline_time::{

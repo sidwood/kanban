@@ -27,6 +27,7 @@
     "dialog",
     "frontmatter",
     "gitdir",
+    "grabbable",
     "hardlinked",
     "idempotency",
     "kanban",

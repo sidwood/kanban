@@ -96,6 +96,10 @@ fn canonical_path(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Membership is proven only by a shared Git common directory (the
+/// Seed and its linked worktrees) or by the explicit, transitive
+/// `bc.source` chain of sanctioned branch clones. Matching origin
+/// URLs never establish membership (KAN-T97).
 fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {
     match (
         repository_identity(workspace_path),
@@ -118,14 +122,7 @@ fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {
             None => break,
         };
     }
-    match (origin_url(workspace_path), origin_url(repository_path)) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn origin_url(path: &str) -> Option<String> {
-    git_output(path, &["remote", "get-url", "origin"])
+    false
 }
 
 fn working_tree_clean(workspace_path: &str) -> bool {
@@ -248,6 +245,27 @@ mod tests {
             .expect("cargo builds the failure-mode probe beside the suite")
     }
 
+    fn init_repo_at(parent: &Path, name: &str) -> String {
+        let dir = parent.join(name);
+        fs::create_dir_all(&dir).expect("the repository directory is created");
+        init_repo(&dir)
+    }
+
+    fn set_bc_source(workspace: &Path, source: &str) {
+        git(
+            workspace,
+            &[
+                "config",
+                "bc.source",
+                Path::new(source)
+                    .canonicalize()
+                    .expect("the source resolves")
+                    .to_str()
+                    .expect("the path is UTF-8"),
+            ],
+        );
+    }
+
     #[test]
     fn branch_clone_observation_is_present() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -261,18 +279,7 @@ mod tests {
             dir.path(),
             &["clone", "--local", &repository, workspace.to_str().unwrap()],
         );
-        git(
-            &workspace,
-            &[
-                "config",
-                "bc.source",
-                Path::new(&repository)
-                    .canonicalize()
-                    .expect("the repository resolves")
-                    .to_str()
-                    .expect("the path is UTF-8"),
-            ],
-        );
+        set_bc_source(&workspace, &repository);
 
         let snapshot = LocalWorkspaceGitObserver
             .observe(workspace.to_str().expect("the path is UTF-8"), &repository);
@@ -586,6 +593,93 @@ mod tests {
             Some(true),
             "commits only reachable from a detached HEAD must report as unlanded"
         );
+    }
+
+    #[test]
+    fn worktree_observation_shares_the_common_directory() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let worktree = dir.path().join("worktree");
+        git(
+            Path::new(&repository),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.to_str().expect("the path is UTF-8"),
+            ],
+        );
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(worktree.to_str().expect("the path is UTF-8"), &repository);
+
+        assert!(
+            snapshot.present,
+            "linked worktrees share the repository's common Git directory"
+        );
+        assert_eq!(snapshot.branch, Some("feature".to_owned()));
+        assert!(snapshot.working_tree_clean);
+    }
+
+    #[test]
+    fn transitive_bc_source_membership_observes_nested_clones() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        git(
+            Path::new(&repository),
+            &["clone", "--local", &repository, first.to_str().unwrap()],
+        );
+        git(
+            &first,
+            &[
+                "clone",
+                "--local",
+                first.to_str().unwrap(),
+                second.to_str().unwrap(),
+            ],
+        );
+        set_bc_source(&first, &repository);
+        set_bc_source(&second, first.to_str().expect("the path is UTF-8"));
+
+        let snapshot = LocalWorkspaceGitObserver
+            .observe(second.to_str().expect("the path is UTF-8"), &repository);
+
+        assert!(
+            snapshot.present,
+            "the transitive bc.source chain must establish membership"
+        );
+        assert_eq!(snapshot.branch, Some("main".to_owned()));
+        assert!(snapshot.head.is_some());
+    }
+
+    #[test]
+    fn unrelated_same_origin_clone_is_refused() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let origin = init_repo_at(dir.path(), "origin");
+        let repository = dir.path().join("repository");
+        let unrelated = dir.path().join("unrelated");
+        git(
+            Path::new(&origin),
+            &["clone", "--local", &origin, repository.to_str().unwrap()],
+        );
+        git(
+            Path::new(&origin),
+            &["clone", "--local", &origin, unrelated.to_str().unwrap()],
+        );
+
+        let snapshot = LocalWorkspaceGitObserver.observe(
+            unrelated.to_str().expect("the path is UTF-8"),
+            repository.to_str().expect("the path is UTF-8"),
+        );
+
+        assert!(
+            !snapshot.present,
+            "origin URL equality alone must not establish membership"
+        );
+        assert_eq!(snapshot.repository_identity, None);
     }
 
     #[test]

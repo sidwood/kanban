@@ -7,6 +7,7 @@ pub mod contracts_gen;
 pub mod coverage;
 pub mod deadlines;
 pub mod deferrals;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod event_catalog;
 pub mod events;

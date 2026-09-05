@@ -212,6 +212,11 @@ impl Core {
                 plans: context.plans.clone(),
             }),
         )?;
+        self.register_plan_diagnostics(
+            context.plans.clone(),
+            context.projects.clone(),
+            context.specs.clone(),
+        )?;
         Ok(())
     }
 }

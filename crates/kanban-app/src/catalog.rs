@@ -204,6 +204,13 @@ define_exposed_catalogue! {
         mcp: "plan_get",
         description: "Read one Plan with every frozen version beside it.",
     },
+    "plan.diagnostics" => {
+        kind: Query,
+        request: "PlanDiagnosticsQuery",
+        response: "PlanDiagnosticsResponse",
+        mcp: "plan_diagnostics",
+        description: "Report one Plan graph's blocking diagnostics: dependency cycles, story coverage gaps, and invalid profile references.",
+    },
     "spec.create" => {
         kind: Command,
         request: "SpecCreateRequest",

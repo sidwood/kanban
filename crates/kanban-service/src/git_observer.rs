@@ -19,7 +19,13 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
                 ..WorkspaceGitSnapshot::default()
             };
         }
-        let expected = match repository_identity(repository_path) {
+        if repository_identity(repository_path).is_none() {
+            return WorkspaceGitSnapshot {
+                present: false,
+                ..WorkspaceGitSnapshot::default()
+            };
+        }
+        let identity = match repository_identity(workspace_path) {
             Some(identity) => identity,
             None => {
                 return WorkspaceGitSnapshot {
@@ -28,16 +34,7 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
                 };
             }
         };
-        let actual = match repository_identity(workspace_path) {
-            Some(identity) => identity,
-            None => {
-                return WorkspaceGitSnapshot {
-                    present: false,
-                    ..WorkspaceGitSnapshot::default()
-                };
-            }
-        };
-        if expected != actual {
+        if !belongs_to_repository(workspace_path, repository_path) {
             return WorkspaceGitSnapshot {
                 present: false,
                 ..WorkspaceGitSnapshot::default()
@@ -45,17 +42,12 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
         }
         let branch = git_output(workspace_path, &["rev-parse", "--abbrev-ref", "HEAD"]);
         let head = git_output(workspace_path, &["rev-parse", "HEAD"]);
-        let working_tree_clean = Command::new("git")
-            .args(["-C", workspace_path, "status", "--porcelain"])
-            .output()
-            .map(|output| output.stdout.is_empty())
-            .unwrap_or(false);
         WorkspaceGitSnapshot {
             present: true,
-            repository_identity: Some(actual),
+            repository_identity: Some(identity),
             branch,
             head,
-            working_tree_clean,
+            working_tree_clean: working_tree_clean(workspace_path),
         }
     }
 }
@@ -93,6 +85,50 @@ fn repository_identity(path: &str) -> Option<String> {
         .ok()?
         .to_str()
         .map(str::to_owned)
+}
+
+fn canonical_path(path: &str) -> Option<String> {
+    Path::new(path).canonicalize().ok()?.to_str().map(str::to_owned)
+}
+
+fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {
+    match (
+        repository_identity(workspace_path),
+        repository_identity(repository_path),
+    ) {
+        (Some(actual), Some(expected)) if actual == expected => return true,
+        _ => {}
+    }
+    let repository = match canonical_path(repository_path) {
+        Some(path) => path,
+        None => return false,
+    };
+    let mut current = workspace_path.to_owned();
+    for _ in 0..10 {
+        if canonical_path(&current).as_deref() == Some(repository.as_str()) {
+            return true;
+        }
+        current = match git_output(&current, &["config", "--local", "--get", "bc.source"]) {
+            Some(source) => source,
+            None => break,
+        };
+    }
+    match (origin_url(workspace_path), origin_url(repository_path)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn origin_url(path: &str) -> Option<String> {
+    git_output(path, &["remote", "get-url", "origin"])
+}
+
+fn working_tree_clean(workspace_path: &str) -> bool {
+    Command::new("git")
+        .args(["-C", workspace_path, "status", "--porcelain"])
+        .output()
+        .map(|output| output.status.success() && output.stdout.is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

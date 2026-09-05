@@ -14,7 +14,7 @@ use kanban_dto::{
     DeferralRecordRequest, DeferralSupersedeRequest, EvidenceAttachRequest, EvidenceListRequest,
     HealthQuery, InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
     InitiativeRenameRequest, MutationContext, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery,
+    RulingSupersedeRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -95,6 +95,17 @@ fn entity() -> TimelineEntityRef {
     }
 }
 
+fn production_timeline_query_fixture() -> Value {
+    serde_json::to_value(TimelineQuery {
+        scope: TimelineScope::Project("kan".to_owned()),
+        entity: None,
+        kinds: None,
+        since: None,
+        until: None,
+    })
+    .expect("the production timeline query encodes")
+}
+
 fn sample_request(schema: &str) -> Value {
     let mutation = mutation_for(schema);
     match schema {
@@ -104,7 +115,7 @@ fn sample_request(schema: &str) -> Value {
             json!({ "mutation": mutation, "initiative_id": 1, "name": "Beta" })
         }
         "InitiativeArchiveRequest" => json!({ "mutation": mutation, "initiative_id": 1 }),
-        "TimelineQuery" => json!({ "project_id": "kan" }),
+        "TimelineQuery" => production_timeline_query_fixture(),
         "CommentCreateRequest" => json!({
             "mutation": mutation,
             "project_id": "kan",
@@ -315,4 +326,20 @@ fn commands_refuse_unknown_request_fields() {
             .insert("definitely_unknown".to_owned(), json!(true));
         assert_unknown_fields_refused(operation.request_schema, request);
     }
+}
+
+#[test]
+fn commands_timeline_query_fixture_matches_production_and_refuses_unknown_fields() {
+    assert_eq!(
+        sample_request("TimelineQuery"),
+        production_timeline_query_fixture(),
+        "the catalogue forwarding fixture must match the production TimelineQuery shape"
+    );
+
+    let mut request = production_timeline_query_fixture();
+    request
+        .as_object_mut()
+        .expect("the production timeline query is an object")
+        .insert("definitely_unknown".to_owned(), json!(true));
+    assert_unknown_fields_refused("TimelineQuery", request);
 }

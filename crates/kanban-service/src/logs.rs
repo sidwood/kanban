@@ -130,7 +130,10 @@ impl LogWriter {
             data_dir: data_dir.to_path_buf(),
             directory,
             rotation,
-            redaction: Mutex::new(Redactor::from_config(data_dir)),
+            // Best-effort seed: knowledge held before the first
+            // append survives a configuration later deleted. Every
+            // append re-reads and decides for itself.
+            redaction: Mutex::new(Redactor::from_config(data_dir).unwrap_or_default()),
             append_gate: Mutex::new(()),
         })
     }
@@ -150,7 +153,7 @@ impl LogWriter {
             .redaction
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *held = held.union(&Redactor::from_config(&self.data_dir));
+        *held = held.union(&Redactor::from_config(&self.data_dir).unwrap_or_default());
         held.clone()
     }
 

@@ -88,14 +88,16 @@ impl Redactor {
     }
 
     /// A redactor carrying every secret-valued field in the managed
-    /// configuration; an absent, unreadable, or malformed
-    /// configuration redacts nothing, so serving keeps working while
-    /// export refuses separately.
-    pub fn from_config(data_dir: &Path) -> Self {
-        match read_managed_config(data_dir) {
-            Ok(Some(configuration)) => Self::from_config_json(&configuration),
-            Ok(None) | Err(_) => Self::default(),
-        }
+    /// configuration, or the reason that configuration cannot feed
+    /// one. An absent configuration is not a failure — there is
+    /// nothing to learn — but an unreadable or malformed one is: the
+    /// secrets it holds stay unknown, and a caller told only "no
+    /// secrets" would write them out in the clear.
+    pub fn from_config(data_dir: &Path) -> Result<Self, RedactionSourceError> {
+        Ok(match read_managed_config(data_dir)? {
+            Some(configuration) => Self::from_config_json(&configuration),
+            None => Self::default(),
+        })
     }
 
     /// A redactor carrying every secret-valued field in an already
@@ -281,7 +283,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{REDACTED, Redactor, is_secret_key};
+    use super::{REDACTED, RedactionSourceError, Redactor, is_secret_key};
 
     const PLANTED_TOKEN: &str = "kct_t61_planted_install_token";
     const PLANTED_PASSPHRASE: &str = "t61-planted-backup-passphrase";
@@ -477,7 +479,8 @@ mod tests {
         )
         .expect("the configuration plants secrets");
 
-        let redactor = Redactor::from_config(dir.path());
+        let redactor =
+            Redactor::from_config(dir.path()).expect("the planted configuration feeds redaction");
 
         assert_eq!(redactor.secret_count(), 2);
         assert!(
@@ -487,7 +490,8 @@ mod tests {
             "both planted values must scrub"
         );
 
-        let empty = Redactor::from_config(Path::new("/nonexistent-kanban-t61"));
+        let empty = Redactor::from_config(Path::new("/nonexistent-kanban-t61"))
+            .expect("an absent configuration is not a failure");
         assert_eq!(
             empty.secret_count(),
             0,
@@ -495,19 +499,33 @@ mod tests {
         );
     }
 
-    /// The best-effort constructor stays best-effort: a malformed
-    /// configuration redacts nothing rather than failing the caller,
-    /// because serving outranks diagnostics on the log path.
+    /// The source of redaction knowledge is not best-effort. A
+    /// configuration that cannot be read or parsed reports itself,
+    /// because a caller that cannot tell "nothing to scrub" from
+    /// "cannot know what to scrub" writes out secrets it never
+    /// learned.
     #[test]
-    fn from_config_tolerates_a_malformed_configuration() {
+    fn from_config_reports_a_configuration_that_cannot_feed_redaction() {
         let dir = TempDir::new().expect("a scratch directory is available");
-        std::fs::write(dir.path().join("config.json"), "{ not json")
-            .expect("the malformed configuration is written");
+        let config_path = dir.path().join("config.json");
 
-        assert_eq!(
-            Redactor::from_config(dir.path()).secret_count(),
-            0,
-            "a malformed configuration redacts nothing on the log path"
+        std::fs::write(&config_path, "{ not json").expect("the malformed configuration is written");
+        assert!(
+            matches!(
+                Redactor::from_config(dir.path()),
+                Err(RedactionSourceError::Parse { .. })
+            ),
+            "a malformed configuration must report itself, never read as empty"
+        );
+
+        std::fs::remove_file(&config_path).expect("the malformed configuration is removed");
+        std::fs::create_dir(&config_path).expect("the unreadable configuration is planted");
+        assert!(
+            matches!(
+                Redactor::from_config(dir.path()),
+                Err(RedactionSourceError::Read { .. })
+            ),
+            "an unreadable configuration must report itself, never read as empty"
         );
     }
 }

@@ -286,7 +286,9 @@ mod tests {
         );
         let expected_health = {
             let mut text = serde_json::to_string_pretty(
-                &crate::redaction::Redactor::from_config(dir.path()).redact_json(&health),
+                &crate::redaction::Redactor::from_config(dir.path())
+                    .expect("the planted configuration feeds redaction")
+                    .redact_json(&health),
             )
             .expect("the redacted health encodes");
             text.push('\n');

@@ -1226,8 +1226,8 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("the 0024 migration applies");
-        assert_eq!(report.applied, vec![21, 22, 23, 24]);
+            .expect("the upgrade applies");
+        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26]);
 
         let store = SqliteTicketStore::new(&database);
         let found = store
@@ -1392,8 +1392,7 @@ mod tests {
             &store,
             &database,
             Priority::Normal,
-            &TicketBody::bug("Landing drops the integration branch", None)
-                .expect("the fixture body validates"),
+            &bug_body().expect("the fixture body validates"),
         );
         let timeline_before = ticket_timeline(&database).len();
 
@@ -1406,7 +1405,7 @@ mod tests {
         store
             .save(
                 &assigned,
-                &transition(assigned.id(), "assigned", json!({ "profile": "standard" })),
+                transition(assigned.id(), "assigned", json!({ "profile": "standard" })),
             )
             .expect("the save lands");
 

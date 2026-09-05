@@ -799,9 +799,9 @@ mod tests {
     }
 
     #[test]
-    fn migrate_from_version_twenty_adds_lanes() {
+    fn migrate_from_version_twenty_four_adds_lanes() {
         let (_dir, mut database) = scratch_database();
-        crate::migrations::apply_through(&database.connection(), 20)
+        crate::migrations::apply_through(&database.connection(), 24)
             .expect("the older schema applies");
         let before: i64 = database
             .connection()
@@ -811,13 +811,18 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("sqlite_master is readable");
-        assert_eq!(before, 0, "version twenty must not create lanes");
+        assert_eq!(before, 0, "version twenty-four must not create lanes");
 
         let report = database
             .migrate(&AllowAllMigrations)
             .expect("the upgrade applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![21] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![25, 26]
+            }
+        );
         let present: i64 = database
             .connection()
             .query_row(
@@ -826,20 +831,20 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("sqlite_master is readable");
-        assert_eq!(present, 1, "version twenty-one creates lanes");
+        assert_eq!(present, 1, "version twenty-five creates lanes");
         let audited: String = database
             .connection()
             .query_row(
                 "SELECT detail FROM audit_events
                  WHERE kind = 'migration.applied'
-                   AND json_extract(detail, '$.version') = 21",
+                   AND json_extract(detail, '$.version') = 25",
                 [],
                 |row| row.get(0),
             )
             .expect("the audit trail is readable");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&audited).expect("the detail is JSON"),
-            serde_json::json!({ "version": 21, "name": "lanes" })
+            serde_json::json!({ "version": 25, "name": "lanes" })
         );
     }
 
@@ -946,7 +951,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23, 24, 26]
+                applied: vec![21, 22, 23, 24, 25, 26]
             }
         );
         let conn = database.connection();
@@ -1816,7 +1821,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the bounded rebuild applies");
 
-        assert_eq!(report.applied, vec![21, 22, 23, 24]);
+        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26]);
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn
             .query_row(

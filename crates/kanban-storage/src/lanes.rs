@@ -343,8 +343,10 @@ mod lane_store {
             .connection()
             .execute(
                 "INSERT INTO tickets
-                     (project_id, number, kind, priority, state, title, criteria, version)
-                 VALUES (1, 1, 'task', 'normal', 'draft', 'One slice', '[]', 1)",
+                     (project_id, number, kind, priority, state, title, criteria,
+                      subtype, mode, completion, version)
+                 VALUES (1, 1, 'task', 'normal', 'draft', 'One slice', '[]',
+                         'operational', 'human', '[\"One slice is worked to completion.\"]', 1)",
                 [],
             )
             .expect("the fixture Ticket lands");

@@ -57,8 +57,9 @@ pub use initiative::{
 pub use mutation::MutationContext;
 pub use plan::{
     PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery,
-    PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanCoverageGap, PlanCreateRequest, PlanCycle, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
+    PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse,
+    PlanInvalidProfile, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
 };
 pub use project::{
@@ -178,12 +179,17 @@ mod tests {
                 "PlanArchiveRequest",
                 "PlanCancelRequest",
                 "PlanCompleteRequest",
+                "PlanCoverageGap",
                 "PlanCreateRequest",
+                "PlanCycle",
+                "PlanDiagnosticsQuery",
+                "PlanDiagnosticsResponse",
                 "PlanEdge",
                 "PlanEdgeAddRequest",
                 "PlanEdgeRemoveRequest",
                 "PlanGetQuery",
                 "PlanGetResponse",
+                "PlanInvalidProfile",
                 "PlanListQuery",
                 "PlanListResponse",
                 "PlanRecord",

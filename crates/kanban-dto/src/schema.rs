@@ -34,8 +34,9 @@ use crate::initiative::{
 use crate::mutation::MutationContext;
 use crate::plan::{
     PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery,
-    PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanCoverageGap, PlanCreateRequest, PlanCycle, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
+    PlanEdge, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse,
+    PlanInvalidProfile, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, PlanState, PlanVersionRecord,
 };
 use crate::project::{
@@ -150,12 +151,20 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("PlanArchiveRequest", schema_for!(PlanArchiveRequest)),
         ("PlanCancelRequest", schema_for!(PlanCancelRequest)),
         ("PlanCompleteRequest", schema_for!(PlanCompleteRequest)),
+        ("PlanCoverageGap", schema_for!(PlanCoverageGap)),
         ("PlanCreateRequest", schema_for!(PlanCreateRequest)),
+        ("PlanCycle", schema_for!(PlanCycle)),
+        ("PlanDiagnosticsQuery", schema_for!(PlanDiagnosticsQuery)),
+        (
+            "PlanDiagnosticsResponse",
+            schema_for!(PlanDiagnosticsResponse),
+        ),
         ("PlanEdge", schema_for!(PlanEdge)),
         ("PlanEdgeAddRequest", schema_for!(PlanEdgeAddRequest)),
         ("PlanEdgeRemoveRequest", schema_for!(PlanEdgeRemoveRequest)),
         ("PlanGetQuery", schema_for!(PlanGetQuery)),
         ("PlanGetResponse", schema_for!(PlanGetResponse)),
+        ("PlanInvalidProfile", schema_for!(PlanInvalidProfile)),
         ("PlanListQuery", schema_for!(PlanListQuery)),
         ("PlanListResponse", schema_for!(PlanListResponse)),
         ("PlanRecord", schema_for!(PlanRecord)),

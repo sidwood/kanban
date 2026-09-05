@@ -1,4 +1,4 @@
--- 0011 supersession uniqueness
+-- 0018 supersession uniqueness
 --
 -- One non-null successor per original for rulings and deferrals
 -- (KAN-S2-US3, DR-AE-03). Supersession forms a single unambiguous

@@ -120,7 +120,7 @@ impl DeferralStore for SqliteDeferralStore {
 
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Deferral> {
     let id = row.get::<_, i64>(0)?.unsigned_abs();
-    // A non-numeric scope is a legacy row migration 0011 missed;
+    // A non-numeric scope is a legacy row migration 0017 missed;
     // refusing it beats guessing which Project owns it.
     let project_id: u64 = row.get::<_, String>(1)?.parse().map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(

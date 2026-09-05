@@ -165,7 +165,7 @@ fn internal(error: rusqlite::Error) -> ApiError {
 }
 
 /// The numeric Project identity a stored row carries. Anything else is
-/// a legacy scope migration 0011 missed, which is corruption the
+/// a legacy scope migration 0017 missed, which is corruption the
 /// caller must hear about rather than quietly reinterpret.
 fn decode_project(project_id: &str) -> Result<u64, ApiError> {
     project_id.parse().map_err(|_| {

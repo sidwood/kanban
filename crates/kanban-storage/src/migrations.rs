@@ -358,6 +358,34 @@ mod tests {
         }
     }
 
+    /// KAN-T110-AC1: every landed migration whose header carries a
+    /// four-digit identifier must name the version the registry embeds.
+    #[test]
+    fn embedded_migration_headers_name_their_landed_identifiers() {
+        for migration in MIGRATIONS {
+            let first_line = migration
+                .sql
+                .lines()
+                .next()
+                .expect("migration SQL is non-empty");
+            let Some(rest) = first_line.strip_prefix("-- ") else {
+                continue;
+            };
+            let Some((digits, _)) = rest.split_once(' ') else {
+                continue;
+            };
+            if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            assert_eq!(
+                digits,
+                format!("{:04}", migration.version),
+                "migration {} header names the wrong identifier",
+                migration.version
+            );
+        }
+    }
+
     #[test]
     fn migrate_applies_every_known_migration_from_empty() {
         let (_dir, mut database) = scratch_database();
@@ -1132,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_0011_enforces_one_successor_per_ruling_on_upgraded_stores() {
+    fn migration_0018_enforces_one_successor_per_ruling_on_upgraded_stores() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
         {
@@ -1152,7 +1180,7 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0011 applies");
+            .expect("migration 0018 applies");
 
         assert_eq!(report.applied, vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
         let outcome = database.connection().execute(
@@ -1168,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_0011_enforces_one_successor_per_deferral_on_upgraded_stores() {
+    fn migration_0018_enforces_one_successor_per_deferral_on_upgraded_stores() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
         {
@@ -1189,7 +1217,7 @@ mod tests {
 
         database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0011 applies");
+            .expect("migration 0018 applies");
 
         let outcome = database.connection().execute(
             "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)
@@ -1261,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_0011_recovers_duplicate_ruling_successors_on_dirty_upgraded_stores() {
+    fn migration_0018_recovers_duplicate_ruling_successors_on_dirty_upgraded_stores() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
         {
@@ -1287,7 +1315,7 @@ mod tests {
 
         database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0011 recovers duplicate ruling successors");
+            .expect("migration 0018 recovers duplicate ruling successors");
 
         let conn = database.connection();
         let quarantined: (String, i64, i64, String) = conn
@@ -1350,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_0011_recovers_duplicate_deferral_successors_on_dirty_upgraded_stores() {
+    fn migration_0018_recovers_duplicate_deferral_successors_on_dirty_upgraded_stores() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 10).expect("the pre-supersession schema applies");
         {
@@ -1377,7 +1405,7 @@ mod tests {
 
         database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0011 recovers duplicate deferral successors");
+            .expect("migration 0018 recovers duplicate deferral successors");
 
         let conn = database.connection();
         let quarantined: (String, i64, i64, String) = conn

@@ -1,4 +1,4 @@
-//! Migration 0011 reunifies the split legacy scopes the earlier
+//! Migration 0017 reunifies the split legacy scopes the earlier
 //! commands wrote: rows keep their identities, times, and facts, and
 //! the one Project they can only belong to takes them back
 //! (KAN-T79-AC3).

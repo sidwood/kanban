@@ -159,6 +159,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace unobserved health",
         sql: include_str!("../migrations/0021_workspace_unobserved_health.sql"),
     },
+    Migration {
+        version: 22,
+        name: "ticket dependencies",
+        sql: include_str!("../migrations/0022_ticket_dependencies.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -403,7 +408,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
                 ]
             }
         );
@@ -427,7 +432,7 @@ mod tests {
         assert_eq!(
             versions,
             vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
             ]
         );
         for table in [
@@ -453,6 +458,8 @@ mod tests {
             "specs",
             "spec_versions",
             "tickets",
+            "ticket_dependencies",
+            "ticket_blockers",
             "supersession_duplicate_quarantine",
         ] {
             let present: i64 = database
@@ -502,7 +509,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 21, "one event per applied migration");
+        assert_eq!(events.len(), 22, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -608,6 +615,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[20].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 21, "name": "workspace unobserved health" })
         );
+        assert_eq!(events[21].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[21].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 22, "name": "ticket dependencies" })
+        );
     }
 
     #[test]
@@ -632,7 +644,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
             }
         );
         let present: i64 = database
@@ -696,7 +708,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21]
+                applied: vec![19, 20, 21, 22]
             }
         );
         let rewritten = database
@@ -760,7 +772,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the upgrade applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![21] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![21, 22]
+            }
+        );
         let conn = database.connection();
         let stale: (String, Option<i64>) = conn
             .query_row(
@@ -850,7 +867,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22]
             }
         );
         let after: i64 = database
@@ -916,7 +933,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20, 21]
+                applied: vec![15, 16, 17, 18, 19, 20, 21, 22]
             }
         );
         let conn = database.connection();
@@ -1177,6 +1194,10 @@ mod tests {
                     version: 21,
                     name: "workspace unobserved health",
                 },
+                PendingMigration {
+                    version: 22,
+                    name: "ticket dependencies",
+                },
             ]]
         );
     }
@@ -1217,11 +1238,11 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0021 apply");
+            .expect("migrations 0010 through 0022 apply");
 
         assert_eq!(
             report.applied,
-            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+            vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
         );
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
@@ -1294,7 +1315,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+            vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
         );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)

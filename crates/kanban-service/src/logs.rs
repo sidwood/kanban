@@ -7,7 +7,10 @@
 //! bounded no matter how long the core runs. Entries are redacted as
 //! they are written, and an append that fails never stops the core:
 //! callers ignore append results by design, because diagnostics must
-//! never outrank serving.
+//! never outrank serving. The redaction knowledge is refreshed from
+//! the managed configuration at every append, so a secret added or
+//! rotated after the writer opened is still scrubbed, and a value the
+//! configuration rotated away from is never forgotten.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -105,9 +108,10 @@ impl LogRecord {
 /// with bounded size and redacting configured secrets at write.
 #[derive(Debug)]
 pub struct LogWriter {
+    data_dir: PathBuf,
     directory: PathBuf,
     rotation: LogRotation,
-    redactor: Redactor,
+    redaction: Mutex<Redactor>,
     append_gate: Mutex<()>,
 }
 
@@ -123,9 +127,10 @@ impl LogWriter {
         let directory = logs_dir(data_dir);
         fs::create_dir_all(&directory)?;
         Ok(Self {
+            data_dir: data_dir.to_path_buf(),
             directory,
             rotation,
-            redactor: Redactor::from_config(data_dir),
+            redaction: Mutex::new(Redactor::from_config(data_dir)),
             append_gate: Mutex::new(()),
         })
     }
@@ -135,15 +140,30 @@ impl LogWriter {
         self.directory.as_path()
     }
 
+    /// Re-reads the managed configuration and unions it into the held
+    /// knowledge, so this append scrubs every secret the
+    /// configuration carries now plus every one it carried before. A
+    /// configuration that cannot be read keeps the knowledge already
+    /// held: refresh must never know less than the last refresh.
+    fn refresh_redaction(&self) -> Redactor {
+        let mut held = self
+            .redaction
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *held = held.union(&Redactor::from_config(&self.data_dir));
+        held.clone()
+    }
+
     /// Appends one entry as a redacted JSON line, rotating first when
     /// the line would pass the active file's bound.
     pub fn append(&self, record: &LogRecord) -> std::io::Result<()> {
+        let redactor = self.refresh_redaction();
         let entry = json!({
             "ts": unix_millis(),
             "level": record.level.as_str(),
             "component": record.component,
-            "message": self.redactor.redact_text(&record.message),
-            "fields": self.redactor.redact_json(&record.fields),
+            "message": redactor.redact_text(&record.message),
+            "fields": redactor.redact_json(&record.fields),
         });
         let mut line = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
         line.push('\n');
@@ -424,6 +444,67 @@ mod tests {
             assert!(
                 text.contains(REDACTED),
                 "redaction replaces the secret in {}",
+                file.display()
+            );
+        }
+    }
+
+    /// The core is long-lived, so the writer must learn secrets the
+    /// configuration gained after it opened, and keep scrubbing values
+    /// a later rotation removed, across the active and the rotated
+    /// files alike.
+    #[test]
+    fn secret_exclusion_learns_secrets_added_or_rotated_after_open() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        std::fs::write(
+            dir.path().join("config.json"),
+            format!(r#"{{"mcp_install_token":"{PLANTED_SECRET}"}}"#),
+        )
+        .expect("the configuration plants the first secret");
+        // A bound that retires files as the entries land, so the
+        // rotated copies prove the same refresh guarantee.
+        let writer = bounded_writer(&dir, 300, 3);
+        writer
+            .append(&LogRecord::new(
+                LogLevel::Info,
+                "probe",
+                format!("entry one saw {PLANTED_SECRET} pass by"),
+            ))
+            .expect("the first entry writes");
+
+        let rotated_in = "kct_t61_rotated_in_secret";
+        std::fs::write(
+            dir.path().join("config.json"),
+            format!(r#"{{"mcp_install_token":"{rotated_in}"}}"#),
+        )
+        .expect("the configuration rotates its secret");
+        for index in 0..4 {
+            writer
+                .append(&LogRecord::new(
+                    LogLevel::Info,
+                    "probe",
+                    format!("entry two {index} saw {PLANTED_SECRET} and {rotated_in} pass by"),
+                ))
+                .expect("every later entry writes");
+            writer
+                .append(
+                    &LogRecord::new(LogLevel::Info, "probe", "plain entry").with_fields(json!({
+                        "note": format!("field carrying {rotated_in}")
+                    })),
+                )
+                .expect("every field entry writes");
+        }
+
+        let files = log_files(&dir);
+        assert!(
+            files.len() > 1,
+            "the fixture must exercise the rotated files too"
+        );
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("the log file reads");
+            assert!(
+                !text.contains(PLANTED_SECRET) && !text.contains(rotated_in),
+                "the retired and the rotated-in secret must never land in {}: {text}",
                 file.display()
             );
         }

@@ -5,6 +5,7 @@
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::{Component, Path, PathBuf};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -14,7 +15,8 @@ use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand_core::RngCore;
-use rusqlite::Connection;
+use rusqlite::backup::{Backup, StepResult};
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{ConnectionHandle, Database};
@@ -144,16 +146,25 @@ impl BackupStore {
 
     /// Creates a consistent snapshot, validates it, records
     /// verification, and prunes older bundles per `options`.
+    ///
+    /// One bounded lock on the shared live command connection learns
+    /// which file to copy; the copy itself runs on a dedicated
+    /// connection, so it never holds the live connection across a
+    /// throttling sleep or the whole copy (KAN-T107).
     pub fn create(
         &self,
         database: &Database,
         options: &BackupOptions,
     ) -> Result<PathBuf, StorageError> {
-        let bundle_path = self.write_bundle(database, options)?;
-        let manifest = self.validate(&bundle_path, options.passphrase.as_deref())?;
-        self.write_verified(&bundle_path, &manifest)?;
-        self.prune(options.retention)?;
-        Ok(bundle_path)
+        let file = {
+            let handle = database.connection_handle();
+            let conn = handle.lock();
+            main_database_file(&conn)?
+        };
+        let path = file.ok_or_else(|| StorageError::BackupInvalid {
+            reason: "the live database has no file to snapshot".to_string(),
+        })?;
+        self.publish(SnapshotSource::File(path), options)
     }
 
     /// Verifies manifest hashes and opens the database snapshot.
@@ -313,18 +324,40 @@ impl BackupStore {
         Ok(None)
     }
 
+    /// Assembles, validates, records, and prunes one bundle from
+    /// `source`.
+    fn publish(
+        &self,
+        source: SnapshotSource<'_>,
+        options: &BackupOptions,
+    ) -> Result<PathBuf, StorageError> {
+        let bundle_path = self.write_bundle(source, options)?;
+        let manifest = self.validate(&bundle_path, options.passphrase.as_deref())?;
+        self.write_verified(&bundle_path, &manifest)?;
+        self.prune(options.retention)?;
+        Ok(bundle_path)
+    }
+
     fn write_bundle(
         &self,
-        database: &Database,
+        source: SnapshotSource<'_>,
         options: &BackupOptions,
     ) -> Result<PathBuf, StorageError> {
         let bundle_id = bundle_id_from_now();
         let bundle_path = backups_dir(&self.managed_root).join(&bundle_id);
-        fs::create_dir_all(&bundle_path).map_err(|source| StorageError::BackupIo {
-            path: bundle_path.clone(),
+        self.assemble_bundle(&bundle_path, source, options)
+    }
+
+    fn assemble_bundle(
+        &self,
+        bundle_path: &Path,
+        source: SnapshotSource<'_>,
+        options: &BackupOptions,
+    ) -> Result<PathBuf, StorageError> {
+        fs::create_dir_all(bundle_path).map_err(|source| StorageError::BackupIo {
+            path: bundle_path.to_path_buf(),
             source,
         })?;
-        let schema_version = current_schema_version(database)?;
         let encrypted = options.passphrase.is_some();
         let encryption_salt = if encrypted {
             Some(generate_encryption_salt())
@@ -338,7 +371,10 @@ impl BackupStore {
         let mut files = Vec::new();
 
         let database_target = bundle_path.join(database_file_name());
-        snapshot_database(database, &database_target)?;
+        // The schema version is read from the copy itself, so the
+        // manifest describes exactly the snapshot it carries even
+        // when the live database moves on mid-copy.
+        let schema_version = snapshot_to(source, &database_target)?.schema_version;
         let database_bytes =
             fs::read(&database_target).map_err(|source| StorageError::BackupIo {
                 path: database_target.clone(),
@@ -418,8 +454,8 @@ impl BackupStore {
             encryption_salt,
             files,
         };
-        write_manifest(&bundle_path, &manifest)?;
-        Ok(bundle_path)
+        write_manifest(bundle_path, &manifest)?;
+        Ok(bundle_path.to_path_buf())
     }
 
     fn validate_staging(
@@ -536,127 +572,22 @@ impl BackupStore {
         Ok(())
     }
 
-    /// Creates a bundle from an open connection, for hooks that already
-    /// hold the authoritative connection.
+    /// Creates a bundle from an open connection, for hooks that
+    /// already hold the authoritative connection. A file-backed
+    /// connection still copies through a dedicated connection, so
+    /// the copy never holds the shared live command connection
+    /// (KAN-T107); only a connection with no file behind it (an
+    /// in-memory database, which no live command contends with) is
+    /// copied in place.
     pub fn create_from_connection(
         &self,
         conn: &Connection,
         options: BackupOptions,
     ) -> Result<PathBuf, StorageError> {
-        let bundle_path = self.write_bundle_from_connection(conn, &options)?;
-        let manifest = self.validate(&bundle_path, options.passphrase.as_deref())?;
-        self.write_verified(&bundle_path, &manifest)?;
-        self.prune(options.retention)?;
-        Ok(bundle_path)
-    }
-
-    fn write_bundle_from_connection(
-        &self,
-        conn: &Connection,
-        options: &BackupOptions,
-    ) -> Result<PathBuf, StorageError> {
-        let bundle_id = bundle_id_from_now();
-        let bundle_path = backups_dir(&self.managed_root).join(&bundle_id);
-        fs::create_dir_all(&bundle_path).map_err(|source| StorageError::BackupIo {
-            path: bundle_path.clone(),
-            source,
-        })?;
-        let schema_version = current_schema_version_from(conn)?;
-        let encrypted = options.passphrase.is_some();
-        let encryption_salt = if encrypted {
-            Some(generate_encryption_salt())
-        } else {
-            None
-        };
-        let salt_bytes = encryption_salt
-            .as_deref()
-            .map(encryption_salt_from_hex)
-            .transpose()?;
-        let mut files = Vec::new();
-
-        let database_target = bundle_path.join(database_file_name());
-        snapshot_connection(conn, &database_target)?;
-        let database_bytes =
-            fs::read(&database_target).map_err(|source| StorageError::BackupIo {
-                path: database_target.clone(),
-                source,
-            })?;
-        files.push(manifest_entry(database_file_name(), &database_bytes));
-        if encrypted {
-            let passphrase = options
-                .passphrase
-                .as_deref()
-                .expect("encrypted needs passphrase");
-            fs::write(
-                &database_target,
-                encrypt_bytes(
-                    passphrase,
-                    salt_bytes.as_deref().expect("encrypted needs salt"),
-                    &database_bytes,
-                )?,
-            )
-            .map_err(|source| StorageError::BackupIo {
-                path: database_target.clone(),
-                source,
-            })?;
+        match main_database_file(conn)? {
+            Some(path) => self.publish(SnapshotSource::File(path), &options),
+            None => self.publish(SnapshotSource::Connection(conn), &options),
         }
-
-        let live_attachments = attachments_dir(&self.managed_root);
-        if live_attachments.exists() {
-            let bundle_attachments = bundle_path.join("attachments");
-            copy_tree(
-                &live_attachments,
-                &bundle_attachments,
-                encrypted,
-                options.passphrase.as_deref(),
-                salt_bytes.as_deref(),
-                &mut files,
-            )?;
-        }
-
-        let live_config = self.managed_root.join(config_file_name());
-        if live_config.exists() {
-            let bundle_config = bundle_path.join(config_file_name());
-            fs::copy(&live_config, &bundle_config).map_err(|source| StorageError::BackupIo {
-                path: bundle_config.clone(),
-                source,
-            })?;
-            let config_bytes =
-                fs::read(&bundle_config).map_err(|source| StorageError::BackupIo {
-                    path: bundle_config.clone(),
-                    source,
-                })?;
-            files.push(manifest_entry(config_file_name(), &config_bytes));
-            if encrypted {
-                let passphrase = options
-                    .passphrase
-                    .as_deref()
-                    .expect("encrypted needs passphrase");
-                fs::write(
-                    &bundle_config,
-                    encrypt_bytes(
-                        passphrase,
-                        salt_bytes.as_deref().expect("encrypted needs salt"),
-                        &config_bytes,
-                    )?,
-                )
-                .map_err(|source| StorageError::BackupIo {
-                    path: bundle_config.clone(),
-                    source,
-                })?;
-            }
-        }
-
-        let manifest = BackupManifest {
-            format_version: 1,
-            created_at: rfc3339_now(),
-            schema_version,
-            encrypted,
-            encryption_salt,
-            files,
-        };
-        write_manifest(&bundle_path, &manifest)?;
-        Ok(bundle_path)
     }
 }
 
@@ -727,10 +658,6 @@ impl PreMigrationHook for VerifiedBackupHook<'_> {
     }
 }
 
-fn current_schema_version(database: &Database) -> Result<i64, StorageError> {
-    current_schema_version_from(&database.connection_handle().lock())
-}
-
 fn current_schema_version_from(conn: &Connection) -> Result<i64, StorageError> {
     let version: Option<i64> = conn
         .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
@@ -740,11 +667,45 @@ fn current_schema_version_from(conn: &Connection) -> Result<i64, StorageError> {
     Ok(version.unwrap_or(0))
 }
 
-fn snapshot_database(database: &Database, target: &Path) -> Result<(), StorageError> {
-    snapshot_connection(&database.connection_handle().lock(), target)
+/// Where a snapshot copies from: the database file through a
+/// dedicated connection, or a caller's connection directly when no
+/// file backs it.
+enum SnapshotSource<'a> {
+    /// The database file, copied through a dedicated read-only
+    /// connection so bounded steps never hold the shared live
+    /// connection.
+    File(PathBuf),
+    /// A connection with no backing file (an in-memory database),
+    /// copied in place; no live command contends with it.
+    Connection(&'a Connection),
 }
 
-fn snapshot_connection(source: &Connection, target: &Path) -> Result<(), StorageError> {
+/// The main database file behind `conn`, if it has one.
+fn main_database_file(conn: &Connection) -> Result<Option<PathBuf>, StorageError> {
+    let mut statement = conn.prepare("PRAGMA database_list")?;
+    let files = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(files
+        .into_iter()
+        .find(|(name, _)| name == "main")
+        .map(|(_, file)| file)
+        .filter(|file| !file.trim().is_empty())
+        .map(PathBuf::from))
+}
+
+/// The schema version a completed copy captured, read from the copy
+/// itself.
+struct Snapshot {
+    schema_version: i64,
+}
+
+/// Copies the source database to `target` in bounded steps, then
+/// reads the schema version from the copy so the manifest describes
+/// exactly the snapshot it carries.
+fn snapshot_to(source: SnapshotSource<'_>, target: &Path) -> Result<Snapshot, StorageError> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|source| StorageError::BackupIo {
             path: parent.to_path_buf(),
@@ -755,19 +716,70 @@ fn snapshot_connection(source: &Connection, target: &Path) -> Result<(), Storage
         path: target.to_path_buf(),
         source,
     })?;
-    let backup = rusqlite::backup::Backup::new(source, &mut destination).map_err(|source| {
-        StorageError::BackupOpen {
-            path: target.to_path_buf(),
-            source,
+    match source {
+        SnapshotSource::File(path) => {
+            // The dedicated read-only connection is the whole fix
+            // (KAN-T107): the copy runs on it in bounded steps with
+            // the throttle sleep between them, so the shared live
+            // command connection is never held across a sleep or the
+            // whole copy. WAL lets live commands commit while the
+            // copy reads; SQLite transparently restarts the copy
+            // around a write it sees, and a completed copy is always
+            // one consistent committed snapshot. Opening read-only
+            // also refuses to conjure a fresh database out of a path
+            // whose file vanished mid-restore.
+            let reader = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|source| StorageError::BackupOpen {
+                    path: path.clone(),
+                    source,
+                })?;
+            copy_in_bounded_steps(&reader, &mut destination, target)?;
         }
+        SnapshotSource::Connection(conn) => {
+            copy_in_bounded_steps(conn, &mut destination, target)?;
+        }
+    }
+    let schema_version = current_schema_version_from(&destination)?;
+    Ok(Snapshot { schema_version })
+}
+
+/// Pages copied per bounded step, unchanged from the historical
+/// snapshot cadence.
+const SNAPSHOT_PAGES_PER_STEP: i32 = 5;
+
+/// The pause between bounded steps, unchanged from the historical
+/// cadence, so a copying snapshot stays polite to the system.
+const SNAPSHOT_STEP_PAUSE: Duration = Duration::from_millis(50);
+
+fn copy_in_bounded_steps(
+    source: &Connection,
+    destination: &mut Connection,
+    target: &Path,
+) -> Result<(), StorageError> {
+    let backup = Backup::new(source, destination).map_err(|source| StorageError::BackupOpen {
+        path: target.to_path_buf(),
+        source,
     })?;
-    backup
-        .run_to_completion(5, Duration::from_millis(50), None)
-        .map_err(|source| StorageError::BackupOpen {
-            path: target.to_path_buf(),
-            source,
-        })?;
-    Ok(())
+    let mut step = 0;
+    loop {
+        let outcome =
+            backup
+                .step(SNAPSHOT_PAGES_PER_STEP)
+                .map_err(|source| StorageError::BackupOpen {
+                    path: target.to_path_buf(),
+                    source,
+                })?;
+        step += 1;
+        snapshot_step_test_hooks::on_step(step, outcome == StepResult::Done);
+        match outcome {
+            StepResult::Done => return Ok(()),
+            // Busy and Locked are transient, and any other
+            // non-completing outcome waits as well: the step is
+            // retried after the same pause the historical cadence
+            // took.
+            _ => thread::sleep(SNAPSHOT_STEP_PAUSE),
+        }
+    }
 }
 
 fn bundle_id_from_now() -> String {
@@ -1066,7 +1078,6 @@ mod validation_temp_test_hooks {
 }
 
 #[cfg(test)]
-#[allow(dead_code)] // the bounded step loop starts reporting through here next
 mod snapshot_step_test_hooks {
     //! Test-only coordination with the bounded snapshot step loop:
     //! a test parks the copying snapshot at a step boundary and
@@ -1147,6 +1158,11 @@ mod snapshot_step_test_hooks {
             *slot = Some(channel);
         }
     }
+}
+
+#[cfg(not(test))]
+mod snapshot_step_test_hooks {
+    pub fn on_step(_index: usize, _done: bool) {}
 }
 
 struct SecureValidationTemp {

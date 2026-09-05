@@ -1,7 +1,7 @@
--- 0011 plan version append-only refusals
+-- 0012 plan version append-only refusals
 --
 -- The frozen Plan version tables are the audit of every approved
--- shape: 0010 named them append-only but enforced nothing beyond the
+-- shape: 0011 named them append-only but enforced nothing beyond the
 -- UNIQUE keys. These triggers refuse UPDATE and DELETE on
 -- plan_versions, plan_version_specs, and plan_version_edges at the
 -- schema level, so a frozen version can only ever be appended to,

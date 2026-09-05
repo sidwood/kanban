@@ -109,9 +109,9 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/0011_plans.sql"),
     },
     Migration {
-        version: 11,
+        version: 12,
         name: "plan versions append-only",
-        sql: include_str!("../migrations/0011_plan_versions_append_only.sql"),
+        sql: include_str!("../migrations/0012_plan_versions_append_only.sql"),
     },
 ];
 
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
             }
         );
         assert_eq!(
@@ -284,7 +284,7 @@ mod tests {
             .expect("the query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("versions decode");
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         for table in [
             "audit_events",
             "timeline_events",
@@ -352,7 +352,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 11, "one event per applied migration");
+        assert_eq!(events.len(), 12, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -405,14 +405,13 @@ mod tests {
         );
         assert_eq!(events[10].1, "migration.applied");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&events[10].2)
-                .expect("the detail is JSON"),
+            serde_json::from_str::<serde_json::Value>(&events[10].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 11, "name": "plans" })
         );
-        assert_eq!(events[10].1, "migration.applied");
+        assert_eq!(events[11].1, "migration.applied");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&events[10].2).expect("the detail is JSON"),
-            serde_json::json!({ "version": 11, "name": "plan versions append-only" })
+            serde_json::from_str::<serde_json::Value>(&events[11].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 12, "name": "plan versions append-only" })
         );
     }
 
@@ -493,7 +492,7 @@ mod tests {
                     name: "plans",
                 },
                 PendingMigration {
-                    version: 11,
+                    version: 12,
                     name: "plan versions append-only",
                 },
             ]]
@@ -538,7 +537,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0010 applies");
 
-        assert_eq!(report.applied, vec![10, 11]);
+        assert_eq!(report.applied, vec![10, 11, 12]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

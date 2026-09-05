@@ -26,6 +26,7 @@ function record(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
     seed_workspace: '/workspaces/kanban.seed',
     default_branch: 'main',
     herdr_session: 'kanban-main',
+    herdr_workspace: 'kanban.seed',
     initiative_id: null,
     archived: false,
     counters: { plan: 2, spec: 0, ticket: 5 },
@@ -72,6 +73,7 @@ async function fillRegistration(wrapper: ReturnType<typeof mount>) {
   await wrapper.find('[data-testid="project-repository"]').setValue('/repositories/wave')
   await wrapper.find('[data-testid="project-seed"]').setValue('/workspaces/wave.seed')
   await wrapper.find('[data-testid="project-branch"]').setValue('trunk')
+  await wrapper.find('[data-testid="project-workspace"]').setValue('wave.seed')
   await wrapper.find('[data-testid="project-session"]').setValue('wave-main')
 }
 
@@ -112,10 +114,48 @@ describe('RegisterView', () => {
         repository: '/repositories/wave',
         seed_workspace: '/workspaces/wave.seed',
         default_branch: 'trunk',
+        herdr_workspace: 'wave.seed',
         herdr_session: 'wave-main',
         initiative_id: null,
       }),
     )
+  })
+
+  it('registering without a session submits null for the default session', async () => {
+    const { wrapper, command } = await mounted([])
+
+    await wrapper.find('[data-testid="project-code"]').setValue('WAVE')
+    await wrapper.find('[data-testid="project-name"]').setValue('Wave pool')
+    await wrapper.find('[data-testid="project-repository"]').setValue('/repositories/wave')
+    await wrapper.find('[data-testid="project-seed"]').setValue('/workspaces/wave.seed')
+    await wrapper.find('[data-testid="project-branch"]').setValue('trunk')
+    await wrapper.find('[data-testid="project-workspace"]').setValue('wave.seed')
+    await wrapper.find('[data-testid="project-register"]').trigger('submit')
+
+    expect(command).toHaveBeenCalledWith(
+      'project.register',
+      expect.objectContaining({ herdr_session: null, herdr_workspace: 'wave.seed' }),
+    )
+  })
+
+  it('registering with a blank workspace submits nothing', async () => {
+    const { wrapper, command } = await mounted([])
+
+    await wrapper.find('[data-testid="project-code"]').setValue('WAVE')
+    await wrapper.find('[data-testid="project-name"]').setValue('Wave pool')
+    await wrapper.find('[data-testid="project-repository"]').setValue('/repositories/wave')
+    await wrapper.find('[data-testid="project-seed"]').setValue('/workspaces/wave.seed')
+    await wrapper.find('[data-testid="project-branch"]').setValue('trunk')
+    await wrapper.find('[data-testid="project-session"]').setValue('wave-main')
+    await wrapper.find('[data-testid="project-register"]').trigger('submit')
+
+    expect(command).not.toHaveBeenCalled()
+  })
+
+  it('lists a sessionless Project against the default session', async () => {
+    const { wrapper } = await mounted([record({ herdr_session: null })])
+
+    expect(wrapper.find('[data-testid="project-row-1"]').text()).toContain('default session')
   })
 
   it('registering under a chosen Initiative links it', async () => {
@@ -155,14 +195,14 @@ describe('RegisterView', () => {
     const { wrapper, command, store } = await mounted([record()])
     command.mockRejectedValue({
       code: 'invalid_request',
-      message: 'the Herdr session name `kanban-main` is already exclusive to another Project',
+      message: 'the project code `CORE` is already registered',
     })
 
     await fillRegistration(wrapper)
     await wrapper.find('[data-testid="project-register"]').trigger('submit')
     await flushPromises()
 
-    expect(store.error).toContain('already exclusive')
-    expect(wrapper.find('[data-testid="project-error"]').text()).toContain('already exclusive')
+    expect(store.error).toContain('already registered')
+    expect(wrapper.find('[data-testid="project-error"]').text()).toContain('already registered')
   })
 })

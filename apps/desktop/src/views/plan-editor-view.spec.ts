@@ -14,6 +14,7 @@ const project = {
   seed_workspace: '/workspaces/kanban.seed',
   default_branch: 'main',
   herdr_session: 'kanban-main',
+  herdr_workspace: 'kanban.seed',
   initiative_id: null,
   archived: false,
   counters: { plan: 2, spec: 3, ticket: 0 },

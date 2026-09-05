@@ -132,7 +132,8 @@ async function saveDefaults() {
             :key="project.id"
             :value="project.id"
           >
-            {{ project.code }} · {{ project.herdr_session }}
+            {{ project.code }} · {{ project.herdr_workspace }} ·
+            {{ project.herdr_session ?? 'default session' }}
           </option>
         </select>
       </label>
@@ -211,7 +212,7 @@ async function saveDefaults() {
                 Session
               </dt>
               <dd data-testid="diagnostics-session">
-                {{ herdr.diagnostics.session_name }}
+                {{ herdr.diagnostics.session_name ?? 'default session' }}
               </dd>
             </div>
             <div>
@@ -232,10 +233,10 @@ async function saveDefaults() {
             </div>
             <div>
               <dt class="text-slate-500">
-                Herdr workspace
+                Target Herdr workspace
               </dt>
               <dd data-testid="diagnostics-herdr-workspace">
-                {{ herdr.diagnostics.herdr_workspace ?? 'unknown' }}
+                {{ herdr.diagnostics.herdr_workspace }}
               </dd>
             </div>
             <div>

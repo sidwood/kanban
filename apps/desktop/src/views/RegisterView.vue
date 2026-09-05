@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // The Project registration surface: register a Project with its
-// one target repository, Seed Workspace, default branch, and
-// exclusive Herdr session, optionally under one Initiative, then
-// list and archive through the project-register store. Presentation
-// only; every domain call goes through the generated client in the
-// store, and no delete control exists (KAN-S1-US4, KAN-S1-US6).
+// one target repository, Seed Workspace, default branch, and required
+// target Herdr workspace, with an optional Herdr session whose
+// absence selects Herdr's default session, optionally under one
+// Initiative, then list and archive through the project-register
+// store. Presentation only; every domain call goes through the
+// generated client in the store, and no delete control exists
+// (KAN-S1-US4, KAN-S1-US6).
 import { computed, inject, onMounted, reactive } from 'vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useInitiativesStore } from '../stores/initiatives'
@@ -19,6 +21,7 @@ const draft = reactive({
   repository: '',
   seed_workspace: '',
   default_branch: '',
+  herdr_workspace: '',
   herdr_session: '',
   initiative_id: null as number | null,
 })
@@ -34,6 +37,7 @@ onMounted(() => {
 // archived or not.
 const initiativeOptions = computed(() => initiatives.initiatives)
 
+// The session is optional; every other anchor must carry text.
 const draftCarriesEveryAnchor = computed(() =>
   [
     draft.code,
@@ -41,7 +45,7 @@ const draftCarriesEveryAnchor = computed(() =>
     draft.repository,
     draft.seed_workspace,
     draft.default_branch,
-    draft.herdr_session,
+    draft.herdr_workspace,
   ].every((field) => field.trim().length > 0),
 )
 
@@ -56,6 +60,7 @@ async function submitRegister() {
     draft.repository = ''
     draft.seed_workspace = ''
     draft.default_branch = ''
+    draft.herdr_workspace = ''
     draft.herdr_session = ''
     draft.initiative_id = null
   }
@@ -154,13 +159,20 @@ async function submitArchive(id: number) {
           class="w-48 rounded border border-slate-300 px-3 py-2 text-sm"
         >
         <input
-          v-model="draft.herdr_session"
-          data-testid="project-session"
-          aria-label="Herdr session name"
-          placeholder="Herdr session name"
+          v-model="draft.herdr_workspace"
+          data-testid="project-workspace"
+          aria-label="Target Herdr workspace"
+          placeholder="Target Herdr workspace"
           class="w-56 rounded border border-slate-300 px-3 py-2 text-sm"
         >
       </div>
+      <input
+        v-model="draft.herdr_session"
+        data-testid="project-session"
+        aria-label="Herdr session name, optional"
+        placeholder="Herdr session, optional; empty uses the default session"
+        class="rounded border border-slate-300 px-3 py-2 text-sm"
+      >
       <button
         type="submit"
         data-testid="project-register"
@@ -195,7 +207,8 @@ async function submitArchive(id: number) {
         </span>
         <span class="text-xs text-slate-500">
           {{ project.repository }} · {{ project.default_branch }} ·
-          {{ project.herdr_session }}
+          {{ project.herdr_workspace }} ·
+          {{ project.herdr_session ?? 'default session' }}
         </span>
         <span
           :data-testid="`project-counters-${project.id}`"

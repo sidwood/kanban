@@ -17,12 +17,15 @@ function mutationFor(optimisticVersion: number): MutationContext {
 
 // The anchors one registration collects in the form; the generated
 // request is built from them at the client call, never sent as-is.
+// A blank Herdr session means absence, which selects Herdr's default
+// session, so it reaches the core as null.
 export interface RegistrationDraft {
   code: string
   name: string
   repository: string
   seed_workspace: string
   default_branch: string
+  herdr_workspace: string
   herdr_session: string
   initiative_id?: number | null
 }
@@ -56,7 +59,8 @@ export const useProjectRegisterStore = defineStore('project-register', {
           repository: draft.repository,
           seed_workspace: draft.seed_workspace,
           default_branch: draft.default_branch,
-          herdr_session: draft.herdr_session,
+          herdr_workspace: draft.herdr_workspace,
+          herdr_session: draft.herdr_session.trim() ? draft.herdr_session : null,
           initiative_id: draft.initiative_id ?? null,
         }),
       )

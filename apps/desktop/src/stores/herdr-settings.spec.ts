@@ -22,6 +22,7 @@ function project(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
     seed_workspace: '/workspaces/kanban.seed',
     default_branch: 'main',
     herdr_session: 'kanban-main',
+    herdr_workspace: 'kanban.seed',
     initiative_id: null,
     archived: false,
     counters: { plan: 0, spec: 0, ticket: 0 },
@@ -151,6 +152,21 @@ describe('herdr-settings', () => {
       }),
     )
     expect(store.settings?.version).toBe(2)
+  })
+
+  it('reports the default session and its target workspace when no session is named', async () => {
+    const { wrapper, store } = await mounted()
+    expect(wrapper.find('[data-testid="diagnostics-session"]').text()).toBe('kanban-main')
+    expect(wrapper.find('[data-testid="diagnostics-herdr-workspace"]').text()).toBe('kanban.seed')
+
+    store.diagnostics = store.diagnostics
+      ? { ...store.diagnostics, session_name: null }
+      : store.diagnostics
+    await wrapper.vm.$nextTick()
+
+    // An unnamed session renders the marker, not an empty field.
+    expect(wrapper.find('[data-testid="diagnostics-session"]').text()).toBe('default session')
+    expect(wrapper.find('[data-testid="diagnostics-herdr-workspace"]').text()).toBe('kanban.seed')
   })
 
   it('shows reconciliation, fallback polling, deadlines, and diagnostics fields', async () => {

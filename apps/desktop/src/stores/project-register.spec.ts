@@ -13,6 +13,7 @@ function record(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
     seed_workspace: '/workspaces/kanban.seed',
     default_branch: 'main',
     herdr_session: 'kanban-main',
+    herdr_workspace: 'kanban.seed',
     initiative_id: null,
     archived: false,
     counters: { plan: 0, spec: 0, ticket: 0 },
@@ -27,8 +28,11 @@ const draft = {
   repository: '/repositories/kanban',
   seed_workspace: '/workspaces/kanban.seed',
   default_branch: 'main',
+  herdr_workspace: 'kanban.seed',
   herdr_session: 'kanban-main',
 }
+
+const sessionlessDraft = { ...draft, herdr_session: ' ' }
 
 // A recording transport: every operation is captured, and the query
 // and command answers are steerable from the test.
@@ -85,18 +89,34 @@ describe('project register store', () => {
       repository: string
       seed_workspace: string
       default_branch: string
-      herdr_session: string
+      herdr_workspace: string
+      herdr_session: string | null
       initiative_id: number | null
     }
     expect(request.code).toBe('CORE')
     expect(request.repository).toBe('/repositories/kanban')
     expect(request.seed_workspace).toBe('/workspaces/kanban.seed')
     expect(request.default_branch).toBe('main')
+    expect(request.herdr_workspace).toBe('kanban.seed')
     expect(request.herdr_session).toBe('kanban-main')
     expect(request.initiative_id).toBeNull()
     expect(request.mutation.optimistic_version).toBe(0)
     expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)
     expect(projects.error).toBeNull()
+  })
+
+  it('registering without a session sends null for the default session', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, command, listing } = harness()
+    listing()
+    command.mockResolvedValue(record({ herdr_session: null }))
+    const projects = useProjectRegisterStore()
+
+    await projects.register(transport, sessionlessDraft)
+
+    const register = operations.find((entry) => entry.name === 'project.register')
+    const request = register?.request as { herdr_session: string | null }
+    expect(request.herdr_session).toBeNull()
   })
 
   it('registering carries the chosen Initiative', async () => {
@@ -144,16 +164,14 @@ describe('project register store', () => {
     listing(record())
     command.mockRejectedValue({
       code: 'invalid_request',
-      message: 'the Herdr session name `kanban-main` is already exclusive to another Project',
+      message: 'the project code `CORE` is already registered',
     })
     const projects = useProjectRegisterStore()
     await projects.refresh(transport)
 
     await projects.register(transport, draft)
 
-    expect(projects.error).toBe(
-      'the Herdr session name `kanban-main` is already exclusive to another Project',
-    )
+    expect(projects.error).toBe('the project code `CORE` is already registered')
     expect(projects.projects).toHaveLength(1)
   })
 

@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TicketBugQualification": {
+      "additionalProperties": false,
+      "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
+      "properties": {
+        "affected_scope": {
+          "description": "What the defect affects.",
+          "type": "string"
+        },
+        "criteria": {
+          "description": "The story-linked Acceptance Criteria, at least one.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": "array"
+        },
+        "environment": {
+          "description": "Where the defect occurs.",
+          "type": "string"
+        },
+        "expected_behaviour": {
+          "description": "The behaviour that should have happened.",
+          "type": "string"
+        },
+        "frequency": {
+          "description": "How often the defect occurs.",
+          "type": "string"
+        },
+        "reproduction": {
+          "description": "The reproduction steps or the failing test demonstrating the defect.",
+          "type": "string"
+        },
+        "risk": {
+          "description": "What the defect puts at risk.",
+          "type": "string"
+        },
+        "severity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketSeverity"
+            }
+          ],
+          "description": "The severity qualification assigned (DR-LC-13)."
+        },
+        "verification_steps": {
+          "description": "The Verification Steps, at least one.",
+          "items": {
+            "$ref": "#/definitions/TicketVerificationStep"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "affected_scope",
+        "criteria",
+        "environment",
+        "expected_behaviour",
+        "frequency",
+        "reproduction",
+        "risk",
+        "severity",
+        "verification_steps"
+      ],
+      "type": "object"
+    },
+    "TicketCriterion": {
+      "additionalProperties": false,
+      "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "properties": {
+        "outcome": {
+          "description": "The observable outcome the criterion states.",
+          "type": "string"
+        },
+        "stories": {
+          "description": "The User Stories the criterion claims.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "stories"
+      ],
+      "type": "object"
+    },
+    "TicketSeverity": {
+      "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+      "oneOf": [
+        {
+          "description": "Data loss, secret exposure, or unauthorised execution.",
+          "enum": [
+            "critical"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A failed approved criterion or workflow invariant.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Usable behaviour, wrongly shaped.",
+          "enum": [
+            "medium"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Cosmetic or local clarity.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketVerificationStep": {
+      "additionalProperties": false,
+      "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+      "properties": {
+        "command": {
+          "description": "The command as it runs.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `ticket.bug.qualify` command: one complete qualification for one Bug (DR-TK-09), replacing any earlier one.",
+  "properties": {
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "qualification": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketBugQualification"
+        }
+      ],
+      "description": "The complete qualification, severity included (DR-LC-13)."
+    },
+    "ticket_id": {
+      "description": "The Bug being qualified.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "mutation",
+    "qualification",
+    "ticket_id"
+  ],
+  "title": "TicketBugQualifyRequest",
+  "type": "object"
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+  "oneOf": [
+    {
+      "description": "Data loss, secret exposure, or unauthorised execution.",
+      "enum": [
+        "critical"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "A failed approved criterion or workflow invariant.",
+      "enum": [
+        "high"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Usable behaviour, wrongly shaped.",
+      "enum": [
+        "medium"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Cosmetic or local clarity.",
+      "enum": [
+        "low"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TicketSeverity"
+}

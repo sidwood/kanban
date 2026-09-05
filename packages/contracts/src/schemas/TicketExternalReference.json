@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One vendor-neutral External Reference a Bug carries (DR-TK-10): a URI naming an outside link, with an optional label.",
+  "properties": {
+    "label": {
+      "description": "The reference's label, when it carries one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "uri": {
+      "description": "The referenced URI.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "uri"
+  ],
+  "title": "TicketExternalReference",
+  "type": "object"
+}

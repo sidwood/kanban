@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+  "properties": {
+    "command": {
+      "description": "The command as it runs.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "command"
+  ],
+  "title": "TicketVerificationStep",
+  "type": "object"
+}

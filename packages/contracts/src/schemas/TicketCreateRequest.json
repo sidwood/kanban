@@ -23,7 +23,7 @@
     },
     "TicketCriterion": {
       "additionalProperties": false,
-      "description": "One story-linked criterion an Implementation Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
       "properties": {
         "outcome": {
           "description": "The observable outcome the criterion states.",
@@ -103,8 +103,15 @@
       ]
     }
   },
-  "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug or Task names its title and may name a Spec. Fields the kind does not carry are simply absent.",
+  "description": "Request payload for the `ticket.create` command. Each kind sends exactly its own fields: an Implementation names its Spec, slice, and criteria; a Bug names its quick-capture facts; a Task names its title. Fields the kind does not carry are simply absent.",
   "properties": {
+    "actual_behaviour": {
+      "description": "The Bug's actual behaviour (DR-TK-08); required for a Bug.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "criteria": {
       "description": "The Implementation's story-linked criteria.",
       "items": {
@@ -139,6 +146,13 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "reporter_evidence": {
+      "description": "The Bug's reporter evidence (DR-TK-08); required for a Bug.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "slice": {
       "description": "The Implementation slice description, naming the behaviour delivered end to end.",

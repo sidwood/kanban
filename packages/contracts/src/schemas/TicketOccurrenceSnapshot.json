@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339 moment one occurrence was observed and what was seen then.",
+  "properties": {
+    "observation": {
+      "description": "What was observed at that moment.",
+      "type": "string"
+    },
+    "observed_at": {
+      "description": "The observed moment, RFC 3339.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "observation",
+    "observed_at"
+  ],
+  "title": "TicketOccurrenceSnapshot",
+  "type": "object"
+}

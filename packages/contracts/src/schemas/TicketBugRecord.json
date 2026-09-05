@@ -1,0 +1,233 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketBugQualification": {
+      "additionalProperties": false,
+      "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
+      "properties": {
+        "affected_scope": {
+          "description": "What the defect affects.",
+          "type": "string"
+        },
+        "criteria": {
+          "description": "The story-linked Acceptance Criteria, at least one.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": "array"
+        },
+        "environment": {
+          "description": "Where the defect occurs.",
+          "type": "string"
+        },
+        "expected_behaviour": {
+          "description": "The behaviour that should have happened.",
+          "type": "string"
+        },
+        "frequency": {
+          "description": "How often the defect occurs.",
+          "type": "string"
+        },
+        "reproduction": {
+          "description": "The reproduction steps or the failing test demonstrating the defect.",
+          "type": "string"
+        },
+        "risk": {
+          "description": "What the defect puts at risk.",
+          "type": "string"
+        },
+        "severity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketSeverity"
+            }
+          ],
+          "description": "The severity qualification assigned (DR-LC-13)."
+        },
+        "verification_steps": {
+          "description": "The Verification Steps, at least one.",
+          "items": {
+            "$ref": "#/definitions/TicketVerificationStep"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "affected_scope",
+        "criteria",
+        "environment",
+        "expected_behaviour",
+        "frequency",
+        "reproduction",
+        "risk",
+        "severity",
+        "verification_steps"
+      ],
+      "type": "object"
+    },
+    "TicketCriterion": {
+      "additionalProperties": false,
+      "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "properties": {
+        "outcome": {
+          "description": "The observable outcome the criterion states.",
+          "type": "string"
+        },
+        "stories": {
+          "description": "The User Stories the criterion claims.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "stories"
+      ],
+      "type": "object"
+    },
+    "TicketExternalReference": {
+      "additionalProperties": false,
+      "description": "One vendor-neutral External Reference a Bug carries (DR-TK-10): a URI naming an outside link, with an optional label.",
+      "properties": {
+        "label": {
+          "description": "The reference's label, when it carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "description": "The referenced URI.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "TicketOccurrenceSnapshot": {
+      "additionalProperties": false,
+      "description": "One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339 moment one occurrence was observed and what was seen then.",
+      "properties": {
+        "observation": {
+          "description": "What was observed at that moment.",
+          "type": "string"
+        },
+        "observed_at": {
+          "description": "The observed moment, RFC 3339.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation",
+        "observed_at"
+      ],
+      "type": "object"
+    },
+    "TicketSeverity": {
+      "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+      "oneOf": [
+        {
+          "description": "Data loss, secret exposure, or unauthorised execution.",
+          "enum": [
+            "critical"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A failed approved criterion or workflow invariant.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Usable behaviour, wrongly shaped.",
+          "enum": [
+            "medium"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Cosmetic or local clarity.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketVerificationStep": {
+      "additionalProperties": false,
+      "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+      "properties": {
+        "command": {
+          "description": "The command as it runs.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "The Bug-specific body of a Ticket record: the quick-capture facts, the qualification once one exists, and the vendor-neutral collections the Bug carries (DR-TK-08 to DR-TK-10).",
+  "properties": {
+    "actual_behaviour": {
+      "description": "What the Bug records happening, as the reporter stated it.",
+      "type": "string"
+    },
+    "evidence_ids": {
+      "description": "The identities of the Evidence Items this Bug carries (DR-TK-10).",
+      "items": {
+        "format": "uint64",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "external_references": {
+      "description": "The External References, in recording order (DR-TK-10).",
+      "items": {
+        "$ref": "#/definitions/TicketExternalReference"
+      },
+      "type": "array"
+    },
+    "occurrence_snapshots": {
+      "description": "The Occurrence Snapshots, in recording order (DR-TK-10).",
+      "items": {
+        "$ref": "#/definitions/TicketOccurrenceSnapshot"
+      },
+      "type": "array"
+    },
+    "qualification": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TicketBugQualification"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The complete qualification, once one exists (DR-TK-09)."
+    },
+    "reporter_evidence": {
+      "description": "The evidence the reporter holds, as the reporter stated it.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "actual_behaviour",
+    "evidence_ids",
+    "external_references",
+    "occurrence_snapshots",
+    "reporter_evidence"
+  ],
+  "title": "TicketBugRecord",
+  "type": "object"
+}

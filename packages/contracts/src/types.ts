@@ -479,12 +479,45 @@ export type TicketBlockerRemoveRequest = {
   mutation: MutationContext;
   ticket_id: number;
 };
+export type TicketBugFactsRequest = {
+  evidence_ids: number[];
+  external_references: TicketExternalReference[];
+  mutation: MutationContext;
+  occurrence_snapshots: TicketOccurrenceSnapshot[];
+  ticket_id: number;
+};
+export type TicketBugQualification = {
+  affected_scope: string;
+  criteria: TicketCriterion[];
+  environment: string;
+  expected_behaviour: string;
+  frequency: string;
+  reproduction: string;
+  risk: string;
+  severity: TicketSeverity;
+  verification_steps: TicketVerificationStep[];
+};
+export type TicketBugQualifyRequest = {
+  mutation: MutationContext;
+  qualification: TicketBugQualification;
+  ticket_id: number;
+};
+export type TicketBugRecord = {
+  actual_behaviour: string;
+  evidence_ids: number[];
+  external_references: TicketExternalReference[];
+  occurrence_snapshots: TicketOccurrenceSnapshot[];
+  qualification?: TicketBugQualification | null;
+  reporter_evidence: string;
+};
 export type TicketCreateRequest = {
+  actual_behaviour?: string | null;
   criteria?: TicketCriterion[] | null;
   kind: TicketKind;
   mutation: MutationContext;
   priority: TicketPriority;
   project_id: number;
+  reporter_evidence?: string | null;
   slice?: string | null;
   spec_id?: number | null;
   title?: string | null;
@@ -518,6 +551,10 @@ export type TicketDependencyRemoveRequest = {
   mutation: MutationContext;
   to_ticket: number;
 };
+export type TicketExternalReference = {
+  label?: string | null;
+  uri: string;
+};
 export type TicketGetQuery = {
   ticket_id: number;
 };
@@ -527,6 +564,10 @@ export type TicketListQuery = {
 };
 export type TicketListResponse = {
   tickets: TicketRecord[];
+};
+export type TicketOccurrenceSnapshot = {
+  observation: string;
+  observed_at: string;
 };
 export type TicketPriority = 'urgent' | 'high' | 'normal' | 'low';
 export type TicketReadinessBlocker = {
@@ -552,6 +593,7 @@ export type TicketReadinessResponse = {
   ticket_id: number;
 };
 export type TicketRecord = {
+  bug?: TicketBugRecord | null;
   criteria: TicketCriterion[];
   id: number;
   kind: TicketKind;
@@ -564,7 +606,11 @@ export type TicketRecord = {
   title?: string | null;
   version: number;
 };
+export type TicketSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
+export type TicketVerificationStep = {
+  command: string;
+};
 export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace';
 export type TimelineEntityRef = {
   id: string;

@@ -191,7 +191,7 @@ impl CommandHandler for CreateSpec {
     fn apply(
         &self,
         command: &ParsedCommand,
-        events: &dyn CommandEffects,
+        effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecCreateRequest = parse_payload(&command.payload)?;
         let mut project = self
@@ -211,7 +211,7 @@ impl CommandHandler for CreateSpec {
                 json!({ "project_id": identity.value(), "number": number.value() }),
             )
         })?;
-        announce(events, LiveEventName::SpecCreated, &spec);
+        announce(effects, LiveEventName::SpecCreated, &spec);
         encode_record(&spec)
     }
 }
@@ -233,7 +233,7 @@ impl CommandHandler for UpdateContent {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn CommandEffects,
+        _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecContentUpdateRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
@@ -273,7 +273,7 @@ impl CommandHandler for ApproveVersion {
     fn apply(
         &self,
         command: &ParsedCommand,
-        events: &dyn CommandEffects,
+        effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecVersionApproveRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
@@ -287,7 +287,7 @@ impl CommandHandler for ApproveVersion {
                 json!({ "version": approved }),
             ),
         )?;
-        announce(events, LiveEventName::SpecVersionApproved, &spec);
+        announce(effects, LiveEventName::SpecVersionApproved, &spec);
         encode_record(&spec)
     }
 }
@@ -309,7 +309,7 @@ impl CommandHandler for SupersedeVersion {
     fn apply(
         &self,
         command: &ParsedCommand,
-        events: &dyn CommandEffects,
+        effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecVersionSupersedeRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
@@ -323,7 +323,7 @@ impl CommandHandler for SupersedeVersion {
                 json!({ "version": request.version }),
             ),
         )?;
-        announce(events, LiveEventName::SpecVersionSuperseded, &spec);
+        announce(effects, LiveEventName::SpecVersionSuperseded, &spec);
         encode_record(&spec)
     }
 }
@@ -345,7 +345,7 @@ impl CommandHandler for JoinPlan {
     fn apply(
         &self,
         command: &ParsedCommand,
-        events: &dyn CommandEffects,
+        effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecPlanJoinRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
@@ -381,7 +381,7 @@ impl CommandHandler for JoinPlan {
                 json!({ "plan_id": plan.id().value() }),
             ),
         )?;
-        announce(events, LiveEventName::SpecPlanned, &spec);
+        announce(effects, LiveEventName::SpecPlanned, &spec);
         encode_record(&spec)
     }
 }
@@ -403,7 +403,7 @@ impl CommandHandler for MoveExecution {
     fn apply(
         &self,
         command: &ParsedCommand,
-        events: &dyn CommandEffects,
+        effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: SpecExecutionMoveRequest = parse_payload(&command.payload)?;
         let (project, mut spec) = self.0.open(request.spec_id)?;
@@ -422,7 +422,7 @@ impl CommandHandler for MoveExecution {
                 }),
             ),
         )?;
-        announce(events, LiveEventName::SpecExecutionMoved, &spec);
+        announce(effects, LiveEventName::SpecExecutionMoved, &spec);
         encode_record(&spec)
     }
 }
@@ -920,6 +920,52 @@ pub(crate) mod testing {
         response["version"]
             .as_u64()
             .expect("the version is a number")
+    }
+}
+
+#[cfg(test)]
+mod spec_timeline {
+    use kanban_domain::{ProjectId, SpecId};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope};
+    use serde_json::json;
+
+    use super::transition;
+
+    #[test]
+    fn created_transition_names_the_spec_on_the_project_timeline() {
+        let envelope = transition(
+            ProjectId::new(1),
+            SpecId::new(4),
+            "created",
+            json!({ "project_id": 1, "number": 2 }),
+        );
+
+        assert_eq!(envelope.kind(), TimelineEventKind::Transition);
+        assert!(matches!(envelope.scope(), TimelineScope::Project(1)));
+        assert_eq!(
+            envelope.entity(),
+            Some(&TimelineEntityRef {
+                kind: TimelineEntityKind::Spec,
+                id: "4".to_owned(),
+            })
+        );
+        assert_eq!(envelope.detail()["action"], json!("created"));
+        assert_eq!(envelope.detail()["id"], json!(4));
+        assert_eq!(envelope.detail()["number"], json!(2));
+    }
+
+    #[test]
+    fn execution_move_transition_records_from_and_to_states() {
+        let envelope = transition(
+            ProjectId::new(1),
+            SpecId::new(4),
+            "execution_moved",
+            json!({ "from": "planned", "to": "ready" }),
+        );
+
+        assert_eq!(envelope.detail()["action"], json!("execution_moved"));
+        assert_eq!(envelope.detail()["from"], json!("planned"));
+        assert_eq!(envelope.detail()["to"], json!("ready"));
     }
 }
 

@@ -21,18 +21,18 @@ use kanban_dto::{
     HerdrSettingsGetResponse, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
     InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse, InitiativeRecord,
     InitiativeRenameRequest, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
-    PlanCompleteRequest, PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
-    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
-    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProjectArchiveRequest,
-    ProjectListQuery, ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
-    RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
-    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionRecord, SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery,
-    TicketListQuery, TicketListResponse, TicketRecord, TimelineQuery, TimelineQueryResponse,
-    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
-    WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
+    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse, PlanListQuery,
+    PlanListResponse, PlanRecord, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest,
+    PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
+    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
+    RulingRecordRequest, RulingSupersedeRequest, SpecContentUpdateRequest, SpecCoverageCheckQuery,
+    SpecCoverageCheckResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+    TicketCreateRequest, TicketGetQuery, TicketListQuery, TicketListResponse, TicketRecord,
+    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -347,6 +347,18 @@ async fn plan_get(
     let shell = shell.inner().clone();
     run_blocking(shell, "plan get", |shell| {
         forward_query(shell, "plan.get", "plan get", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_diagnostics(
+    shell: State<'_, Arc<Shell>>,
+    request: PlanDiagnosticsQuery,
+) -> Result<PlanDiagnosticsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "plan diagnostics", |shell| {
+        forward_query(shell, "plan.diagnostics", "plan diagnostics", request)
     })
     .await
 }
@@ -800,6 +812,7 @@ shell_handlers::shell_handler_catalogue! {
     plan_archive,
     plan_list,
     plan_get,
+    plan_diagnostics,
     spec_create,
     spec_content_update,
     spec_version_approve,

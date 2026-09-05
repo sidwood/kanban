@@ -16,15 +16,15 @@ use kanban_dto::{
     HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
     InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, MutationContext,
     PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery,
-    PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest,
-    ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest, RulingListQuery,
-    RulingRecordRequest, RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest,
-    SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
-    SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery, TicketListQuery,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
-    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    PlanCreateRequest, PlanDiagnosticsQuery, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
+    PlanGetQuery, PlanListQuery, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest,
+    PlanSpecRemoveRequest, ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest,
+    RulingListQuery, RulingRecordRequest, RulingSupersedeRequest, SpecContent,
+    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCreateRequest, SpecExecutionMoveRequest,
+    SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
+    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketCreateRequest, TicketGetQuery,
+    TicketListQuery, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
+    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -179,6 +179,7 @@ fn sample_request(schema: &str) -> Value {
         "PlanArchiveRequest" => json!({ "mutation": mutation, "plan_id": 1 }),
         "PlanListQuery" => json!({ "project_id": 1 }),
         "PlanGetQuery" => json!({ "plan_id": 1 }),
+        "PlanDiagnosticsQuery" => json!({ "plan_id": 1, "version": null }),
         "SpecCreateRequest" => {
             json!({ "mutation": mutation, "project_id": 1, "content": spec_content() })
         }
@@ -463,6 +464,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         .is_err(),
         "PlanGetQuery" => serde_json::from_value::<
             kanban_desktop_lib::commands::ShellInvokeArgs<PlanGetQuery>,
+        >(envelope)
+        .is_err(),
+        "PlanDiagnosticsQuery" => serde_json::from_value::<
+            kanban_desktop_lib::commands::ShellInvokeArgs<PlanDiagnosticsQuery>,
         >(envelope)
         .is_err(),
         "ProjectListQuery" => serde_json::from_value::<

@@ -14,6 +14,7 @@ pub mod plan;
 pub mod project;
 pub mod ruling;
 pub mod schema;
+pub mod spec;
 pub mod timeline;
 
 pub mod workspace;
@@ -61,6 +62,12 @@ pub use ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
 pub use schema::schema_definitions;
+pub use spec::{
+    SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
+    SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
+    SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+};
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
@@ -170,6 +177,22 @@ mod tests {
                 "PlanSpecRemoveRequest",
                 "PlanState",
                 "PlanVersionRecord",
+                "SpecContent",
+                "SpecContentState",
+                "SpecContentUpdateRequest",
+                "SpecCreateRequest",
+                "SpecExecutionMoveRequest",
+                "SpecExecutionState",
+                "SpecGetQuery",
+                "SpecGetResponse",
+                "SpecListQuery",
+                "SpecListResponse",
+                "SpecPlanJoinRequest",
+                "SpecRecord",
+                "SpecVersionApproveRequest",
+                "SpecVersionGetQuery",
+                "SpecVersionRecord",
+                "SpecVersionSupersedeRequest",
                 "ProjectArchiveRequest",
                 "ProjectCounters",
                 "ProjectListQuery",

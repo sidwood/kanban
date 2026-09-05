@@ -41,6 +41,12 @@ use crate::project::{
 use crate::ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
+use crate::spec::{
+    SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
+    SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
+    SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+};
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
@@ -137,6 +143,34 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("PlanSpecRemoveRequest", schema_for!(PlanSpecRemoveRequest)),
         ("PlanState", schema_for!(PlanState)),
         ("PlanVersionRecord", schema_for!(PlanVersionRecord)),
+        ("SpecContent", schema_for!(SpecContent)),
+        ("SpecContentState", schema_for!(SpecContentState)),
+        (
+            "SpecContentUpdateRequest",
+            schema_for!(SpecContentUpdateRequest),
+        ),
+        ("SpecCreateRequest", schema_for!(SpecCreateRequest)),
+        (
+            "SpecExecutionMoveRequest",
+            schema_for!(SpecExecutionMoveRequest),
+        ),
+        ("SpecExecutionState", schema_for!(SpecExecutionState)),
+        ("SpecGetQuery", schema_for!(SpecGetQuery)),
+        ("SpecGetResponse", schema_for!(SpecGetResponse)),
+        ("SpecListQuery", schema_for!(SpecListQuery)),
+        ("SpecListResponse", schema_for!(SpecListResponse)),
+        ("SpecPlanJoinRequest", schema_for!(SpecPlanJoinRequest)),
+        ("SpecRecord", schema_for!(SpecRecord)),
+        (
+            "SpecVersionApproveRequest",
+            schema_for!(SpecVersionApproveRequest),
+        ),
+        ("SpecVersionGetQuery", schema_for!(SpecVersionGetQuery)),
+        ("SpecVersionRecord", schema_for!(SpecVersionRecord)),
+        (
+            "SpecVersionSupersedeRequest",
+            schema_for!(SpecVersionSupersedeRequest),
+        ),
         ("ProjectArchiveRequest", schema_for!(ProjectArchiveRequest)),
         ("ProjectCounters", schema_for!(ProjectCounters)),
         ("ProjectListQuery", schema_for!(ProjectListQuery)),

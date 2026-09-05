@@ -3,16 +3,20 @@
 // ordered dependency graphs of Specs, drive the lifecycle, and switch
 // between the working shape and every frozen version. Presentation
 // only; every domain call goes through the generated client in the
-// plan-editor store, and the terminal states stay listed but sit off
-// the active surface (KAN-S3-US1, KAN-S3-US2, KAN-S3-US3).
-import { computed, inject, onMounted, ref } from 'vue'
+// plan-editor and plan-diagnostics stores, and the terminal states
+// stay listed but sit off the active surface (KAN-S3-US1, KAN-S3-US2,
+// KAN-S3-US3). The blocking diagnostics of the graph on display ride
+// beside it (KAN-S3-US7).
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { usePlanEditorStore } from '../stores/plan-editor'
+import { usePlanDiagnosticsStore } from '../stores/plan-diagnostics'
 
 const transport = inject(kanbanTransportKey)
 const projects = useProjectRegisterStore()
 const editor = usePlanEditorStore()
+const diagnostics = usePlanDiagnosticsStore()
 
 const pickedProjectId = ref<number | null>(null)
 const specDraft = ref('')
@@ -123,6 +127,30 @@ async function lifecycle(action: 'activate' | 'replan' | 'complete' | 'cancel' |
   }
   await editor[action](transport)
 }
+
+// One stable key for the graph on display: the open Plan, the
+// displayed version, and the working shape's stored version, which
+// every applied edit bumps. A string keeps the watcher quiet when the
+// Plan list re-renders without the displayed graph changing.
+const displayedGraphKey = computed(
+  () =>
+    `${editor.selectedPlan?.id ?? 'none'}-${editor.selectedVersion ?? 'draft'}-${editor.selectedPlan?.version ?? 0}`,
+)
+
+// The diagnostics follow the graph on display: re-read them whenever
+// that key changes, and forget them when no Plan is open
+// (KAN-S3-US7).
+watch(displayedGraphKey, () => {
+  const planId = editor.selectedPlan?.id ?? null
+  if (transport && planId !== null) {
+    void diagnostics.refresh(transport, planId, editor.selectedVersion)
+  } else {
+    diagnostics.clear()
+  }
+})
+
+// Whether the graph on display carries a blocking diagnostic.
+const blocking = computed(() => diagnostics.report?.blocking ?? false)
 
 const stateLabels: Record<string, string> = {
   draft: 'draft',
@@ -368,6 +396,92 @@ const stateLabels: Record<string, string> = {
           ? 'Only a draft Plan accepts shape edits.'
           : `Viewing frozen version v${editor.selectedVersion}; switch to Draft to edit.` }}
       </p>
+
+      <section
+        v-if="diagnostics.loaded || diagnostics.error"
+        data-testid="plan-diagnostics"
+        class="flex flex-col gap-2 rounded-lg border p-4"
+        :class="blocking ? 'border-red-200 bg-red-50' : 'border-slate-200'"
+        :aria-label="editor.selectedVersion === null
+          ? `Diagnostics of the working shape`
+          : `Diagnostics of frozen version v${editor.selectedVersion}`"
+      >
+        <h4
+          class="text-sm font-semibold"
+          :class="blocking ? 'text-red-700' : 'text-slate-700'"
+        >
+          Diagnostics
+        </h4>
+        <p
+          v-if="diagnostics.error"
+          data-testid="plan-diagnostics-error"
+          role="alert"
+          class="text-sm text-red-700"
+        >
+          {{ diagnostics.error }}
+        </p>
+        <template v-else-if="diagnostics.report">
+          <p
+            v-if="blocking"
+            data-testid="plan-diagnostics-blocking"
+            class="text-sm font-medium text-red-700"
+          >
+            This graph is blocked: it cannot become executable yet.
+          </p>
+          <p
+            v-else
+            data-testid="plan-diagnostics-clear"
+            class="text-sm text-slate-600"
+          >
+            No blocking diagnostics.
+          </p>
+          <ul
+            v-if="diagnostics.report.cycles.length"
+            data-testid="plan-diagnostics-cycles"
+            class="flex flex-col gap-1"
+          >
+            <li
+              v-for="(cycle, index) in diagnostics.report.cycles"
+              :key="`cycle-${index}`"
+              :data-testid="`plan-diagnostics-cycle-${index}`"
+              class="text-sm text-red-700"
+            >
+              {{ cycle.spec_numbers.map((spec) => specId(spec)).join(' → ') }}
+              form a dependency cycle.
+            </li>
+          </ul>
+          <ul
+            v-if="diagnostics.report.coverage_gaps.length"
+            data-testid="plan-diagnostics-gaps"
+            class="flex flex-col gap-1"
+          >
+            <li
+              v-for="gap in diagnostics.report.coverage_gaps"
+              :key="`gap-${gap.spec_number}`"
+              :data-testid="`plan-diagnostics-gap-${gap.spec_number}`"
+              class="text-sm text-red-700"
+            >
+              {{ gap.claims_no_stories
+                ? `${specId(gap.spec_number)} claims no User Stories to cover.`
+                : `${specId(gap.spec_number)}: ${gap.uncovered.join(', ')} uncovered.` }}
+            </li>
+          </ul>
+          <ul
+            v-if="diagnostics.report.invalid_profiles.length"
+            data-testid="plan-diagnostics-profiles"
+            class="flex flex-col gap-1"
+          >
+            <li
+              v-for="(profile, index) in diagnostics.report.invalid_profiles"
+              :key="`profile-${index}`"
+              :data-testid="`plan-diagnostics-profile-${index}`"
+              class="text-sm text-red-700"
+            >
+              Profile reference {{ profile.reference }} resolves to no catalogue entry.
+            </li>
+          </ul>
+        </template>
+      </section>
 
       <div class="grid gap-4 md:grid-cols-2">
         <section class="flex flex-col gap-2">

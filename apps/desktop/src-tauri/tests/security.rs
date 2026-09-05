@@ -158,15 +158,81 @@ fn the_shell_links_no_capability_plugins() {
 }
 
 /// Production dependencies the thin shell must never link (KAN-T73-AC1).
-const FORBIDDEN_DEPS: &[&str] = &["kanban-service", "kanban-storage", "rusqlite"];
+const FORBIDDEN_DEPS: &[&str] = &[
+    "kanban-service",
+    "kanban-storage",
+    "rusqlite",
+    "libsqlite3-sys",
+];
+
+/// The `[dependencies]` table body: ends at the next TOML table header, not at
+/// `[` inside inline tables or feature arrays.
+fn production_dependencies_section(manifest: &str) -> &str {
+    let marker = "[dependencies]";
+    let start = manifest.find(marker).expect("[dependencies] is present") + marker.len();
+    let rest = manifest[start..]
+        .strip_prefix('\n')
+        .unwrap_or(&manifest[start..]);
+
+    let mut offset = 0;
+    let mut first_line = true;
+    for line in rest.lines() {
+        if !first_line {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.contains('=') {
+                return rest[..offset].trim_end();
+            }
+        }
+        first_line = false;
+        offset += line.len() + 1;
+    }
+    rest.trim_end()
+}
+
+fn production_manifest_lists_forbidden_dependency(manifest: &str, dep: &str) -> bool {
+    production_dependencies_section(manifest).contains(&format!("{dep} ="))
+}
+
+#[test]
+fn dependencies_section_includes_entries_after_inline_feature_arrays() {
+    let manifest = r#"
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+kanban-storage = { path = "crates/kanban-storage" }
+
+[dev-dependencies]
+tempfile = "3"
+"#;
+    let section = production_dependencies_section(manifest);
+    assert!(
+        section.contains("kanban-storage ="),
+        "section must run through feature arrays to the next table header"
+    );
+    assert!(!section.contains("tempfile ="));
+}
+
+#[test]
+fn forbidden_dependencies_after_feature_arrays_are_detected() {
+    let manifest = r#"
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+kanban-storage = { path = "crates/kanban-storage" }
+libsqlite3-sys = "0.30"
+
+[dev-dependencies]
+tempfile = "3"
+"#;
+    for dep in ["kanban-storage", "libsqlite3-sys"] {
+        assert!(
+            production_manifest_lists_forbidden_dependency(manifest, dep),
+            "guard must see {dep} after a feature array in [dependencies]"
+        );
+    }
+}
 
 #[test]
 fn the_shell_links_no_service_or_storage_crates() {
-    let deps_section = MANIFEST
-        .split("[dependencies]")
-        .nth(1)
-        .and_then(|section| section.split('[').next())
-        .expect("[dependencies] is present");
+    let deps_section = production_dependencies_section(MANIFEST);
     for dep in FORBIDDEN_DEPS {
         assert!(
             !deps_section.contains(&format!("{dep} =")),

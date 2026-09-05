@@ -888,6 +888,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
             }),
         );
 
@@ -971,6 +972,7 @@ mod tests {
                 "seed_workspace": "/workspaces/kanban.seed",
                 "default_branch": "main",
                 "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
             }),
         );
         client.command(
@@ -1010,6 +1012,25 @@ mod tests {
                 "content_base64": "cHJvb2YgYnl0ZXM=",
             }),
         );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let timeline = client.query_with(
+                "timeline.query",
+                json!({ "scope": { "project": 1 }, "kinds": ["telemetry"] }),
+            );
+            if !timeline["events"]
+                .as_array()
+                .expect("events are an array")
+                .is_empty()
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the live subscription settles before archive"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
         client.command(
             "project.archive",
             json!({

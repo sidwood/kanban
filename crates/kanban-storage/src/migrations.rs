@@ -134,6 +134,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace unlanded guard",
         sql: include_str!("../migrations/0016_workspace_unlanded.sql"),
     },
+    Migration {
+        version: 17,
+        name: "project timeline identity",
+        sql: include_str!("../migrations/0017_project_timeline_identity.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -349,7 +354,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+                applied: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
             }
         );
         assert_eq!(
@@ -371,7 +376,7 @@ mod tests {
             .expect("versions decode");
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
         );
         for table in [
             "audit_events",
@@ -443,7 +448,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 16, "one event per applied migration");
+        assert_eq!(events.len(), 17, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -524,6 +529,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[15].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 16, "name": "workspace unlanded guard" })
         );
+        assert_eq!(events[16].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[16].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 17, "name": "project timeline identity" })
+        );
     }
 
     #[test]
@@ -548,7 +558,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16]
+                applied: vec![13, 14, 15, 16, 17]
             }
         );
         let present: i64 = database
@@ -601,7 +611,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16]
+                applied: vec![14, 15, 16, 17]
             }
         );
         let after: i64 = database
@@ -617,7 +627,7 @@ mod tests {
         let audited: String = database
             .connection()
             .query_row(
-                "SELECT detail FROM audit_events WHERE kind = 'migration.applied' ORDER BY id DESC LIMIT 1",
+                "SELECT detail FROM audit_events WHERE kind = 'migration.applied' AND json_extract(detail, '$.version') = 16",
                 [],
                 |row| row.get(0),
             )
@@ -667,7 +677,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16]
+                applied: vec![15, 16, 17]
             }
         );
         let conn = database.connection();
@@ -908,6 +918,10 @@ mod tests {
                     version: 16,
                     name: "workspace unlanded guard",
                 },
+                PendingMigration {
+                    version: 17,
+                    name: "project timeline identity",
+                },
             ]]
         );
     }
@@ -948,9 +962,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0016 apply");
+            .expect("migrations 0010 through 0017 apply");
 
-        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(report.applied, vec![10, 11, 12, 13, 14, 15, 16, 17]);
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
             .query_row(

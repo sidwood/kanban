@@ -27,6 +27,9 @@ pub use backup::{
     BackupManifest, BackupOptions, BackupPreview, BackupRetentionPolicy, BackupSettings,
     BackupStore, VerifiedBackupHook, VerifiedBackupRecord, load_backup_settings,
 };
+#[cfg(test)]
+mod timeline_scope_migration;
+
 pub use comments::SqliteCommentStore;
 pub use db::Database;
 pub use deferrals::SqliteDeferralStore;

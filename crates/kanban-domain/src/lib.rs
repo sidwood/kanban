@@ -2,6 +2,7 @@
 //! rules, and invariants. No I/O, no async, no DTO types, no clock.
 
 pub mod comment;
+pub mod coverage;
 pub mod deferral;
 pub mod evidence;
 pub mod herdr;
@@ -15,6 +16,10 @@ pub mod workspace;
 
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
+};
+pub use coverage::{
+    AcceptanceCriterion, CriterionError, ExecutableRefusal, ScopeError, StoryRefError, StoryScope,
+    UserStoryRef, VerificationStep, VerificationStepError, enforce_executable,
 };
 pub use deferral::{Deferral, DeferralDraft, DeferralError, DeferralId, DeferralReason};
 pub use evidence::{

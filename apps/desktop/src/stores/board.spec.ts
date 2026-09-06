@@ -73,6 +73,15 @@ function serving(tickets: TicketRecord[], blockers: Record<number, TicketReadine
   }
 }
 
+// The readiness queries a refresh spent, as bare requests.
+function readinessRequests(
+  operations: Array<{ kind: 'query' | 'command'; name: string; request: unknown }>,
+): unknown[] {
+  return operations
+    .filter((entry) => entry.name === 'ticket.readiness')
+    .map((entry) => entry.request)
+}
+
 describe('board store', () => {
   it('loads the Project\'s Tickets through the generated client', async () => {
     setActivePinia(createPinia())
@@ -111,6 +120,97 @@ describe('board store', () => {
     expect(board.blockersFor(8)).toEqual([])
     // A Ticket the board never loaded holds nothing back.
     expect(board.blockersFor(99)).toEqual([])
+  })
+
+  it('asks readiness only for the cards that can still be held back', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, query } = harness()
+    const history = [
+      task({ id: 21, state: 'done' }),
+      task({ id: 22, state: 'cancelled' }),
+      task({ id: 23, state: 'superseded' }),
+    ]
+    const live = [task(), task({ id: 8, state: 'blocked' })]
+    query.mockImplementation(serving([...history, ...live]))
+    const board = useBoardStore()
+
+    await board.refresh(transport, 1)
+
+    // Finished history needs no projection; the live cards,
+    // whatever holds them back, are each asked once.
+    expect(readinessRequests(operations)).toEqual([
+      { ticket_id: 7 },
+      { ticket_id: 8 },
+    ])
+  })
+
+  it('spends no more readiness calls as history grows', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, query } = harness()
+    const live = [task(), task({ id: 8, state: 'blocked' })]
+    const historyOf = (count: number): TicketRecord[] =>
+      Array.from({ length: count }, (_, index) =>
+        task({ id: 100 + index, state: 'done' }),
+      )
+    const board = useBoardStore()
+
+    query.mockImplementation(serving([...live, ...historyOf(3)]))
+    await board.refresh(transport, 1)
+    const againstThree = readinessRequests(operations)
+
+    operations.length = 0
+    query.mockImplementation(serving([...live, ...historyOf(90)]))
+    await board.refresh(transport, 1)
+    const againstNinety = readinessRequests(operations)
+
+    expect(againstNinety).toEqual(againstThree)
+  })
+
+  it('clears blocker entries a refresh leaves behind', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    const waiting: TicketReadinessBlocker = {
+      Ticket: {
+        from_number: 3,
+        from_project_id: 1,
+        from_state: 'active',
+        from_ticket_id: 3,
+      },
+    }
+    query.mockImplementation(serving([task(), task({ id: 8 })], { 7: [waiting], 8: [waiting] }))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+    expect(board.blockersFor(7)).toEqual([waiting])
+
+    // Ticket 7 lands done and Ticket 8 leaves the Project: neither
+    // keeps the blockers that spoke for it.
+    query.mockImplementation(serving([task({ state: 'done' })]))
+    await board.refresh(transport, 1)
+
+    expect(board.blockers).toEqual({})
+  })
+
+  it('drops the readiness of a Ticket a move finishes', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, query, command } = harness()
+    const waiting: TicketReadinessBlocker = {
+      Ticket: {
+        from_number: 3,
+        from_project_id: 1,
+        from_state: 'active',
+        from_ticket_id: 3,
+      },
+    }
+    query.mockImplementation(serving([task()], { 7: [waiting] }))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+    operations.length = 0
+    command.mockResolvedValue(task({ state: 'done', version: 4 }))
+
+    await board.move(transport, 7, 'done')
+
+    expect(readinessRequests(operations)).toEqual([])
+    expect(board.blockers).toEqual({})
   })
 
   it('reports a failed load without pretending to be loaded', async () => {

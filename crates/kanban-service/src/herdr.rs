@@ -341,6 +341,23 @@ impl HerdrObserver {
         }
     }
 
+    /// Build one Project's handle together with its stop flag, without
+    /// spawning its thread: a test driving the whole loop through
+    /// [`HerdrObserverHandle::run_parking`] stops it from its own park
+    /// hook — exactly where production's parked thread would notice a
+    /// stop (KAN-T130-AC1).
+    #[cfg(test)]
+    fn test_driven_loop(&self, project: &Project) -> (HerdrObserverHandle, Arc<AtomicBool>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = self.observation_handle(
+            project,
+            stop.clone(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(VecDeque::new())),
+        );
+        (handle, stop)
+    }
+
     /// Build one Project's handle without spawning its thread: tests
     /// drive the reconnect lifecycle cycle by cycle on their own
     /// thread, so every transition is asserted after the cycle that
@@ -493,6 +510,15 @@ struct HerdrObserverHandle {
 
 impl HerdrObserverHandle {
     fn run(self) {
+        self.run_parking(thread::park_timeout);
+    }
+
+    /// The observer loop with its backoff park injected: production
+    /// parks the thread for the bounded delay, while a driven test
+    /// records each cycle's delay — and stops the loop from the hook —
+    /// so the loop's own failure accounting and bounded delay are
+    /// proven cycle by cycle without a real sleep (KAN-T130-AC1).
+    fn run_parking(self, mut park: impl FnMut(Duration)) {
         let mut failures = 0u32;
         let mut live_once = false;
         // The monitor outlives every redial — roles observed before a
@@ -517,7 +543,7 @@ impl HerdrObserverHandle {
             if self.stopped() {
                 break;
             }
-            thread::park_timeout(backoff_delay(self.backoff, failures));
+            park(backoff_delay(self.backoff, failures));
         }
     }
 
@@ -1340,6 +1366,65 @@ mod tests {
             telemetry_details(&database).len(),
             1,
             "no thread survives shutdown to append again"
+        );
+    }
+
+    /// KAN-T130-AC1: the production loop's own accounting, driven
+    /// cycle by cycle on the test thread. Every failed cycle parks for
+    /// the bounded delay its failure count calls for — one, two, four,
+    /// then the policy maximum — with the count published per cycle,
+    /// and no real sleep anywhere in the loop: the park hook records
+    /// each delay and stops the loop in place of sleeping it out.
+    #[test]
+    fn the_loop_parks_the_bounded_backoff_its_failures_call_for() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_flapping_subscriptions(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let (handle, stop) =
+            observer.test_driven_loop(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let parked: Arc<Mutex<Vec<(Duration, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = parked.clone();
+
+        handle.run_parking(|delay| {
+            let mut seen = recorded.lock().unwrap();
+            seen.push((delay, observer.consecutive_failures(1)));
+            if seen.len() >= 4 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        });
+
+        assert_eq!(
+            parked.lock().unwrap().as_slice(),
+            &[
+                (Duration::from_millis(10), 1),
+                (Duration::from_millis(20), 2),
+                (Duration::from_millis(40), 3),
+                (Duration::from_millis(40), 4),
+            ],
+            "each failed cycle parks the doubling delay its count calls for, bounded at the maximum"
+        );
+        let state = binding_diagnostics(&observer);
+        assert!(
+            !state.connected,
+            "the flapping run ends with no connection claimed"
+        );
+        assert_eq!(
+            state.last_error,
+            Some("disconnected".to_owned()),
+            "the flapping drop is the reported failure"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a run that never settles appends no telemetry"
         );
     }
 

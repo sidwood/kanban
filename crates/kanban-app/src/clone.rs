@@ -5,15 +5,20 @@
 //! validated first: conflicting paths — a declared Seed, a registered
 //! Workspace, or a target that already exists on the filesystem —
 //! branches, and Lane assignments are refused before anything is
-//! invoked, with the conflict named (DR-LW-10). Every invocation and
-//! every refusal appends a timeline row, so the audit trail outlives
-//! both outcomes. Removal never
-//! deletes the Workspace record (DR-LW-11); a successful removal
-//! records the checkout gone itself — health missing, stale git
-//! facts cleared, optimistic version bumped — inside the command's
-//! span, so no guard mistakes a deleted directory for a live
-//! checkout before the next observation runs (KAN-T133).
+//! invoked, with the conflict named (DR-LW-10). Paths are judged by
+//! the filesystem identity they resolve to, so a case or symlink
+//! alias of the Seed Workspace or a registered Workspace is refused
+//! as itself, and a destination that does not exist yet is resolved
+//! through its parent (KAN-T122). Every invocation and every refusal
+//! appends a timeline row, so the audit trail outlives both
+//! outcomes. Removal never deletes the Workspace record (DR-LW-11);
+//! a successful removal records the checkout gone itself — health
+//! missing, stale git facts cleared, optimistic version bumped —
+//! inside the command's span, so no guard mistakes a deleted
+//! directory for a live checkout before the next observation runs
+//! (KAN-T133).
 
+use std::path::Path;
 use std::sync::Arc;
 
 use kanban_domain::{
@@ -149,6 +154,28 @@ fn encode(record: &impl serde::Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(record).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
+/// Resolve one clone-guard path to the filesystem identity it names
+/// (KAN-T122): the directory a symlink or a case-insensitive spelling
+/// reaches and, for a destination that does not exist yet, the
+/// identity its parent resolves to with the leaf appended. Every side
+/// of the conflict check is resolved this way, so a differently
+/// spelled Seed Workspace or registered Workspace cannot clone onto
+/// protected identity. What the filesystem cannot name keeps its
+/// spelling: the case of a segment that does not exist and a symlink
+/// whose target is gone are the documented residual.
+fn resolved_filesystem_identity(path: &str) -> String {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical.to_string_lossy().into_owned();
+    }
+    let destination = Path::new(path);
+    if let (Some(parent), Some(leaf)) = (destination.parent(), destination.file_name()) {
+        if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+            return canonical_parent.join(leaf).to_string_lossy().into_owned();
+        }
+    }
+    path.to_owned()
+}
+
 /// Announce one applied clone command to every live subscriber.
 fn announce(events: &dyn CommandEffects, event: LiveEventName, record: &impl serde::Serialize) {
     emit_catalogued(events, event, record);
@@ -269,15 +296,23 @@ impl CommandHandler for CreateClone {
         let (path, branch) =
             validate_clone_target(&request.path, &request.branch).map_err(refuse)?;
         let registered = self.0.workspaces.list_for_project(project_id)?;
+        // Every side of the conflict check is judged by the identity
+        // the filesystem gives the path, never by its spelling
+        // (KAN-T122); the refusal row below still records the
+        // spelling that was asked for.
         let facts: Vec<_> = registered
             .iter()
-            .map(WorkspaceCloneFacts::from_workspace)
+            .map(|workspace| {
+                let mut facts = WorkspaceCloneFacts::from_workspace(workspace);
+                facts.path = resolved_filesystem_identity(&facts.path);
+                facts
+            })
             .collect();
         let target_exists = self.0.probe.exists(&path);
         if let Some(conflict) = clone_create_conflict(
-            &path,
+            &resolved_filesystem_identity(&path),
             &branch,
-            project.registration().seed_workspace(),
+            &resolved_filesystem_identity(project.registration().seed_workspace()),
             &facts,
             target_exists,
         ) {
@@ -1801,6 +1836,322 @@ mod clone_conflicts {
         assert!(
             harness.timeline.rows().is_empty(),
             "payload validation records no row"
+        );
+    }
+}
+
+/// The clone guard judges paths by the identity the filesystem gives
+/// them, never by their spelling (KAN-T122). These tests run against
+/// a real scratch tree, because a symlink and a case-insensitive
+/// spelling are filesystem facts: no in-memory port can prove them.
+#[cfg(test)]
+mod clone_filesystem_identity {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use serde_json::{Value, json};
+    use tempfile::TempDir;
+
+    use kanban_dto::ErrorCode;
+
+    use super::testing::clone_harness;
+    use crate::clone::testing::CloneHarness;
+
+    fn mutation(key: &str) -> Value {
+        json!({ "optimistic_version": 0, "idempotency_key": key })
+    }
+
+    fn create(path: &str, key: &str) -> Value {
+        json!({
+            "mutation": mutation(key),
+            "project_id": 1,
+            "path": path,
+            "branch": "fleet/kan-t34",
+        })
+    }
+
+    /// The spelling the filesystem itself holds for one directory
+    /// created under the scratch tree: every identity the guard
+    /// compares resolves through the filesystem, so the fixtures are
+    /// anchored the same way.
+    fn existing_directory(dir: &TempDir, name: &str) -> String {
+        let directory = dir.path().join(name);
+        fs::create_dir_all(&directory).expect("the scratch directory is created");
+        directory
+            .canonicalize()
+            .expect("the scratch directory canonicalises")
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned()
+    }
+
+    /// A child that does not exist yet under an existing directory.
+    fn missing_child(parent: &str, name: &str) -> String {
+        format!("{parent}/{name}")
+    }
+
+    /// One more name for an existing directory, through a symlink.
+    fn alias_symlink(dir: &TempDir, target: &str, name: &str) -> String {
+        symlink(target, dir.path().join(name)).expect("the alias symlink is created");
+        dir.path()
+            .join(name)
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned()
+    }
+
+    /// The same existing path with its leaf segment uppercased, so
+    /// case is the only difference from the original spelling.
+    fn uppercased_leaf(path: &str) -> String {
+        let (parent, leaf) = path.rsplit_once('/').expect("the path is anchored");
+        format!("{parent}/{}", leaf.to_uppercase())
+    }
+
+    /// Re-anchor the harness Project's declared Seed at `seed_path`,
+    /// keeping its identity, so the guard's Seed rule meets a path the
+    /// filesystem really holds.
+    fn project_with_seed(harness: &CloneHarness, seed_path: &str) {
+        harness.projects.replace(kanban_domain::Project::restore(
+            kanban_domain::ProjectId::new(1),
+            kanban_domain::ProjectRegistration::new(
+                "CORE",
+                "Control plane",
+                "/repositories/kanban",
+                seed_path,
+                "main",
+                "kanban.seed",
+                Some("kanban-main"),
+                None,
+            )
+            .expect("the fixture registration validates"),
+            kanban_domain::ProjectState::Active,
+            kanban_domain::ProjectCounters::zeroed(),
+            1,
+        ));
+    }
+
+    fn register_workspace(harness: &CloneHarness, path: &str, key: &str) {
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &json!({
+                    "mutation": mutation(key),
+                    "project_id": 1,
+                    "path": path,
+                }),
+            )
+            .expect("the workspace registers");
+    }
+
+    /// KAN-T122-AC1: a symlink alias of the declared Seed Workspace is
+    /// refused before anything is invoked.
+    #[test]
+    fn creating_refuses_a_symlink_alias_of_the_seed_path() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let seed = existing_directory(&dir, "kanban.seed");
+        let alias = alias_symlink(&dir, &seed, "seed-link");
+        let harness = clone_harness();
+        project_with_seed(&harness, &seed);
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-1"))
+            .expect_err("a symlink alias still names the Seed path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("Seed"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refusal is recorded");
+        assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("seed_path"));
+    }
+
+    /// KAN-T122-AC1: on a case-insensitive filesystem an uppercased
+    /// spelling of the declared Seed Workspace is the same directory.
+    #[test]
+    fn creating_refuses_a_case_alias_of_the_seed_path() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let seed = existing_directory(&dir, "kanban.seed");
+        let alias = uppercased_leaf(&seed);
+        let harness = clone_harness();
+        project_with_seed(&harness, &seed);
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-1"))
+            .expect_err("an uppercased spelling still names the Seed path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("Seed"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refusal is recorded");
+        assert_eq!(rows[0].detail()["reason"], json!("seed_path"));
+    }
+
+    /// KAN-T122-AC1: a symlink alias of a registered Workspace is
+    /// refused and names the holder.
+    #[test]
+    fn creating_refuses_a_symlink_alias_of_a_registered_workspace() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspace = existing_directory(&dir, "kanban.fleet-t31");
+        let alias = alias_symlink(&dir, &workspace, "fleet-link");
+        let harness = clone_harness();
+        register_workspace(&harness, &workspace, "key-1");
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-2"))
+            .expect_err("a symlink alias still names the registered path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
+        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
+    }
+
+    /// KAN-T122-AC1: on a case-insensitive filesystem an uppercased
+    /// spelling of a registered Workspace is the same directory.
+    #[test]
+    fn creating_refuses_a_case_alias_of_a_registered_workspace() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspace = existing_directory(&dir, "kanban.fleet-t31");
+        let alias = uppercased_leaf(&workspace);
+        let harness = clone_harness();
+        register_workspace(&harness, &workspace, "key-1");
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-2"))
+            .expect_err("an uppercased spelling still names the registered path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
+    }
+
+    /// KAN-T122-AC2: a destination that does not exist yet is judged
+    /// through its resolved parent. The registered Workspace's clone
+    /// is gone from disk, so both spellings name a missing directory —
+    /// and the one through the symlinked parent is still the
+    /// registered identity, which nothing may clone onto.
+    #[test]
+    fn creating_refuses_a_missing_destination_resolved_through_its_parent() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspaces = existing_directory(&dir, "workspaces");
+        let link = alias_symlink(&dir, &workspaces, "workspaces-link");
+        let registered = missing_child(&workspaces, "kanban.gone");
+        let harness = clone_harness();
+        register_workspace(&harness, &registered, "key-1");
+
+        let request = missing_child(&link, "kanban.gone");
+        let error = harness
+            .core
+            .command("clone.create", &create(&request, "key-2"))
+            .expect_err("a missing destination resolves through its parent");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!(request),
+            "the row records the spelling that was asked for"
+        );
+    }
+
+    /// A missing destination whose resolved identity names nothing
+    /// registered still proceeds: resolution judges identity, it does
+    /// not tighten the guard.
+    #[test]
+    fn a_free_missing_destination_through_a_resolved_parent_proceeds() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspaces = existing_directory(&dir, "workspaces");
+        let link = alias_symlink(&dir, &workspaces, "workspaces-link");
+        let harness = clone_harness();
+
+        let request = missing_child(&link, "kanban.fresh");
+        let response = harness
+            .core
+            .command("clone.create", &create(&request, "key-1"))
+            .expect("a free identity is free however it is spelled");
+
+        assert_eq!(
+            response["path"],
+            json!(request),
+            "the skill is handed the spelling that was asked for"
+        );
+        assert_eq!(harness.tool.calls().len(), 1);
+    }
+
+    /// The documented residual (KAN-T122): the case of a segment that
+    /// does not exist is nothing the filesystem can name, so two
+    /// spellings of one missing leaf are two identities, and the
+    /// difference is the operator's to keep straight.
+    #[test]
+    fn a_case_alias_of_a_missing_leaf_is_the_documented_residual() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspaces = existing_directory(&dir, "workspaces");
+        let registered = missing_child(&workspaces, "kanban.gone");
+        let harness = clone_harness();
+        register_workspace(&harness, &registered, "key-1");
+
+        let request = missing_child(&workspaces, "KANBAN.GONE");
+        harness
+            .core
+            .command("clone.create", &create(&request, "key-2"))
+            .expect("no filesystem entry can name the alias, so the guard cannot either");
+
+        assert_eq!(
+            harness.tool.calls().len(),
+            1,
+            "the residual proceeds; it is documented, not silently refused or caught"
         );
     }
 }

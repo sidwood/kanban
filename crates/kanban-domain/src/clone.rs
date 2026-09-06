@@ -5,7 +5,9 @@
 //! is invoked (DR-LW-10). The rules here are pure: they decide, from
 //! registered Workspace facts and whatever filesystem facts a caller
 //! hands them as values, whether a guarded command may proceed, and
-//! they name the conflict when it may not.
+//! they name the conflict when it may not. Paths arrive as the
+//! filesystem identities the application layer resolved (KAN-T122);
+//! no rule here reads a filesystem.
 
 use std::fmt;
 
@@ -227,9 +229,16 @@ fn normalised_path_form(path: &str) -> String {
 /// known holder keeps being named. The branch is judged last, against
 /// every non-retired Workspace's observed checkout: a retired record
 /// keeps history, not a live execution slot, so it blocks no branch.
-/// Paths are judged by their normal form on both sides, so an
-/// equivalent spelling of a refused path is refused too. The first
-/// conflict wins and names itself.
+/// Every path arrives as the filesystem identity the application
+/// layer resolved (KAN-T122): a case or symlink alias of the Seed
+/// Workspace or a registered Workspace shares one identity with the
+/// path it aliases, and a destination that does not exist yet arrives
+/// resolved through its parent. Identities are still judged by their
+/// normal form on both sides, so an equivalent spelling of a refused
+/// identity is refused too. What the filesystem cannot name — the
+/// case of a segment that does not exist, a symlink whose target is
+/// gone — keeps its spelling: that residual is documented, not
+/// caught. The first conflict wins and names itself.
 pub fn clone_create_conflict(
     path: &str,
     branch: &str,

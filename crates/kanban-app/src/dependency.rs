@@ -922,6 +922,7 @@ pub(crate) mod testing {
             .expect("the fixture body validates"),
             None,
             None,
+            None,
             1,
         )
     }
@@ -1148,6 +1149,7 @@ mod cross_project_deps {
             .expect("the fixture body validates"),
             None,
             None,
+            None,
             4,
         );
         harness.rows.replace(landed.clone());
@@ -1164,6 +1166,7 @@ mod cross_project_deps {
                 "The landing log names the drop immediately after the merge.",
             )
             .expect("the fixture body validates"),
+            None,
             None,
             None,
             2,

@@ -1526,6 +1526,7 @@ mod pinning {
             standing.priority(),
             kanban_domain::TicketState::Active,
             standing.body().clone(),
+            standing.predecessor(),
             standing.profile().cloned(),
             standing.pinned_version(),
             standing.version() + 1,

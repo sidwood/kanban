@@ -666,6 +666,7 @@ mod tests {
                     row.priority(),
                     row.state(),
                     row.body().clone(),
+                    row.predecessor(),
                     row.profile().cloned(),
                     None,
                     1,

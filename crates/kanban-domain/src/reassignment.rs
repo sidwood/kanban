@@ -112,6 +112,7 @@ mod reassignment_rules {
             body(),
             None,
             None,
+            None,
             1,
         )
     }

@@ -532,6 +532,7 @@ mod graph_rules {
             .expect("the fixture body validates"),
             None,
             None,
+            None,
             1,
         )
     }

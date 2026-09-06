@@ -1928,7 +1928,7 @@ mod ticket_kinds {
                 ],
             )
             .expect("the fixture body validates"),
-            None,
+            Some(TicketId::new(4)),
             Some(crate::profile::ProfileName::new("standard").expect("the name validates")),
             None,
             7,
@@ -1942,6 +1942,11 @@ mod ticket_kinds {
         assert_eq!(ticket.state(), TicketState::Active);
         assert_eq!(ticket.spec(), Some(SpecId::new(6)));
         assert_eq!(ticket.criteria()[1].stories(), [story(3, 2)].as_slice());
+        assert_eq!(
+            ticket.predecessor(),
+            Some(TicketId::new(4)),
+            "a restored replacement keeps the Ticket it replaced (DR-DE-07)"
+        );
         assert_eq!(ticket.profile().map(|name| name.as_str()), Some("standard"));
         assert_eq!(ticket.version(), 7);
     }
@@ -3088,6 +3093,7 @@ mod task_rules {
                 TaskTiming::new(Some("2026-10-01T00:00:00Z".to_owned()), None)
                     .expect("the fixture timing validates"),
             )),
+            None,
             None,
             None,
             4,

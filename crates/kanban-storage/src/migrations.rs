@@ -184,6 +184,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "execution profiles",
         sql: include_str!("../migrations/0026_execution_profiles.sql"),
     },
+    Migration {
+        version: 27,
+        name: "capacity",
+        sql: include_str!("../migrations/0027_capacity.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -429,7 +434,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24, 25, 26
+                    23, 24, 25, 26, 27
                 ]
             }
         );
@@ -454,7 +459,7 @@ mod tests {
             versions,
             vec![
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24, 25, 26
+                24, 25, 26, 27
             ]
         );
         for table in [
@@ -533,7 +538,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 26, "one event per applied migration");
+        assert_eq!(events.len(), 27, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -664,6 +669,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[25].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 26, "name": "execution profiles" })
         );
+        assert_eq!(events[26].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[26].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 27, "name": "capacity" })
+        );
     }
 
     #[test]
@@ -684,7 +694,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0026 applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![26] });
+        assert_eq!(report, MigrationReport { applied: vec![26, 27] });
         let conn = database.connection();
         // Names are unique, values are never blank, and nothing is
         // deleted; the fallback and the Ticket assignment are stored
@@ -749,6 +759,85 @@ mod tests {
     }
 
     #[test]
+    fn migration_0027_creates_the_capacity_tables() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 26).expect("the pre-capacity schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'capacity_project_caps'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(before, 0, "version twenty-six holds no capacity tables");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0027 applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![27] });
+        let conn = database.connection();
+        let seeded: (i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT max_active_per_harness, max_active_per_model,
+                        max_active_per_usage_pool, version
+                 FROM capacity_global_defaults WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("the global defaults are seeded");
+        assert_eq!(seeded, (2, 2, 4, 1));
+
+        // Existing Projects impose nothing by default: absence is the
+        // record, and no row is backfilled.
+        let projects_with_caps: i64 = conn
+            .query_row("SELECT COUNT(*) FROM capacity_project_caps", [], |row| {
+                row.get(0)
+            })
+            .expect("the caps table is readable");
+        assert_eq!(projects_with_caps, 0, "no Project is backfilled caps");
+
+        conn.execute(
+            "INSERT INTO projects
+                 (code, name, repository, seed_workspace, default_branch,
+                  herdr_workspace, herdr_session, archived, version)
+             VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                     '/workspaces/kanban.seed', 'main', 'kanban.seed',
+                     'kanban-main', 0, 1)",
+            [],
+        )
+        .expect("the Project lands");
+        conn.execute(
+            "INSERT INTO capacity_project_caps
+                 (project_id, max_active_per_harness, max_active_lanes, version)
+             VALUES (1, 2, 3, 1)",
+            [],
+        )
+        .expect("stricter caps land");
+        assert!(
+            conn.execute(
+                "INSERT INTO capacity_project_caps
+                     (project_id, max_active_lanes, version)
+                 VALUES (1, 0, 1)",
+                [],
+            )
+            .is_err(),
+            "a zero limit is refused at the schema level"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO capacity_project_caps
+                     (project_id, max_active_lanes, version)
+                 VALUES (1, 2, 0)",
+                [],
+            )
+            .is_err(),
+            "a non-positive version is refused"
+        );
+    }
+
+    #[test]
     fn migrate_from_version_twelve_adds_workspaces() {
         let (_dir, mut database) = scratch_database();
         crate::migrations::apply_through(&database.connection(), 12)
@@ -770,7 +859,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+                applied: vec![13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
             }
         );
         let present: i64 = database
@@ -820,7 +909,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![25, 26]
+                applied: vec![25, 26, 27]
             }
         );
         let present: i64 = database
@@ -884,7 +973,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21, 22, 23, 24, 25, 26]
+                applied: vec![19, 20, 21, 22, 23, 24, 25, 26, 27]
             }
         );
         let rewritten = database
@@ -951,7 +1040,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23, 24, 25, 26]
+                applied: vec![21, 22, 23, 24, 25, 26, 27]
             }
         );
         let conn = database.connection();
@@ -1043,7 +1132,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
             }
         );
         let after: i64 = database
@@ -1109,7 +1198,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+                applied: vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
             }
         );
         let conn = database.connection();
@@ -1390,6 +1479,10 @@ mod tests {
                     version: 26,
                     name: "execution profiles",
                 },
+                PendingMigration {
+                    version: 27,
+                    name: "capacity",
+                },
             ]]
         );
     }
@@ -1430,12 +1523,12 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0026 apply");
+            .expect("migrations 0010 through 0027 apply");
 
         assert_eq!(
             report.applied,
             vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
@@ -1510,7 +1603,7 @@ mod tests {
         assert_eq!(
             report.applied,
             vec![
-                11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
+                11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
             ]
         );
         let outcome = database.connection().execute(
@@ -1821,7 +1914,7 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the bounded rebuild applies");
 
-        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26]);
+        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27]);
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn
             .query_row(

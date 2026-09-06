@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
   LaneRecord,
+  SpecRecord,
   TicketBugQualification,
   TicketRecord,
   TicketReadinessBlocker,
@@ -12,6 +13,7 @@ import { CHIP_VOCABULARY } from '@kanban/contracts'
 import {
   chipsFor,
   laneFor,
+  specFor,
   type CardChip,
   type ChipSources,
 } from './board-chips'
@@ -61,9 +63,24 @@ const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
 const sources = (overrides: Partial<ChipSources> = {}): ChipSources => ({
   projectCode: 'KAN',
   lane: null,
+  spec: null,
   blockers: [],
   reviewers: [],
   execution: null,
+  ...overrides,
+})
+
+// A Spec as the generated client serves it: the row id the whole
+// store shares and the number this Project minted — different on
+// purpose, so an id rendered as the identity cannot pass.
+const specRecord = (overrides: Partial<SpecRecord> = {}): SpecRecord => ({
+  execution: 'planned',
+  id: 4,
+  name: 'Serve the lifecycle command surface',
+  number: 9,
+  plan_id: null,
+  project_id: 1,
+  version: 2,
   ...overrides,
 })
 
@@ -232,6 +249,7 @@ describe('board chips', () => {
     const chips = chipsFor(
       ticket(),
       sources({
+        spec: specRecord(),
         lane: lane(),
         blockers: [waiting(3), waiting(5)],
         reviewers: ['opus-max', 'sonnet-stage'],
@@ -241,7 +259,7 @@ describe('board chips', () => {
     expect(kindsOf(chips)).toEqual(
       CHIP_VOCABULARY.sets[0].chips,
     )
-    expect(chipByKind(chips, 'spec')).toMatchObject({ label: 'Spec', value: 'KAN-S4' })
+    expect(chipByKind(chips, 'spec')).toMatchObject({ label: 'Spec', value: 'KAN-S9' })
     expect(chipByKind(chips, 'implementer')).toMatchObject({
       label: 'Implementer',
       value: 'glm-implementer',
@@ -262,6 +280,31 @@ describe('board chips', () => {
     expect(kindsOf(chips)).toEqual(['priority', 'progress'])
   })
 
+  it('renders the Spec\'s minted number, never its row id', () => {
+    const chips = chipsFor(
+      ticket({ spec_id: 4 }),
+      sources({ spec: specRecord({ id: 4, number: 9 }) }),
+    )
+    expect(chipByKind(chips, 'spec')).toMatchObject({ value: 'KAN-S9' })
+
+    // Row ids run across every Project; numbers restart with each
+    // one, so a gap another Project's Specs open below this record
+    // still renders the number this Project minted.
+    const gapped = chipsFor(
+      ticket({ spec_id: 6 }),
+      sources({ spec: specRecord({ id: 6, number: 2 }) }),
+    )
+    expect(chipByKind(gapped, 'spec')).toMatchObject({ value: 'KAN-S2' })
+  })
+
+  it('omits the Spec chip when the record does not resolve', () => {
+    // The Ticket names a Spec the board did not load; no number may
+    // be invented from the id, so the region stays off the card.
+    const chips = chipsFor(ticket({ spec_id: 4 }), sources({ spec: null }))
+
+    expect(chipByKind(chips, 'spec')).toBeUndefined()
+  })
+
   it('adds the bug chips: severity, frequency, origin, and optional spec', () => {
     const bug = {
       actual_behaviour: 'The guard lands a dirty tree.',
@@ -274,11 +317,11 @@ describe('board chips', () => {
 
     const chips = chipsFor(
       ticket({ kind: 'bug', title: 'Clone guard misses a dirty tree', criteria: [], bug }),
-      sources({ projectCode: 'KAN', blockers: [waiting(3)] }),
+      sources({ projectCode: 'KAN', spec: specRecord(), blockers: [waiting(3)] }),
     )
 
     expect(kindsOf(chips)).toEqual(CHIP_VOCABULARY.sets[1].chips)
-    expect(chipByKind(chips, 'spec')).toMatchObject({ value: 'KAN-S4' })
+    expect(chipByKind(chips, 'spec')).toMatchObject({ value: 'KAN-S9' })
     expect(chipByKind(chips, 'severity')).toMatchObject({
       label: 'Severity',
       value: 'Critical',
@@ -464,5 +507,15 @@ describe('board chips', () => {
 
     expect(laneFor(lanes, 7)?.id).toBe(3)
     expect(laneFor(lanes, 8)).toBeUndefined()
+  })
+
+  it('finds the Spec a Ticket names', () => {
+    const specs = [specRecord({ id: 4, number: 9 }), specRecord({ id: 6, number: 2 })]
+
+    expect(specFor(specs, 6)?.number).toBe(2)
+    expect(specFor(specs, 4)?.number).toBe(9)
+    expect(specFor(specs, 99)).toBeUndefined()
+    // A Ticket attached to no Spec resolves to none.
+    expect(specFor(specs, null)).toBeUndefined()
   })
 })

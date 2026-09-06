@@ -131,10 +131,36 @@ function lanes(): LaneListResponse['lanes'] {
   ]
 }
 
+// The Project's Specs: row ids every Project shares, numbers each
+// mints its own — the identity a card renders is the number.
+function specs(): SpecListResponse['specs'] {
+  return [
+    {
+      execution: 'planned',
+      id: 4,
+      name: 'Serve the lifecycle command surface',
+      number: 9,
+      plan_id: null,
+      project_id: 1,
+      version: 2,
+    },
+    {
+      execution: 'ready',
+      id: 6,
+      name: 'Carry the work through review',
+      number: 2,
+      plan_id: null,
+      project_id: 1,
+      version: 3,
+    },
+  ]
+}
+
 async function mounted(
   tickets: TicketRecord[],
   laneList: LaneListResponse['lanes'] = lanes(),
   blockers: Record<number, TicketReadinessResponse['blocked_by']> = {},
+  specList: SpecListResponse['specs'] = specs(),
 ): Promise<{ wrapper: ReturnType<typeof mount>; query: ReturnType<typeof vi.fn> }> {
   document.documentElement.classList.remove('dark')
   localStorage.clear()
@@ -145,11 +171,8 @@ async function mounted(
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: laneList } satisfies LaneListResponse)
     }
-    // The board loads the Project's Specs beside its Tickets
-    // (KAN-T126); the numbers its cards render arrive with the tests
-    // that assert them.
     if (name === 'spec.list') {
-      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
+      return Promise.resolve({ specs: specList } satisfies SpecListResponse)
     }
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }
@@ -259,12 +282,56 @@ describe('board cards', () => {
   it('adds the implementation chips: spec, implementer, lane, and blockers', async () => {
     const { wrapper } = await mounted(boardTickets(), lanes(), { 8: [waiting(3), waiting(5)] })
 
-    expect(chip(wrapper, 'spec', 8).text()).toBe('SpecKAN-S4')
+    expect(chip(wrapper, 'spec', 8).text()).toBe('SpecKAN-S9')
     expect(chip(wrapper, 'implementer', 8).text()).toContain('glm-implementer')
     expect(chip(wrapper, 'blockers', 8).text()).toBe('Blockers2 blockers')
     // Reviewers populate as KAN-S9 lands; the region stays absent
     // until one is named.
     expect(chip(wrapper, 'reviewers', 8).exists()).toBe(false)
+  })
+
+  it('renders the Spec\'s minted number, never its row id', async () => {
+    // Spec 4 is this Project's ninth: the ids below it belong to
+    // other Projects, and a gap between numbers changes nothing.
+    const gapped = ticket({
+      id: 11,
+      number: 15,
+      kind: 'implementation',
+      state: 'active',
+      title: null,
+      slice: 'Carry the work through review',
+      spec_id: 6,
+      criteria: [],
+      subtype: null,
+      mode: null,
+      completion: [],
+      profile: 'glm-implementer',
+    })
+    const { wrapper } = await mounted([gapped])
+
+    expect(chip(wrapper, 'spec', 11).text()).toBe('SpecKAN-S2')
+  })
+
+  it('omits the Spec chip when the record does not resolve', async () => {
+    // The Ticket names a Spec the board did not load; the card
+    // invents no identity from the id (KAN-T126-AC2).
+    const orphan = ticket({
+      id: 12,
+      number: 16,
+      kind: 'implementation',
+      state: 'active',
+      title: null,
+      slice: 'Serve a Spec gone missing',
+      spec_id: 99,
+      criteria: [],
+      subtype: null,
+      mode: null,
+      completion: [],
+      profile: 'glm-implementer',
+    })
+    const { wrapper } = await mounted([orphan])
+
+    expect(chip(wrapper, 'spec', 12).exists()).toBe(false)
   })
 
   it('populates the Lane chip from the KAN-T32 Lane contract', async () => {

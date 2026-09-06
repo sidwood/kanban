@@ -56,7 +56,7 @@ import {
   statusSurfaceClass,
 } from './board-card'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
-import { chipSurfaceClass, chipsFor, laneFor } from './board-chips'
+import { chipSurfaceClass, chipsFor, laneFor, specFor } from './board-chips'
 import type { CardChip } from './board-chips'
 import { useLanesStore } from '../stores/lanes'
 import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
@@ -348,12 +348,16 @@ function cardChrome(ticket: TicketRecord, column: BoardColumnId): string {
 }
 
 // The chips one card wears, resolved from the vocabulary against the
-// Ticket and the facts the board holds. Reviewer and effective-profile
-// values arrive with KAN-S9's dispatch and run data; until then the
-// planned profile the assignment names is the profile a card shows.
+// Ticket and the facts the board holds. The Spec identity is the
+// number its record minted; a Spec the board did not load leaves the
+// chip off rather than showing the row id. Reviewer and
+// effective-profile values arrive with KAN-S9's dispatch and run data;
+// until then the planned profile the assignment names is the profile
+// a card shows.
 function cardChips(ticket: TicketRecord): readonly CardChip[] {
   return chipsFor(ticket, {
     projectCode: projectCode.value,
+    spec: specFor(board.specs, ticket.spec_id),
     lane: laneFor(lanes.lanes, ticket.id),
     blockers: board.blockersFor(ticket.id),
     reviewers: [],

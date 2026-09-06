@@ -9,6 +9,7 @@
 import type {
   ChipKind,
   LaneRecord,
+  SpecRecord,
   TicketPriority,
   TicketRecord,
   TicketReadinessBlocker,
@@ -33,11 +34,15 @@ export interface CardChip {
 }
 
 /** The facts beside the Ticket that feed its chips: the Project code
- * its numbers render with, the Lane holding it, what the core's
- * readiness projection says holds it back, and the execution facts
- * that populate as KAN-S9 lands. */
+ * its numbers render with, the Spec its spec_id resolved to, the Lane
+ * holding it, what the core's readiness projection says holds it
+ * back, and the execution facts that populate as KAN-S9 lands. */
 export interface ChipSources {
   projectCode: string
+  /** The Spec this Ticket's spec_id resolved to. Its minted number is
+   * the identity the chip wears; unresolvable, the chip stays off —
+   * the row id is never shown in its place. */
+  spec?: SpecRecord | null
   /** The Lane holding this Ticket, when one does. */
   lane?: LaneRecord | null
   /** The core's readiness projection for this Ticket. */
@@ -196,9 +201,9 @@ const CHIP_BUILDERS: Record<
   priority: (ticket) =>
     chip('priority', 'Priority', sentence(ticket.priority), PRIORITY_TONES[ticket.priority]),
   progress: (ticket) => progressChip(ticket),
-  spec: (ticket, sources) =>
-    ticket.spec_id
-      ? chip('spec', 'Spec', `${sources.projectCode}-S${ticket.spec_id}`)
+  spec: (_ticket, sources) =>
+    sources.spec
+      ? chip('spec', 'Spec', `${sources.projectCode}-S${sources.spec.number}`)
       : null,
   implementer: (ticket, sources) =>
     executionProfileChip('implementer', 'Implementer', ticket, sources),
@@ -252,6 +257,15 @@ export function laneFor(
   ticketId: number,
 ): LaneRecord | undefined {
   return lanes.find((lane) => lane.ticket_id === ticketId)
+}
+
+/** The Spec a Ticket names, when the board holds it: the record whose
+ * minted number is the identity the card renders. */
+export function specFor(
+  specs: readonly SpecRecord[],
+  specId: number | null | undefined,
+): SpecRecord | undefined {
+  return specs.find((spec) => spec.id === specId)
 }
 
 /**

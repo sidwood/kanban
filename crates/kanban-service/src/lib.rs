@@ -24,11 +24,10 @@ use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHan
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
-    SqliteCommentStore,
-    SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore, SqliteHerdrSettingsStore,
-    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
-    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
-    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore,
+    SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore,
+    SqlitePlanStore, SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore,
+    SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 

@@ -12,9 +12,11 @@ use kanban_desktop_lib::commands::{
     decode_invoke_args, forward_command_value, forward_query_value, install_link,
 };
 use kanban_dto::{
-    CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery, DeferralListQuery,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest,
-    EvidenceListQuery, ExportDriftQuery, ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery,
+    CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest, CapacitySettingsGetQuery,
+    CapacitySettingsUpdateRequest, CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery,
+    DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
+    EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery, ExportRenderRequest, HealthQuery,
+    HerdrDefaultsGetQuery,
     HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery, HerdrSettingsUpdateRequest,
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
     InitiativeRenameRequest, LaneCreateRequest, LaneListQuery, LaneTicketAssignRequest,

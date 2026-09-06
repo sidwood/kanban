@@ -12,14 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kanban_dto::{
-    ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
-    DiagnosticsExportResponse, EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse,
-    EvidenceRecord, ExportDriftQuery, ExportDriftResponse, ExportRenderRequest,
-    ExportRenderResponse, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
-    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
-    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
+    ApiError, CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
+    CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
+    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest, CommentCreateRequest,
+    CommentEditRequest, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
+    DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, DiagnosticsExportResponse,
+    EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
+    ExportDriftQuery, ExportDriftResponse, ExportRenderRequest, ExportRenderResponse, HealthQuery,
+    HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest,
+    HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -1148,6 +1150,68 @@ async fn herdr_defaults_update(
 }
 
 #[tauri::command]
+async fn capacity_defaults_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CapacityDefaultsGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CapacityDefaultsGetQuery>(request)?;
+    run_blocking(shell, "capacity defaults", move |shell| {
+        forward_query(shell, "capacity.defaults.get", "capacity defaults", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn capacity_defaults_update(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CapacityGlobalDefaults, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CapacityDefaultsUpdateRequest>(request)?;
+    run_blocking(shell, "capacity defaults update", |shell| {
+        forward_command(
+            shell,
+            "capacity.defaults.update",
+            "updated capacity defaults",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn capacity_settings_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CapacitySettingsGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CapacitySettingsGetQuery>(request)?;
+    run_blocking(shell, "capacity settings", move |shell| {
+        forward_query(shell, "capacity.settings.get", "capacity settings", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn capacity_settings_update(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CapacityProjectCaps, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CapacitySettingsUpdateRequest>(request)?;
+    run_blocking(shell, "capacity settings update", |shell| {
+        forward_command(
+            shell,
+            "capacity.settings.update",
+            "updated capacity caps",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn workspace_retire(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1365,6 +1429,10 @@ shell_handlers::shell_handler_catalogue! {
     herdr_settings_update,
     herdr_defaults_get,
     herdr_defaults_update,
+    capacity_defaults_get,
+    capacity_defaults_update,
+    capacity_settings_get,
+    capacity_settings_update,
     workspace_register,
     workspace_observe,
     workspace_retire,

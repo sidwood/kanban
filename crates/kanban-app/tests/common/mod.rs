@@ -156,12 +156,42 @@ pub fn mutation(version: u64, key: impl AsRef<str>) -> serde_json::Value {
 }
 
 pub fn constrain_harness(database_path: &std::path::Path, cap: u64) {
+    constrain_global(database_path, "max_active_per_harness", cap);
+}
+
+/// Set one global capacity default. `dimension` names the column.
+pub fn constrain_global(database_path: &std::path::Path, dimension: &str, cap: u64) {
     let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
     conn.execute(
-        "UPDATE capacity_global_defaults SET max_active_per_harness = ?1",
+        &format!("UPDATE capacity_global_defaults SET {dimension} = ?1"),
         rusqlite::params![cap as i64],
     )
-    .expect("the harness cap applies");
+    .expect("the global cap applies");
+}
+
+/// Impose one Project cap on the seeded Project. `dimension` names
+/// the column.
+pub fn cap_project(database_path: &std::path::Path, dimension: &str, cap: u64) {
+    let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
+    conn.execute(
+        &format!(
+            "INSERT INTO capacity_project_caps (project_id, {dimension}, version)
+             VALUES (1, ?1, 1)"
+        ),
+        rusqlite::params![cap as i64],
+    )
+    .expect("the Project cap applies");
+}
+
+/// Seat `ticket_id` in a fresh Lane holding no Workspace: the Ticket
+/// is assigned, which is the fact the capacity claim reads.
+pub fn assign_lane(database_path: &std::path::Path, ticket_id: u64) {
+    let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
+    conn.execute(
+        "INSERT INTO lanes (project_id, ticket_id, version) VALUES (1, ?1, 1)",
+        rusqlite::params![ticket_id as i64],
+    )
+    .expect("the fixture Lane lands");
 }
 
 pub fn insert_blocker(database_path: &std::path::Path, ticket_id: u64) {

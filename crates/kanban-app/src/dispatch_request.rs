@@ -71,14 +71,18 @@ impl CoordinatorWake for NoopCoordinatorWake {
 
 /// The capacity numbers and occupied Lane count one claim reads.
 /// Claimed Dispatch Requests themselves are the active runs; the
-/// store loads those inside the same transaction.
+/// store loads those inside the same transaction. The Lane count
+/// excludes the Lane holding the candidate's own Ticket: the
+/// evaluation adds the candidate once, so a Ticket already seated in
+/// a Lane is never counted twice.
 #[derive(Debug, Clone)]
 pub struct ClaimContext {
     /// The global capacity defaults.
     pub defaults: GlobalCapacity,
     /// The candidate Project's caps, when it imposes any.
     pub project_caps: Option<ProjectCapacity>,
-    /// The candidate Project's count of Lanes holding a Ticket.
+    /// The candidate Project's count of Lanes holding a Ticket other
+    /// than the candidate's own.
     pub active_lanes: u64,
 }
 
@@ -359,7 +363,7 @@ impl CommandHandler for ClaimDispatchRequest {
         let caps = self.0.capacity.project_caps(queued.project().value())?;
         let project_caps = project_caps_of(&caps);
         let lanes = self.0.lanes.list_for_project(queued.project())?;
-        let active_lanes = active_lane_count(&lanes);
+        let active_lanes = active_lane_count(&lanes, queued.ticket());
         let (updated, decision) = self.0.requests.try_claim(
             queued.id(),
             &ClaimContext {
@@ -501,10 +505,13 @@ fn project_caps_of(caps: &kanban_dto::CapacityProjectCaps) -> Option<ProjectCapa
     }
 }
 
-fn active_lane_count(lanes: &[Lane]) -> u64 {
+/// The Project's active Lanes other than the candidate's own: the
+/// evaluation adds the candidate once, so the Lane already holding
+/// its Ticket must not be counted here.
+fn active_lane_count(lanes: &[Lane], candidate: TicketId) -> u64 {
     lanes
         .iter()
-        .filter(|lane| lane.ticket_id().is_some())
+        .filter(|lane| lane.ticket_id().is_some_and(|held| held != candidate))
         .count() as u64
 }
 

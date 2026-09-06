@@ -222,15 +222,21 @@ pub struct ActiveRun<'a> {
 
 /// Everything one capacity evaluation reads: the candidate run
 /// asking for room (never itself part of `active`), every active run
-/// across Projects, the candidate Project's active Lane count, the
-/// global defaults, and the candidate Project's caps.
+/// across Projects, the candidate Project's count of active Lanes
+/// with the Lane holding the candidate's own Ticket excluded, the
+/// global defaults, and the candidate Project's caps. The candidate
+/// is added exactly once on every dimension, so a candidate already
+/// represented by an assigned Lane is never counted twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapacityInputs<'a> {
     /// The run asking for capacity.
     pub candidate: ActiveRun<'a>,
     /// Every active run across Projects, the candidate excluded.
     pub active: &'a [ActiveRun<'a>],
-    /// The candidate Project's count of active Lanes.
+    /// The candidate Project's count of active Lanes, the Lane
+    /// holding the candidate's own Ticket excluded: the evaluation
+    /// adds the candidate once, whether it executes in that Lane or
+    /// claims a new one.
     pub active_lanes: u64,
     /// The global capacity defaults.
     pub defaults: GlobalCapacity,
@@ -392,6 +398,8 @@ pub fn evaluate_capacity(inputs: &CapacityInputs<'_>) -> Result<(), CapacityRefu
             }
         }
         if let Some(cap) = caps.max_active_lanes() {
+            // The count excludes the candidate's own Lane, so the +1
+            // is the candidate itself, counted once.
             if inputs.active_lanes + 1 > cap {
                 return Err(CapacityRefusal::LaneExhausted {
                     active: inputs.active_lanes,
@@ -788,6 +796,54 @@ mod capacity_evaluation {
         let mut with_room = inputs(candidate, &[], Some(caps));
         with_room.active_lanes = 1;
         assert_eq!(evaluate_capacity(&with_room), Ok(()));
+    }
+
+    #[test]
+    fn an_assigned_candidate_at_the_exact_lane_cap_is_counted_once() {
+        // The Lane holding the candidate's own Ticket is excluded
+        // from the count, so a Project whose Lanes already meet the
+        // cap still admits the candidate its Lane represents.
+        let caps = ProjectCapacity::new(&defaults(), None, None, None, Some(3))
+            .expect("a lane cap is accepted");
+        let candidate = run(CORE, "claude-code", "opus", "operator");
+
+        let mut at_cap = inputs(candidate, &[], Some(caps));
+        at_cap.active_lanes = 2;
+        assert_eq!(
+            evaluate_capacity(&at_cap),
+            Ok(()),
+            "the candidate's own Lane is the third the cap of 3 allows"
+        );
+
+        let mut beyond = inputs(candidate, &[], Some(caps));
+        beyond.active_lanes = 3;
+        assert_eq!(
+            evaluate_capacity(&beyond),
+            Err(CapacityRefusal::LaneExhausted { active: 3, cap: 3 }),
+            "a candidate with no Lane of its own needs a fourth slot"
+        );
+    }
+
+    #[test]
+    fn a_candidate_exactly_fills_the_last_slot_on_every_dimension() {
+        let active = [
+            run(WAVE, "claude-code", "opus", "operator"),
+            run(WAVE, "claude-code", "sonnet", "operator"),
+            run(CORE, "shell-agent", "opus", "operator"),
+            run(WAVE, "codex-cli", "haiku", "operator"),
+        ];
+
+        // Three runs share the harness, two the model family, four
+        // the pool; the candidate lands exactly on every cap.
+        assert_eq!(
+            evaluate_capacity(&inputs(
+                run(CORE, "claude-code", "opus", "operator"),
+                &active,
+                None,
+            )),
+            Ok(()),
+            "the candidate is added once, exactly filling 4/3/5"
+        );
     }
 
     #[test]

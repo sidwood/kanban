@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One proposed dependency edge inside a Ticket graph: the blocking Ticket must land before the waiting Ticket may begin (DR-DE-02).",
+  "properties": {
+    "from_ticket": {
+      "description": "The Ticket that must land first.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "to_ticket": {
+      "description": "The Ticket that waits on `from_ticket`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from_ticket",
+    "to_ticket"
+  ],
+  "title": "TicketGraphEdgeProposal",
+  "type": "object"
+}

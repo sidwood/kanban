@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One dependency edge of a recorded Ticket graph, as every client sees it.",
+  "properties": {
+    "from_ticket": {
+      "description": "The Ticket that must land first (DR-DE-02).",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "to_ticket": {
+      "description": "The Ticket that waits on `from_ticket`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from_ticket",
+    "to_ticket"
+  ],
+  "title": "TicketGraphEdgeRecord",
+  "type": "object"
+}

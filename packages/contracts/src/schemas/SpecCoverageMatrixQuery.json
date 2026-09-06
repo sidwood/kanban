@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `spec.coverage.matrix` query: the story-to-criterion-to-Ticket coverage matrix of one Spec version (DR-PS-18). A null `version` reads the version the Spec's Tickets answer to — the approved one when operative, otherwise the working content.",
+  "properties": {
+    "spec_id": {
+      "description": "The Spec whose coverage matrix is rendered.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "default": null,
+      "description": "The content version the matrix reports; null reads the approved version when one is operative, else the current one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "spec_id"
+  ],
+  "title": "SpecCoverageMatrixQuery",
+  "type": "object"
+}

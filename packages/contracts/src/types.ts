@@ -566,6 +566,24 @@ export type SpecCoverageCheckResponse = {
   scope: string[];
   uncovered: string[];
 };
+export type SpecCoverageClaim = {
+  outcome: string;
+  ticket_id: number;
+  ticket_number: number;
+};
+export type SpecCoverageMatrixQuery = {
+  spec_id: number;
+  version?: number | null;
+};
+export type SpecCoverageMatrixResponse = {
+  spec_id: number;
+  stories: SpecCoverageMatrixRow[];
+  version: number;
+};
+export type SpecCoverageMatrixRow = {
+  claims: SpecCoverageClaim[];
+  story: string;
+};
 export type SpecCreateRequest = {
   content: SpecContent;
   mutation: MutationContext;
@@ -745,6 +763,41 @@ export type TicketExternalReference = {
 export type TicketGetQuery = {
   ticket_id: number;
 };
+export type TicketGraphApproveRequest = {
+  mutation: MutationContext;
+  proposal_id: number;
+};
+export type TicketGraphEdgeProposal = {
+  from_ticket: number;
+  to_ticket: number;
+};
+export type TicketGraphEdgeRecord = {
+  from_ticket: number;
+  to_ticket: number;
+};
+export type TicketGraphListQuery = {
+  spec_id: number;
+};
+export type TicketGraphListResponse = {
+  proposals: TicketGraphRecord[];
+};
+export type TicketGraphProposeRequest = {
+  edges: TicketGraphEdgeProposal[];
+  mutation: MutationContext;
+  spec_id: number;
+  spec_version: number;
+  tickets: number[];
+};
+export type TicketGraphRecord = {
+  edges: TicketGraphEdgeRecord[];
+  id: number;
+  spec_id: number;
+  spec_version: number;
+  state: TicketGraphState;
+  tickets: number[];
+  version: number;
+};
+export type TicketGraphState = 'proposed' | 'approved';
 export type TicketKind = 'implementation' | 'bug' | 'task';
 export type TicketListQuery = {
   project_id: number;
@@ -797,6 +850,7 @@ export type TicketRecord = {
   kind: TicketKind;
   mode?: TaskMode | null;
   number: number;
+  pinned_spec_version?: number | null;
   priority: TicketPriority;
   profile?: string | null;
   project_id: number;
@@ -819,6 +873,11 @@ export type TicketScheduleRequest = {
   ticket_id: number;
 };
 export type TicketSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type TicketSpecMoveRequest = {
+  mutation: MutationContext;
+  spec_id: number;
+  ticket_id: number;
+};
 export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
 export type TicketTransitionRequest = {
   mutation: MutationContext;

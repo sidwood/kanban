@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketGraphEdgeRecord": {
+      "additionalProperties": false,
+      "description": "One dependency edge of a recorded Ticket graph, as every client sees it.",
+      "properties": {
+        "from_ticket": {
+          "description": "The Ticket that must land first (DR-DE-02).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_ticket": {
+          "description": "The Ticket that waits on `from_ticket`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_ticket",
+        "to_ticket"
+      ],
+      "type": "object"
+    },
+    "TicketGraphRecord": {
+      "additionalProperties": false,
+      "description": "One Ticket graph proposal as every client sees it: the Spec version it is proposed against, the Tickets and edges it holds, and its lifecycle state.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges between the Tickets the graph holds, in proposal order.",
+          "items": {
+            "$ref": "#/definitions/TicketGraphEdgeRecord"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "description": "The Spec the graph proposes for.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_version": {
+          "description": "The Spec content version the graph is proposed against.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketGraphState"
+            }
+          ],
+          "description": "The proposal's lifecycle state."
+        },
+        "tickets": {
+          "description": "Every Ticket the graph holds, in proposal order.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "spec_id",
+        "spec_version",
+        "state",
+        "tickets",
+        "version"
+      ],
+      "type": "object"
+    },
+    "TicketGraphState": {
+      "description": "The closed Ticket graph proposal lifecycle on the wire (DR-PS-16, DR-PS-17).",
+      "oneOf": [
+        {
+          "description": "Recorded against an approved Spec version, awaiting the human approval gate.",
+          "enum": [
+            "proposed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Approved; every Ticket in the graph is pinned to the Spec content version the proposal named.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `ticket.graph.list` query.",
+  "properties": {
+    "proposals": {
+      "description": "Every proposal recorded against the Spec, oldest first.",
+      "items": {
+        "$ref": "#/definitions/TicketGraphRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "proposals"
+  ],
+  "title": "TicketGraphListResponse",
+  "type": "object"
+}

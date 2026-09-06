@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One claim inside the coverage matrix: a criterion of one Ticket claiming the story of the row it sits in.",
+  "properties": {
+    "outcome": {
+      "description": "The criterion's observable outcome.",
+      "type": "string"
+    },
+    "ticket_id": {
+      "description": "The Ticket whose criterion claims the story.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ticket_number": {
+      "description": "The number the Ticket's Project minted for it; rendered with the Project's code, for example `CORE-T17`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "outcome",
+    "ticket_id",
+    "ticket_number"
+  ],
+  "title": "SpecCoverageClaim",
+  "type": "object"
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Ticket graph proposal lifecycle on the wire (DR-PS-16, DR-PS-17).",
+  "oneOf": [
+    {
+      "description": "Recorded against an approved Spec version, awaiting the human approval gate.",
+      "enum": [
+        "proposed"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Approved; every Ticket in the graph is pinned to the Spec content version the proposal named.",
+      "enum": [
+        "approved"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TicketGraphState"
+}

@@ -1,7 +1,9 @@
 //! Story coverage payload definitions: the executable gate's
 //! evaluation surface (KAN-S3-US6). One Spec version's story scope is
 //! checked against proposed story-linked criteria, the rules the graph
-//! approval gate enforces (DR-PS-13 to DR-PS-15, T23).
+//! approval gate enforces (DR-PS-13 to DR-PS-15, T23), and rendered
+//! back as the story-to-criterion-to-Ticket coverage matrix the
+//! planning UI exposes (DR-PS-18).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -102,13 +104,71 @@ pub struct SpecCoverageCheckResponse {
     pub executable: bool,
 }
 
+/// Request payload for the `spec.coverage.matrix` query: the
+/// story-to-criterion-to-Ticket coverage matrix of one Spec version
+/// (DR-PS-18). A null `version` reads the version the Spec's Tickets
+/// answer to — the approved one when operative, otherwise the
+/// working content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpecCoverageMatrixQuery {
+    /// The Spec whose coverage matrix is rendered.
+    pub spec_id: u64,
+    /// The content version the matrix reports; null reads the
+    /// approved version when one is operative, else the current one.
+    #[serde(default)]
+    pub version: Option<u64>,
+}
+
+/// One claim inside the coverage matrix: a criterion of one Ticket
+/// claiming the story of the row it sits in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpecCoverageClaim {
+    /// The Ticket whose criterion claims the story.
+    pub ticket_id: u64,
+    /// The number the Ticket's Project minted for it; rendered with
+    /// the Project's code, for example `CORE-T17`.
+    pub ticket_number: u64,
+    /// The criterion's observable outcome.
+    pub outcome: String,
+}
+
+/// One row of the coverage matrix: a User Story of the reported
+/// version and every claim a Ticket's criterion makes on it, in
+/// claim order. An empty claim list is the row's coverage gap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpecCoverageMatrixRow {
+    /// The story, as its full identity `CORE-S3-US6`.
+    pub story: String,
+    /// The claims Tickets' criteria make on this story, in claim
+    /// order; empty while the story stays uncovered (DR-PS-14).
+    pub claims: Vec<SpecCoverageClaim>,
+}
+
+/// Response payload for the `spec.coverage.matrix` query: the
+/// coverage matrix of one Spec version, one row per User Story in
+/// scope order, completing the planning diagnostics (DR-PS-18).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpecCoverageMatrixResponse {
+    /// The Spec the matrix reports.
+    pub spec_id: u64,
+    /// The content version the matrix reports.
+    pub version: u64,
+    /// One row per User Story the version claims, in scope order.
+    pub stories: Vec<SpecCoverageMatrixRow>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
         CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
-        SpecCoverageCheckResponse,
+        SpecCoverageCheckResponse, SpecCoverageClaim, SpecCoverageMatrixQuery,
+        SpecCoverageMatrixResponse, SpecCoverageMatrixRow,
     };
     use crate::schema_definitions;
 
@@ -213,6 +273,83 @@ mod tests {
     }
 
     #[test]
+    fn the_matrix_round_trips_row_by_row() {
+        let response = SpecCoverageMatrixResponse {
+            spec_id: 3,
+            version: 2,
+            stories: vec![
+                SpecCoverageMatrixRow {
+                    story: "CORE-S3-US6".to_owned(),
+                    claims: vec![
+                        SpecCoverageClaim {
+                            ticket_id: 17,
+                            ticket_number: 17,
+                            outcome: "Every criterion links to one or more User Stories."
+                                .to_owned(),
+                        },
+                        SpecCoverageClaim {
+                            ticket_id: 19,
+                            ticket_number: 19,
+                            outcome: "Claims accumulate across Tickets.".to_owned(),
+                        },
+                    ],
+                },
+                SpecCoverageMatrixRow {
+                    story: "CORE-S3-US7".to_owned(),
+                    claims: Vec::new(),
+                },
+            ],
+        };
+
+        let encoded = serde_json::to_value(&response).expect("the matrix serialises");
+        assert_eq!(
+            encoded,
+            json!({
+                "spec_id": 3,
+                "version": 2,
+                "stories": [
+                    {
+                        "story": "CORE-S3-US6",
+                        "claims": [
+                            {
+                                "ticket_id": 17,
+                                "ticket_number": 17,
+                                "outcome": "Every criterion links to one or more User Stories.",
+                            },
+                            {
+                                "ticket_id": 19,
+                                "ticket_number": 19,
+                                "outcome": "Claims accumulate across Tickets.",
+                            },
+                        ],
+                    },
+                    { "story": "CORE-S3-US7", "claims": [] },
+                ],
+            })
+        );
+        let decoded: SpecCoverageMatrixResponse =
+            serde_json::from_value(encoded).expect("the matrix deserialises");
+        assert_eq!(decoded, response);
+
+        let query = json!({ "spec_id": 3, "version": null });
+        let decoded: SpecCoverageMatrixQuery =
+            serde_json::from_value(query).expect("the query decodes");
+        assert_eq!(
+            decoded,
+            SpecCoverageMatrixQuery {
+                spec_id: 3,
+                version: None,
+            }
+        );
+        let mut refused = json!({ "spec_id": 3 });
+        refused["surprise"] = json!(true);
+        assert!(
+            serde_json::from_value::<SpecCoverageMatrixQuery>(refused).is_err(),
+            "unknown fields are rejected"
+        );
+    }
+
+    #[test]
     fn every_coverage_schema_rejects_unknown_fields() {
         for name in [
             "CoverageCriterionProposal",
@@ -220,6 +357,10 @@ mod tests {
             "RefusedCriterion",
             "SpecCoverageCheckQuery",
             "SpecCoverageCheckResponse",
+            "SpecCoverageClaim",
+            "SpecCoverageMatrixQuery",
+            "SpecCoverageMatrixResponse",
+            "SpecCoverageMatrixRow",
         ] {
             let (_, schema) = schema_definitions()
                 .into_iter()

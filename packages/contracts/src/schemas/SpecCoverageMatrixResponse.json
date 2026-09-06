@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "SpecCoverageClaim": {
+      "additionalProperties": false,
+      "description": "One claim inside the coverage matrix: a criterion of one Ticket claiming the story of the row it sits in.",
+      "properties": {
+        "outcome": {
+          "description": "The criterion's observable outcome.",
+          "type": "string"
+        },
+        "ticket_id": {
+          "description": "The Ticket whose criterion claims the story.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_number": {
+          "description": "The number the Ticket's Project minted for it; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outcome",
+        "ticket_id",
+        "ticket_number"
+      ],
+      "type": "object"
+    },
+    "SpecCoverageMatrixRow": {
+      "additionalProperties": false,
+      "description": "One row of the coverage matrix: a User Story of the reported version and every claim a Ticket's criterion makes on it, in claim order. An empty claim list is the row's coverage gap.",
+      "properties": {
+        "claims": {
+          "description": "The claims Tickets' criteria make on this story, in claim order; empty while the story stays uncovered (DR-PS-14).",
+          "items": {
+            "$ref": "#/definitions/SpecCoverageClaim"
+          },
+          "type": "array"
+        },
+        "story": {
+          "description": "The story, as its full identity `CORE-S3-US6`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claims",
+        "story"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `spec.coverage.matrix` query: the coverage matrix of one Spec version, one row per User Story in scope order, completing the planning diagnostics (DR-PS-18).",
+  "properties": {
+    "spec_id": {
+      "description": "The Spec the matrix reports.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "stories": {
+      "description": "One row per User Story the version claims, in scope order.",
+      "items": {
+        "$ref": "#/definitions/SpecCoverageMatrixRow"
+      },
+      "type": "array"
+    },
+    "version": {
+      "description": "The content version the matrix reports.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "spec_id",
+    "stories",
+    "version"
+  ],
+  "title": "SpecCoverageMatrixResponse",
+  "type": "object"
+}

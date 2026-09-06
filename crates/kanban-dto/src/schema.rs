@@ -15,7 +15,8 @@ use crate::comment::{
 };
 use crate::coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
-    SpecCoverageCheckResponse,
+    SpecCoverageCheckResponse, SpecCoverageClaim, SpecCoverageMatrixQuery,
+    SpecCoverageMatrixResponse, SpecCoverageMatrixRow,
 };
 use crate::deferral::{
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
@@ -79,11 +80,13 @@ use crate::ticket::{
     TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
     TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
     TicketEditRequest, TicketEmergencyOverrideRequest, TicketExternalReference, TicketGetQuery,
-    TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot, TicketParkRequest,
-    TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker, TicketReadinessQuery,
-    TicketReadinessResponse, TicketRecord, TicketReviewDecision, TicketReviewRequest,
-    TicketScheduleRequest, TicketSeverity, TicketState, TicketTransitionRequest,
-    TicketUnparkRequest, TicketVerificationStep,
+    TicketGraphApproveRequest, TicketGraphEdgeProposal, TicketGraphEdgeRecord,
+    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
+    TicketGraphState, TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
+    TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
+    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketReviewDecision,
+    TicketReviewRequest, TicketScheduleRequest, TicketSeverity, TicketSpecMoveRequest, TicketState,
+    TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -287,6 +290,27 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TaskSubtype", schema_for!(TaskSubtype)),
         ("TicketAssignRequest", schema_for!(TicketAssignRequest)),
         ("TicketCancelRequest", schema_for!(TicketCancelRequest)),
+        (
+            "TicketGraphApproveRequest",
+            schema_for!(TicketGraphApproveRequest),
+        ),
+        (
+            "TicketGraphEdgeProposal",
+            schema_for!(TicketGraphEdgeProposal),
+        ),
+        ("TicketGraphEdgeRecord", schema_for!(TicketGraphEdgeRecord)),
+        ("TicketGraphListQuery", schema_for!(TicketGraphListQuery)),
+        (
+            "TicketGraphListResponse",
+            schema_for!(TicketGraphListResponse),
+        ),
+        (
+            "TicketGraphProposeRequest",
+            schema_for!(TicketGraphProposeRequest),
+        ),
+        ("TicketGraphRecord", schema_for!(TicketGraphRecord)),
+        ("TicketGraphState", schema_for!(TicketGraphState)),
+        ("TicketSpecMoveRequest", schema_for!(TicketSpecMoveRequest)),
         ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
         ("TicketCriterion", schema_for!(TicketCriterion)),
         (
@@ -392,6 +416,16 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "SpecCoverageCheckResponse",
             schema_for!(SpecCoverageCheckResponse),
         ),
+        ("SpecCoverageClaim", schema_for!(SpecCoverageClaim)),
+        (
+            "SpecCoverageMatrixQuery",
+            schema_for!(SpecCoverageMatrixQuery),
+        ),
+        (
+            "SpecCoverageMatrixResponse",
+            schema_for!(SpecCoverageMatrixResponse),
+        ),
+        ("SpecCoverageMatrixRow", schema_for!(SpecCoverageMatrixRow)),
         ("RulingListQuery", schema_for!(RulingListQuery)),
         ("RulingListResponse", schema_for!(RulingListResponse)),
         ("RulingRecord", schema_for!(RulingRecord)),

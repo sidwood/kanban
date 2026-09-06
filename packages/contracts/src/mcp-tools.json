@@ -5417,6 +5417,15 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "priority": {
           "allOf": [
             {
@@ -6217,6 +6226,15 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "priority": {
           "allOf": [
             {
@@ -6941,6 +6959,15 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "priority": {
           "allOf": [
             {
@@ -7438,6 +7465,15 @@
               "format": "uint64",
               "minimum": 0.0,
               "type": "integer"
+            },
+            "pinned_spec_version": {
+              "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "priority": {
               "allOf": [
@@ -8223,6 +8259,15 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "priority": {
           "allOf": [
@@ -10351,6 +10396,15 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "priority": {
           "allOf": [

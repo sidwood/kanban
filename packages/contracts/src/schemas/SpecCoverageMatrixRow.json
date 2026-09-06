@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "SpecCoverageClaim": {
+      "additionalProperties": false,
+      "description": "One claim inside the coverage matrix: a criterion of one Ticket claiming the story of the row it sits in.",
+      "properties": {
+        "outcome": {
+          "description": "The criterion's observable outcome.",
+          "type": "string"
+        },
+        "ticket_id": {
+          "description": "The Ticket whose criterion claims the story.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_number": {
+          "description": "The number the Ticket's Project minted for it; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outcome",
+        "ticket_id",
+        "ticket_number"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One row of the coverage matrix: a User Story of the reported version and every claim a Ticket's criterion makes on it, in claim order. An empty claim list is the row's coverage gap.",
+  "properties": {
+    "claims": {
+      "description": "The claims Tickets' criteria make on this story, in claim order; empty while the story stays uncovered (DR-PS-14).",
+      "items": {
+        "$ref": "#/definitions/SpecCoverageClaim"
+      },
+      "type": "array"
+    },
+    "story": {
+      "description": "The story, as its full identity `CORE-S3-US6`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claims",
+    "story"
+  ],
+  "title": "SpecCoverageMatrixRow",
+  "type": "object"
+}

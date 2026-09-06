@@ -745,6 +745,7 @@ pub(crate) fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
         scheduled_for: ticket.scheduled_for().map(str::to_owned),
         due: ticket.due().map(str::to_owned),
         profile: ticket.profile().map(|name| name.as_str().to_owned()),
+        pinned_spec_version: ticket.pinned_version(),
         version: ticket.version(),
     }
 }

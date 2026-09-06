@@ -625,6 +625,146 @@ pub struct TicketEmergencyOverrideRequest {
     pub why: String,
 }
 
+/// Request payload for the `ticket.spec.move` command: a draft,
+/// unpinned Ticket moves its Spec attachment to another Spec of its
+/// own Project (DR-DE-05). A pinned or executed Ticket stays where it
+/// stands (DR-DE-06).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketSpecMoveRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket whose Spec attachment moves.
+    pub ticket_id: u64,
+    /// The Spec of the same Project the Ticket moves to.
+    pub spec_id: u64,
+}
+
+/// The closed Ticket graph proposal lifecycle on the wire (DR-PS-16,
+/// DR-PS-17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketGraphState {
+    /// Recorded against an approved Spec version, awaiting the human
+    /// approval gate.
+    Proposed,
+    /// Approved; every Ticket in the graph is pinned to the Spec
+    /// content version the proposal named.
+    Approved,
+}
+
+impl TicketGraphState {
+    /// Every state, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Proposed, Self::Approved];
+
+    /// The wire name, matching this state's serialised form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Approved => "approved",
+        }
+    }
+
+    /// The state `wire` names, or `None` outside the vocabulary.
+    pub fn parse(wire: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|state| state.as_str() == wire)
+    }
+}
+
+/// One proposed dependency edge inside a Ticket graph: the blocking
+/// Ticket must land before the waiting Ticket may begin (DR-DE-02).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphEdgeProposal {
+    /// The Ticket that must land first.
+    pub from_ticket: u64,
+    /// The Ticket that waits on `from_ticket`.
+    pub to_ticket: u64,
+}
+
+/// Request payload for the `ticket.graph.propose` command: one
+/// complete Ticket graph proposed against an approved Spec version
+/// (DR-PS-16). Every named Ticket must be attached to the Spec; the
+/// completeness of the set is the approval gate's to judge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphProposeRequest {
+    pub mutation: super::MutationContext,
+    /// The Spec the graph proposes for.
+    pub spec_id: u64,
+    /// The approved Spec content version the graph is proposed
+    /// against.
+    pub spec_version: u64,
+    /// Every Ticket the graph holds.
+    pub tickets: Vec<u64>,
+    /// The dependency edges between the Tickets the graph holds.
+    pub edges: Vec<TicketGraphEdgeProposal>,
+}
+
+/// Request payload for the `ticket.graph.approve` command: the human
+/// gate's decision on one proposed graph (DR-PS-17). Approval pins
+/// every Ticket in the graph to the Spec version it named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphApproveRequest {
+    pub mutation: super::MutationContext,
+    /// The proposal being approved.
+    pub proposal_id: u64,
+}
+
+/// One dependency edge of a recorded Ticket graph, as every client
+/// sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphEdgeRecord {
+    /// The Ticket that must land first (DR-DE-02).
+    pub from_ticket: u64,
+    /// The Ticket that waits on `from_ticket`.
+    pub to_ticket: u64,
+}
+
+/// One Ticket graph proposal as every client sees it: the Spec
+/// version it is proposed against, the Tickets and edges it holds,
+/// and its lifecycle state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphRecord {
+    /// The immutable, storage-assigned identity.
+    pub id: u64,
+    /// The Spec the graph proposes for.
+    pub spec_id: u64,
+    /// The Spec content version the graph is proposed against.
+    pub spec_version: u64,
+    /// The proposal's lifecycle state.
+    pub state: TicketGraphState,
+    /// Every Ticket the graph holds, in proposal order.
+    pub tickets: Vec<u64>,
+    /// The dependency edges between the Tickets the graph holds, in
+    /// proposal order.
+    pub edges: Vec<TicketGraphEdgeRecord>,
+    /// The aggregate version, for optimistic mutation checks.
+    pub version: u64,
+}
+
+/// Request payload for the `ticket.graph.list` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphListQuery {
+    /// The Spec whose proposed graphs are listed, every state
+    /// included.
+    pub spec_id: u64,
+}
+
+/// Response payload for the `ticket.graph.list` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketGraphListResponse {
+    /// Every proposal recorded against the Spec, oldest first.
+    pub proposals: Vec<TicketGraphRecord>,
+}
+
 /// The Ticket record as every client sees it: the Project it belongs
 /// to, the number that Project minted, the kind whose schema it
 /// carries, the kind-specific fields — a title for Bugs and Tasks, a
@@ -675,6 +815,10 @@ pub struct TicketRecord {
     /// catalogue name. The reference keeps its name through every
     /// later catalogue change (DR-EP-05).
     pub profile: Option<String>,
+    /// The Spec content version an approved Ticket graph pinned this
+    /// Ticket to, if one did (DR-DE-06); a pinned Ticket stays with
+    /// its Spec and version.
+    pub pinned_spec_version: Option<u64>,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
 }
@@ -873,11 +1017,13 @@ mod tests {
         TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
         TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
         TicketEditRequest, TicketEmergencyOverrideRequest, TicketExternalReference, TicketGetQuery,
-        TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
-        TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
-        TicketReadinessResponse, TicketRecord, TicketReviewDecision, TicketReviewRequest,
-        TicketScheduleRequest, TicketSeverity, TicketState, TicketTransitionRequest,
-        TicketUnparkRequest, TicketVerificationStep,
+        TicketGraphApproveRequest, TicketGraphEdgeProposal, TicketGraphEdgeRecord,
+        TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest,
+        TicketGraphRecord, TicketGraphState, TicketKind, TicketListQuery, TicketListResponse,
+        TicketOccurrenceSnapshot, TicketParkRequest, TicketPrioritiseRequest, TicketPriority,
+        TicketReadinessBlocker, TicketReadinessResponse, TicketRecord, TicketReviewDecision,
+        TicketReviewRequest, TicketScheduleRequest, TicketSeverity, TicketSpecMoveRequest,
+        TicketState, TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -948,6 +1094,7 @@ mod tests {
             scheduled_for: None,
             due: None,
             profile: None,
+            pinned_spec_version: None,
             version: 1,
         }
     }
@@ -1019,6 +1166,7 @@ mod tests {
                 "scheduled_for": "2026-10-01T00:00:00.000Z",
                 "due": "2026-09-30T17:00:00.000Z",
                 "profile": null,
+                "pinned_spec_version": null,
                 "version": 1,
             })
         );
@@ -1121,6 +1269,7 @@ mod tests {
                 "scheduled_for": null,
                 "due": null,
                 "profile": null,
+                "pinned_spec_version": null,
                 "version": 1,
             })
         );
@@ -1244,6 +1393,29 @@ mod tests {
             "ticket_id": 6,
             "profile": "standard",
         }));
+        round_trips::<TicketSpecMoveRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "spec_id": 4,
+        }));
+        round_trips::<TicketGraphProposeRequest>(json!({
+            "mutation": context(),
+            "spec_id": 4,
+            "spec_version": 2,
+            "tickets": [17, 19],
+            "edges": [TicketGraphEdgeProposal {
+                from_ticket: 17,
+                to_ticket: 19,
+            }],
+        }));
+        round_trips::<TicketGraphApproveRequest>(json!({
+            "mutation": context(),
+            "proposal_id": 3,
+        }));
+
+        let graphs: TicketGraphListQuery =
+            serde_json::from_value(json!({ "spec_id": 4 })).expect("the graph query decodes");
+        assert_eq!(graphs, TicketGraphListQuery { spec_id: 4 });
 
         // The lifecycle command surface: a drag names its target, the
         // named commands name their Ticket, a review names its
@@ -1338,6 +1510,65 @@ mod tests {
         };
         let encoded = serde_json::to_value(&response).expect("the response serialises");
         assert_eq!(encoded["tickets"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn the_graph_record_round_trips_with_its_tickets_and_edges() {
+        let proposal = TicketGraphRecord {
+            id: 3,
+            spec_id: 4,
+            spec_version: 2,
+            state: TicketGraphState::Proposed,
+            tickets: vec![17, 19],
+            edges: vec![TicketGraphEdgeRecord {
+                from_ticket: 17,
+                to_ticket: 19,
+            }],
+            version: 1,
+        };
+
+        let encoded = serde_json::to_value(&proposal).expect("the record serialises");
+        assert_eq!(
+            encoded,
+            json!({
+                "id": 3,
+                "spec_id": 4,
+                "spec_version": 2,
+                "state": "proposed",
+                "tickets": [17, 19],
+                "edges": [{ "from_ticket": 17, "to_ticket": 19 }],
+                "version": 1,
+            })
+        );
+        let decoded: TicketGraphRecord =
+            serde_json::from_value(encoded).expect("the record deserialises");
+        assert_eq!(decoded, proposal);
+
+        for state in TicketGraphState::ALL {
+            assert_eq!(TicketGraphState::parse(state.as_str()), Some(*state));
+            assert_eq!(
+                serde_json::to_value(state).expect("the state encodes"),
+                json!(state.as_str())
+            );
+        }
+        assert_eq!(TicketGraphState::parse("ghost"), None);
+
+        let approved = TicketGraphRecord {
+            state: TicketGraphState::Approved,
+            ..proposal
+        };
+        let encoded = serde_json::to_value(&approved).expect("the record serialises");
+        assert_eq!(encoded["state"], json!("approved"));
+
+        let response = TicketGraphListResponse {
+            proposals: vec![approved],
+        };
+        let encoded = serde_json::to_value(&response).expect("the response serialises");
+        assert_eq!(
+            encoded["proposals"].as_array().map(Vec::len),
+            Some(1),
+            "the proposals list round trips"
+        );
     }
 
     #[test]
@@ -1495,6 +1726,15 @@ mod tests {
             "TaskSubtype",
             "TicketAssignRequest",
             "TicketCancelRequest",
+            "TicketGraphApproveRequest",
+            "TicketGraphEdgeProposal",
+            "TicketGraphEdgeRecord",
+            "TicketGraphListQuery",
+            "TicketGraphListResponse",
+            "TicketGraphProposeRequest",
+            "TicketGraphRecord",
+            "TicketGraphState",
+            "TicketSpecMoveRequest",
             "TicketCreateRequest",
             "TicketCriterion",
             "TicketDependenciesQuery",

@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TicketGraphEdgeProposal": {
+      "additionalProperties": false,
+      "description": "One proposed dependency edge inside a Ticket graph: the blocking Ticket must land before the waiting Ticket may begin (DR-DE-02).",
+      "properties": {
+        "from_ticket": {
+          "description": "The Ticket that must land first.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "to_ticket": {
+          "description": "The Ticket that waits on `from_ticket`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_ticket",
+        "to_ticket"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `ticket.graph.propose` command: one complete Ticket graph proposed against an approved Spec version (DR-PS-16). Every named Ticket must be attached to the Spec; the completeness of the set is the approval gate's to judge.",
+  "properties": {
+    "edges": {
+      "description": "The dependency edges between the Tickets the graph holds.",
+      "items": {
+        "$ref": "#/definitions/TicketGraphEdgeProposal"
+      },
+      "type": "array"
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "spec_id": {
+      "description": "The Spec the graph proposes for.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "spec_version": {
+      "description": "The approved Spec content version the graph is proposed against.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "tickets": {
+      "description": "Every Ticket the graph holds.",
+      "items": {
+        "format": "uint64",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "edges",
+    "mutation",
+    "spec_id",
+    "spec_version",
+    "tickets"
+  ],
+  "title": "TicketGraphProposeRequest",
+  "type": "object"
+}

@@ -778,6 +778,13 @@ define_exposed_catalogue! {
         mcp: "export_drift",
         description: "Report drift between the exported Markdown on disk and the current planning state.",
     },
+    "board.global" => {
+        kind: Query,
+        request: "BoardGlobalQuery",
+        response: "BoardGlobalResponse",
+        mcp: "board_global",
+        description: "Project the global board: filter every Project's work by Initiative, Project, Plan, Spec, kind, state, priority, Lane, execution profile, and attention state. Cards return grouped and deterministically ordered, beside the values each filter axis offers.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

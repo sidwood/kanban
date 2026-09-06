@@ -187,7 +187,7 @@ fn assemble_core(
     core.register_projects(
         project_store.clone(),
         Arc::new(LocalRepositories),
-        initiative_store,
+        initiative_store.clone(),
         herdr_settings_store.clone(),
         herdr.clone(),
     )?;
@@ -209,6 +209,17 @@ fn assemble_core(
         projects.clone(),
         workspace_store.clone(),
         ticket_store.clone(),
+    )?;
+    // The global board reads every planning store and mutates none:
+    // it registers after the stores it projects exist.
+    core.register_board(
+        initiative_store.clone(),
+        projects.clone(),
+        plan_store.clone(),
+        spec_store.clone(),
+        ticket_store.clone(),
+        lane_store.clone(),
+        profile_store.clone(),
     )?;
     core.register_clones(
         fleet_tool,

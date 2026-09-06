@@ -1,6 +1,7 @@
 //! Named application commands and queries shared by the UI and every
 //! other client, with the ports they call through.
 
+pub mod board_query;
 pub mod capacity;
 pub mod catalog;
 pub mod clone;

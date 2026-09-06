@@ -22,8 +22,9 @@ pub struct CloneCreateRequest {
 }
 
 /// Request payload for the `clone.remove` command. The Workspace
-/// record is preserved, never deleted (DR-LW-11); only the clone on
-/// disk goes, and only through the guarded fleet skill.
+/// record is preserved, never deleted or retired (DR-LW-11); only the
+/// clone on disk goes, and only through the guarded fleet skill. The
+/// removal itself marks the Workspace missing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloneRemoveRequest {
@@ -43,8 +44,9 @@ pub struct CloneCreatedRecord {
 }
 
 /// The record a guarded remove answers with. The Workspace record
-/// itself is preserved; the next observation reports the clone
-/// missing.
+/// itself is preserved and the removal marks it missing, so the
+/// branch named here is the one the Workspace last observed — the
+/// checkout that answered is already gone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloneRemovedRecord {

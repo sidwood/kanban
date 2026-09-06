@@ -446,6 +446,61 @@ mod workspace_store {
     }
 
     #[test]
+    fn a_missing_observation_round_trips_with_cleared_git_facts() {
+        let (_dir, database, store) = store();
+        let mut workspace = store
+            .create(&registration("/workspaces/core.clone"), &|id| {
+                transition(id, "registered")
+            })
+            .expect("the workspace registers");
+        observe_and_save(
+            &store,
+            &mut workspace,
+            Some(WorkspaceCheckout::Branch("fleet/kan-t31".to_owned())),
+        );
+
+        // The observation a successful clone.remove records: the path
+        // is gone, so the Workspace model clears every stale git fact
+        // and health recomputes to missing (KAN-T133).
+        workspace.observe(false, None, None, None, None, None);
+        store
+            .save(
+                &workspace,
+                transition(workspace.id(), "branch_clone_removed"),
+            )
+            .expect("the removal observation persists");
+
+        let restored = store
+            .find(workspace.id())
+            .expect("the workspace loads")
+            .expect("the workspace exists");
+        assert_eq!(restored.health(), WorkspaceHealth::Missing);
+        assert_eq!(restored.observation().branch(), None);
+        assert_eq!(restored.observation().head(), None);
+        assert_eq!(restored.observation().working_tree_clean(), None);
+        assert_eq!(restored.observation().unique_unlanded_commits(), None);
+        assert_eq!(restored.version(), 3, "the removal bumped the version");
+        let raw: (String, Option<String>, Option<i64>, i64) = database
+            .connection()
+            .query_row(
+                "SELECT health, branch, working_tree_clean, version
+                 FROM workspaces WHERE id = ?1",
+                [workspace.id().value() as i64],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("the SQLite row is readable");
+        assert_eq!(
+            raw,
+            ("missing".to_owned(), None, None, 3_i64,),
+            "no stale branch or verdict survives the removal in storage"
+        );
+        assert!(
+            !restored.reuse_evaluation().reusable(),
+            "a gone checkout restores as no reuse capacity"
+        );
+    }
+
+    #[test]
     fn a_failed_observation_round_trips_as_unobserved() {
         let (_dir, _database, store) = store();
         let mut workspace = store

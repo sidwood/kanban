@@ -6,8 +6,11 @@
 //! are refused before anything is invoked, with the conflict named
 //! (DR-LW-10). Every invocation and every refusal appends a timeline
 //! row, so the audit trail outlives both outcomes. Removal never
-//! deletes the Workspace record (DR-LW-11); the next observation
-//! reports the clone missing.
+//! deletes the Workspace record (DR-LW-11); a successful removal
+//! records the checkout gone itself — health missing, stale git
+//! facts cleared, optimistic version bumped — inside the command's
+//! span, so no guard mistakes a deleted directory for a live
+//! checkout before the next observation runs (KAN-T133).
 
 use std::sync::Arc;
 
@@ -313,7 +316,10 @@ impl CommandHandler for CreateClone {
 
 /// Serves `clone.remove`: validate every precondition, then — and only
 /// then — let the fleet skill remove the clone. The Workspace record
-/// is preserved untouched (DR-LW-11).
+/// is preserved, never deleted or retired (DR-LW-11). The removal
+/// itself is the observation that the checkout is gone: health moves
+/// to missing, the stale git facts clear, and the optimistic version
+/// bumps, all in this command's span (KAN-T133).
 struct RemoveClone(CloneContext);
 
 impl CommandHandler for RemoveClone {
@@ -333,7 +339,7 @@ impl CommandHandler for RemoveClone {
         events: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CloneRemoveRequest = parse_payload(&command.payload)?;
-        let workspace = load_workspace(&self.0.workspaces, request.workspace_id)?;
+        let mut workspace = load_workspace(&self.0.workspaces, request.workspace_id)?;
         let project_id = workspace.registration().project_id();
         let project = load_project(&self.0.projects, project_id)?;
         if project.is_archived() {
@@ -372,22 +378,38 @@ impl CommandHandler for RemoveClone {
             );
             return Err(error);
         }
+        // The removal is authoritative: the checkout is gone. Record
+        // that the way the Workspace model requires — health missing,
+        // stale git facts cleared — and persist it through the
+        // Workspace store, whose span nests inside this command's, so
+        // the update, the invocation row, and the command's outcome
+        // land together or not at all (KAN-T133).
+        let branch = workspace.observation().branch().map(str::to_owned);
+        let health_change = workspace.observe(false, None, None, None, None, None);
         let record = CloneRemovedRecord {
             project_id: project_id.value(),
             workspace_id: workspace.id().value(),
-            branch: workspace.observation().branch().map(str::to_owned),
+            branch,
             path,
         };
-        self.0.timeline.append(clone_transition(
-            project_id,
-            workspace_entity(workspace.id()),
-            "branch_clone_removed",
-            json!({
-                "workspace_id": record.workspace_id,
-                "path": record.path,
-                "branch": record.branch,
-            }),
-        ))?;
+        let mut facts = json!({
+            "workspace_id": record.workspace_id,
+            "path": record.path,
+            "branch": record.branch,
+        });
+        if let Some((from, to)) = health_change {
+            facts["from"] = Value::from(from.as_str());
+            facts["to"] = Value::from(to.as_str());
+        }
+        self.0.workspaces.save(
+            &workspace,
+            clone_transition(
+                project_id,
+                workspace_entity(workspace.id()),
+                "branch_clone_removed",
+                facts,
+            ),
+        )?;
         announce(events, LiveEventName::CloneRemoved, &record);
         encode(&record)
     }
@@ -778,18 +800,87 @@ mod guarded_clone {
             .command("clone.remove", &remove(1, "key-2", 2))
             .expect("the guarded remove applies");
 
-        let rows = harness.timeline.rows();
-        assert_eq!(rows.len(), 1, "one invocation row, nothing else");
-        assert_eq!(rows[0].detail()["action"], json!("branch_clone_removed"));
-        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
+        // The invocation row lands through the Workspace store, inside
+        // the command's span, so it commits with the mutation it
+        // records rather than beside it.
+        let (_, rows) = harness.workspaces.snapshot();
+        let removal: Vec<_> = rows
+            .iter()
+            .filter(|row| row.detail().get("action") == Some(&json!("branch_clone_removed")))
+            .collect();
+        assert_eq!(removal.len(), 1, "one invocation row, nothing else");
+        assert_eq!(removal[0].detail()["workspace_id"], json!(1));
         assert_eq!(
-            rows[0].detail()["path"],
+            removal[0].detail()["path"],
             json!("/workspaces/kanban.fleet-t31")
         );
         assert_eq!(
-            rows[0].entity().map(|entity| entity.kind),
+            removal[0].entity().map(|entity| entity.kind),
             Some(kanban_dto::TimelineEntityKind::Workspace)
         );
+    }
+
+    #[test]
+    fn removal_marks_the_workspace_missing_in_the_same_span() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+
+        let (stored, _) = harness.workspaces.snapshot();
+        assert_eq!(
+            stored[0].health(),
+            kanban_domain::WorkspaceHealth::Missing,
+            "a removed clone is reported missing at once, not at the next observation"
+        );
+    }
+
+    #[test]
+    fn removal_clears_the_stale_git_facts() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        let response = harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+
+        assert_eq!(
+            response["branch"],
+            json!("fleet/kan-t31"),
+            "the record still answers with the branch the Workspace last observed"
+        );
+        let (stored, _) = harness.workspaces.snapshot();
+        let observation = stored[0].observation();
+        assert_eq!(observation.repository_identity(), None);
+        assert_eq!(observation.checkout(), None);
+        assert_eq!(observation.branch(), None);
+        assert_eq!(observation.head(), None);
+        assert_eq!(observation.working_tree_clean(), None);
+        assert_eq!(observation.unique_unlanded_commits(), None);
+    }
+
+    #[test]
+    fn removal_bumps_the_optimistic_version() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+
+        let (stored, _) = harness.workspaces.snapshot();
+        assert_eq!(stored[0].version(), 3, "the removal bumps the version");
+        let refused = harness
+            .core
+            .command("clone.remove", &remove(1, "key-3", 2))
+            .expect_err("the pre-removal version is spent");
+        assert_eq!(refused.code, ErrorCode::StaleVersion);
+        assert_eq!(refused.current_version, Some(3));
     }
 
     #[test]
@@ -810,6 +901,134 @@ mod guarded_clone {
         );
         assert_eq!(stored[0].id().value(), 1);
         assert!(!stored[0].is_retired(), "removal retires nothing");
+    }
+
+    #[test]
+    fn removal_never_retires_and_retirement_stays_a_separate_command() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+        let (stored, _) = harness.workspaces.snapshot();
+        assert_eq!(
+            stored[0].health(),
+            kanban_domain::WorkspaceHealth::Missing,
+            "removal reports the clone gone, not the Workspace ended"
+        );
+
+        let retired = harness
+            .core
+            .command(
+                "workspace.retire",
+                &json!({
+                    "mutation": mutation(3, "key-4"),
+                    "workspace_id": 1,
+                }),
+            )
+            .expect("retirement remains the operator's own explicit action");
+
+        assert_eq!(retired["health"], json!("retired"));
+        let (stored, _) = harness.workspaces.snapshot();
+        assert!(stored[0].is_retired());
+    }
+
+    #[test]
+    fn removing_a_retired_workspaces_clone_keeps_it_retired() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+        harness
+            .core
+            .command(
+                "workspace.retire",
+                &json!({ "mutation": mutation(2, "key-2"), "workspace_id": 1 }),
+            )
+            .expect("the retirement applies");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-3", 3))
+            .expect("the guarded remove applies");
+
+        let (stored, _) = harness.workspaces.snapshot();
+        assert!(
+            stored[0].is_retired(),
+            "a retired record stays retired through its clone's removal"
+        );
+        assert_eq!(stored[0].health(), kanban_domain::WorkspaceHealth::Retired);
+        assert_eq!(
+            stored[0].observation().branch(),
+            None,
+            "the gone checkout still leaves no stale branch behind"
+        );
+    }
+
+    #[test]
+    fn after_removal_reuse_sees_no_live_checkout() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+
+        let listing = harness
+            .core
+            .query("workspace.list", &json!({ "project_id": 1 }))
+            .expect("the listing serves");
+        assert_eq!(listing["workspaces"][0]["health"], json!("missing"));
+        assert_eq!(
+            listing["workspaces"][0]["observation"]["branch"],
+            json!(null)
+        );
+        assert_eq!(
+            listing["workspaces"][0]["reuse"],
+            json!({
+                "reusable": false,
+                "clean": false,
+                "unassigned": true,
+                "free_of_unlanded_commits": false,
+            }),
+            "a gone checkout is not reuse capacity, whatever it last observed"
+        );
+    }
+
+    #[test]
+    fn after_removal_the_freed_branch_conflicts_with_nothing() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+
+        harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect("the guarded remove applies");
+
+        let response = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t31", "key-3"),
+            )
+            .expect("the branch left with the deleted directory");
+
+        assert_eq!(response["branch"], json!("fleet/kan-t31"));
+        assert_eq!(
+            harness.tool.calls(),
+            vec![
+                CloneCall::Remove {
+                    path: "/workspaces/kanban.fleet-t31".to_owned(),
+                },
+                CloneCall::Add {
+                    source: "/repositories/kanban".to_owned(),
+                    path: "/workspaces/kanban.fleet-t34".to_owned(),
+                    branch: "fleet/kan-t31".to_owned(),
+                },
+            ],
+            "the create was invoked, not refused on stale facts"
+        );
     }
 
     /// KAN-T121-AC3: an internal tool failure is a tool failure — it

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "description": "The record a guarded remove answers with. The Workspace record itself is preserved; the next observation reports the clone missing.",
+  "description": "The record a guarded remove answers with. The Workspace record itself is preserved and the removal marks it missing, so the branch named here is the one the Workspace last observed — the checkout that answered is already gone.",
   "properties": {
     "branch": {
       "description": "The branch the Workspace last observed, when any.",

@@ -22,7 +22,7 @@
       "type": "object"
     }
   },
-  "description": "Request payload for the `clone.remove` command. The Workspace record is preserved, never deleted (DR-LW-11); only the clone on disk goes, and only through the guarded fleet skill.",
+  "description": "Request payload for the `clone.remove` command. The Workspace record is preserved, never deleted or retired (DR-LW-11); only the clone on disk goes, and only through the guarded fleet skill. The removal itself marks the Workspace missing.",
   "properties": {
     "mutation": {
       "$ref": "#/definitions/MutationContext"

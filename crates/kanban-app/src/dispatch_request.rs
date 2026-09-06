@@ -222,8 +222,7 @@ impl CommandHandler for CreateDispatchRequest {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: DispatchRequestCreateRequest = parse_payload(&command.payload)?;
-        let ticket = self.ticket(request.ticket_id)?;
-        let project = self.project(ticket.project())?;
+        let (project, ticket) = self.open(request.ticket_id)?;
         let profile_name = ticket.profile().ok_or_else(|| {
             ApiError::invalid_request("a Dispatch Request requires an assigned Execution Profile")
         })?;
@@ -275,6 +274,26 @@ impl CommandHandler for CreateDispatchRequest {
 }
 
 impl CreateDispatchRequest {
+    /// The Ticket a Dispatch Request addresses with its Project,
+    /// refusing an unknown Ticket, the terminal Ticket states, and
+    /// the terminal archived-Project state — the same open guards the
+    /// lifecycle and dependency commands apply.
+    fn open(&self, ticket_id: u64) -> Result<(Project, Ticket), ApiError> {
+        let ticket = self.ticket(ticket_id)?;
+        let project = self.project(ticket.project())?;
+        if project.is_archived() {
+            return Err(ApiError::invalid_request(
+                "archived is terminal; the Project accepts no further changes",
+            ));
+        }
+        if ticket.state().is_terminal() {
+            return Err(ApiError::invalid_request(
+                "cancelled and superseded are terminal; the Ticket accepts no further changes",
+            ));
+        }
+        Ok((project, ticket))
+    }
+
     fn ticket(&self, ticket_id: u64) -> Result<Ticket, ApiError> {
         self.0
             .tickets

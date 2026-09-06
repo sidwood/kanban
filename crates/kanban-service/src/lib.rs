@@ -5,6 +5,7 @@
 mod backup_scheduler;
 pub mod diagnostics;
 pub mod export_files;
+pub mod fleet_clone;
 pub mod git_observer;
 pub mod herdr;
 pub mod logs;
@@ -22,10 +23,10 @@ use std::time::Duration;
 use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
-    BackupStore, Database, RetentionPolicy, SqliteCommentStore, SqliteDeferralStore,
-    SqliteDependencyStore, SqliteEvidenceStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore,
-    SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore, SqliteProfileStore,
-    SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
+    BackupStore, Database, RetentionPolicy, SqliteCloneGuardStore, SqliteCommentStore,
+    SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore, SqliteHerdrSettingsStore,
+    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
+    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
     SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
@@ -35,6 +36,7 @@ use timeline::StorageTimelineStore;
 
 use backup_scheduler::BackupScheduler;
 use diagnostics::DiagnosticsExportHandler;
+use fleet_clone::LocalFleetCloneTool;
 use git_observer::LocalWorkspaceGitObserver;
 use logs::{LogLevel, LogRecord, LogWriter};
 
@@ -131,6 +133,7 @@ fn assemble_core(
     let plan_store = Arc::new(SqlitePlanStore::new(&database));
     let workspace_store = Arc::new(SqliteWorkspaceStore::new(&database));
     let lane_store = Arc::new(SqliteLaneStore::new(&database));
+    let clone_guard_store = Arc::new(SqliteCloneGuardStore::new(&database));
     let spec_store = Arc::new(SqliteSpecStore::new(&database));
     let ticket_store = Arc::new(SqliteTicketStore::new(&database));
     let dependency_store = Arc::new(SqliteDependencyStore::new(&database));
@@ -176,8 +179,14 @@ fn assemble_core(
     core.register_lanes(
         lane_store,
         projects.clone(),
-        workspace_store,
+        workspace_store.clone(),
         ticket_store.clone(),
+    )?;
+    core.register_clones(
+        Arc::new(LocalFleetCloneTool),
+        projects.clone(),
+        workspace_store.clone(),
+        clone_guard_store,
     )?;
     core.register_dependencies(dependency_store, ticket_store.clone(), projects.clone())?;
     core.register_profiles(profile_store, ticket_store.clone(), projects.clone())?;

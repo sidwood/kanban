@@ -3,6 +3,7 @@
 
 pub mod audit;
 pub mod backup;
+pub mod clone_guard;
 pub mod comments;
 pub mod db;
 pub mod deferrals;
@@ -34,6 +35,7 @@ pub use backup::{
 #[cfg(test)]
 mod timeline_scope_migration;
 
+pub use clone_guard::SqliteCloneGuardStore;
 pub use comments::SqliteCommentStore;
 pub use db::Database;
 pub use deferrals::SqliteDeferralStore;

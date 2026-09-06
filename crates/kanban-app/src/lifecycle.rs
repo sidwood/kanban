@@ -83,6 +83,7 @@ struct LifecycleContext {
     tickets: Arc<dyn TicketStore>,
     dependencies: Arc<dyn DependencyStore>,
     projects: Arc<dyn ProjectStore>,
+    schedules: Arc<dyn crate::schedule::ScheduleStore>,
 }
 
 impl LifecycleContext {
@@ -196,6 +197,55 @@ impl LifecycleContext {
         serde_json::to_value(record_of(ticket, project.code()))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }
+
+    /// Apply the scheduling move with the one-time Schedule the
+    /// operator set, landing everything it owes together: the domain
+    /// move, the Ticket row and the Schedule row under the Ticket's
+    /// version guard, the timeline row naming the Schedule's facts,
+    /// and the live announcement of the record the command returns
+    /// (DR-SA-01, DR-SA-03). A refused movement writes nothing.
+    fn land_scheduled(
+        &self,
+        project: &Project,
+        ticket: &mut Ticket,
+        schedule: &kanban_domain::Schedule,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let from = ticket.state().wire_name().to_owned();
+        let readiness = self.readiness_of(ticket)?;
+        apply_command(ticket, HumanCommand::Schedule, &readiness).map_err(refuse)?;
+        let to = ticket.state().wire_name().to_owned();
+        let activation = schedule.next_activation().to_owned();
+        let timezone = schedule.timezone().as_str().to_owned();
+        let profile = schedule.profile().as_str().to_owned();
+        self.schedules.attach(ticket, schedule, &|schedule_id| {
+            TimelineEnvelope::project(
+                project.id().value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Ticket,
+                    id: ticket.id().value().to_string(),
+                }),
+                json!({
+                    "action": "scheduled",
+                    "id": ticket.id().value(),
+                    "from": from,
+                    "to": to,
+                    "schedule": schedule_id.value(),
+                    "activation": activation,
+                    "timezone": timezone,
+                    "profile": profile,
+                }),
+            )
+        })?;
+        emit_catalogued(
+            effects,
+            LiveEventName::TicketStateChanged,
+            &record_of(ticket, project.code()),
+        );
+        serde_json::to_value(record_of(ticket, project.code()))
+            .map_err(|error| ApiError::internal(&error.to_string()))
+    }
 }
 
 /// One lifecycle landing: the action the timeline row names, the
@@ -209,18 +259,20 @@ struct Landing<'a> {
 
 impl Core {
     /// Register the Ticket lifecycle operations against `tickets`,
-    /// resolving readiness through `dependencies` and Projects through
-    /// `projects`.
+    /// resolving readiness through `dependencies`, Projects through
+    /// `projects`, and one-time Schedules through `schedules`.
     pub fn register_lifecycle(
         &mut self,
         tickets: Arc<dyn TicketStore>,
         dependencies: Arc<dyn DependencyStore>,
         projects: Arc<dyn ProjectStore>,
+        schedules: Arc<dyn crate::schedule::ScheduleStore>,
     ) -> Result<(), RegistrationError> {
         let context = LifecycleContext {
             tickets,
             dependencies,
             projects,
+            schedules,
         };
         self.register_command(
             "ticket.transition",
@@ -353,8 +405,10 @@ impl CommandHandler for UnparkTicket {
     }
 }
 
-/// Serves `ticket.schedule` (DR-LC-09); activation behaviour is
-/// KAN-S11's.
+/// Serves `ticket.schedule` (DR-LC-09): hold qualified work until its
+/// activation, optionally carrying the one-time Schedule — activation
+/// instant, timezone, eligible profile — that makes the Ticket ready
+/// when its moment arrives (DR-SA-01, DR-SA-03).
 struct ScheduleTicket(LifecycleContext);
 
 impl CommandHandler for ScheduleTicket {
@@ -375,17 +429,32 @@ impl CommandHandler for ScheduleTicket {
     ) -> Result<Value, ApiError> {
         let request: TicketScheduleRequest = parse_payload(&command.payload)?;
         let (project, mut ticket) = self.0.open(request.ticket_id)?;
-        self.0.land(
-            &project,
-            &mut ticket,
-            Landing {
-                action: "scheduled",
-                facts: json!({}),
-                announced: LiveEventName::TicketStateChanged,
-            },
-            |ticket, readiness| apply_command(ticket, HumanCommand::Schedule, readiness),
-            effects,
-        )
+        match (request.activation, request.timezone, request.profile) {
+            (None, None, None) => self.0.land(
+                &project,
+                &mut ticket,
+                Landing {
+                    action: "scheduled",
+                    facts: json!({}),
+                    announced: LiveEventName::TicketStateChanged,
+                },
+                |ticket, readiness| apply_command(ticket, HumanCommand::Schedule, readiness),
+                effects,
+            ),
+            (Some(activation), Some(timezone), Some(profile)) => {
+                let schedule =
+                    kanban_domain::Schedule::one_time(ticket.id(), activation, &timezone, &profile)
+                        .map_err(refuse)?;
+                kanban_domain::accepts(ticket.kind(), schedule.trigger()).map_err(refuse)?;
+                self.0
+                    .land_scheduled(&project, &mut ticket, &schedule, effects)
+            }
+            // A Schedule carries every fact it owns or none: half a
+            // Schedule holds work until nothing.
+            _ => Err(ApiError::invalid_request(
+                "a Schedule carries its activation, timezone, and eligible profile together",
+            )),
+        }
     }
 }
 
@@ -1088,7 +1157,7 @@ pub(crate) mod testing {
             evidence.clone(),
         )
         .expect("the ticket operations register");
-        core.register_lifecycle(rows.clone(), rows.clone(), projects.clone())
+        core.register_lifecycle(rows.clone(), rows.clone(), projects.clone(), rows.clone())
             .expect("the lifecycle operations register");
         LifecycleHarness {
             rows,
@@ -1369,6 +1438,147 @@ mod lifecycle_commands {
             )
             .expect("a human cancels every kind");
         assert_eq!(cancelled["state"], json!("cancelled"));
+    }
+
+    #[test]
+    fn scheduling_with_the_schedule_facts_lands_the_one_time_schedule() {
+        let harness = lifecycle_harness();
+        let chore = task(&harness, "key-task");
+
+        let scheduled = harness
+            .core
+            .command(
+                "ticket.schedule",
+                &command(
+                    json!({
+                        "ticket_id": chore,
+                        "activation": "2026-09-10T11:00:00+02:00",
+                        "timezone": "Europe/Amsterdam",
+                        "profile": "standard",
+                    }),
+                    1,
+                    "key-schedule",
+                ),
+            )
+            .expect("the Task schedules with its Schedule");
+
+        assert_eq!(scheduled["state"], json!("scheduled"));
+        assert_eq!(scheduled["version"], json!(2));
+        let schedules = harness.rows.schedules();
+        assert_eq!(schedules.len(), 1, "one waiting Schedule landed");
+        assert_eq!(
+            schedules[0].next_activation(),
+            "2026-09-10T09:00:00.000Z",
+            "an offset activation instant stores as UTC (DR-SA-01)"
+        );
+        assert_eq!(schedules[0].timezone().as_str(), "Europe/Amsterdam");
+        assert_eq!(schedules[0].profile().as_str(), "standard");
+        let (_, timeline) = harness.rows.snapshot();
+        assert_eq!(
+            timeline.last().expect("the move appended").detail(),
+            &json!({
+                "action": "scheduled",
+                "id": chore,
+                "from": "draft",
+                "to": "scheduled",
+                "schedule": 1,
+                "activation": "2026-09-10T09:00:00.000Z",
+                "timezone": "Europe/Amsterdam",
+                "profile": "standard",
+            }),
+            "the timeline row names the Schedule the move landed"
+        );
+    }
+
+    #[test]
+    fn the_schedule_facts_arrive_together_or_not_at_all() {
+        let harness = lifecycle_harness();
+        let chore = task(&harness, "key-task");
+        let timeline_before = harness.rows.snapshot().1.len();
+
+        for body in [
+            json!({ "ticket_id": chore, "activation": "2026-09-10T09:00:00Z" }),
+            json!({ "ticket_id": chore, "timezone": "Europe/Amsterdam" }),
+            json!({ "ticket_id": chore, "profile": "standard" }),
+            json!({
+                "ticket_id": chore,
+                "activation": "2026-09-10T09:00:00Z",
+                "timezone": "Europe/Amsterdam",
+            }),
+        ] {
+            let refused = harness
+                .core
+                .command("ticket.schedule", &command(body, 1, "key-refused"))
+                .expect_err("a Schedule carries its three facts together");
+            assert_eq!(refused.code, ErrorCode::InvalidRequest);
+            assert_eq!(
+                refused.message,
+                "a Schedule carries its activation, timezone, and eligible profile together"
+            );
+        }
+
+        assert!(
+            harness.rows.schedules().is_empty(),
+            "the refusals landed no Schedule"
+        );
+        assert_eq!(
+            harness.rows.snapshot().1.len(),
+            timeline_before,
+            "the refusals appended no timeline row"
+        );
+    }
+
+    #[test]
+    fn a_malformed_schedule_fact_is_refused_with_its_rule() {
+        let harness = lifecycle_harness();
+        let chore = task(&harness, "key-task");
+
+        let refused = harness
+            .core
+            .command(
+                "ticket.schedule",
+                &command(
+                    json!({
+                        "ticket_id": chore,
+                        "activation": "September",
+                        "timezone": "Europe/Amsterdam",
+                        "profile": "standard",
+                    }),
+                    1,
+                    "key-instant",
+                ),
+            )
+            .expect_err("the activation instant names no moment");
+        assert_eq!(
+            refused.message,
+            "a Schedule activation must be an RFC 3339 instant: `September`"
+        );
+
+        let refused = harness
+            .core
+            .command(
+                "ticket.schedule",
+                &command(
+                    json!({
+                        "ticket_id": chore,
+                        "activation": "2026-09-10T09:00:00Z",
+                        "timezone": "europe/amsterdam",
+                        "profile": "standard",
+                    }),
+                    1,
+                    "key-zone",
+                ),
+            )
+            .expect_err("the timezone names no zone");
+        assert_eq!(
+            refused.message,
+            "a Schedule timezone names an IANA zone, like `Europe/Amsterdam`"
+        );
+
+        assert!(
+            harness.rows.schedules().is_empty(),
+            "the refusals landed no Schedule"
+        );
     }
 
     #[test]

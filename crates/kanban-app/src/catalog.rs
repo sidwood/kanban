@@ -426,7 +426,7 @@ define_exposed_catalogue! {
         request: "TicketScheduleRequest",
         response: "TicketRecord",
         mcp: "ticket_schedule",
-        description: "Schedule a Ticket, holding qualified work until its activation. Activation behaviour is KAN-S11's.",
+        description: "Schedule a Ticket, holding qualified work until its activation. Optional facts — activation instant, timezone, eligible profile — land the one-time Schedule that makes the Ticket ready when its moment arrives.",
     },
     "ticket.cancel" => {
         kind: Command,

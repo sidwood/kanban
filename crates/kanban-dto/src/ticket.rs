@@ -544,13 +544,25 @@ pub struct TicketUnparkRequest {
 }
 
 /// Request payload for the `ticket.schedule` command: hold qualified
-/// work until its activation (DR-LC-09); activation itself is KAN-S11.
+/// work until its activation (DR-LC-09). The optional Schedule facts
+/// — activation instant, timezone, and eligible profile — arrive
+/// together or not at all, and land the one-time Schedule that makes
+/// the Ticket ready when its moment arrives (DR-SA-01, DR-SA-03).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketScheduleRequest {
     pub mutation: super::MutationContext,
     /// The Ticket being scheduled.
     pub ticket_id: u64,
+    /// The one-time activation instant, RFC 3339.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<String>,
+    /// The IANA timezone the Schedule lives in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    /// The Execution Profile eligible once the activation fires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 /// Request payload for the `ticket.cancel` command: end the Ticket.
@@ -1523,6 +1535,13 @@ mod tests {
         round_trips::<TicketScheduleRequest>(json!({
             "mutation": context(),
             "ticket_id": 6,
+        }));
+        round_trips::<TicketScheduleRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "activation": "2026-09-10T11:00:00+02:00",
+            "timezone": "Europe/Amsterdam",
+            "profile": "standard",
         }));
         round_trips::<TicketCancelRequest>(json!({
             "mutation": context(),

@@ -27,8 +27,9 @@ use kanban_storage::{
     SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteDispatchStore,
     SqliteEvidenceStore, SqliteGraphProposalStore, SqliteHerdrSettingsStore,
     SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
-    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
-    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteScheduleStore,
+    SqliteSpecStore, SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook,
+    load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -137,6 +138,7 @@ fn assemble_core(
     let clone_guard_store = Arc::new(SqliteCloneGuardStore::new(&database));
     let spec_store = Arc::new(SqliteSpecStore::new(&database));
     let ticket_store = Arc::new(SqliteTicketStore::new(&database));
+    let schedule_store = Arc::new(SqliteScheduleStore::new(&database));
     let dependency_store = Arc::new(SqliteDependencyStore::new(&database));
     let graph_proposal_store = Arc::new(SqliteGraphProposalStore::new(&database));
     let profile_store = Arc::new(SqliteProfileStore::new(&database));
@@ -201,6 +203,7 @@ fn assemble_core(
         ticket_store.clone(),
         dependency_store.clone(),
         projects.clone(),
+        schedule_store,
     )?;
     core.register_graph_proposals(
         graph_proposal_store,

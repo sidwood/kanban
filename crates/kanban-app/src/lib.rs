@@ -1,6 +1,7 @@
 //! Named application commands and queries shared by the UI and every
 //! other client, with the ports they call through.
 
+pub mod capacity;
 pub mod catalog;
 pub mod clone;
 pub mod comment;
@@ -33,6 +34,7 @@ pub mod workspace;
 #[cfg(test)]
 mod project_scope;
 
+pub use capacity::CapacityStore;
 pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, OperationDescriptor, OperationKind,
     assert_registered_matches_exposed_catalogue, exposed_operations,

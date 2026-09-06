@@ -3,21 +3,25 @@
 //! version it proposes for, approve it through the human gate —
 //! pinning every Ticket in the graph to that Spec content version —
 //! and read the proposals of one Spec back (KAN-S4-US8, DR-PS-16,
-//! DR-PS-17, DR-DE-06). Recording mutates no Ticket and names only
-//! executable members — a Ticket pinned to an earlier version or a
-//! terminal one stays history, never a member of a new graph;
-//! approval's proposal move, Ticket pins, and timeline rows land in
-//! one storage write, so a graph approval never splits across a
-//! crash boundary. The gate also refuses a graph whose Tickets carry
-//! assignments referencing profiles the catalogue no longer offers
-//! (KAN-S7-US4, T38), so approval never pins a Ticket nothing can
-//! dispatch.
+//! DR-PS-17, DR-DE-06). A proposal joins the dependencies the store
+//! already holds — inside its Tickets or crossing out of them across
+//! Specs and Projects — so recording and the gate both refuse edges
+//! that would close a cycle with them (DR-DE-02). Recording mutates
+//! no Ticket and names only executable members — a Ticket pinned to
+//! an earlier version or a terminal one stays history, never a
+//! member of a new graph; approval's proposal move, Ticket pins, and
+//! timeline rows land in one storage write, so a graph approval
+//! never splits across a crash boundary. The gate also refuses a
+//! graph whose Tickets carry assignments referencing profiles the
+//! catalogue no longer offers (KAN-S7-US4, T38), so approval never
+//! pins a Ticket nothing can dispatch.
 
 use std::sync::Arc;
 
 use kanban_domain::{
-    GraphProposalId, GraphProposalState, Project, SpecId, SpecNumber, StoryScope, TicketDependency,
-    TicketGraphProposal, TicketId, enforce_approvable, enforce_assignable,
+    GraphProposalError, GraphProposalId, GraphProposalState, Project, SpecId, SpecNumber,
+    StoryScope, TicketDependency, TicketDependencyGraph, TicketGraphProposal, TicketId,
+    enforce_acyclic_with_registered, enforce_approvable, enforce_assignable,
     enforce_executable_member,
 };
 use kanban_dto::{
@@ -27,6 +31,7 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
+use crate::dependency::DependencyStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::profile::ProfileStore;
@@ -161,6 +166,7 @@ fn encode_record(proposal: &TicketGraphProposal) -> Result<Value, ApiError> {
 #[derive(Clone)]
 struct GraphContext {
     proposals: Arc<dyn GraphProposalStore>,
+    dependencies: Arc<dyn DependencyStore>,
     tickets: Arc<dyn TicketStore>,
     specs: Arc<dyn SpecStore>,
     projects: Arc<dyn ProjectStore>,
@@ -168,6 +174,15 @@ struct GraphContext {
 }
 
 impl GraphContext {
+    /// The whole registered dependency graph, cross-Project edges
+    /// included, as the proposal joins with and the approval installs
+    /// into.
+    fn registered(&self) -> Result<TicketDependencyGraph, ApiError> {
+        Ok(TicketDependencyGraph::restore(
+            self.dependencies.list_dependencies()?,
+        ))
+    }
+
     /// The Spec a command addresses with its Project, refusing an
     /// unknown Spec and the terminal archived-Project state.
     fn open_spec(&self, id: u64) -> Result<(Project, kanban_domain::Spec), ApiError> {
@@ -234,12 +249,14 @@ impl GraphContext {
 
 impl Core {
     /// Register the Ticket graph proposal operations against
-    /// `proposals`, resolving Tickets through `tickets`, Specs through
-    /// `specs`, Projects through `projects`, and profile references
-    /// through `profiles`.
+    /// `proposals`, joining the registered dependency graph through
+    /// `dependencies`, resolving Tickets through `tickets`, Specs
+    /// through `specs`, Projects through `projects`, and profile
+    /// references through `profiles`.
     pub fn register_graph_proposals(
         &mut self,
         proposals: Arc<dyn GraphProposalStore>,
+        dependencies: Arc<dyn DependencyStore>,
         tickets: Arc<dyn TicketStore>,
         specs: Arc<dyn SpecStore>,
         projects: Arc<dyn ProjectStore>,
@@ -247,6 +264,7 @@ impl Core {
     ) -> Result<(), RegistrationError> {
         let context = GraphContext {
             proposals,
+            dependencies,
             tickets,
             specs,
             projects,
@@ -324,6 +342,13 @@ impl CommandHandler for ProposeGraph {
             })
             .collect();
         TicketGraphProposal::validate(&tickets, &edges).map_err(refuse)?;
+        // The proposal joins the dependencies the store already holds,
+        // so it records only a graph that can join them without a
+        // cycle (DR-DE-02); approval rechecks against whatever the
+        // store holds by then.
+        enforce_acyclic_with_registered(&edges, &self.0.registered()?)
+            .map_err(|reason| GraphProposalError::RegisteredCycle { reason })
+            .map_err(refuse)?;
         let spec_id = spec.id();
         let spec_version = request.spec_version;
         let named = tickets.clone();
@@ -392,7 +417,11 @@ impl CommandHandler for ApproveGraph {
         let scope = self
             .0
             .scope(&project, spec.number(), version.content().user_stories())?;
-        enforce_approvable(&proposal, &scope, &attached).map_err(refuse)?;
+        // The gate joins the dependencies the store holds now, not the
+        // ones it held at recording: edges registered in between still
+        // close cycles the gate must refuse.
+        let registered = self.0.registered()?;
+        enforce_approvable(&proposal, &registered, &scope, &attached).map_err(refuse)?;
         // The graph's shape holds; the assignments it would execute
         // must resolve too, or approval pins Tickets nothing can
         // dispatch (KAN-S7-US4).
@@ -469,14 +498,180 @@ pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{
-        GraphProposalId, GraphProposalState, SpecId, TicketDependency, TicketGraphProposal,
-        TicketId,
+        BlockerDescription, ExternalBlocker, ExternalBlockerId, GraphProposalId,
+        GraphProposalState, SpecId, Ticket, TicketDependency, TicketGraphProposal, TicketId,
     };
     use kanban_dto::ApiError;
 
     use super::GraphProposalStore;
+    use crate::dependency::DependencyStore;
     use crate::ticket::testing::{MemoryTickets, TicketHarness, ticket_harness_with_sink};
     use crate::timeline::TimelineEnvelope;
+
+    /// The dependency rows the graph operations join with and install
+    /// into: edges and blockers recorded against the Ticket rows the
+    /// harness seeded, moved the way the durable store moves them.
+    #[derive(Default)]
+    pub(crate) struct MemoryGraphDependencies {
+        state: Mutex<MemoryGraphDependencyState>,
+        tickets: Arc<MemoryTickets>,
+    }
+
+    #[derive(Default)]
+    struct MemoryGraphDependencyState {
+        edges: Vec<TicketDependency>,
+        blockers: Vec<ExternalBlocker>,
+        next_blocker_id: u64,
+        timeline: Vec<TimelineEnvelope>,
+    }
+
+    impl MemoryGraphDependencies {
+        /// A dependency store sharing the Ticket rows the harness
+        /// seeded.
+        pub(crate) fn sharing(tickets: Arc<MemoryTickets>) -> Self {
+            Self {
+                tickets,
+                ..Self::default()
+            }
+        }
+
+        /// Seed one registered edge as-is, standing in for an operator
+        /// registration the proposal joins with.
+        pub(crate) fn seed_edge(&self, edge: TicketDependency) {
+            self.state
+                .lock()
+                .expect("the memory dependency lock is sound")
+                .edges
+                .push(edge);
+        }
+
+        /// The registered edges and timeline envelopes, for assertions.
+        pub(crate) fn snapshot(&self) -> (Vec<TicketDependency>, Vec<TimelineEnvelope>) {
+            let state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            (state.edges.clone(), state.timeline.clone())
+        }
+
+        /// The waiting Ticket as one applied change leaves it:
+        /// identical, with its aggregate version moved forward by one.
+        fn moved(waiting: &Ticket) -> Ticket {
+            Ticket::restore(
+                waiting.id(),
+                waiting.project(),
+                waiting.number(),
+                waiting.priority(),
+                waiting.state(),
+                waiting.body().clone(),
+                waiting.predecessor(),
+                waiting.profile().cloned(),
+                waiting.pinned_version(),
+                waiting.version() + 1,
+            )
+        }
+    }
+
+    impl DependencyStore for MemoryGraphDependencies {
+        fn add_dependency(
+            &self,
+            waiting: &Ticket,
+            edge: TicketDependency,
+            envelope: &dyn Fn() -> TimelineEnvelope,
+        ) -> Result<Ticket, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            state.edges.push(edge);
+            state.timeline.push(envelope());
+            drop(state);
+            let moved = Self::moved(waiting);
+            self.tickets.replace_pinned(moved.clone())?;
+            Ok(moved)
+        }
+
+        fn remove_dependency(
+            &self,
+            waiting: &Ticket,
+            edge: TicketDependency,
+            envelope: &dyn Fn() -> TimelineEnvelope,
+        ) -> Result<Ticket, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            state.edges.retain(|held| *held != edge);
+            state.timeline.push(envelope());
+            drop(state);
+            let moved = Self::moved(waiting);
+            self.tickets.replace_pinned(moved.clone())?;
+            Ok(moved)
+        }
+
+        fn add_blocker(
+            &self,
+            waiting: &Ticket,
+            description: &BlockerDescription,
+            envelope: &dyn Fn(ExternalBlockerId) -> TimelineEnvelope,
+        ) -> Result<(Ticket, ExternalBlocker), ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            state.next_blocker_id += 1;
+            let blocker = ExternalBlocker::restore(
+                ExternalBlockerId::new(state.next_blocker_id),
+                waiting.id(),
+                description.clone(),
+            );
+            state.blockers.push(blocker.clone());
+            state.timeline.push(envelope(blocker.id()));
+            drop(state);
+            let moved = Self::moved(waiting);
+            self.tickets.replace_pinned(moved.clone())?;
+            Ok((moved, blocker))
+        }
+
+        fn remove_blocker(
+            &self,
+            waiting: &Ticket,
+            blocker: ExternalBlocker,
+            envelope: &dyn Fn() -> TimelineEnvelope,
+        ) -> Result<Ticket, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            state.blockers.retain(|held| held.id() != blocker.id());
+            state.timeline.push(envelope());
+            drop(state);
+            let moved = Self::moved(waiting);
+            self.tickets.replace_pinned(moved.clone())?;
+            Ok(moved)
+        }
+
+        fn list_dependencies(&self) -> Result<Vec<TicketDependency>, ApiError> {
+            Ok(self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound")
+                .edges
+                .clone())
+        }
+
+        fn blockers_of(&self, ticket: TicketId) -> Result<Vec<ExternalBlocker>, ApiError> {
+            Ok(self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound")
+                .blockers
+                .iter()
+                .filter(|blocker| blocker.ticket() == ticket)
+                .cloned()
+                .collect())
+        }
+    }
 
     /// An in-memory proposal store: rows by id, the pinned Ticket rows
     /// its approvals moved, and the timeline envelopes it was asked to
@@ -485,6 +680,7 @@ pub(crate) mod testing {
     pub(crate) struct MemoryGraphProposals {
         state: Mutex<MemoryGraphState>,
         tickets: Arc<MemoryTickets>,
+        dependencies: Arc<MemoryGraphDependencies>,
     }
 
     #[derive(Default)]
@@ -495,12 +691,23 @@ pub(crate) mod testing {
     }
 
     impl MemoryGraphProposals {
-        /// A proposal store sharing the Ticket rows the harness seeded.
-        pub(crate) fn sharing(tickets: Arc<MemoryTickets>) -> Self {
+        /// A proposal store sharing the Ticket and dependency rows the
+        /// harness seeded.
+        pub(crate) fn sharing(
+            tickets: Arc<MemoryTickets>,
+            dependencies: Arc<MemoryGraphDependencies>,
+        ) -> Self {
             Self {
                 tickets,
+                dependencies,
                 ..Self::default()
             }
+        }
+
+        /// The dependency rows the proposals join with and install
+        /// into, for seeding and assertions.
+        pub(crate) fn dependencies(&self) -> &Arc<MemoryGraphDependencies> {
+            &self.dependencies
         }
 
         /// The stored rows and timeline envelopes, for assertions.
@@ -629,12 +836,25 @@ pub(crate) mod testing {
         events: Arc<dyn crate::events::EventSink>,
     ) -> (TicketHarness, Arc<MemoryGraphProposals>) {
         let mut harness = ticket_harness_with_sink(events);
-        let proposals = Arc::new(MemoryGraphProposals::sharing(harness.tickets.clone()));
+        let dependencies = Arc::new(MemoryGraphDependencies::sharing(harness.tickets.clone()));
+        harness
+            .core
+            .register_dependencies(
+                dependencies.clone(),
+                harness.tickets.clone(),
+                harness.projects.clone(),
+            )
+            .expect("the dependency operations register");
+        let proposals = Arc::new(MemoryGraphProposals::sharing(
+            harness.tickets.clone(),
+            dependencies.clone(),
+        ));
         let profiles = Arc::new(crate::profile::testing::MemoryProfiles::default());
         harness
             .core
             .register_graph_proposals(
                 proposals.clone(),
+                dependencies,
                 harness.tickets.clone(),
                 harness.specs.clone(),
                 harness.projects.clone(),
@@ -642,6 +862,237 @@ pub(crate) mod testing {
             )
             .expect("the graph operations register");
         (harness, proposals)
+    }
+}
+
+#[cfg(test)]
+mod registered_cycles {
+    use kanban_dto::ErrorCode;
+    use serde_json::{Value, json};
+
+    use super::graph_approval::{approve, approved_spec, implementation};
+    use super::testing::graph_harness;
+
+    /// Two covered Implementation Tickets attached to the Spec, ready
+    /// for a proposal that joins the registered dependencies.
+    pub(super) fn covered_pair(core: &crate::dispatch::Core, spec: u64) -> (u64, u64) {
+        let first = implementation(
+            core,
+            spec,
+            "Graphs record completely",
+            json!([
+                { "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key-ticket-1",
+        );
+        let second = implementation(
+            core,
+            spec,
+            "Stories stay covered",
+            json!([{ "outcome": "Stories stay covered.", "stories": ["CORE-S1-US3"] }]),
+            "key-ticket-2",
+        );
+        (first, second)
+    }
+
+    /// One proposal request over `tickets` and `edges`.
+    fn propose(spec: u64, tickets: Value, edges: Value, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+            "spec_id": spec,
+            "spec_version": 1,
+            "tickets": tickets,
+            "edges": edges,
+        })
+    }
+
+    #[test]
+    fn a_proposal_refuses_an_edge_that_reverses_a_registered_one() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        // The operator separately registered second → first before
+        // the graph was proposed (DR-DE-02).
+        proposals.dependencies().seed_edge(edge(second, first));
+
+        let error = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect_err("the proposal reverses a registered edge");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            format!(
+                "a Ticket graph edge would close a cycle with the registered dependencies; \
+                 the dependency from Ticket {first} to Ticket {second} would close a cycle"
+            )
+        );
+        let (rows, _) = proposals.snapshot();
+        assert!(rows.is_empty(), "the refusal recorded no proposal");
+    }
+
+    #[test]
+    fn a_proposal_accepts_an_edge_the_store_already_holds() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        proposals.dependencies().seed_edge(edge(first, second));
+
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("an edge the store already holds joins nothing new");
+
+        assert_eq!(recorded["state"], json!("proposed"));
+    }
+
+    #[test]
+    fn a_longer_registered_cycle_refuses_the_proposal() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        // A standing Ticket outside the graph carries the chain
+        // second → outside → first across the boundary, the way a
+        // cross-Spec or cross-Project edge would (DR-DE-02).
+        let standing = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-standing" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour": "The integration branch is dropped after a review lands.",
+                    "reporter_evidence": "The landing log names the drop immediately after the merge.",
+                }),
+            )
+            .expect("the standing Bug quick captures");
+        let standing = standing["id"].as_u64().expect("the identity is a number");
+        proposals.dependencies().seed_edge(edge(second, standing));
+        proposals.dependencies().seed_edge(edge(standing, first));
+
+        let error = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect_err("the chain closes through the standing Ticket");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            format!(
+                "a Ticket graph edge would close a cycle with the registered dependencies; \
+                 the dependency from Ticket {first} to Ticket {second} would close a cycle"
+            )
+        );
+    }
+
+    #[test]
+    fn approval_rechecks_the_registered_dependencies_at_the_gate() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        // The proposal records against a clean store.
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+
+        // The operator then registers the opposite edge before the
+        // human gate decides; only the gate's recheck catches it.
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-reverse" },
+                    "from_ticket": second,
+                    "to_ticket": first,
+                }),
+            )
+            .expect("the opposite edge registers against the unpinned Tickets");
+
+        let error = harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect_err("the gate joins the edges registered after recording");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            format!(
+                "the Ticket graph is not acyclic against the registered dependencies; \
+                 the dependency from Ticket {first} to Ticket {second} would close a cycle"
+            )
+        );
+        let (rows, _) = proposals.snapshot();
+        let refused = rows
+            .iter()
+            .find(|row| row.id().value() == proposal)
+            .expect("the proposal stands");
+        assert!(
+            matches!(refused.state(), kanban_domain::GraphProposalState::Proposed),
+            "the refusal approved nothing"
+        );
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": first }))
+            .expect("the get serves");
+        assert_eq!(
+            read["pinned_spec_version"],
+            json!(null),
+            "the refusal pinned nothing"
+        );
+        let (edges, _) = proposals.dependencies().snapshot();
+        assert_eq!(
+            edges,
+            vec![edge(second, first)],
+            "the refusal installed nothing"
+        );
+    }
+
+    /// One dependency edge between two Ticket identities.
+    fn edge(from: u64, to: u64) -> kanban_domain::TicketDependency {
+        kanban_domain::TicketDependency::new(
+            kanban_domain::TicketId::new(from),
+            kanban_domain::TicketId::new(to),
+        )
     }
 }
 

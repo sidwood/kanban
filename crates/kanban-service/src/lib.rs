@@ -237,6 +237,7 @@ fn assemble_core(
     )?;
     core.register_graph_proposals(
         graph_proposal_store,
+        dependency_store.clone(),
         ticket_store.clone(),
         spec_store.clone(),
         projects.clone(),

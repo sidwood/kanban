@@ -15,7 +15,7 @@ use crate::catalog::exposed_operations;
 use crate::diagnostics::StoredProfileCatalogue;
 use crate::dispatch::Core;
 use crate::events::NoopEventSink;
-use crate::graph_proposal::testing::MemoryGraphProposals;
+use crate::graph_proposal::testing::{MemoryGraphDependencies, MemoryGraphProposals};
 use crate::mutation::MemoryIdempotencyStore;
 use crate::plan::testing::{MemoryPlans, MemoryProjects};
 use crate::profile::testing::MemoryProfiles;
@@ -70,8 +70,15 @@ fn harness() -> Harness {
         Arc::new(MemoryTicketEvidence::default()),
     )
     .expect("the ticket operations register");
+    let dependencies = Arc::new(MemoryGraphDependencies::sharing(tickets.clone()));
+    core.register_dependencies(dependencies.clone(), tickets.clone(), projects.clone())
+        .expect("the dependency operations register");
     core.register_graph_proposals(
-        Arc::new(MemoryGraphProposals::sharing(tickets.clone())),
+        Arc::new(MemoryGraphProposals::sharing(
+            tickets.clone(),
+            dependencies.clone(),
+        )),
+        dependencies,
         tickets.clone(),
         specs.clone(),
         projects.clone(),

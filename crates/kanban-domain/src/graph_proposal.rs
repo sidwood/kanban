@@ -110,6 +110,17 @@ pub enum GraphProposalError {
         /// The refusal the dependency rule reported.
         reason: DependencyError,
     },
+    /// An edge, joined with the dependencies the store already holds,
+    /// would close a cycle (DR-DE-02). Registered edges — inside the
+    /// graph's Tickets or crossing out of them across Specs and
+    /// Projects — stand when the proposal is recorded, so the joined
+    /// graph must already be acyclic; a proposal never silently
+    /// reverses a registered edge.
+    RegisteredCycle {
+        /// The refusal the dependency rule reported for the closing
+        /// edge.
+        reason: DependencyError,
+    },
     /// Only a proposed graph approaches the approval gate; an
     /// approved one already passed it.
     ApproveRequiresProposed,
@@ -129,6 +140,10 @@ impl fmt::Display for GraphProposalError {
                 "a Ticket graph edge runs between the Tickets it holds; {ticket} is outside the graph"
             ),
             Self::IllegalEdge { reason } => write!(f, "{reason}"),
+            Self::RegisteredCycle { reason } => write!(
+                f,
+                "a Ticket graph edge would close a cycle with the registered dependencies; {reason}"
+            ),
             Self::ApproveRequiresProposed => {
                 write!(f, "only a proposed Ticket graph approaches approval")
             }
@@ -356,6 +371,15 @@ pub enum GraphApprovalRefusal {
         /// The profile name the assignment references, as written.
         name: String,
     },
+    /// An edge of the graph, joined with the dependencies the store
+    /// already holds — inside the graph's Tickets or crossing out of
+    /// them across Specs and Projects — would close a cycle, and a
+    /// cyclic graph never executes (DR-DE-02).
+    CyclicWithRegistered {
+        /// The refusal the dependency rule reported for the closing
+        /// edge.
+        reason: DependencyError,
+    },
 }
 
 impl GraphApprovalRefusal {
@@ -417,14 +441,40 @@ impl fmt::Display for GraphApprovalRefusal {
                 "the Ticket graph is not assignable; Ticket {ticket} references the profile \
                  `{name}`, which is not in the catalogue"
             ),
+            Self::CyclicWithRegistered { reason } => write!(
+                f,
+                "the Ticket graph is not acyclic against the registered dependencies; {reason}"
+            ),
         }
     }
 }
 
 impl std::error::Error for GraphApprovalRefusal {}
 
+/// Refuse proposal edges that would close a cycle once joined with
+/// the dependencies the store already holds (DR-DE-02). Every
+/// registered edge — between the proposal's own Tickets or reaching
+/// out across Specs and Projects — stands when the proposal is
+/// recorded and again when it is approved, so the joined graph must
+/// stay acyclic at both gates. An edge the store already holds
+/// changes nothing and passes.
+pub fn enforce_acyclic_with_registered(
+    edges: &[TicketDependency],
+    registered: &TicketDependencyGraph,
+) -> Result<(), DependencyError> {
+    let mut joined = registered.clone();
+    for edge in edges {
+        match joined.add(edge.from(), edge.to()) {
+            Ok(()) | Err(DependencyError::DuplicateEdge) => {}
+            Err(reason) => return Err(reason),
+        }
+    }
+    Ok(())
+}
+
 /// The human approval gate (DR-PS-17): a Ticket graph may be approved
-/// only when it is complete, granular, verifiable, and story-covered.
+/// only when it is complete, granular, verifiable, story-covered, and
+/// acyclic against the registered dependencies.
 ///
 /// - Complete: the graph names at least one Ticket, every Ticket it
 ///   names is an executable member of a new graph for the Spec it
@@ -441,11 +491,18 @@ impl std::error::Error for GraphApprovalRefusal {}
 ///   linked to stories can exist (DR-PS-13, DR-PS-15).
 /// - Story-covered: every User Story the version claims is covered by
 ///   a criterion of at least one Ticket in the graph (DR-PS-14).
+/// - Acyclic: the graph's edges, joined with every dependency the
+///   store already holds — including edges that cross out of the
+///   graph across Specs and Projects — close no cycle (DR-DE-02); an
+///   approved graph is installed as the executable graph, and a
+///   cyclic one never executes.
 ///
-/// `attached` carries every Ticket attached to the Spec, as stored;
-/// the gate reads it and the proposal, and nothing else.
+/// `attached` carries every Ticket attached to the Spec and
+/// `registered` the whole registered dependency graph, both as
+/// stored; the gate reads them and the proposal, and nothing else.
 pub fn enforce_approvable(
     proposal: &TicketGraphProposal,
+    registered: &TicketDependencyGraph,
     scope: &StoryScope,
     attached: &[Ticket],
 ) -> Result<(), GraphApprovalRefusal> {
@@ -474,6 +531,8 @@ pub fn enforce_approvable(
     if !outside.is_empty() {
         return Err(GraphApprovalRefusal::Incomplete { tickets: outside });
     }
+    enforce_acyclic_with_registered(proposal.edges(), registered)
+        .map_err(|reason| GraphApprovalRefusal::CyclicWithRegistered { reason })?;
     for ticket in &held {
         match ticket.body() {
             crate::ticket::TicketBody::Implementation(_) => {
@@ -586,10 +645,11 @@ fn claimed_criteria_collected(held: &[&Ticket]) -> Vec<AcceptanceCriterion> {
 mod graph_rules {
     use super::{
         GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState, SpecId,
-        TicketGraphProposal, enforce_approvable, enforce_assignable,
+        TicketGraphProposal, enforce_acyclic_with_registered, enforce_approvable,
+        enforce_assignable,
     };
     use crate::coverage::{AcceptanceCriterion, StoryScope, UserStoryRef, VerificationStep};
-    use crate::dependency::TicketDependency;
+    use crate::dependency::{DependencyError, TicketDependency, TicketDependencyGraph};
     use crate::plan::SpecNumber;
     use crate::project::{ProjectCode, ProjectId};
     use crate::ticket::{
@@ -918,7 +978,13 @@ mod graph_rules {
         ];
         let proposal = proposal(vec![ticket(1), ticket(2), ticket(3)], Vec::new());
 
-        enforce_approvable(&proposal, &scope(), &attached).expect("every gate holds (DR-PS-17)");
+        enforce_approvable(
+            &proposal,
+            &TicketDependencyGraph::new(),
+            &scope(),
+            &attached,
+        )
+        .expect("every gate holds (DR-PS-17)");
     }
 
     #[test]
@@ -939,6 +1005,7 @@ mod graph_rules {
         assert_eq!(
             enforce_approvable(
                 &empty,
+                &TicketDependencyGraph::new(),
                 &scope(),
                 &[implementation(
                     1,
@@ -961,7 +1028,13 @@ mod graph_rules {
         let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
 
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached
+            )
+            .unwrap_err(),
             GraphApprovalRefusal::Detached { ticket: ticket(2) },
             "a Ticket of another Spec, or of none, is not this graph's to hold"
         );
@@ -976,16 +1049,27 @@ mod graph_rules {
         let proposal = proposal(vec![ticket(1)], Vec::new());
 
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached
+            )
+            .unwrap_err(),
             GraphApprovalRefusal::Incomplete {
                 tickets: vec![ticket(2)]
             },
             "the graph is the Spec's complete graph or it is not approved"
         );
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached)
-                .unwrap_err()
-                .to_string(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached
+            )
+            .unwrap_err()
+            .to_string(),
             "the Ticket graph is not complete; Tickets 2 sit outside it"
         );
     }
@@ -1012,7 +1096,13 @@ mod graph_rules {
             ];
             let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
 
-            let refusal = enforce_approvable(&proposal, &scope(), &attached).unwrap_err();
+            let refusal = enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached,
+            )
+            .unwrap_err();
 
             assert_eq!(
                 refusal,
@@ -1040,7 +1130,13 @@ mod graph_rules {
         ];
         let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
 
-        let refusal = enforce_approvable(&proposal, &scope(), &attached).unwrap_err();
+        let refusal = enforce_approvable(
+            &proposal,
+            &TicketDependencyGraph::new(),
+            &scope(),
+            &attached,
+        )
+        .unwrap_err();
 
         assert_eq!(
             refusal,
@@ -1087,8 +1183,13 @@ mod graph_rules {
         ];
         let proposal = proposal(vec![ticket(1)], Vec::new());
 
-        enforce_approvable(&proposal, &scope(), &attached)
-            .expect("a later graph completes over its active unpinned members alone");
+        enforce_approvable(
+            &proposal,
+            &TicketDependencyGraph::new(),
+            &scope(),
+            &attached,
+        )
+        .expect("a later graph completes over its active unpinned members alone");
     }
 
     #[test]
@@ -1119,7 +1220,13 @@ mod graph_rules {
         let proposal = proposal(vec![ticket(1)], Vec::new());
 
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached,
+            )
+            .unwrap_err(),
             GraphApprovalRefusal::Incomplete {
                 tickets: vec![ticket(2)]
             },
@@ -1141,7 +1248,13 @@ mod graph_rules {
         let proposal = proposal(vec![ticket(1), ticket(2), ticket(3), ticket(4)], Vec::new());
 
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached
+            )
+            .unwrap_err(),
             GraphApprovalRefusal::NotGranular { ticket: ticket(1) },
             "a slice of nothing this version claims is not granular (DR-TK-04)"
         );
@@ -1163,7 +1276,13 @@ mod graph_rules {
         let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
 
         assert_eq!(
-            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            enforce_approvable(
+                &proposal,
+                &TicketDependencyGraph::new(),
+                &scope(),
+                &attached
+            )
+            .unwrap_err(),
             GraphApprovalRefusal::NotVerifiable { ticket: ticket(2) },
             "an unqualified Bug carries no criteria and no Verification Steps (DR-TK-09)"
         );
@@ -1178,7 +1297,13 @@ mod graph_rules {
         )];
         let proposal = proposal(vec![ticket(1)], Vec::new());
 
-        let refusal = enforce_approvable(&proposal, &scope(), &attached).unwrap_err();
+        let refusal = enforce_approvable(
+            &proposal,
+            &TicketDependencyGraph::new(),
+            &scope(),
+            &attached,
+        )
+        .unwrap_err();
 
         assert_eq!(
             refusal,
@@ -1207,8 +1332,151 @@ mod graph_rules {
             vec![TicketDependency::new(ticket(1), ticket(2))],
         );
 
-        enforce_approvable(&proposal, &scope(), &attached)
-            .expect("a story needs one claim from any Ticket in the graph (DR-PS-14)");
+        enforce_approvable(
+            &proposal,
+            &TicketDependencyGraph::new(),
+            &scope(),
+            &attached,
+        )
+        .expect("a story needs one claim from any Ticket in the graph (DR-PS-14)");
+    }
+
+    #[test]
+    fn recorded_edges_join_the_registered_graph_acyclically() {
+        // The store already holds 2 → 1, registered separately before
+        // the graph was proposed. A proposal edge that reverses it is
+        // a two-edge cycle, refused before any human sees the graph.
+        let mut registered = TicketDependencyGraph::new();
+        registered
+            .add(ticket(2), ticket(1))
+            .expect("the fixture edge lands");
+
+        assert_eq!(
+            enforce_acyclic_with_registered(
+                &[TicketDependency::new(ticket(1), ticket(2))],
+                &registered,
+            ),
+            Err(DependencyError::Cycle {
+                from: ticket(1),
+                to: ticket(2)
+            }),
+            "a proposal never reverses a registered edge (DR-DE-02)"
+        );
+        // An edge the store already holds changes nothing and passes,
+        // as does a graph of no edges.
+        assert_eq!(
+            enforce_acyclic_with_registered(
+                &[TicketDependency::new(ticket(2), ticket(1))],
+                &registered,
+            ),
+            Ok(())
+        );
+        assert_eq!(enforce_acyclic_with_registered(&[], &registered), Ok(()));
+        assert_eq!(
+            enforce_acyclic_with_registered(
+                &[TicketDependency::new(ticket(1), ticket(2))],
+                &TicketDependencyGraph::new(),
+            ),
+            Ok(()),
+            "a fresh store holds nothing to cycle with"
+        );
+    }
+
+    #[test]
+    fn a_longer_registered_cycle_is_refused_at_the_closing_edge() {
+        // Tickets 1 and 2 sit in the graph; Ticket 9's edges cross out
+        // of it — across Specs and Projects, the registered graph does
+        // not care (DR-DE-02) — and the chain 2 → 9 → 1 waits only on
+        // the proposal's 1 → 2 to close.
+        let mut registered = TicketDependencyGraph::new();
+        registered
+            .add(ticket(2), ticket(9))
+            .expect("the fixture edge lands");
+        registered
+            .add(ticket(9), ticket(1))
+            .expect("the fixture edge lands");
+
+        assert_eq!(
+            enforce_acyclic_with_registered(
+                &[TicketDependency::new(ticket(1), ticket(2))],
+                &registered,
+            ),
+            Err(DependencyError::Cycle {
+                from: ticket(1),
+                to: ticket(2)
+            }),
+            "outside edges join the cycle check even across Specs"
+        );
+    }
+
+    #[test]
+    fn the_gate_refuses_a_graph_that_cycles_with_registered_edges() {
+        let attached = [
+            implementation(1, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            implementation(2, 1, vec![criterion(1, 2, "Slices stay granular.")]),
+            implementation(3, 1, vec![criterion(1, 3, "Stories stay covered.")]),
+        ];
+        let proposal = proposal(
+            vec![ticket(1), ticket(2), ticket(3)],
+            vec![TicketDependency::new(ticket(1), ticket(2))],
+        );
+        let mut registered = TicketDependencyGraph::new();
+        registered
+            .add(ticket(2), ticket(1))
+            .expect("the fixture edge lands");
+
+        let refusal = enforce_approvable(&proposal, &registered, &scope(), &attached).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            GraphApprovalRefusal::CyclicWithRegistered {
+                reason: DependencyError::Cycle {
+                    from: ticket(1),
+                    to: ticket(2)
+                }
+            },
+            "the human gate refuses a cyclic executable graph (DR-DE-02)"
+        );
+        assert_eq!(
+            refusal.to_string(),
+            "the Ticket graph is not acyclic against the registered dependencies; \
+             the dependency from Ticket 1 to Ticket 2 would close a cycle"
+        );
+    }
+
+    #[test]
+    fn the_gate_passes_edges_the_registered_graph_already_holds() {
+        let attached = [
+            implementation(1, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            implementation(2, 1, vec![criterion(1, 2, "Slices stay granular.")]),
+            implementation(3, 1, vec![criterion(1, 3, "Stories stay covered.")]),
+        ];
+        let proposal = proposal(
+            vec![ticket(1), ticket(2), ticket(3)],
+            vec![TicketDependency::new(ticket(1), ticket(2))],
+        );
+        let mut registered = TicketDependencyGraph::new();
+        registered
+            .add(ticket(1), ticket(2))
+            .expect("the fixture edge lands");
+
+        enforce_approvable(&proposal, &registered, &scope(), &attached)
+            .expect("an edge the store already holds is not a cycle (DR-DE-02)");
+    }
+
+    #[test]
+    fn recording_names_the_registered_cycle() {
+        assert_eq!(
+            GraphProposalError::RegisteredCycle {
+                reason: DependencyError::Cycle {
+                    from: ticket(1),
+                    to: ticket(2)
+                }
+            }
+            .to_string(),
+            "a Ticket graph edge would close a cycle with the registered dependencies; \
+             the dependency from Ticket 1 to Ticket 2 would close a cycle"
+        );
     }
 
     /// One stored Implementation carrying the profile reference a

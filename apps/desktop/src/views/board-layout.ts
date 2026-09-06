@@ -183,8 +183,11 @@ function boardGroupForState(state: TicketState): BoardGroupId | undefined {
 }
 
 /** Where a state sits in the register, which never demotes Done. */
-export function registerColumnFor(state: TicketState): BoardColumnId | undefined {
-  return columnForCard(state, DEFAULT_BOARD_LAYOUTS)
+export function registerColumnFor(
+  state: TicketState,
+  layouts: BoardLayoutState = DEFAULT_BOARD_LAYOUTS,
+): BoardColumnId | undefined {
+  return columnForCard(state, layouts)
 }
 
 /**

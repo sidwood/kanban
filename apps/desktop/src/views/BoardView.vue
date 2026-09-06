@@ -55,6 +55,7 @@ import {
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
 import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
 import type { BoardChoices } from './board-layout.storage'
+import { orderCards } from './board-ordering'
 
 /**
  * A group grows with the number of columns it holds, so a four-column
@@ -133,8 +134,13 @@ async function load(): Promise<void> {
 }
 
 // Only Tickets the board can place reach the columns; terminal
-// states keep their history off the active board.
-const cards = computed(() => board.tickets.filter((ticket) => isOnBoard(ticket.state)))
+// states keep their history off the active board. The order is the
+// deterministic one — priority, readiness, number — so every column,
+// the register, and the Done table scan the same way, and no manual
+// ordering exists anywhere (DR-LC-11).
+const cards = computed(() =>
+  orderCards(board.tickets.filter((ticket) => isOnBoard(ticket.state))),
+)
 
 const draftCount = computed(
   () => board.tickets.filter((ticket) => ticket.state === 'draft').length,

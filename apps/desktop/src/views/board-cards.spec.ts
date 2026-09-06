@@ -134,7 +134,7 @@ async function mounted(
   tickets: TicketRecord[],
   laneList: LaneListResponse['lanes'] = lanes(),
   blockers: Record<number, TicketReadinessResponse['blocked_by']> = {},
-): Promise<ReturnType<typeof mount>> {
+): Promise<{ wrapper: ReturnType<typeof mount>; query: ReturnType<typeof vi.fn> }> {
   document.documentElement.classList.remove('dark')
   localStorage.clear()
   const query = vi.fn((name: string, request: unknown) => {
@@ -171,7 +171,7 @@ async function mounted(
     },
   })
   await flushPromises()
-  return wrapper
+  return { wrapper, query }
 }
 
 afterEach(() => {
@@ -193,7 +193,7 @@ const chip = (wrapper: ReturnType<typeof mount>, kind: string, ticketId: number)
 
 describe('board cards', () => {
   it('gives every card the fixed regions: number with Project code, kind, and title', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     for (const [id, number, kindLabel, title] of [
       [7, 'KAN-T12', 'Task Ticket', 'Archive the old exports'],
@@ -207,7 +207,7 @@ describe('board cards', () => {
   })
 
   it('shows the priority and progress chips on every card', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     expect(chip(wrapper, 'priority', 7).text()).toBe('PriorityHigh')
     expect(chip(wrapper, 'progress', 7).text()).toBe('Progress1 outcomes')
@@ -217,7 +217,7 @@ describe('board cards', () => {
   })
 
   it('adds the implementation chips: spec, implementer, lane, and blockers', async () => {
-    const wrapper = await mounted(boardTickets(), lanes(), { 8: [waiting(3), waiting(5)] })
+    const { wrapper } = await mounted(boardTickets(), lanes(), { 8: [waiting(3), waiting(5)] })
 
     expect(chip(wrapper, 'spec', 8).text()).toBe('SpecKAN-S4')
     expect(chip(wrapper, 'implementer', 8).text()).toContain('glm-implementer')
@@ -228,7 +228,7 @@ describe('board cards', () => {
   })
 
   it('populates the Lane chip from the KAN-T32 Lane contract', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     // The chip comes from `lane.list`, the landed Lane application
     // contract — not from any local board state.
@@ -239,7 +239,7 @@ describe('board cards', () => {
   })
 
   it('adds the bug chips: severity, frequency, origin, and profiles', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     expect(chip(wrapper, 'severity', 9).text()).toBe('SeverityHigh')
     expect(chip(wrapper, 'severity', 9).attributes('data-tone')).toBe('caution')
@@ -251,7 +251,7 @@ describe('board cards', () => {
   })
 
   it('adds the task chips: subtype, mode, schedule, and executor', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     expect(chip(wrapper, 'subtype', 7).text()).toBe('SubtypeOperational')
     expect(chip(wrapper, 'mode', 7).text()).toBe('ModeHuman')
@@ -263,7 +263,7 @@ describe('board cards', () => {
   })
 
   it('keeps one kind of chip off another kind of card', async () => {
-    const wrapper = await mounted(boardTickets())
+    const { wrapper } = await mounted(boardTickets())
 
     // The Task carries no severity; the Bug carries no Lane; the
     // Implementation carries no subtype — the vocabulary decides.

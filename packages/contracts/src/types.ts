@@ -279,7 +279,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -637,6 +637,10 @@ export type TicketBugRecord = {
   qualification?: TicketBugQualification | null;
   reporter_evidence: string;
 };
+export type TicketCancelRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
 export type TicketCreateRequest = {
   actual_behaviour?: string | null;
   completion?: string[] | null;
@@ -683,6 +687,19 @@ export type TicketDependencyRemoveRequest = {
   mutation: MutationContext;
   to_ticket: number;
 };
+export type TicketEditRequest = {
+  mutation: MutationContext;
+  slice?: string | null;
+  ticket_id: number;
+  title?: string | null;
+};
+export type TicketEmergencyOverrideRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+  to: TicketState;
+  who: string;
+  why: string;
+};
 export type TicketExternalReference = {
   label?: string | null;
   uri: string;
@@ -700,6 +717,15 @@ export type TicketListResponse = {
 export type TicketOccurrenceSnapshot = {
   observation: string;
   observed_at: string;
+};
+export type TicketParkRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type TicketPrioritiseRequest = {
+  mutation: MutationContext;
+  priority: TicketPriority;
+  ticket_id: number;
 };
 export type TicketPriority = 'urgent' | 'high' | 'normal' | 'low';
 export type TicketReadinessBlocker = {
@@ -744,8 +770,27 @@ export type TicketRecord = {
   title?: string | null;
   version: number;
 };
+export type TicketReviewDecision = 'approve' | 'reject';
+export type TicketReviewRequest = {
+  decision: TicketReviewDecision;
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type TicketScheduleRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
 export type TicketSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
+export type TicketTransitionRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+  to: TicketState;
+};
+export type TicketUnparkRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
 export type TicketVerificationStep = {
   command: string;
 };

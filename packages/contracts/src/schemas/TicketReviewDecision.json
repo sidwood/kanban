@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One explicit human review decision on the wire (DR-LC-09): the decision the lifecycle records when a review resolves. The review flows that stage findings are KAN-S10's.",
+  "oneOf": [
+    {
+      "description": "The review approves; the Ticket waits to land.",
+      "enum": [
+        "approve"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The review rejects; the Ticket returns to work.",
+      "enum": [
+        "reject"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "TicketReviewDecision"
+}

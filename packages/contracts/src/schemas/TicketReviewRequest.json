@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TicketReviewDecision": {
+      "description": "One explicit human review decision on the wire (DR-LC-09): the decision the lifecycle records when a review resolves. The review flows that stage findings are KAN-S10's.",
+      "oneOf": [
+        {
+          "description": "The review approves; the Ticket waits to land.",
+          "enum": [
+            "approve"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The review rejects; the Ticket returns to work.",
+          "enum": [
+            "reject"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Request payload for the `ticket.review` command: record one explicit human review decision (DR-LC-09).",
+  "properties": {
+    "decision": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketReviewDecision"
+        }
+      ],
+      "description": "The decision recorded."
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "ticket_id": {
+      "description": "The Ticket the decision resolves.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "decision",
+    "mutation",
+    "ticket_id"
+  ],
+  "title": "TicketReviewRequest",
+  "type": "object"
+}

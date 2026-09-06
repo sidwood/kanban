@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `ticket.edit` command: edit the human-authored description of an open Ticket (DR-LC-09) — the title a Bug or Task carries or the slice description an Implementation carries. Each kind sends exactly the field it owns.",
+  "properties": {
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "slice": {
+      "description": "The new slice description, for an Implementation.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ticket_id": {
+      "description": "The Ticket being edited.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "title": {
+      "description": "The new title, for a Bug or Task.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mutation",
+    "ticket_id"
+  ],
+  "title": "TicketEditRequest",
+  "type": "object"
+}

@@ -20,6 +20,8 @@
     "spec.execution.moved",
     "ticket.created",
     "ticket.assigned",
+    "ticket.state.changed",
+    "ticket.edited",
     "profile.defined",
     "profile.updated",
     "profile.retired",

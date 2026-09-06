@@ -201,7 +201,7 @@ describe('PlanningView diagnostics', () => {
     ])
   })
 
-  it('renders the invalid profile references the catalogue feeds', async () => {
+  it('renders the invalid profile references the catalogue reports as blocking', async () => {
     setActivePinia(createPinia())
     const { wrapper } = await mountedWithDiagnostics({
       'plan.diagnostics': {
@@ -215,6 +215,7 @@ describe('PlanningView diagnostics', () => {
     expect(wrapper.find('[data-testid="plan-diagnostics-profile-0"]').text()).toBe(
       'Profile reference ghost-profile resolves to no catalogue entry.',
     )
+    expect(wrapper.find('[data-testid="plan-diagnostics-blocking"]').exists()).toBe(true)
   })
 
   it('re-reads the retained graph when the view returns', async () => {

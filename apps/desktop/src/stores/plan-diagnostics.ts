@@ -1,8 +1,9 @@
 // The planning diagnostics of the graph on display: the blocking
 // cycles, coverage gaps, and invalid profile references the core
 // reports for one Plan — the working shape, or the frozen version the
-// editor switched to (KAN-S3-US7). The invalid-profile list arrives
-// empty until the execution profile catalogue feeds it (KAN-S7).
+// editor switched to (KAN-S3-US7). The invalid-profile list carries
+// the references the stored execution profile catalogue resolves to
+// no assignable entry (KAN-S7, T38).
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type { PlanDiagnosticsResponse } from '@kanban/contracts'

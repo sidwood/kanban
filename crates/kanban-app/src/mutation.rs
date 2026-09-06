@@ -34,6 +34,11 @@ fn translate_error(error: serde_json::Error) -> ApiError {
     }
 }
 
+/// The prefix opening every operation-aware fingerprint. A recorded
+/// fingerprint without it predates operation awareness and carries
+/// only the aggregate and the body.
+const FINGERPRINT_SCHEME_PREFIX: &str = "v2:";
+
 /// The guard-relevant half of a validated command payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedCommand {
@@ -47,10 +52,9 @@ pub struct ParsedCommand {
     pub optimistic_version: u64,
     /// The client's idempotency key for this logical request.
     pub idempotency_key: String,
-    /// The request's identity for idempotency: the aggregate plus the
-    /// payload without its mutation context, so a corrected retry
-    /// with the same key is a replay, never a conflict.
-    pub fingerprint: String,
+    /// The serialised payload without its mutation context: the body
+    /// every fingerprint projection shares.
+    body: String,
 }
 
 impl ParsedCommand {
@@ -67,17 +71,35 @@ impl ParsedCommand {
             .cloned()
             .ok_or_else(|| ApiError::invalid_request("a command payload must be a JSON object"))?;
         body.remove("mutation");
-        let body = Value::Object(body);
+        let body = serde_json::to_string(&Value::Object(body)).expect("a JSON object serialises");
         Ok(Self {
             aggregate: aggregate.to_owned(),
             payload: payload.clone(),
             optimistic_version: context.optimistic_version,
             idempotency_key: context.idempotency_key,
-            fingerprint: format!(
-                "{aggregate}:{}",
-                serde_json::to_string(&body).expect("a JSON object serialises")
-            ),
+            body,
         })
+    }
+
+    /// The request's identity for idempotency under `operation`: the
+    /// dispatched operation, the aggregate, and the payload without
+    /// its mutation context, so a corrected retry with the same key
+    /// is a replay, never a conflict — while an operation pair that
+    /// shares an aggregate and a body shape, like an edge add and
+    /// its remove, stays two different requests.
+    pub fn fingerprint(&self, operation: &str) -> String {
+        format!(
+            "{FINGERPRINT_SCHEME_PREFIX}{operation}:{}:{}",
+            self.aggregate, self.body
+        )
+    }
+
+    /// The operation-blind projection outcomes recorded before the
+    /// fingerprint named its operation. A spent key whose outcome
+    /// predates the scheme still replays through it (see
+    /// [`RecordedOutcome::replays`]).
+    pub fn legacy_fingerprint(&self) -> String {
+        format!("{}:{}", self.aggregate, self.body)
     }
 }
 
@@ -88,6 +110,21 @@ pub struct RecordedOutcome {
     pub fingerprint: String,
     /// The recorded success response.
     pub response: Value,
+}
+
+impl RecordedOutcome {
+    /// Whether this outcome is the recorded answer to the request
+    /// whose operation-aware fingerprint is `fingerprint`. An outcome
+    /// recorded before operation awareness names no operation, so it
+    /// cannot prove which operation spent the key: it replays any
+    /// request whose legacy projection `legacy_projection` matches
+    /// the aggregate and body those rows recorded, and retention
+    /// bounds how long such an outcome can answer at all.
+    pub fn replays(&self, fingerprint: &str, legacy_projection: &str) -> bool {
+        self.fingerprint == fingerprint
+            || (!self.fingerprint.starts_with(FINGERPRINT_SCHEME_PREFIX)
+                && self.fingerprint == legacy_projection)
+    }
 }
 
 /// The record of spent idempotency keys and the durable span each
@@ -336,7 +373,8 @@ mod tests {
         .expect("the second command lifts");
 
         assert_eq!(
-            first.fingerprint, second.fingerprint,
+            first.fingerprint("counter.bump"),
+            second.fingerprint("counter.bump"),
             "a corrected retry with the same body is the same request"
         );
     }
@@ -361,8 +399,92 @@ mod tests {
         .expect("the second command lifts");
 
         assert_ne!(
-            first.fingerprint, second.fingerprint,
+            first.fingerprint("counter.bump"),
+            second.fingerprint("counter.bump"),
             "a different body is a different request"
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_names_the_operation() {
+        let command = ParsedCommand::lift(
+            "counter",
+            &json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                "step": 1,
+            }),
+        )
+        .expect("the command lifts");
+
+        let bump = command.fingerprint("counter.bump");
+        let reset = command.fingerprint("counter.reset");
+
+        assert_ne!(
+            bump, reset,
+            "the same body under two operations is two different requests"
+        );
+        assert!(
+            bump.starts_with("v2:"),
+            "an operation-aware fingerprint opens with its scheme: {bump}"
+        );
+    }
+
+    #[test]
+    fn the_legacy_projection_keeps_the_recorded_shape() {
+        let command = ParsedCommand::lift(
+            "counter",
+            &json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                "step": 1,
+            }),
+        )
+        .expect("the command lifts");
+
+        assert_eq!(
+            command.legacy_fingerprint(),
+            "counter:{\"step\":1}",
+            "the projection stays byte-identical to the rows recorded before the scheme"
+        );
+    }
+
+    #[test]
+    fn a_recorded_outcome_replays_its_own_fingerprint_and_legacy_twins_only() {
+        let aware = RecordedOutcome {
+            fingerprint: "v2:counter.bump:counter:{\"step\":1}".to_owned(),
+            response: json!({ "value": 1 }),
+        };
+        assert!(
+            aware.replays(
+                "v2:counter.bump:counter:{\"step\":1}",
+                "counter:{\"step\":1}"
+            ),
+            "the outcome replays the request that spent the key"
+        );
+        assert!(
+            !aware.replays(
+                "v2:counter.reset:counter:{\"step\":1}",
+                "counter:{\"step\":1}"
+            ),
+            "an operation-aware outcome never answers through the legacy projection"
+        );
+
+        let legacy = RecordedOutcome {
+            fingerprint: "counter:{\"step\":1}".to_owned(),
+            response: json!({ "value": 1 }),
+        };
+        assert!(
+            legacy.replays(
+                "v2:counter.bump:counter:{\"step\":1}",
+                "counter:{\"step\":1}"
+            ),
+            "a pre-scheme outcome replays the request shape it recorded"
+        );
+        assert!(
+            !legacy.replays(
+                "v2:counter.bump:counter:{\"step\":2}",
+                "counter:{\"step\":2}"
+            ),
+            "a pre-scheme outcome still refuses a different body"
         );
     }
 

@@ -302,6 +302,21 @@ mod tests {
         projects
     }
 
+    /// One lifted command against the ruling aggregate, carrying `key`
+    /// and the body a test chooses.
+    fn command(key: &str, body: serde_json::Value) -> ParsedCommand {
+        let mut payload = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+        });
+        let payload_object = payload
+            .as_object_mut()
+            .expect("the command is a JSON object");
+        for (field, value) in body.as_object().expect("the body is a JSON object") {
+            payload_object.insert(field.clone(), value.clone());
+        }
+        ParsedCommand::lift("ruling", &payload).expect("the fixture command lifts")
+    }
+
     #[test]
     fn recording_appends_an_immutable_ruling() {
         let store = Arc::new(MemoryRulingStore::default());
@@ -311,18 +326,14 @@ mod tests {
         };
         let response = handler
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-1",
+                    json!({
                         "project_id": 1,
                         "entity": { "kind": "ticket", "id": "kan-t12" },
                         "summary": "Allow landing",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("recording succeeds");
@@ -368,34 +379,20 @@ mod tests {
         };
         let original = record
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
-                        "project_id": 1,
-                        "summary": "Hold",
-                    }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                &command("key-1", json!({ "project_id": 1, "summary": "Hold" })),
                 &NoopCommandEffects,
             )
             .expect("original lands");
         let replacement = supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-2",
+                    json!({
                         "project_id": 1,
                         "ruling_id": original["id"],
                         "summary": "Proceed",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-2".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("supersession lands");
@@ -426,51 +423,33 @@ mod tests {
         };
         let original = record
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
-                        "project_id": 1,
-                        "summary": "Hold",
-                    }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                &command("key-1", json!({ "project_id": 1, "summary": "Hold" })),
                 &NoopCommandEffects,
             )
             .expect("original lands");
         supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-2",
+                    json!({
                         "project_id": 1,
                         "ruling_id": original["id"],
                         "summary": "Proceed",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-2".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("first supersession lands");
         let error = supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-3",
+                    json!({
                         "project_id": 1,
                         "ruling_id": original["id"],
                         "summary": "Reconsider",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-3".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect_err("a second supersession is refused");
@@ -492,18 +471,10 @@ mod tests {
         };
         let error = handler
             .apply(
-                &ParsedCommand {
-                    aggregate: "ruling".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
-                        "project_id": 1,
-                        "ruling_id": 9,
-                        "summary": "Proceed",
-                    }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "ruling:{}".to_owned(),
-                },
+                &command(
+                    "key-1",
+                    json!({ "project_id": 1, "ruling_id": 9, "summary": "Proceed" }),
+                ),
                 &NoopCommandEffects,
             )
             .expect_err("unknown rulings are refused");

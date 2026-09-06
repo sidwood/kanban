@@ -141,13 +141,17 @@ impl Core {
     /// Serve a named command through the mutation guard: idempotent
     /// replay first, then the optimistic version check, then one
     /// apply and its outcome inside a single durable span
-    /// (DR-SS-03).
+    /// (DR-SS-03). The dispatched name is the request's canonical
+    /// operation identity, so the fingerprint that decides a replay
+    /// separates two operations sharing an aggregate and a body
+    /// shape.
     pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
         let handler = self
             .commands
             .get(name)
             .ok_or_else(|| ApiError::not_found(&format!("operation `{name}`")))?;
         let command = handler.parse(payload)?;
+        let fingerprint = command.fingerprint(name);
 
         // The gate spans check-and-record so one idempotency key can
         // never apply twice. A poisoned gate means a handler panicked
@@ -159,7 +163,7 @@ impl Core {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if let Some(recorded) = self.idempotency.recorded(&command.idempotency_key)? {
-            if recorded.fingerprint == command.fingerprint {
+            if recorded.replays(&fingerprint, &command.legacy_fingerprint()) {
                 return Ok(recorded.response);
             }
             return Err(ApiError::duplicate_idempotency_key(
@@ -192,7 +196,7 @@ impl Core {
         span.commit(
             &command.idempotency_key,
             RecordedOutcome {
-                fingerprint: command.fingerprint,
+                fingerprint,
                 response: response.clone(),
             },
         )?;
@@ -324,14 +328,24 @@ mod tests {
         RecordedOutcome, parse_payload,
     };
 
-    const TEST_CATALOG: &[OperationDescriptor] = &[OperationDescriptor {
-        name: "counter.bump",
-        kind: OperationKind::Command,
-        request_schema: "MutationContext",
-        response_schema: "HealthResponse",
-        mcp_tool_name: "counter_bump",
-        description: "Test fixture: bump a versioned counter.",
-    }];
+    const TEST_CATALOG: &[OperationDescriptor] = &[
+        OperationDescriptor {
+            name: "counter.bump",
+            kind: OperationKind::Command,
+            request_schema: "MutationContext",
+            response_schema: "HealthResponse",
+            mcp_tool_name: "counter_bump",
+            description: "Test fixture: bump a versioned counter.",
+        },
+        OperationDescriptor {
+            name: "counter.reset",
+            kind: OperationKind::Command,
+            request_schema: "MutationContext",
+            response_schema: "HealthResponse",
+            mcp_tool_name: "counter_reset",
+            description: "Test fixture: zero a versioned counter.",
+        },
+    ];
 
     #[derive(Debug, Default)]
     struct RecordingSink {
@@ -411,9 +425,17 @@ mod tests {
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
+        register_counter_commands(&mut core);
+        core
+    }
+
+    /// Wire both counter commands, so a test can spend one key on two
+    /// operations that share an aggregate and a body shape.
+    fn register_counter_commands(core: &mut Core) {
         core.register_command("counter.bump", Arc::new(Counter::default()))
             .expect("the test command registers");
-        core
+        core.register_command("counter.reset", Arc::new(Resettable))
+            .expect("the test command registers");
     }
 
     fn bump(step: i64, key: &str, version: u64) -> Value {
@@ -421,6 +443,33 @@ mod tests {
             "mutation": { "optimistic_version": version, "idempotency_key": key },
             "step": step,
         })
+    }
+
+    /// A second command over the counter aggregate and the very same
+    /// `BumpRequest` body, distinguishing itself only by its
+    /// operation name: the guard's fixture for an add/remove-style
+    /// operation pair.
+    struct Resettable;
+
+    impl CommandHandler for Resettable {
+        fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+            parse_payload::<BumpRequest>(payload)?;
+            ParsedCommand::lift("counter", payload)
+        }
+
+        fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+            Ok(0)
+        }
+
+        fn apply(
+            &self,
+            command: &ParsedCommand,
+            effects: &dyn CommandEffects,
+        ) -> Result<Value, ApiError> {
+            let request: BumpRequest = parse_payload(&command.payload)?;
+            effects.emit("counter.reset", json!({ "from": request.step }));
+            Ok(json!({ "value": 0, "version": 1 }))
+        }
     }
 
     #[test]
@@ -682,6 +731,92 @@ mod tests {
             "the message should name the reused key: {}",
             error.message
         );
+    }
+
+    #[test]
+    fn command_reusing_an_idempotency_key_across_operations_is_refused() {
+        let core = counter_core();
+
+        core.command("counter.bump", &bump(1, "key-1", 0))
+            .expect("the first attempt applies");
+
+        // The reset carries the same aggregate, body, and key as the
+        // bump; only its operation name differs. Replaying the bump's
+        // outcome here would answer a reset with a bump's result.
+        let error = core
+            .command("counter.reset", &bump(1, "key-1", 1))
+            .expect_err("a key cannot be spent on a second operation");
+
+        assert_eq!(error.code, ErrorCode::DuplicateIdempotencyKey);
+        assert!(
+            error.message.contains("key-1"),
+            "the message should name the reused key: {}",
+            error.message
+        );
+
+        // The refusal is the operation's, not the key's: the bump's
+        // own retry still replays, and the reset still applies under
+        // its own key.
+        let replay = core
+            .command("counter.bump", &bump(1, "key-1", 0))
+            .expect("the bump's own retry replays");
+        assert_eq!(replay, json!({ "value": 1, "version": 1 }));
+
+        let reset = core
+            .command("counter.reset", &bump(1, "key-2", 0))
+            .expect("the reset applies under its own key");
+        assert_eq!(reset, json!({ "value": 0, "version": 1 }));
+    }
+
+    /// A core whose store already holds `key-legacy`, spent before the
+    /// fingerprint named its operation: the row carries the
+    /// operation-blind projection those outcomes recorded.
+    fn legacy_core() -> Core {
+        let store = Arc::new(MemoryIdempotencyStore::new());
+        store
+            .begin()
+            .expect("the span opens")
+            .commit(
+                "key-legacy",
+                RecordedOutcome {
+                    fingerprint: "counter:{\"step\":1}".to_owned(),
+                    response: json!({ "value": 1, "version": 1 }),
+                },
+            )
+            .expect("the pre-scheme outcome records");
+        let mut core = Core::new(TEST_CATALOG, store, Arc::new(NoopEventSink));
+        register_counter_commands(&mut core);
+        core
+    }
+
+    #[test]
+    fn an_outcome_recorded_before_operation_awareness_still_replays() {
+        let core = legacy_core();
+
+        // The retry carries a corrected version and the operation-aware
+        // fingerprint of a new record; the pre-scheme row must still
+        // answer it, exactly as it answered before the scheme.
+        let replay = core
+            .command("counter.bump", &bump(1, "key-legacy", 7))
+            .expect("the pre-scheme outcome replays the retry");
+
+        assert_eq!(replay, json!({ "value": 1, "version": 1 }));
+    }
+
+    #[test]
+    fn an_outcome_recorded_before_operation_awareness_answers_across_operations() {
+        let core = legacy_core();
+
+        // A pre-scheme row names no operation, so the guard cannot
+        // prove which operation spent the key: it honours the replay
+        // for every operation carrying the recorded aggregate and
+        // body. Retention bounds how long such a row can answer;
+        // every outcome recorded after the scheme is separated.
+        let replay = core
+            .command("counter.reset", &bump(1, "key-legacy", 0))
+            .expect("the pre-scheme outcome still answers");
+
+        assert_eq!(replay, json!({ "value": 1, "version": 1 }));
     }
 
     /// An idempotency store whose span cannot commit, standing in

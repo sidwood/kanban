@@ -283,15 +283,26 @@ mod tests {
         }
     }
 
-    fn mutation() -> serde_json::Value {
-        json!({ "optimistic_version": 0, "idempotency_key": "key-1" })
-    }
-
     /// One stored Project (identity 1) every deferral test resolves.
     fn projects() -> Arc<MemoryProjectStore> {
         let projects = Arc::new(MemoryProjectStore::default());
         projects.seed(stored_project(1, "CORE", "kanban-main"));
         projects
+    }
+
+    /// One lifted command against the deferral aggregate, carrying
+    /// `key` and the body a test chooses.
+    fn command(key: &str, body: serde_json::Value) -> ParsedCommand {
+        let mut payload = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+        });
+        let payload_object = payload
+            .as_object_mut()
+            .expect("the command is a JSON object");
+        for (field, value) in body.as_object().expect("the body is a JSON object") {
+            payload_object.insert(field.clone(), value.clone());
+        }
+        ParsedCommand::lift("deferral", &payload).expect("the fixture command lifts")
     }
 
     #[test]
@@ -303,18 +314,14 @@ mod tests {
         };
         let response = handler
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-1",
+                    json!({
                         "project_id": 1,
                         "finding_id": "finding-1",
                         "reason": "Cosmetic only",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("recording succeeds");
@@ -360,35 +367,27 @@ mod tests {
         };
         let original = record
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-1",
+                    json!({
                         "project_id": 1,
                         "finding_id": "finding-1",
                         "reason": "Cosmetic only",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("original lands");
         let replacement = supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-2",
+                    json!({
                         "project_id": 1,
                         "deferral_id": original["id"],
                         "reason": "Accepted risk",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-2".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("supersession lands");
@@ -419,52 +418,40 @@ mod tests {
         };
         let original = record
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-1",
+                    json!({
                         "project_id": 1,
                         "finding_id": "finding-1",
                         "reason": "Cosmetic only",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("original lands");
         supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-2",
+                    json!({
                         "project_id": 1,
                         "deferral_id": original["id"],
                         "reason": "Accepted risk",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-2".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect("first supersession lands");
         let error = supersede
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-3",
+                    json!({
                         "project_id": 1,
                         "deferral_id": original["id"],
                         "reason": "Reopened",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-3".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect_err("a second supersession is refused");
@@ -486,18 +473,14 @@ mod tests {
         };
         let error = handler
             .apply(
-                &ParsedCommand {
-                    aggregate: "deferral".to_owned(),
-                    payload: json!({
-                        "mutation": mutation(),
+                &command(
+                    "key-1",
+                    json!({
                         "project_id": 1,
                         "deferral_id": 9,
                         "reason": "Accepted risk",
                     }),
-                    optimistic_version: 0,
-                    idempotency_key: "key-1".to_owned(),
-                    fingerprint: "deferral:{}".to_owned(),
-                },
+                ),
                 &NoopCommandEffects,
             )
             .expect_err("unknown deferrals are refused");

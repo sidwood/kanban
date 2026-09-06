@@ -694,7 +694,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0026 applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![26, 27] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![26, 27]
+            }
+        );
         let conn = database.connection();
         // Names are unique, values are never blank, and nothing is
         // deleted; the fallback and the Ticket assignment are stored

@@ -214,6 +214,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "schedules",
         sql: include_str!("../migrations/0032_schedules.sql"),
     },
+    Migration {
+        version: 33,
+        name: "runs",
+        sql: include_str!("../migrations/0033_runs.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -459,7 +464,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
                 ]
             }
         );
@@ -484,7 +489,7 @@ mod tests {
             versions,
             vec![
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24, 25, 26, 27, 28, 29, 30, 31, 32
+                24, 25, 26, 27, 28, 29, 30, 31, 32, 33
             ]
         );
         for table in [
@@ -565,7 +570,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 32, "one event per applied migration");
+        assert_eq!(events.len(), 33, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -749,7 +754,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![26, 27, 28, 29, 30, 31, 32]
+                applied: vec![26, 27, 28, 29, 30, 31, 32, 33]
             }
         );
         let conn = database.connection();
@@ -836,7 +841,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![27, 28, 29, 30, 31, 32]
+                applied: vec![27, 28, 29, 30, 31, 32, 33]
             }
         );
         let conn = database.connection();
@@ -920,7 +925,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![31, 32]
+                applied: vec![31, 32, 33]
             }
         );
         let conn = database.connection();
@@ -989,7 +994,8 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+                    13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+                    33
                 ]
             }
         );
@@ -1040,7 +1046,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![25, 26, 27, 28, 29, 30, 31, 32]
+                applied: vec![25, 26, 27, 28, 29, 30, 31, 32, 33]
             }
         );
         let present: i64 = database
@@ -1104,7 +1110,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+                applied: vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
             }
         );
         let rewritten = database
@@ -1171,7 +1177,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+                applied: vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
             }
         );
         let conn = database.connection();
@@ -1264,7 +1270,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+                    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
                 ]
             }
         );
@@ -1332,7 +1338,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
                 ]
             }
         );
@@ -1638,6 +1644,10 @@ mod tests {
                     version: 32,
                     name: "schedules",
                 },
+                PendingMigration {
+                    version: 33,
+                    name: "runs",
+                },
             ]]
         );
     }
@@ -1684,7 +1694,7 @@ mod tests {
             report.applied,
             vec![
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                31, 32
+                31, 32, 33
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
@@ -1760,7 +1770,7 @@ mod tests {
             report.applied,
             vec![
                 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                32
+                32, 33
             ]
         );
         let outcome = database.connection().execute(
@@ -2073,7 +2083,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
         );
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn

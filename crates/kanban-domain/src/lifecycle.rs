@@ -476,6 +476,7 @@ mod lifecycle_transitions {
             state,
             body,
             None,
+            None,
             1,
         )
     }

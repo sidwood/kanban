@@ -42,17 +42,11 @@ use kanban_dto::{
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
     TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
     TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
-    TicketEmergencyOverrideRequest, TicketGetQuery, TicketListQuery, TicketListResponse,
-    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
-    TicketRecord, TicketReviewRequest, TicketScheduleRequest, TicketTransitionRequest,
-    TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, WorkspaceListQuery,
-    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
-    WorkspaceRetireRequest,
-    TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery,
-    TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphListResponse,
-    TicketGraphProposeRequest, TicketGraphRecord, TicketListQuery, TicketListResponse,
-    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketSpecMoveRequest,
+    TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
+    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
+    TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
+    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketReviewRequest,
+    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
     TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
     WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
@@ -746,7 +740,6 @@ async fn ticket_assign(
 
 #[tauri::command]
 async fn ticket_transition(
-async fn ticket_spec_move(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
 ) -> Result<TicketRecord, ApiError> {
@@ -819,6 +812,16 @@ async fn ticket_review(
     let request = decode_invoke_args::<TicketReviewRequest>(request)?;
     run_blocking(shell, "ticket review", |shell| {
         forward_command(shell, "ticket.review", "reviewed Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_spec_move(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
     let request = decode_invoke_args::<TicketSpecMoveRequest>(request)?;
     run_blocking(shell, "ticket spec move", |shell| {
         forward_command(
@@ -840,6 +843,11 @@ async fn ticket_prioritise(
     let request = decode_invoke_args::<TicketPrioritiseRequest>(request)?;
     run_blocking(shell, "ticket prioritise", |shell| {
         forward_command(shell, "ticket.prioritise", "prioritised Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ticket_graph_propose(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -866,6 +874,11 @@ async fn ticket_edit(
     let request = decode_invoke_args::<TicketEditRequest>(request)?;
     run_blocking(shell, "ticket edit", |shell| {
         forward_command(shell, "ticket.edit", "edited Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ticket_graph_approve(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -897,6 +910,11 @@ async fn ticket_emergency_override(
             "overrode Ticket lifecycle",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ticket_graph_list(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,

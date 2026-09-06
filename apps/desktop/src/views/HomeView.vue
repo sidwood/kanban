@@ -97,6 +97,12 @@ const eventStream = computed(() =>
         Execution profiles
       </RouterLink>
       <RouterLink
+        to="/settings/capacity"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Capacity settings
+      </RouterLink>
+      <RouterLink
         to="/planning"
         class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
       >

@@ -4,6 +4,7 @@ import InitiativesView from '../views/InitiativesView.vue'
 import PlanningView from '../views/PlanningView.vue'
 import RegisterView from '../views/RegisterView.vue'
 import HerdrSettingsView from '../views/HerdrSettingsView.vue'
+import CapacitySettingsView from '../views/CapacitySettingsView.vue'
 import ProfilesView from '../views/ProfilesView.vue'
 import WorkspacesView from '../views/WorkspacesView.vue'
 import SpecEditorView from '../views/SpecEditorView.vue'
@@ -17,6 +18,7 @@ const router = createRouter({
     { path: '/initiatives', name: 'initiatives', component: InitiativesView },
     { path: '/register', name: 'register', component: RegisterView },
     { path: '/settings/herdr', name: 'herdr-settings', component: HerdrSettingsView },
+    { path: '/settings/capacity', name: 'capacity-settings', component: CapacitySettingsView },
     { path: '/settings/profiles', name: 'profiles', component: ProfilesView },
     { path: '/planning', name: 'planning', component: PlanningView },
     { path: '/planning/specs', name: 'planning-specs', component: SpecEditorView },

@@ -14,7 +14,7 @@ use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCapacityStore, SqliteDependencyStore,
     SqliteDispatchStore, SqliteIdempotencyStore, SqliteLaneStore, SqliteProfileStore,
-    SqliteProjectStore, SqliteTicketStore,
+    SqliteProjectStore, SqliteRunStore, SqliteTicketStore,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -59,6 +59,7 @@ pub fn harness() -> DispatchHarness {
     let lanes = Arc::new(SqliteLaneStore::new(&database));
     let dependencies = Arc::new(SqliteDependencyStore::new(&database));
     let requests = Arc::new(SqliteDispatchStore::new(&database));
+    let runs = Arc::new(SqliteRunStore::new(&database));
     let wake = Arc::new(RecordingWake::default());
     let idempotency = Arc::new(SqliteIdempotencyStore::new(
         &database,
@@ -66,16 +67,18 @@ pub fn harness() -> DispatchHarness {
     ));
     let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
     core.register_dispatch(
-        requests,
-        tickets,
-        profiles,
-        projects,
+        requests.clone(),
+        tickets.clone(),
+        profiles.clone(),
+        projects.clone(),
         capacity,
         lanes,
         dependencies,
         wake.clone(),
     )
     .expect("the dispatch operations register");
+    core.register_runs(runs, requests, tickets, profiles, projects)
+        .expect("the run operations register");
     DispatchHarness {
         _dir: dir,
         core,

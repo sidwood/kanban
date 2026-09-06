@@ -554,6 +554,20 @@ define_exposed_catalogue! {
         mcp: "dispatch_queue",
         description: "List a Project's queued Dispatch Requests in deterministic priority, readiness, age order.",
     },
+    "run.acknowledge" => {
+        kind: Command,
+        request: "RunAcknowledgeRequest",
+        response: "RunRecord",
+        mcp: "run_acknowledge",
+        description: "Acknowledge the run of one claimed Dispatch Request, freezing its requested and effective profile snapshots with the fallback path.",
+    },
+    "run.list" => {
+        kind: Query,
+        request: "RunListQuery",
+        response: "RunListResponse",
+        mcp: "run_list",
+        description: "List a Project's runs with their frozen requested and effective profile snapshots.",
+    },
     "timeline.query" => {
         kind: Query,
         request: "TimelineQuery",

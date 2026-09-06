@@ -37,11 +37,14 @@ use kanban_dto::{
     SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
     SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery,
-    TicketListResponse, TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TimelineQuery,
-    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
+    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
+    TicketEmergencyOverrideRequest, TicketGetQuery, TicketListQuery, TicketListResponse,
+    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
+    TicketRecord, TicketReviewRequest, TicketScheduleRequest, TicketTransitionRequest,
+    TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, WorkspaceListQuery,
+    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -714,6 +717,128 @@ async fn ticket_assign(
 }
 
 #[tauri::command]
+async fn ticket_transition(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketTransitionRequest>(request)?;
+    run_blocking(shell, "ticket transition", |shell| {
+        forward_command(shell, "ticket.transition", "moved Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_park(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketParkRequest>(request)?;
+    run_blocking(shell, "ticket park", |shell| {
+        forward_command(shell, "ticket.park", "parked Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_unpark(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketUnparkRequest>(request)?;
+    run_blocking(shell, "ticket unpark", |shell| {
+        forward_command(shell, "ticket.unpark", "unparked Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_schedule(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketScheduleRequest>(request)?;
+    run_blocking(shell, "ticket schedule", |shell| {
+        forward_command(shell, "ticket.schedule", "scheduled Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_cancel(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketCancelRequest>(request)?;
+    run_blocking(shell, "ticket cancel", |shell| {
+        forward_command(shell, "ticket.cancel", "cancelled Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_review(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketReviewRequest>(request)?;
+    run_blocking(shell, "ticket review", |shell| {
+        forward_command(shell, "ticket.review", "reviewed Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_prioritise(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketPrioritiseRequest>(request)?;
+    run_blocking(shell, "ticket prioritise", |shell| {
+        forward_command(shell, "ticket.prioritise", "prioritised Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_edit(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketEditRequest>(request)?;
+    run_blocking(shell, "ticket edit", |shell| {
+        forward_command(shell, "ticket.edit", "edited Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_emergency_override(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketEmergencyOverrideRequest>(request)?;
+    run_blocking(shell, "ticket emergency override", |shell| {
+        forward_command(
+            shell,
+            "ticket.emergency.override",
+            "overrode Ticket lifecycle",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn profile_define(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1210,6 +1335,15 @@ shell_handlers::shell_handler_catalogue! {
     ticket_dependencies,
     ticket_readiness,
     ticket_assign,
+    ticket_transition,
+    ticket_park,
+    ticket_unpark,
+    ticket_schedule,
+    ticket_cancel,
+    ticket_review,
+    ticket_prioritise,
+    ticket_edit,
+    ticket_emergency_override,
     profile_define,
     profile_update,
     profile_retire,

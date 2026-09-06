@@ -29,10 +29,13 @@ use kanban_dto::{
     SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
     TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
-    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCreateRequest, TicketDependenciesQuery,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery, TicketListQuery,
-    TicketReadinessQuery, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
-    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
+    TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketListQuery,
+    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReviewRequest,
+    TicketScheduleRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind,
+    TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
+    WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -284,6 +287,29 @@ fn sample_request(schema: &str) -> Value {
         "TicketAssignRequest" => {
             json!({ "mutation": mutation, "ticket_id": 1, "profile": "standard" })
         }
+        "TicketTransitionRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "to": "ready" })
+        }
+        "TicketParkRequest" => json!({ "mutation": mutation, "ticket_id": 1 }),
+        "TicketUnparkRequest" => json!({ "mutation": mutation, "ticket_id": 1 }),
+        "TicketScheduleRequest" => json!({ "mutation": mutation, "ticket_id": 1 }),
+        "TicketCancelRequest" => json!({ "mutation": mutation, "ticket_id": 1 }),
+        "TicketReviewRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "decision": "approve" })
+        }
+        "TicketPrioritiseRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "priority": "urgent" })
+        }
+        "TicketEditRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "title": "Landing drops every branch" })
+        }
+        "TicketEmergencyOverrideRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "to": "ready",
+            "who": "Sid Wood",
+            "why": "Recovery after the core crashed mid move",
+        }),
         "ProfileDefineRequest" => json!({
             "mutation": mutation,
             "name": "standard",
@@ -574,6 +600,21 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "TicketReadinessQuery" => decode_invoke_args::<TicketReadinessQuery>(request).is_err(),
         "TicketAssignRequest" => decode_invoke_args::<TicketAssignRequest>(request).is_err(),
+        "TicketTransitionRequest" => {
+            decode_invoke_args::<TicketTransitionRequest>(request).is_err()
+        }
+        "TicketParkRequest" => decode_invoke_args::<TicketParkRequest>(request).is_err(),
+        "TicketUnparkRequest" => decode_invoke_args::<TicketUnparkRequest>(request).is_err(),
+        "TicketScheduleRequest" => decode_invoke_args::<TicketScheduleRequest>(request).is_err(),
+        "TicketCancelRequest" => decode_invoke_args::<TicketCancelRequest>(request).is_err(),
+        "TicketReviewRequest" => decode_invoke_args::<TicketReviewRequest>(request).is_err(),
+        "TicketPrioritiseRequest" => {
+            decode_invoke_args::<TicketPrioritiseRequest>(request).is_err()
+        }
+        "TicketEditRequest" => decode_invoke_args::<TicketEditRequest>(request).is_err(),
+        "TicketEmergencyOverrideRequest" => {
+            decode_invoke_args::<TicketEmergencyOverrideRequest>(request).is_err()
+        }
         "ProfileDefineRequest" => decode_invoke_args::<ProfileDefineRequest>(request).is_err(),
         "ProfileUpdateRequest" => decode_invoke_args::<ProfileUpdateRequest>(request).is_err(),
         "ProfileRetireRequest" => decode_invoke_args::<ProfileRetireRequest>(request).is_err(),

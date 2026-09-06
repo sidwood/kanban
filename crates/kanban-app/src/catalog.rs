@@ -582,6 +582,20 @@ define_exposed_catalogue! {
         mcp: "lane_list",
         description: "List every Lane of one Project with its Workspace claim and held Ticket.",
     },
+    "clone.create" => {
+        kind: Command,
+        request: "CloneCreateRequest",
+        response: "CloneCreatedRecord",
+        mcp: "clone_create",
+        description: "Create a branch clone through the guarded fleet skill. Conflicting paths, branches, and Lane assignments are refused before anything runs.",
+    },
+    "clone.remove" => {
+        kind: Command,
+        request: "CloneRemoveRequest",
+        response: "CloneRemovedRecord",
+        mcp: "clone_remove",
+        description: "Remove a branch clone through the guarded fleet skill. The Seed and Lane-assigned Workspaces are refused; the Workspace record is preserved, never deleted.",
+    },
     "export.render" => {
         kind: Command,
         request: "ExportRenderRequest",

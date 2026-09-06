@@ -2,6 +2,7 @@
 //! other client, with the ports they call through.
 
 pub mod catalog;
+pub mod clone;
 pub mod comment;
 pub mod contracts_gen;
 pub mod coverage;
@@ -35,6 +36,7 @@ pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, OperationDescriptor, OperationKind,
     assert_registered_matches_exposed_catalogue, exposed_operations,
 };
+pub use clone::{CloneGuardStore, FLEET_TOOL_REFUSED, FleetCloneTool};
 pub use comment::CommentStore;
 pub use deadlines::{
     DeadlineConfig, DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,

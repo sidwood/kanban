@@ -1,6 +1,9 @@
 use schemars::schema::RootSchema;
 use schemars::schema_for;
 
+use crate::clone::{
+    CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord,
+};
 use crate::comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
@@ -390,5 +393,9 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("LaneListQuery", schema_for!(LaneListQuery)),
         ("LaneListResponse", schema_for!(LaneListResponse)),
+        ("CloneCreateRequest", schema_for!(CloneCreateRequest)),
+        ("CloneRemoveRequest", schema_for!(CloneRemoveRequest)),
+        ("CloneCreatedRecord", schema_for!(CloneCreatedRecord)),
+        ("CloneRemovedRecord", schema_for!(CloneRemovedRecord)),
     ]
 }

@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::clone::{CloneCreatedRecord, CloneRemovedRecord};
 use crate::comment::CommentRecord;
 use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
@@ -241,6 +242,14 @@ define_live_event_catalogue! {
         payload: "LaneRecord",
         description: "A Lane released its active Ticket.",
     },
+    CloneCreated @ "clone.created" => {
+        payload: "CloneCreatedRecord",
+        description: "A branch clone was created through the guarded fleet skill.",
+    },
+    CloneRemoved @ "clone.removed" => {
+        payload: "CloneRemovedRecord",
+        description: "A branch clone was removed through the guarded fleet skill. The Workspace record is preserved.",
+    },
 }
 
 /// The identity carried on ruling live events.
@@ -416,6 +425,14 @@ pub enum LiveEvent {
         sequence: u64,
         payload: LaneRecord,
     },
+    CloneCreated {
+        sequence: u64,
+        payload: CloneCreatedRecord,
+    },
+    CloneRemoved {
+        sequence: u64,
+        payload: CloneRemovedRecord,
+    },
 }
 
 impl LiveEvent {
@@ -459,6 +476,8 @@ impl LiveEvent {
             Self::LaneWorkspaceReleased { .. } => LiveEventName::LaneWorkspaceReleased,
             Self::LaneTicketAssigned { .. } => LiveEventName::LaneTicketAssigned,
             Self::LaneTicketReleased { .. } => LiveEventName::LaneTicketReleased,
+            Self::CloneCreated { .. } => LiveEventName::CloneCreated,
+            Self::CloneRemoved { .. } => LiveEventName::CloneRemoved,
         }
     }
 
@@ -501,7 +520,9 @@ impl LiveEvent {
             | Self::LaneWorkspaceAssigned { sequence, .. }
             | Self::LaneWorkspaceReleased { sequence, .. }
             | Self::LaneTicketAssigned { sequence, .. }
-            | Self::LaneTicketReleased { sequence, .. } => *sequence,
+            | Self::LaneTicketReleased { sequence, .. }
+            | Self::CloneCreated { sequence, .. }
+            | Self::CloneRemoved { sequence, .. } => *sequence,
         }
     }
 }
@@ -699,6 +720,14 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::LaneTicketReleased => LiveEvent::LaneTicketReleased {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::CloneCreated => LiveEvent::CloneCreated {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::CloneRemoved => LiveEvent::CloneRemoved {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -1019,6 +1048,57 @@ mod tests {
                     workspace_id: Some(3),
                     ticket_id: None,
                     version: 2,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn catalogued_clone_events_decode_typed_payloads() {
+        let created = EventEnvelope {
+            sequence: 8,
+            event_type: "clone.created".to_owned(),
+            payload: json!({
+                "project_id": 1,
+                "path": "/workspaces/kanban.fleet-t34",
+                "branch": "fleet/kan-t34",
+            }),
+        };
+
+        let event = decode_live_event(&created).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::CloneCreated {
+                sequence: 8,
+                payload: CloneCreatedRecord {
+                    project_id: 1,
+                    path: "/workspaces/kanban.fleet-t34".to_owned(),
+                    branch: "fleet/kan-t34".to_owned(),
+                },
+            }
+        );
+
+        let removed = EventEnvelope {
+            sequence: 9,
+            event_type: "clone.removed".to_owned(),
+            payload: json!({
+                "project_id": 1,
+                "workspace_id": 2,
+                "path": "/workspaces/kanban.fleet-t34",
+                "branch": null,
+            }),
+        };
+
+        let event = decode_live_event(&removed).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::CloneRemoved {
+                sequence: 9,
+                payload: CloneRemovedRecord {
+                    project_id: 1,
+                    workspace_id: 2,
+                    path: "/workspaces/kanban.fleet-t34".to_owned(),
+                    branch: None,
                 },
             }
         );

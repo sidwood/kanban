@@ -1,6 +1,7 @@
 //! Authoritative command, query, event, and error payload definitions
 //! with schema derivation. Depends on nothing internal.
 
+pub mod clone;
 pub mod comment;
 pub mod coverage;
 pub mod deferral;
@@ -25,6 +26,7 @@ pub mod timeline;
 
 pub mod workspace;
 
+pub use clone::{CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord};
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
@@ -325,6 +327,10 @@ mod tests {
                 "LaneTicketReleaseRequest",
                 "LaneListQuery",
                 "LaneListResponse",
+                "CloneCreateRequest",
+                "CloneRemoveRequest",
+                "CloneCreatedRecord",
+                "CloneRemovedRecord",
             ]
         );
     }

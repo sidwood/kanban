@@ -1,1 +1,171 @@
 @import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource-variable/bricolage-grotesque/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+
+/* Class-based dark mode (toggle `dark` on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * The SmokeFree Surface presentation, carried as the Kanban design
+ * tokens: the typography, colour ramps, themes, spacing radii, and
+ * shadows the board preserves (DR-BP-02). Domain wording lives in the
+ * components; only the presentation lives here.
+ */
+@theme {
+  /* Archivo carries a width axis, so the wordmark can be genuinely expanded. */
+  --font-sans: "Archivo Variable", ui-sans-serif, sans-serif;
+  --font-display:
+    "Bricolage Grotesque Variable", "Archivo Variable", ui-sans-serif,
+    sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Brand ramp sampled from the heart-check logo: lime 400, forest 600. */
+  --color-brand-50: #f3faea;
+  --color-brand-100: #e3f4cd;
+  --color-brand-200: #c8e9a2;
+  --color-brand-300: #a8dc70;
+  --color-brand-400: #88d048;
+  --color-brand-500: #6cb62f;
+  --color-brand-600: #508020;
+  --color-brand-700: #416a1a;
+  --color-brand-800: #375719;
+  --color-brand-900: #2f4917;
+  --color-brand-950: #172708;
+
+  /* Semantic tokens; the two themes below supply the runtime values. */
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-accent: var(--accent);
+  --color-accent-fill: var(--accent-fill);
+  --color-on-accent: var(--on-accent);
+  --color-caution: var(--caution);
+  --color-caution-soft: var(--caution-soft);
+  --color-critical: var(--critical);
+  --color-info: var(--info);
+  --color-cta-ink: #12200a;
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.875rem;
+
+  --shadow-panel:
+    0 1px 2px var(--shadow-tint), 0 10px 30px -18px var(--shadow-tint-strong);
+  --shadow-drawer: -12px 0 40px -18px var(--shadow-tint-strong);
+
+  --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Daylight: warm paper with a chlorophyll cast, white panels, hairline seams. */
+:root {
+  color-scheme: light;
+  --canvas: #f6f8f2;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --line: #e4e9dc;
+  --line-strong: #ccd6c1;
+  --ink: #141a11;
+  --ink-muted: #4b5545;
+  --ink-subtle: #6f7a66;
+  --accent: #416a1a;
+  --accent-fill: #508020;
+  --on-accent: #ffffff;
+  --caution: #8f5106;
+  /* Pre-mixed wash — low-alpha caution on canvas reads muddy in both themes. */
+  --caution-soft: #f4ebd8;
+  --critical: #b42318;
+  --info: #1c6690;
+  --shadow-tint: rgb(20 26 17 / 0.05);
+  --shadow-tint-strong: rgb(20 26 17 / 0.22);
+}
+
+/* Forest night: near-black canvas, lifted panels, lime accents. */
+html.dark {
+  color-scheme: dark;
+  --canvas: #0b0f0b;
+  --surface: #10160f;
+  --raised: #161d14;
+  --line: #232c20;
+  --line-strong: #35402f;
+  --ink: #eef2e9;
+  --ink-muted: #a3ad9b;
+  --ink-subtle: #77816e;
+  --accent: #a8dc70;
+  --accent-fill: #6cb62f;
+  --on-accent: #0b1408;
+  --caution: #e5a13a;
+  --caution-soft: #22180c;
+  --critical: #f28b82;
+  --info: #6ab8e8;
+  --shadow-tint: rgb(0 0 0 / 0.4);
+  --shadow-tint-strong: rgb(0 0 0 / 0.7);
+}
+
+/* Deliberately identical in both themes: the primary action is the one
+   control that behaves like a physical key. Its lime span stays light
+   enough that `--color-cta-ink` clears 7:1 across the whole sweep. */
+@utility bg-brand-gradient {
+  background-image: linear-gradient(
+    135deg,
+    var(--color-brand-300) 0%,
+    var(--color-brand-400) 45%,
+    var(--color-brand-500) 100%
+  );
+}
+
+/* Expanded Archivo: the wordmark signature for chrome and headers. */
+@utility wordmark {
+  font-family: var(--font-sans);
+  font-stretch: 125%;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer base {
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent) 26%, transparent);
+  }
+}
+
+/* Unlayered, so it outranks every `@layer utilities` animation without
+   needing `!important`. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+  }
+}

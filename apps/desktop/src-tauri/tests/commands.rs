@@ -27,19 +27,19 @@ use kanban_dto::{
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
     ProfileGetQuery, ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest,
     ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest, RulingListQuery,
-    RulingRecordRequest, RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest,
-    SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest, SpecExecutionMoveRequest,
-    SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
-    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependencyAddRequest,
-    TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
-    TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphProposeRequest,
-    TicketListQuery, TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery,
-    TicketReassignRequest, TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest,
-    TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind, TimelineEntityRef,
-    TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
-    WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery, SpecContent,
+    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
+    TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
+    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
+    TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
+    TicketGraphListQuery, TicketGraphProposeRequest, TicketListQuery, TicketParkRequest,
+    TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewRequest,
+    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -450,6 +450,11 @@ fn sample_request(schema: &str) -> Value {
             "dispatch_request_id": 1,
         }),
         "DispatchQueueQuery" => json!({ "project_id": 1 }),
+        "RunAcknowledgeRequest" => json!({
+            "mutation": mutation,
+            "dispatch_request_id": 1,
+        }),
+        "RunListQuery" => json!({ "project_id": 1 }),
         "WorkspaceRegisterRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -637,6 +642,8 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "DispatchClaimRequest" => decode_invoke_args::<DispatchClaimRequest>(request).is_err(),
         "DispatchQueueQuery" => decode_invoke_args::<DispatchQueueQuery>(request).is_err(),
+        "RunAcknowledgeRequest" => decode_invoke_args::<RunAcknowledgeRequest>(request).is_err(),
+        "RunListQuery" => decode_invoke_args::<RunListQuery>(request).is_err(),
         "SpecCreateRequest" => decode_invoke_args::<SpecCreateRequest>(request).is_err(),
         "SpecContentUpdateRequest" => {
             decode_invoke_args::<SpecContentUpdateRequest>(request).is_err()

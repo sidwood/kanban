@@ -37,22 +37,22 @@ use kanban_dto::{
     ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
-    SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
-    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
-    TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
-    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
-    TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
-    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
-    TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest,
-    TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, WorkspaceListQuery,
-    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
-    WorkspaceRetireRequest,
+    RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SpecContentUpdateRequest,
+    SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCoverageMatrixQuery,
+    SpecCoverageMatrixResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+    TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
+    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
+    TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphListResponse,
+    TicketGraphProposeRequest, TicketGraphRecord, TicketListQuery, TicketListResponse,
+    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
+    TicketReassignRequest, TicketRecord, TicketReviewRequest, TicketScheduleRequest,
+    TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineQuery,
+    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
+    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1360,6 +1360,32 @@ async fn dispatch_queue(
 }
 
 #[tauri::command]
+async fn run_acknowledge(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<RunRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<RunAcknowledgeRequest>(request)?;
+    run_blocking(shell, "run acknowledge", |shell| {
+        forward_command(shell, "run.acknowledge", "acknowledged run", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<RunListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<RunListQuery>(request)?;
+    run_blocking(shell, "run list", move |shell| {
+        forward_query(shell, "run.list", "run list", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn workspace_retire(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1614,6 +1640,8 @@ shell_handlers::shell_handler_catalogue! {
     dispatch_request,
     dispatch_claim,
     dispatch_queue,
+    run_acknowledge,
+    run_list,
     workspace_register,
     workspace_observe,
     workspace_retire,

@@ -6,7 +6,7 @@ use serde_json::json;
 
 mod common;
 
-use common::{harness, insert_ticket, mutation};
+use common::{assign_lane, harness, insert_ticket, mutation};
 
 #[test]
 fn dispatch_queue_orders_by_priority_then_readiness_then_age() {
@@ -72,6 +72,7 @@ fn dispatch_queue_keeps_requests_without_capacity() {
     let harness = harness();
     common::constrain_harness(&harness.database_path, 1);
     let first = insert_ticket(&harness.database_path, 1, "urgent");
+    assign_lane(&harness.database_path, first);
     let second = insert_ticket(&harness.database_path, 2, "low");
     for (ticket, key) in [(first, "key-first"), (second, "key-second")] {
         harness

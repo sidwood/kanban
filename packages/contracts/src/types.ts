@@ -210,6 +210,7 @@ export type DispatchClaimRequest = {
   mutation: MutationContext;
 };
 export type DispatchClaimResponse = {
+  capability?: CapabilityRecord | null;
   capacity_refusal?: string | null;
   claimed: boolean;
   request: DispatchRequestRecord;

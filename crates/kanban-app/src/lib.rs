@@ -2,6 +2,7 @@
 //! other client, with the ports they call through.
 
 pub mod board_query;
+pub mod capability;
 pub mod capacity;
 pub mod catalog;
 pub mod clone;
@@ -42,6 +43,10 @@ mod profile_validation;
 #[cfg(test)]
 mod project_scope;
 
+pub use capability::{
+    AGENT_MCP_OPERATIONS, CapabilityCheckError, CapabilityMintDraft, CapabilityStore,
+    agent_surface, encode_capability, enforce_capability,
+};
 pub use capacity::CapacityStore;
 pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, OperationDescriptor, OperationKind,

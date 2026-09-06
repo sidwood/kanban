@@ -6,6 +6,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::capability::CapabilityRecord;
 use super::mutation::MutationContext;
 use super::ticket::TicketPriority;
 
@@ -67,8 +68,9 @@ pub struct DispatchClaimRequest {
 }
 
 /// Response payload for the `dispatch.claim` command: the request as
-/// it stands after the attempt, whether this claimant won, and the
-/// capacity refusal that kept it queued when this claimant lost.
+/// it stands after the attempt, whether this claimant won, the
+/// capacity refusal that kept it queued when this claimant lost, and
+/// the run-scoped capability a win minted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DispatchClaimResponse {
@@ -78,6 +80,10 @@ pub struct DispatchClaimResponse {
     pub claimed: bool,
     /// Why the request stayed queued, when it did.
     pub capacity_refusal: Option<String>,
+    /// The capability minted with the win: the authority the run's
+    /// agent holds, expiring with run settlement. A request still
+    /// queued has granted none.
+    pub capability: Option<CapabilityRecord>,
 }
 
 /// Request payload for the `dispatch.queue` query.

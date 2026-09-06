@@ -10,9 +10,10 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kanban_domain::{
-    ActiveRun, CapacityInputs, ClaimDecision, DispatchRequest, DispatchRequestId, DispatchStatus,
-    GlobalCapacity, Lane, Priority, Project, ProjectCapacity, ProjectId, Ticket, TicketId,
-    compute_readiness, decide_claim, evaluate_capacity, refuse_duplicate_open, sort_queue,
+    ActiveRun, CapabilityId, CapacityInputs, ClaimDecision, DispatchRequest, DispatchRequestId,
+    DispatchStatus, GlobalCapacity, Lane, Priority, Project, ProjectCapacity, ProjectId, Ticket,
+    TicketId, compute_readiness, decide_claim, evaluate_capacity, refuse_duplicate_open,
+    sort_queue,
 };
 use kanban_dto::{
     ApiError, DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery,
@@ -22,6 +23,7 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
+use crate::capability::{CapabilityMintDraft, encode_capability};
 use crate::capacity::CapacityStore;
 use crate::dependency::DependencyStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
@@ -125,13 +127,27 @@ pub trait DispatchStore: Send + Sync {
     /// The open request for `ticket`, if it has one.
     fn open_for_ticket(&self, ticket: TicketId) -> Result<Option<DispatchStatus>, ApiError>;
     /// Claim `id` inside one transaction: reload, evaluate capacity
-    /// against currently claimed requests, and persist a win.
+    /// against currently claimed requests, and persist a win. A win
+    /// calls `mint` and lands the capability it drafts inside the
+    /// same transaction, so the claim and the authority it grants
+    /// land together or not at all. A `mint` failure rolls the claim
+    /// back with everything else; a capacity miss or a lost race
+    /// never calls it, so a request still queued grants nothing.
     fn try_claim(
         &self,
         id: DispatchRequestId,
         context: &ClaimContext,
         envelope: TimelineEnvelope,
-    ) -> Result<(DispatchRequest, ClaimDecision), ApiError>;
+        mint: &dyn Fn() -> Result<CapabilityMintDraft, ApiError>,
+        mint_envelope: &dyn Fn(&CapabilityMintDraft, CapabilityId) -> TimelineEnvelope,
+    ) -> Result<
+        (
+            DispatchRequest,
+            ClaimDecision,
+            Option<kanban_domain::Capability>,
+        ),
+        ApiError,
+    >;
     /// Every queued request of one Project, unsorted; the application
     /// layer applies the domain order.
     fn list_queued(&self, project: ProjectId) -> Result<Vec<DispatchRequest>, ApiError>;
@@ -364,7 +380,21 @@ impl CommandHandler for ClaimDispatchRequest {
         let project_caps = project_caps_of(&caps);
         let lanes = self.0.lanes.list_for_project(queued.project())?;
         let active_lanes = active_lane_count(&lanes, queued.ticket());
-        let (updated, decision) = self.0.requests.try_claim(
+        // A run executes in a Lane, so the capability a win mints
+        // binds the Lane holding the Ticket. A Ticket in no Lane
+        // cannot run: its would-be win refuses the mint, and the
+        // refusal rolls the claim back with it. The draft is built
+        // only on a win, so a capacity miss or a lost race never
+        // mints and never demands a Lane.
+        let mint = || -> Result<CapabilityMintDraft, ApiError> {
+            let lane = lane_holding(&lanes, queued.ticket()).ok_or_else(|| {
+                ApiError::invalid_request(
+                    "a Dispatch Request claim requires its Ticket seated in a Lane",
+                )
+            })?;
+            CapabilityMintDraft::implementer(queued.id(), queued.ticket(), lane, unix_now())
+        };
+        let (updated, decision, capability) = self.0.requests.try_claim(
             queued.id(),
             &ClaimContext {
                 defaults: GlobalCapacity::restore(
@@ -385,6 +415,10 @@ impl CommandHandler for ClaimDispatchRequest {
                     "status": DispatchStatus::Claimed.wire_name(),
                 }),
             ),
+            &mint,
+            &|minted, capability| {
+                capability_mint_transition(queued.project(), queued.ticket(), minted, capability)
+            },
         )?;
         let record = encode_record(&updated);
         let (claimed, capacity_refusal) = match &decision {
@@ -403,6 +437,7 @@ impl CommandHandler for ClaimDispatchRequest {
             request: record,
             claimed,
             capacity_refusal,
+            capability: capability.as_ref().map(encode_capability),
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -513,6 +548,53 @@ fn active_lane_count(lanes: &[Lane], candidate: TicketId) -> u64 {
         .iter()
         .filter(|lane| lane.ticket_id().is_some_and(|held| held != candidate))
         .count() as u64
+}
+
+/// The Lane holding `ticket`, if one does. The row-level UNIQUE
+/// Ticket binding keeps the answer at most one.
+fn lane_holding(lanes: &[Lane], ticket: TicketId) -> Option<kanban_domain::LaneId> {
+    lanes
+        .iter()
+        .find(|lane| lane.ticket_id() == Some(ticket))
+        .map(|lane| lane.id())
+}
+
+/// The timeline row for one minted capability: on the Project's
+/// timeline, about the Ticket, naming the binding and the permitted
+/// operations the run's agent holds. The storage-assigned identity
+/// arrives with the row the mint lands; the binding comes from the
+/// mint itself.
+fn capability_mint_transition(
+    project: ProjectId,
+    ticket: TicketId,
+    mint: &CapabilityMintDraft,
+    capability: CapabilityId,
+) -> TimelineEnvelope {
+    let scope = mint.scope();
+    let mut detail = json!({
+        "action": "capability_minted",
+        "dispatch_request_id": mint.dispatch().value(),
+        "capability_id": capability.value(),
+        "ticket_id": scope.ticket().value(),
+        "lane_id": scope.lane().value(),
+        "role": scope.role().wire_name(),
+        "operations": mint.operations().iter().collect::<Vec<_>>(),
+    });
+    if let Some(slot) = scope.reviewer_slot() {
+        detail
+            .as_object_mut()
+            .expect("the mint detail is a JSON object")
+            .insert("reviewer_slot_id".to_owned(), json!(slot.value()));
+    }
+    TimelineEnvelope::project(
+        project.value(),
+        TimelineEventKind::Transition,
+        Some(TimelineEntityRef {
+            kind: TimelineEntityKind::Ticket,
+            id: ticket.value().to_string(),
+        }),
+        detail,
+    )
 }
 
 fn unix_now() -> u64 {

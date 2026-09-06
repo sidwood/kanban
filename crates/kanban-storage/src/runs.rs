@@ -205,11 +205,13 @@ mod tests {
     use crate::migrations::AllowAllMigrations;
     use crate::{Database, SqliteDispatchStore, SqliteProjectStore};
     use kanban_app::{
-        ClaimContext, DispatchEnqueue, DispatchStore, ProjectStore, RunMint, RunStore,
+        CapabilityMintDraft, ClaimContext, DispatchEnqueue, DispatchStore, ProjectStore, RunMint,
+        RunStore,
     };
     use kanban_domain::{
-        DispatchRequestId, GlobalCapacity, Priority, ProfileSnapshot, ProjectId,
-        ProjectRegistration, RunStatus, TicketId,
+        CapabilityId, CapabilityRole, CapabilityScope, DispatchRequestId, GlobalCapacity, LaneId,
+        McpOperations, Priority, ProfileSnapshot, ProjectId, ProjectRegistration, RunStatus,
+        TicketId,
     };
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::json;
@@ -262,6 +264,10 @@ mod tests {
                 [],
             )
             .expect("the fixture Ticket lands");
+        database
+            .connection()
+            .execute("INSERT INTO lanes (project_id, version) VALUES (1, 1)", [])
+            .expect("the fixture Lane lands");
     }
 
     fn envelope(run: u64) -> kanban_app::TimelineEnvelope {
@@ -273,6 +279,39 @@ mod tests {
                 id: run.to_string(),
             }),
             json!({ "action": "acknowledged", "run_id": run }),
+        )
+    }
+
+    /// The implementer mint a won claim carries, bound to the
+    /// fixture's Ticket and the Lane holding it.
+    fn mint_draft(claimant: u64) -> CapabilityMintDraft {
+        CapabilityMintDraft::new(
+            DispatchRequestId::new(claimant),
+            CapabilityScope::new(
+                TicketId::new(claimant),
+                LaneId::new(1),
+                CapabilityRole::Implementer,
+                None,
+            )
+            .expect("the fixture scope binds"),
+            McpOperations::new(["ticket.get"]).expect("the fixture grant validates"),
+            10,
+        )
+    }
+
+    /// The timeline row a minted capability leaves.
+    fn mint_envelope(
+        _mint: &CapabilityMintDraft,
+        capability: CapabilityId,
+    ) -> kanban_app::TimelineEnvelope {
+        kanban_app::TimelineEnvelope::project(
+            1,
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: "1".to_owned(),
+            }),
+            json!({ "action": "capability_minted", "capability_id": capability.value() }),
         )
     }
 
@@ -300,7 +339,13 @@ mod tests {
             active_lanes: 0,
         };
         store
-            .try_claim(queued.id(), &roomy, envelope(0))
+            .try_claim(
+                queued.id(),
+                &roomy,
+                envelope(0),
+                &|| Ok(mint_draft(queued.id().value())),
+                &mint_envelope,
+            )
             .expect("the claim lands")
             .0
     }
@@ -437,7 +482,13 @@ mod tests {
             active_lanes: 0,
         };
         let claimed = dispatch
-            .try_claim(queued.id(), &roomy, envelope(0))
+            .try_claim(
+                queued.id(),
+                &roomy,
+                envelope(0),
+                &|| Ok(mint_draft(queued.id().value())),
+                &mint_envelope,
+            )
             .expect("the claim lands")
             .0;
         let later = RunMint {

@@ -195,6 +195,7 @@ fn the_model_dimension_keys_verbatim_on_the_profile_model_string() {
     let opus = insert_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, opus);
     let nightly = insert_ticket_with_profile(&harness.database_path, 2, "normal", "nightly");
+    assign_lane(&harness.database_path, nightly);
 
     let first = claim(
         &harness.core,

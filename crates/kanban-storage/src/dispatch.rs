@@ -3,11 +3,12 @@
 //! concurrent claimants see exactly one winner (DR-EP-08).
 
 use kanban_app::{
-    ClaimContext, DispatchEnqueue, DispatchStore, TimelineEnvelope, evaluate_dispatch_claim,
+    CapabilityMintDraft, ClaimContext, DispatchEnqueue, DispatchStore, TimelineEnvelope,
+    evaluate_dispatch_claim,
 };
 use kanban_domain::{
-    ClaimDecision, DispatchError, DispatchRequest, DispatchRequestId, DispatchStatus, Priority,
-    ProjectId, TicketId,
+    Capability, CapabilityId, ClaimDecision, DispatchError, DispatchRequest, DispatchRequestId,
+    DispatchStatus, Priority, ProjectId, TicketId,
 };
 use kanban_dto::ApiError;
 use rusqlite::params;
@@ -124,7 +125,9 @@ impl DispatchStore for SqliteDispatchStore {
         id: DispatchRequestId,
         context: &ClaimContext,
         envelope: TimelineEnvelope,
-    ) -> Result<(DispatchRequest, ClaimDecision), ApiError> {
+        mint: &dyn Fn() -> Result<CapabilityMintDraft, ApiError>,
+        mint_envelope: &dyn Fn(&CapabilityMintDraft, CapabilityId) -> TimelineEnvelope,
+    ) -> Result<(DispatchRequest, ClaimDecision, Option<Capability>), ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let mut request = span
@@ -144,6 +147,7 @@ impl DispatchStore for SqliteDispatchStore {
         request
             .apply_claim(decision.clone())
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        let mut capability = None;
         if matches!(decision, ClaimDecision::Claim) {
             let changed = span
                 .execute(
@@ -159,9 +163,15 @@ impl DispatchStore for SqliteDispatchStore {
                 ));
             }
             insert_event(&span, &envelope).map_err(internal)?;
+            // A mint failure discards the span, and with it the win:
+            // a claim that cannot grant its authority is not a claim.
+            let draft = mint()?;
+            let minted = crate::capability::insert_capability(&span, &draft)?;
+            insert_event(&span, &mint_envelope(&draft, minted.id())).map_err(internal)?;
+            capability = Some(minted);
         }
         span.commit().map_err(internal)?;
-        Ok((request, decision))
+        Ok((request, decision, capability))
     }
 
     fn list_queued(&self, project: ProjectId) -> Result<Vec<DispatchRequest>, ApiError> {
@@ -252,9 +262,12 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    use kanban_app::{ClaimContext, DispatchEnqueue, DispatchStore, ProjectStore};
+    use kanban_app::{
+        CapabilityMintDraft, ClaimContext, DispatchEnqueue, DispatchStore, ProjectStore,
+    };
     use kanban_domain::{
-        ClaimDecision, DispatchRequestId, DispatchStatus, GlobalCapacity, Priority, ProjectId,
+        CapabilityId, CapabilityRole, CapabilityScope, ClaimDecision, DispatchRequestId,
+        DispatchStatus, GlobalCapacity, LaneId, McpOperations, Priority, ProjectId,
         ProjectRegistration, TicketId,
     };
     use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
@@ -315,6 +328,10 @@ mod tests {
                 )
                 .expect("the fixture Ticket lands");
         }
+        database
+            .connection()
+            .execute("INSERT INTO lanes (project_id, version) VALUES (1, 1)", [])
+            .expect("the fixture Lane lands");
     }
 
     fn envelope(ticket: u64, request: DispatchRequestId, action: &str) -> TimelineEnvelope {
@@ -367,6 +384,37 @@ mod tests {
         }
     }
 
+    /// The implementer mint a won claim carries, bound to the
+    /// fixture's Ticket and a Lane holding it. Fixtures seat one
+    /// Ticket per dispatch identity, so both share `claimant`.
+    fn mint_draft(claimant: u64) -> CapabilityMintDraft {
+        CapabilityMintDraft::new(
+            DispatchRequestId::new(claimant),
+            CapabilityScope::new(
+                TicketId::new(claimant),
+                LaneId::new(1),
+                CapabilityRole::Implementer,
+                None,
+            )
+            .expect("the fixture scope binds"),
+            McpOperations::new(["ticket.get"]).expect("the fixture grant validates"),
+            10,
+        )
+    }
+
+    /// The timeline row a minted capability leaves.
+    fn mint_envelope(_mint: &CapabilityMintDraft, capability: CapabilityId) -> TimelineEnvelope {
+        TimelineEnvelope::project(
+            1,
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: "1".to_owned(),
+            }),
+            json!({ "action": "capability_minted", "capability_id": capability.value() }),
+        )
+    }
+
     #[test]
     fn a_request_round_trips_and_survives_reopen() {
         let (dir, database) = database();
@@ -394,16 +442,22 @@ mod tests {
         for _ in 0..8 {
             let store = store.clone();
             joins.push(thread::spawn(move || {
-                store.try_claim(id, &roomy(), envelope(1, id, "claimed"))
+                store.try_claim(
+                    id,
+                    &roomy(),
+                    envelope(1, id, "claimed"),
+                    &|| Ok(mint_draft(1)),
+                    &mint_envelope,
+                )
             }));
         }
         let mut wins = 0;
         let mut already = 0;
         for join in joins {
             match join.join().expect("the claimant finishes") {
-                Ok((_, ClaimDecision::Claim)) => wins += 1,
-                Ok((_, ClaimDecision::AlreadyClaimed)) => already += 1,
-                Ok((_, other)) => panic!("unexpected decision {other:?}"),
+                Ok((_, ClaimDecision::Claim, _)) => wins += 1,
+                Ok((_, ClaimDecision::AlreadyClaimed, _)) => already += 1,
+                Ok((_, other, _)) => panic!("unexpected decision {other:?}"),
                 Err(error) => {
                     assert!(
                         error.message.contains("already claimed"),
@@ -431,15 +485,21 @@ mod tests {
         for id in ids.clone() {
             let store = store.clone();
             joins.push(thread::spawn(move || {
-                store.try_claim(id, &one_harness(), envelope(id.value(), id, "claimed"))
+                store.try_claim(
+                    id,
+                    &one_harness(),
+                    envelope(id.value(), id, "claimed"),
+                    &|| Ok(mint_draft(id.value())),
+                    &mint_envelope,
+                )
             }));
         }
         let mut wins = 0;
         let mut queued = 0;
         for join in joins {
             match join.join().expect("the claimant finishes") {
-                Ok((_, ClaimDecision::Claim)) => wins += 1,
-                Ok((_, ClaimDecision::RemainQueued(_))) => queued += 1,
+                Ok((_, ClaimDecision::Claim, _)) => wins += 1,
+                Ok((_, ClaimDecision::RemainQueued(_), _)) => queued += 1,
                 other => panic!("unexpected outcome {other:?}"),
             }
         }

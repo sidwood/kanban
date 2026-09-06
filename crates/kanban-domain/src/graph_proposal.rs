@@ -172,7 +172,7 @@ impl TicketGraphProposal {
             state: GraphProposalState::Proposed,
             version: 1,
         };
-        proposal.validate()?;
+        Self::validate(&proposal.tickets, &proposal.edges)?;
         Ok(proposal)
     }
 
@@ -202,20 +202,24 @@ impl TicketGraphProposal {
 
     /// Refuse what the record refuses: an empty or repeated Ticket
     /// set, and every edge outside the set or outside the dependency
-    /// rules.
-    pub fn validate(&self) -> Result<(), GraphProposalError> {
-        if self.tickets.is_empty() {
+    /// rules. Free of the identity, so the application layer can
+    /// validate a graph before storage assigns one.
+    pub fn validate(
+        tickets: &[TicketId],
+        edges: &[TicketDependency],
+    ) -> Result<(), GraphProposalError> {
+        if tickets.is_empty() {
             return Err(GraphProposalError::EmptyTicketSet);
         }
-        for (position, ticket) in self.tickets.iter().enumerate() {
-            if self.tickets[..position].contains(ticket) {
+        for (position, ticket) in tickets.iter().enumerate() {
+            if tickets[..position].contains(ticket) {
                 return Err(GraphProposalError::DuplicateTicket { ticket: *ticket });
             }
         }
         let mut graph = TicketDependencyGraph::new();
-        for edge in &self.edges {
+        for edge in edges {
             for endpoint in [edge.from(), edge.to()] {
-                if !self.tickets.contains(&endpoint) {
+                if !tickets.contains(&endpoint) {
                     return Err(GraphProposalError::EdgeOutsideSet { ticket: endpoint });
                 }
             }

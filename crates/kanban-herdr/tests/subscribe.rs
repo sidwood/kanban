@@ -259,6 +259,11 @@ fn connection_scripts_serve_each_connection_in_order() {
     third
         .subscribe()
         .expect("the final script repeats for every later connection");
+    assert_eq!(
+        third.read_event_within(Duration::from_secs(2)).err(),
+        Some(HerdrError::Disconnected),
+        "the repeated final script closes after its hold, where the base script would hold the connection open"
+    );
 }
 
 /// A stream that drops inside a bounded read must surface the drop:

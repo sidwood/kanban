@@ -5,6 +5,7 @@
     "unknown_field",
     "stale_version",
     "duplicate_idempotency_key",
+    "ambiguous_idempotency_key",
     "not_found",
     "invalid_request",
     "internal"

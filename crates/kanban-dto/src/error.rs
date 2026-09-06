@@ -44,6 +44,21 @@ impl ApiError {
         }
     }
 
+    /// An idempotency key was spent by an outcome recorded before
+    /// fingerprints named their operation, so no retry can prove it
+    /// replays that outcome. The row stays recorded for audit; the
+    /// request needs a fresh key (KAN-T135).
+    pub fn ambiguous_idempotency_key(key: &str) -> Self {
+        Self {
+            code: ErrorCode::AmbiguousIdempotencyKey,
+            message: format!(
+                "idempotency key `{key}` was recorded without an operation and \
+                 cannot prove a replay; retry with a fresh idempotency key"
+            ),
+            current_version: None,
+        }
+    }
+
     /// The named operation or aggregate does not exist.
     pub fn not_found(subject: &str) -> Self {
         Self {
@@ -80,6 +95,7 @@ pub enum ErrorCode {
     UnknownField,
     StaleVersion,
     DuplicateIdempotencyKey,
+    AmbiguousIdempotencyKey,
     NotFound,
     InvalidRequest,
     Internal,
@@ -158,5 +174,26 @@ mod tests {
             "the message should name the reused key"
         );
         assert_eq!(error.current_version, None);
+    }
+
+    #[test]
+    fn ambiguous_idempotency_key_error_requires_a_fresh_key() {
+        let error = ApiError::ambiguous_idempotency_key("legacy-1");
+
+        assert_eq!(error.code, ErrorCode::AmbiguousIdempotencyKey);
+        assert!(
+            error.message.contains("legacy-1"),
+            "the message should name the refused key"
+        );
+        assert!(
+            error.message.contains("fresh idempotency key"),
+            "the message should require a fresh key: {}",
+            error.message
+        );
+        assert_eq!(error.current_version, None);
+        assert_eq!(
+            serde_json::to_value(&error.code).expect("the code serialises"),
+            json!("ambiguous_idempotency_key")
+        );
     }
 }

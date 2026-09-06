@@ -184,7 +184,7 @@ export type DispatchRequestRecord = {
   version: number;
 };
 export type DispatchStatus = 'queued' | 'claimed';
-export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
+export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;
   payload: JsonValue;

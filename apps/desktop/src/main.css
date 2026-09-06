@@ -59,6 +59,7 @@
   --shadow-drawer: -12px 0 40px -18px var(--shadow-tint-strong);
 
   --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sweep: sweep 1.9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
 }
 
 /* Daylight: warm paper with a chlorophyll cast, white panels, hairline seams. */
@@ -138,6 +139,15 @@ html.dark {
   }
 }
 
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
 @layer base {
   body {
     margin: 0;
@@ -167,5 +177,11 @@ html.dark {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
     transition-duration: 0.01ms;
+  }
+
+  /* A parked skeleton shimmer reads as a defect, so drop it entirely;
+     the bare bar still says what it means. */
+  [data-motion="sweep"] {
+    display: none;
   }
 }

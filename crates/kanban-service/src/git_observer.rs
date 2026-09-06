@@ -219,8 +219,23 @@ mod tests {
         assert!(status.success(), "git {:?} in {}", args, dir.display());
     }
 
+    /// Initialise the fixture repository on `main` under the hostile
+    /// `init.defaultBranch` GitHub runners carry, so the suite never
+    /// depends on the host's default branch (KAN-T136-AC1).
+    fn git_init(dir: &Path) {
+        let status = Command::new("git")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+            .env("GIT_CONFIG_VALUE_0", "master")
+            .args(["init", "-b", "main"])
+            .current_dir(dir)
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git init -b main in {}", dir.display());
+    }
+
     fn init_repo(dir: &Path) -> String {
-        git(dir, &["init"]);
+        git_init(dir);
         git(dir, &["config", "user.email", "test@example.com"]);
         git(dir, &["config", "user.name", "Test"]);
         fs::write(dir.join("README.md"), "seed\n").expect("the seed file is written");

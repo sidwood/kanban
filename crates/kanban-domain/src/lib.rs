@@ -59,7 +59,7 @@ pub use evidence::{
 };
 pub use graph_proposal::{
     GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState,
-    TicketGraphProposal, enforce_approvable,
+    TicketGraphProposal, enforce_approvable, enforce_assignable,
 };
 pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{

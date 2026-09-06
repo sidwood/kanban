@@ -321,6 +321,17 @@ pub enum GraphApprovalRefusal {
         /// Every uncovered story, in scope order.
         stories: Vec<UserStoryRef>,
     },
+    /// A Ticket in the graph references a profile the catalogue offers
+    /// no assignment against — a name no entry carries, or one a
+    /// retired entry keeps out of the assignable catalogue — so the
+    /// graph is not assignable and would dispatch against a broken
+    /// reference (KAN-S7-US4, DR-EP-03).
+    NotAssignable {
+        /// The Ticket whose assignment carries the reference.
+        ticket: TicketId,
+        /// The profile name the assignment references, as written.
+        name: String,
+    },
 }
 
 impl GraphApprovalRefusal {
@@ -367,6 +378,11 @@ impl fmt::Display for GraphApprovalRefusal {
                     named.join(", ")
                 )
             }
+            Self::NotAssignable { ticket, name } => write!(
+                f,
+                "the Ticket graph is not assignable; Ticket {ticket} references the profile \
+                 `{name}`, which is not in the catalogue"
+            ),
         }
     }
 }
@@ -449,6 +465,35 @@ pub fn enforce_approvable(
     Ok(())
 }
 
+/// The assignment gate (KAN-S7-US4): every profile reference the
+/// Tickets' assignments carry must resolve to an entry the `catalogue`
+/// still offers assignment against. Assignments name profiles by
+/// reference and no catalogue change rewrites them (DR-EP-05), so an
+/// entry retired after an assignment — or a name no entry ever
+/// carried — leaves the reference nothing to resolve to, and a graph
+/// holding it would dispatch against a broken assignment (DR-EP-03).
+/// A Ticket that carries no assignment names nothing and passes.
+///
+/// `attached` carries the Tickets the graph approves, as stored; the
+/// gate reads it and the catalogue, and nothing else.
+pub fn enforce_assignable(
+    catalogue: &crate::profile::ProfileCatalogue,
+    attached: &[Ticket],
+) -> Result<(), GraphApprovalRefusal> {
+    for ticket in attached {
+        let Some(name) = ticket.profile() else {
+            continue;
+        };
+        if !catalogue.assignable(name) {
+            return Err(GraphApprovalRefusal::NotAssignable {
+                ticket: ticket.id(),
+                name: name.as_str().to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Every criterion the graph's Tickets claim, in graph order — the
 /// claims the story-covered gate accumulates. An Implementation
 /// claims through its criteria; a qualified Bug claims through its
@@ -470,7 +515,7 @@ fn claimed_criteria_collected(held: &[&Ticket]) -> Vec<AcceptanceCriterion> {
 mod graph_rules {
     use super::{
         GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState, SpecId,
-        TicketGraphProposal, enforce_approvable,
+        TicketGraphProposal, enforce_approvable, enforce_assignable,
     };
     use crate::coverage::{AcceptanceCriterion, StoryScope, UserStoryRef, VerificationStep};
     use crate::dependency::TicketDependency;
@@ -926,5 +971,100 @@ mod graph_rules {
 
         enforce_approvable(&proposal, &scope(), &attached)
             .expect("a story needs one claim from any Ticket in the graph (DR-PS-14)");
+    }
+
+    /// One stored Implementation carrying the profile reference a
+    /// test chooses, or none.
+    fn assigned(id: u64, profile: Option<&str>) -> Ticket {
+        let mut ticket = implementation(
+            id,
+            1,
+            vec![
+                criterion(1, 1, "Graphs record completely."),
+                criterion(1, 2, "Slices stay granular."),
+                criterion(1, 3, "Stories stay covered."),
+            ],
+        );
+        if let Some(profile) = profile {
+            ticket
+                .assign(
+                    crate::profile::ProfileName::new(profile).expect("the fixture name validates"),
+                )
+                .expect("the fixture assignment applies");
+        }
+        ticket
+    }
+
+    /// The catalogue holding `names`, every entry active.
+    fn catalogue(names: &[&str]) -> crate::profile::ProfileCatalogue {
+        let mut catalogue = crate::profile::ProfileCatalogue::new();
+        for name in names {
+            catalogue
+                .define(
+                    crate::profile::ProfileName::new(name).expect("the fixture name validates"),
+                    crate::profile::ProfileDefinition::new(
+                        "claude-code",
+                        "opus",
+                        "high",
+                        "operator",
+                        None,
+                    )
+                    .expect("the fixture definition validates"),
+                )
+                .expect("the fixture entry defines");
+        }
+        catalogue
+    }
+
+    #[test]
+    fn a_graphs_assignments_name_assignable_profiles_or_none() {
+        let attached = [
+            assigned(1, Some("standard")),
+            implementation(2, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            assigned(3, Some("nightly")),
+        ];
+
+        enforce_assignable(&catalogue(&["standard", "nightly"]), &attached)
+            .expect("an active entry, or no assignment at all, holds");
+    }
+
+    #[test]
+    fn the_gate_refuses_a_reference_no_active_entry_offers() {
+        let attached = [
+            assigned(1, Some("standard")),
+            assigned(2, Some("spare")),
+            assigned(3, Some("ghost")),
+        ];
+        // `spare` retires after the assignment landed; `ghost` was
+        // never defined. Both leave the reference nothing to resolve
+        // against, and the first one the gate meets refuses.
+        let mut retired = catalogue(&["standard", "spare"]);
+        retired
+            .retire(&crate::profile::ProfileName::new("spare").expect("the fixture name validates"))
+            .expect("the fixture entry retires");
+
+        let refusal = enforce_assignable(&retired, &attached).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            GraphApprovalRefusal::NotAssignable {
+                ticket: ticket(2),
+                name: "spare".to_owned()
+            },
+            "a retired entry is out of the assignable catalogue (DR-EP-05)"
+        );
+        assert_eq!(
+            refusal.to_string(),
+            "the Ticket graph is not assignable; Ticket 2 references the profile `spare`, \
+             which is not in the catalogue"
+        );
+        assert_eq!(
+            enforce_assignable(&catalogue(&["standard"]), &attached).unwrap_err(),
+            GraphApprovalRefusal::NotAssignable {
+                ticket: ticket(2),
+                name: "spare".to_owned()
+            },
+            "an unknown name resolves to nothing the same way"
+        );
     }
 }

@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use kanban_domain::{Plan, PlanId, Project, ScopeError, SpecId, SpecNumber, StoryScope};
+use kanban_domain::{PlanId, Project, ScopeError, SpecId, SpecNumber, StoryScope};
 use kanban_dto::{
     ApiError, PlanCoverageGap, PlanCycle, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
     PlanInvalidProfile,
@@ -34,9 +34,15 @@ use crate::ticket::TicketStore;
 /// the interface its entries feed, so the aggregate already counts
 /// them as blocking.
 pub trait ProfileCatalogue: Send + Sync {
-    /// Every profile reference the Plan's graph carries that resolves
-    /// to no catalogue entry, as written where it was referenced.
-    fn invalid_references(&self, plan: &Plan) -> Result<Vec<String>, ApiError>;
+    /// Every profile reference the diagnosed graph — the Project's
+    /// members in the order the diagnostics resolved, the working
+    /// shape or one frozen version — carries that resolves to no
+    /// catalogue entry, as written where it was referenced.
+    fn invalid_references(
+        &self,
+        project: &Project,
+        order: &[SpecNumber],
+    ) -> Result<Vec<String>, ApiError>;
 }
 
 /// The empty catalogue: the cores no Ticket store backs install it, so
@@ -46,20 +52,25 @@ pub trait ProfileCatalogue: Send + Sync {
 pub struct AbsentCatalogue;
 
 impl ProfileCatalogue for AbsentCatalogue {
-    fn invalid_references(&self, _plan: &Plan) -> Result<Vec<String>, ApiError> {
+    fn invalid_references(
+        &self,
+        _project: &Project,
+        _order: &[SpecNumber],
+    ) -> Result<Vec<String>, ApiError> {
         Ok(Vec::new())
     }
 }
 
 /// The stored execution profile catalogue behind the invalid-profile
 /// diagnostics (KAN-S7, T38): the profile references the Tickets
-/// attached to the Plan's member Specs carry, resolved against the
+/// attached to the diagnosed member Specs carry, resolved against the
 /// stored profile rows. Assignments keep the names they referenced
 /// through every catalogue change (DR-EP-05), so the references read
-/// live — the working shape and every frozen version report the same
-/// set — and a reference resolves only against an entry still offered
-/// for assignment: a name no entry carries, or one a retired entry
-/// keeps out of the assignable catalogue, is invalid (DR-EP-03).
+/// live while the membership follows the order the diagnostics
+/// resolved — and a reference resolves only against an entry still
+/// offered for assignment: a name no entry carries, or one a retired
+/// entry keeps out of the assignable catalogue, is invalid
+/// (DR-EP-03).
 pub struct StoredProfileCatalogue {
     profiles: Arc<dyn ProfileStore>,
     tickets: Arc<dyn TicketStore>,
@@ -80,13 +91,13 @@ impl StoredProfileCatalogue {
         }
     }
 
-    /// The Specs of the Plan's graph, as stored identities.
-    fn members(&self, plan: &Plan) -> Result<Vec<SpecId>, ApiError> {
-        let mut members = Vec::with_capacity(plan.order().len());
-        for number in plan.order() {
+    /// The Specs of the diagnosed graph, as stored identities.
+    fn members(&self, project: &Project, order: &[SpecNumber]) -> Result<Vec<SpecId>, ApiError> {
+        let mut members = Vec::with_capacity(order.len());
+        for number in order {
             let held = self
                 .specs
-                .find_by_number(plan.project(), *number)?
+                .find_by_number(project.id(), *number)?
                 .ok_or_else(|| {
                     ApiError::internal(&format!(
                         "member Spec {} of plan is not stored",
@@ -100,14 +111,18 @@ impl StoredProfileCatalogue {
 }
 
 impl ProfileCatalogue for StoredProfileCatalogue {
-    fn invalid_references(&self, plan: &Plan) -> Result<Vec<String>, ApiError> {
+    fn invalid_references(
+        &self,
+        project: &Project,
+        order: &[SpecNumber],
+    ) -> Result<Vec<String>, ApiError> {
         let catalogue = kanban_domain::ProfileCatalogue::restore(self.profiles.list()?);
-        let members = self.members(plan)?;
+        let members = self.members(project, order)?;
         // One entry per invalid reference, in name order: the list is
         // the set of broken names the operator must repair, however
         // many Tickets carry them.
         let mut invalid: BTreeSet<String> = BTreeSet::new();
-        for ticket in self.tickets.list(plan.project())? {
+        for ticket in self.tickets.list(project.id())? {
             let Some(spec) = ticket.spec() else {
                 continue;
             };
@@ -166,7 +181,7 @@ impl QueryHandler for DiagnosePlan {
         let coverage_gaps = self.coverage_gaps(&project, order)?;
         let invalid_profiles: Vec<PlanInvalidProfile> = self
             .profiles
-            .invalid_references(&plan)?
+            .invalid_references(&project, order)?
             .into_iter()
             .map(|reference| PlanInvalidProfile { reference })
             .collect();
@@ -469,7 +484,8 @@ mod planning_diagnostics {
         impl ProfileCatalogue for Dangling {
             fn invalid_references(
                 &self,
-                _plan: &kanban_domain::Plan,
+                _project: &kanban_domain::Project,
+                _order: &[kanban_domain::SpecNumber],
             ) -> Result<Vec<String>, ApiError> {
                 Ok(vec!["ghost-profile".to_owned()])
             }

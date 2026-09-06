@@ -166,6 +166,14 @@ define_live_event_catalogue! {
         payload: "TicketRecord",
         description: "A Ticket's assignment named an Execution Profile.",
     },
+    TicketStateChanged @ "ticket.state.changed" => {
+        payload: "TicketRecord",
+        description: "A Ticket's lifecycle state moved through a command, a drag, or the emergency override.",
+    },
+    TicketEdited @ "ticket.edited" => {
+        payload: "TicketRecord",
+        description: "A Ticket's title, slice description, or priority was edited.",
+    },
     ProfileDefined @ "profile.defined" => {
         payload: "ProfileRecord",
         description: "An Execution Profile was defined in the catalogue.",
@@ -349,6 +357,14 @@ pub enum LiveEvent {
         sequence: u64,
         payload: Box<TicketRecord>,
     },
+    TicketStateChanged {
+        sequence: u64,
+        payload: Box<TicketRecord>,
+    },
+    TicketEdited {
+        sequence: u64,
+        payload: Box<TicketRecord>,
+    },
     ProfileDefined {
         sequence: u64,
         payload: ProfileRecord,
@@ -457,6 +473,8 @@ impl LiveEvent {
             Self::SpecExecutionMoved { .. } => LiveEventName::SpecExecutionMoved,
             Self::TicketCreated { .. } => LiveEventName::TicketCreated,
             Self::TicketAssigned { .. } => LiveEventName::TicketAssigned,
+            Self::TicketStateChanged { .. } => LiveEventName::TicketStateChanged,
+            Self::TicketEdited { .. } => LiveEventName::TicketEdited,
             Self::ProfileDefined { .. } => LiveEventName::ProfileDefined,
             Self::ProfileUpdated { .. } => LiveEventName::ProfileUpdated,
             Self::ProfileRetired { .. } => LiveEventName::ProfileRetired,
@@ -502,6 +520,8 @@ impl LiveEvent {
             | Self::SpecExecutionMoved { sequence, .. }
             | Self::TicketCreated { sequence, .. }
             | Self::TicketAssigned { sequence, .. }
+            | Self::TicketStateChanged { sequence, .. }
+            | Self::TicketEdited { sequence, .. }
             | Self::ProfileDefined { sequence, .. }
             | Self::ProfileUpdated { sequence, .. }
             | Self::ProfileRetired { sequence, .. }
@@ -644,6 +664,14 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::TicketAssigned => LiveEvent::TicketAssigned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketStateChanged => LiveEvent::TicketStateChanged {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketEdited => LiveEvent::TicketEdited {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

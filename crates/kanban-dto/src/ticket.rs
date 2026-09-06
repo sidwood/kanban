@@ -1,7 +1,9 @@
 //! Ticket payload definitions: the kind, priority, severity, and
 //! lifecycle vocabularies, the per-kind creation payload, the Bug's
-//! qualification and vendor-neutral facts payloads, and the record
-//! every client sees (KAN-S4-US1 through KAN-S4-US4). Each kind sends
+//! qualification and vendor-neutral facts payloads, the lifecycle
+//! command payloads — a drag, the named human commands, and the
+//! audited emergency override (DR-LC-07 to DR-LC-10) — and the record
+//! every client sees (KAN-S4-US1 through KAN-S4-US6). Each kind sends
 //! exactly its own fields on creation — an Implementation attaches to
 //! one Spec and carries its slice and story-linked criteria; a Bug
 //! carries its quick-capture facts; a Task carries a title, one
@@ -280,6 +282,39 @@ impl TaskMode {
     }
 }
 
+/// One explicit human review decision on the wire (DR-LC-09): the
+/// decision the lifecycle records when a review resolves. The review
+/// flows that stage findings are KAN-S10's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketReviewDecision {
+    /// The review approves; the Ticket waits to land.
+    Approve,
+    /// The review rejects; the Ticket returns to work.
+    Reject,
+}
+
+impl TicketReviewDecision {
+    /// Every decision, in vocabulary order.
+    pub const ALL: &'static [Self] = &[Self::Approve, Self::Reject];
+
+    /// The wire name, matching this decision's serialised form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Reject => "reject",
+        }
+    }
+
+    /// The decision `wire` names, or `None` outside the vocabulary.
+    pub fn parse(wire: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|decision| decision.as_str() == wire)
+    }
+}
+
 /// One story-linked criterion a Ticket claims: an observable outcome
 /// and the User Stories it delivers, named like `CORE-S3-US6` or
 /// `S3-US6` (DR-TK-04, DR-PS-13).
@@ -471,6 +506,123 @@ pub struct TicketAssignRequest {
     /// The Execution Profile the assignment names, by its catalogue
     /// name.
     pub profile: String,
+}
+
+/// Request payload for the `ticket.transition` command: a drag moves a
+/// Task Ticket to a legal target along the canonical lifecycle
+/// (DR-LC-07). A drag of an Implementation or Bug Ticket is refused
+/// with the explanation that those transitions are agent-owned
+/// (DR-LC-08).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketTransitionRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being dragged.
+    pub ticket_id: u64,
+    /// The state the drag names.
+    pub to: TicketState,
+}
+
+/// Request payload for the `ticket.park` command: set aside work that
+/// has not started executing (DR-LC-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketParkRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being parked.
+    pub ticket_id: u64,
+}
+
+/// Request payload for the `ticket.unpark` command: return parked work
+/// to circulation (DR-LC-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketUnparkRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being unparked.
+    pub ticket_id: u64,
+}
+
+/// Request payload for the `ticket.schedule` command: hold qualified
+/// work until its activation (DR-LC-09); activation itself is KAN-S11.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketScheduleRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being scheduled.
+    pub ticket_id: u64,
+}
+
+/// Request payload for the `ticket.cancel` command: end the Ticket.
+/// Cancelled is terminal and absent from the active board (DR-LC-02,
+/// DR-LC-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketCancelRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being cancelled.
+    pub ticket_id: u64,
+}
+
+/// Request payload for the `ticket.review` command: record one
+/// explicit human review decision (DR-LC-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketReviewRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket the decision resolves.
+    pub ticket_id: u64,
+    /// The decision recorded.
+    pub decision: TicketReviewDecision,
+}
+
+/// Request payload for the `ticket.prioritise` command: set the
+/// Ticket's priority from the closed vocabulary (DR-LC-09, DR-LC-12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketPrioritiseRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being prioritised.
+    pub ticket_id: u64,
+    /// The priority being set.
+    pub priority: TicketPriority,
+}
+
+/// Request payload for the `ticket.edit` command: edit the
+/// human-authored description of an open Ticket (DR-LC-09) — the
+/// title a Bug or Task carries or the slice description an
+/// Implementation carries. Each kind sends exactly the field it owns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketEditRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being edited.
+    pub ticket_id: u64,
+    /// The new title, for a Bug or Task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The new slice description, for an Implementation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<String>,
+}
+
+/// Request payload for the `ticket.emergency.override` command:
+/// recovery moves a Ticket to any state past the rules, on the
+/// strength of the justification the audit row carries — who ran it
+/// and why (DR-LC-10). This command is the only way past the rules;
+/// no unrestricted drag exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketEmergencyOverrideRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being recovered.
+    pub ticket_id: u64,
+    /// The state recovery names.
+    pub to: TicketState,
+    /// Who ran the override, recorded on the timeline.
+    pub who: String,
+    /// Why the override ran, recorded on the timeline.
+    pub why: String,
 }
 
 /// The Ticket record as every client sees it: the Project it belongs
@@ -717,12 +869,15 @@ mod tests {
     use super::{
         TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
         TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
-        TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
-        TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
-        TicketDependencyRecord, TicketDependencyRemoveRequest, TicketExternalReference,
-        TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
-        TicketPriority, TicketReadinessBlocker, TicketReadinessResponse, TicketRecord,
-        TicketSeverity, TicketState, TicketVerificationStep,
+        TicketBugQualifyRequest, TicketBugRecord, TicketCancelRequest, TicketCreateRequest,
+        TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
+        TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
+        TicketEditRequest, TicketEmergencyOverrideRequest, TicketExternalReference, TicketGetQuery,
+        TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
+        TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
+        TicketReadinessResponse, TicketRecord, TicketReviewDecision, TicketReviewRequest,
+        TicketScheduleRequest, TicketSeverity, TicketState, TicketTransitionRequest,
+        TicketUnparkRequest, TicketVerificationStep,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -1090,6 +1245,60 @@ mod tests {
             "profile": "standard",
         }));
 
+        // The lifecycle command surface: a drag names its target, the
+        // named commands name their Ticket, a review names its
+        // decision, an edit sends exactly its kind's field, and the
+        // emergency override carries the who and why its audit row
+        // records (DR-LC-07 to DR-LC-10).
+        round_trips::<TicketTransitionRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "to": "ready",
+        }));
+        round_trips::<TicketParkRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+        }));
+        round_trips::<TicketUnparkRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+        }));
+        round_trips::<TicketScheduleRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+        }));
+        round_trips::<TicketCancelRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+        }));
+        round_trips::<TicketReviewRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "decision": "approve",
+        }));
+        round_trips::<TicketPrioritiseRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "priority": "urgent",
+        }));
+        round_trips::<TicketEditRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "title": "Landing drops every branch",
+        }));
+        round_trips::<TicketEditRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "slice": "Registration creates Projects end to end",
+        }));
+        round_trips::<TicketEmergencyOverrideRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "to": "ready",
+            "who": "Sid Wood",
+            "why": "Recovery after the core crashed mid move",
+        }));
+
         let list: TicketListQuery =
             serde_json::from_value(json!({ "project_id": 2 })).expect("the list query decodes");
         assert_eq!(list, TicketListQuery { project_id: 2 });
@@ -1225,6 +1434,25 @@ mod tests {
         assert_eq!(decoded, readiness);
     }
 
+    #[test]
+    fn review_decisions_round_trip_their_wire_names() {
+        assert_eq!(TicketReviewDecision::ALL.len(), 2);
+        for decision in TicketReviewDecision::ALL {
+            assert_eq!(
+                TicketReviewDecision::parse(decision.as_str()),
+                Some(*decision),
+                "`{}` must survive the round trip",
+                decision.as_str()
+            );
+            assert_eq!(
+                serde_json::to_value(decision).expect("the decision encodes"),
+                json!(decision.as_str()),
+                "the wire name and the serialised name must agree"
+            );
+        }
+        assert_eq!(TicketReviewDecision::parse("ghost"), None);
+    }
+
     /// One request wire form decodes typed, re-encodes identically,
     /// and refuses an unknown field.
     fn round_trips<Request>(wire: serde_json::Value)
@@ -1266,6 +1494,7 @@ mod tests {
             "TaskMode",
             "TaskSubtype",
             "TicketAssignRequest",
+            "TicketCancelRequest",
             "TicketCreateRequest",
             "TicketCriterion",
             "TicketDependenciesQuery",
@@ -1273,19 +1502,28 @@ mod tests {
             "TicketDependencyAddRequest",
             "TicketDependencyRecord",
             "TicketDependencyRemoveRequest",
+            "TicketEditRequest",
+            "TicketEmergencyOverrideRequest",
             "TicketExternalReference",
             "TicketGetQuery",
             "TicketKind",
             "TicketListQuery",
             "TicketListResponse",
             "TicketOccurrenceSnapshot",
+            "TicketParkRequest",
+            "TicketPrioritiseRequest",
             "TicketPriority",
             "TicketReadinessBlocker",
             "TicketReadinessQuery",
             "TicketReadinessResponse",
             "TicketRecord",
+            "TicketReviewDecision",
+            "TicketReviewRequest",
+            "TicketScheduleRequest",
             "TicketSeverity",
             "TicketState",
+            "TicketTransitionRequest",
+            "TicketUnparkRequest",
             "TicketVerificationStep",
         ] {
             let schema = schema_of(name);

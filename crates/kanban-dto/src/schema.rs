@@ -70,12 +70,15 @@ use crate::spec::{
 use crate::ticket::{
     TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
-    TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
-    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
-    TicketDependencyRecord, TicketDependencyRemoveRequest, TicketExternalReference, TicketGetQuery,
-    TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot, TicketPriority,
-    TicketReadinessBlocker, TicketReadinessQuery, TicketReadinessResponse, TicketRecord,
-    TicketSeverity, TicketState, TicketVerificationStep,
+    TicketBugQualifyRequest, TicketBugRecord, TicketCancelRequest, TicketCreateRequest,
+    TicketCriterion, TicketDependenciesQuery, TicketDependenciesResponse,
+    TicketDependencyAddRequest, TicketDependencyRecord, TicketDependencyRemoveRequest,
+    TicketEditRequest, TicketEmergencyOverrideRequest, TicketExternalReference, TicketGetQuery,
+    TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot, TicketParkRequest,
+    TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker, TicketReadinessQuery,
+    TicketReadinessResponse, TicketRecord, TicketReviewDecision, TicketReviewRequest,
+    TicketScheduleRequest, TicketSeverity, TicketState, TicketTransitionRequest,
+    TicketUnparkRequest, TicketVerificationStep,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -249,6 +252,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TaskMode", schema_for!(TaskMode)),
         ("TaskSubtype", schema_for!(TaskSubtype)),
         ("TicketAssignRequest", schema_for!(TicketAssignRequest)),
+        ("TicketCancelRequest", schema_for!(TicketCancelRequest)),
         ("TicketCreateRequest", schema_for!(TicketCreateRequest)),
         ("TicketCriterion", schema_for!(TicketCriterion)),
         (
@@ -271,6 +275,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "TicketDependenciesResponse",
             schema_for!(TicketDependenciesResponse),
         ),
+        ("TicketEditRequest", schema_for!(TicketEditRequest)),
+        (
+            "TicketEmergencyOverrideRequest",
+            schema_for!(TicketEmergencyOverrideRequest),
+        ),
         (
             "TicketExternalReference",
             schema_for!(TicketExternalReference),
@@ -283,6 +292,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "TicketOccurrenceSnapshot",
             schema_for!(TicketOccurrenceSnapshot),
         ),
+        ("TicketParkRequest", schema_for!(TicketParkRequest)),
+        (
+            "TicketPrioritiseRequest",
+            schema_for!(TicketPrioritiseRequest),
+        ),
         ("TicketPriority", schema_for!(TicketPriority)),
         (
             "TicketReadinessBlocker",
@@ -294,8 +308,16 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(TicketReadinessResponse),
         ),
         ("TicketRecord", schema_for!(TicketRecord)),
+        ("TicketReviewDecision", schema_for!(TicketReviewDecision)),
+        ("TicketReviewRequest", schema_for!(TicketReviewRequest)),
+        ("TicketScheduleRequest", schema_for!(TicketScheduleRequest)),
         ("TicketSeverity", schema_for!(TicketSeverity)),
         ("TicketState", schema_for!(TicketState)),
+        (
+            "TicketTransitionRequest",
+            schema_for!(TicketTransitionRequest),
+        ),
+        ("TicketUnparkRequest", schema_for!(TicketUnparkRequest)),
         (
             "TicketBlockerAddRequest",
             schema_for!(TicketBlockerAddRequest),

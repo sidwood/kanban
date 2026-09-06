@@ -518,6 +518,12 @@ pub enum TicketError {
     /// A terminal Ticket — cancelled or superseded — accepts no
     /// further changes.
     Terminal,
+    /// Only a Bug or Task Ticket carries a title to edit; an
+    /// Implementation is named by its slice description.
+    NotTitled,
+    /// Only an Implementation Ticket carries a slice description to
+    /// edit; the other kinds are named by their titles.
+    NotSliced,
 }
 
 /// Why an Occurrence Snapshot was refused.
@@ -574,6 +580,13 @@ impl fmt::Display for TicketError {
                 write!(f, "a Task {field} must be an RFC 3339 instant: `{value}`")
             }
             Self::Terminal => write!(f, "a terminal Ticket accepts no further changes"),
+            Self::NotTitled => write!(f, "only a Bug or Task Ticket carries a title"),
+            Self::NotSliced => {
+                write!(
+                    f,
+                    "only an Implementation Ticket carries a slice description"
+                )
+            }
         }
     }
 }
@@ -619,6 +632,12 @@ impl ImplementationTicket {
     /// The story-linked criteria, in the order they were linked.
     pub fn criteria(&self) -> &[AcceptanceCriterion] {
         &self.criteria
+    }
+
+    /// Replace the slice description, for the edit command alone. The
+    /// Ticket checks the new value; this mutator trusts its caller.
+    pub(crate) fn redescribe(&mut self, slice: String) {
+        self.slice = slice;
     }
 }
 
@@ -980,6 +999,12 @@ impl BugTicket {
     pub fn facts(&self) -> &BugFacts {
         &self.facts
     }
+
+    /// Replace the title, for the edit command alone. The Ticket
+    /// checks the new value; this mutator trusts its caller.
+    pub(crate) fn retitle(&mut self, title: String) {
+        self.title = title;
+    }
 }
 
 /// One Task Ticket's creation schema (DR-TK-06, DR-TK-07): a title,
@@ -1045,6 +1070,12 @@ impl TaskTicket {
     /// The Task's optional timing.
     pub fn timing(&self) -> &TaskTiming {
         &self.timing
+    }
+
+    /// Replace the title, for the edit command alone. The Ticket
+    /// checks the new value; this mutator trusts its caller.
+    pub(crate) fn retitle(&mut self, title: String) {
+        self.title = title;
     }
 }
 
@@ -1411,6 +1442,77 @@ impl Ticket {
         Ok(())
     }
 
+    /// Whether the kind-specific readiness facts are complete: a Bug
+    /// needs its full qualification before it may leave draft
+    /// (DR-TK-09); the other kinds are created complete. The lifecycle
+    /// rules read this; it never moves state itself.
+    pub fn is_qualified(&self) -> bool {
+        match &self.body {
+            TicketBody::Bug(bug) => bug.is_qualified(),
+            _ => true,
+        }
+    }
+
+    /// Prioritise the Ticket (DR-LC-09, DR-LC-12). A terminal Ticket
+    /// accepts no further changes; the applied change bumps the
+    /// version.
+    pub fn prioritise(&mut self, priority: Priority) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        self.priority = priority;
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Edit the title of a Bug or Task Ticket (DR-LC-09), refusing a
+    /// blank title and an Implementation, which a slice description
+    /// names instead. The applied change bumps the version.
+    pub fn retitle(&mut self, title: impl Into<String>) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        let title = title.into();
+        if title.trim().is_empty() {
+            return Err(TicketError::Blank("title"));
+        }
+        match &mut self.body {
+            TicketBody::Bug(bug) => bug.retitle(title),
+            TicketBody::Task(task) => task.retitle(title),
+            TicketBody::Implementation(_) => return Err(TicketError::NotTitled),
+        }
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Edit the slice description of an Implementation Ticket
+    /// (DR-LC-09), refusing a blank slice and every other kind, which
+    /// a title names instead. The applied change bumps the version.
+    pub fn redescribe(&mut self, slice: impl Into<String>) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        let slice = slice.into();
+        if slice.trim().is_empty() {
+            return Err(TicketError::Blank("slice description"));
+        }
+        match &mut self.body {
+            TicketBody::Implementation(implementation) => implementation.redescribe(slice),
+            _ => return Err(TicketError::NotSliced),
+        }
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Move the lifecycle state, counting the change. The rules live
+    /// in [`crate::lifecycle`]; this mutator exists for that module
+    /// and its command surface alone, so no caller moves a Ticket
+    /// around them.
+    pub(crate) fn transition_state(&mut self, to: TicketState) {
+        self.state = to;
+        self.version += 1;
+    }
+
     /// The number of applied changes, for optimistic version checks.
     pub fn version(&self) -> u64 {
         self.version
@@ -1762,6 +1864,138 @@ mod ticket_kinds {
         assert_eq!(ticket.assign(named), Err(TicketError::Terminal));
         assert_eq!(ticket.profile(), None, "the refusal changed nothing");
         assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn prioritising_takes_the_closed_vocabulary_and_bumps_the_version() {
+        let mut ticket = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
+        );
+
+        ticket
+            .prioritise(Priority::Urgent)
+            .expect("an open Ticket prioritises");
+
+        assert_eq!(ticket.priority(), Priority::Urgent);
+        assert_eq!(ticket.version(), 2);
+
+        ticket.state = TicketState::Cancelled;
+        assert_eq!(
+            ticket.prioritise(Priority::Low),
+            Err(TicketError::Terminal),
+            "a terminal Ticket accepts no priority change"
+        );
+        assert_eq!(
+            ticket.priority(),
+            Priority::Urgent,
+            "the refusal changed nothing"
+        );
+    }
+
+    #[test]
+    fn editing_titles_and_slices_serves_only_the_kind_that_carries_them() {
+        let mut bug = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
+        );
+        bug.retitle("Landing drops every branch")
+            .expect("a Bug retitles");
+        assert_eq!(bug.title(), Some("Landing drops every branch"));
+        assert_eq!(bug.version(), 2);
+        assert_eq!(
+            bug.redescribe("A slice"),
+            Err(TicketError::NotSliced),
+            "a Bug carries no slice description"
+        );
+
+        let mut slice = Ticket::new(
+            TicketId::new(2),
+            ProjectId::new(1),
+            number(5),
+            Priority::Normal,
+            implementation(
+                Some(SpecId::new(7)),
+                vec![criterion(1, 4, "Projects register.")],
+            )
+            .expect("the fixture body validates"),
+        );
+        slice
+            .redescribe("Registration creates Projects end to end, again")
+            .expect("an Implementation carries an edited slice");
+        assert_eq!(
+            slice.slice(),
+            Some("Registration creates Projects end to end, again")
+        );
+        assert_eq!(slice.version(), 2);
+        assert_eq!(
+            slice.retitle("A title"),
+            Err(TicketError::NotTitled),
+            "an Implementation carries no title"
+        );
+    }
+
+    #[test]
+    fn a_blank_edit_is_refused_and_a_terminal_ticket_accepts_none() {
+        let mut bug = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                None,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
+        );
+        assert_eq!(bug.retitle("  "), Err(TicketError::Blank("title")));
+        assert_eq!(bug.title(), Some("Landing drops the integration branch"));
+
+        bug.state = TicketState::Superseded;
+        assert_eq!(
+            bug.retitle("A fresh title"),
+            Err(TicketError::Terminal),
+            "a terminal Ticket accepts no edits"
+        );
+        assert_eq!(bug.version(), 1, "the refusals changed nothing");
+
+        let mut slice = Ticket::new(
+            TicketId::new(2),
+            ProjectId::new(1),
+            number(5),
+            Priority::Normal,
+            TicketBody::implementation(
+                Some(SpecId::new(7)),
+                crate::plan::SpecNumber::new(1).expect("the fixture number is positive"),
+                "Specs approve end to end",
+                vec![criterion(1, 4, "Projects register.")],
+            )
+            .expect("the fixture body validates"),
+        );
+        assert_eq!(
+            slice.redescribe("\t"),
+            Err(TicketError::Blank("slice description"))
+        );
     }
 }
 

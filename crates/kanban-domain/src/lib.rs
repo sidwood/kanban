@@ -10,6 +10,7 @@ pub mod evidence;
 pub mod herdr;
 pub mod initiative;
 pub mod lane;
+pub mod lifecycle;
 pub mod plan;
 pub mod profile;
 pub mod project;
@@ -46,6 +47,10 @@ pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
 pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
+pub use lifecycle::{
+    Actor, HumanCommand, LifecycleError, OverrideJustification, ReviewDecision, apply_command,
+    apply_drag, apply_override, human_may_drag, legal_targets,
+};
 pub use plan::{
     DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
     SpecNumber, SpecNumberError,

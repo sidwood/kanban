@@ -15,10 +15,7 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 /// Every stored column of one Project row, in select order.
-pub(crate) const PROJECT_COLUMNS: &str = "id, code, name, repository, seed_workspace, \
-                                         default_branch, herdr_session, herdr_workspace, \
-                                         initiative_id, archived, plan_counter, spec_counter, \
-                                         ticket_counter, version";
+pub(crate) const PROJECT_COLUMNS: &str = "id, code, name, repository, seed_workspace, default_branch, herdr_session, herdr_workspace, initiative_id, archived, plan_counter, spec_counter, ticket_counter, version";
 
 /// The Project port over the authoritative database.
 pub struct SqliteProjectStore {

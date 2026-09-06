@@ -30,10 +30,7 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 /// Every stored column of one Ticket row, in select order.
-pub(crate) const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
-                              slice, criteria, actual_behaviour, reporter_evidence, \
-                              bug_qualification, bug_facts, subtype, mode, completion, \
-                              scheduled_for, due, profile, pinned_version, predecessor_id, version";
+pub(crate) const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, slice, criteria, actual_behaviour, reporter_evidence, bug_qualification, bug_facts, subtype, mode, completion, scheduled_for, due, profile, pinned_version, predecessor_id, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -380,7 +377,10 @@ pub(crate) fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Loade
         pinned_version: row
             .get::<_, Option<i64>>(20)?
             .map(|version| version.unsigned_abs()),
-        predecessor_id: row.get::<_, Option<i64>>(21)?,
+        predecessor_id: match row.get_ref(21)?.data_type() {
+            rusqlite::types::Type::Null => None,
+            _ => Some(row.get::<_, i64>(21)?),
+        },
         version: row.get::<_, i64>(22)?.unsigned_abs(),
     })
 }

@@ -313,7 +313,9 @@ mod activation_pass {
             ticket.priority(),
             TicketState::Scheduled,
             ticket.body().clone(),
+            ticket.predecessor(),
             ticket.profile().cloned(),
+            ticket.pinned_version(),
             ticket.version() + 1,
         );
         ScheduleStore::attach(

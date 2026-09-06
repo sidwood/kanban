@@ -171,15 +171,15 @@ fn timeline_failed(error: crate::error::StorageError) -> ApiError {
 /// corruption the caller must hear about.
 fn load_due_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DueActivation> {
     let ticket = load_ticket_row(row)?.rehydrate()?;
-    let project = decode_row_at(row, 21)?;
-    let id = row.get::<_, i64>(35)?.unsigned_abs();
-    let trigger_kind: String = row.get(36)?;
-    let activation_at: Option<String> = row.get(37)?;
-    let cron_expression: Option<String> = row.get(38)?;
-    let timezone: String = row.get(39)?;
-    let profile: String = row.get(40)?;
-    let next_activation: String = row.get(41)?;
-    let state: String = row.get(42)?;
+    let project = decode_row_at(row, 23)?;
+    let id = row.get::<_, i64>(37)?.unsigned_abs();
+    let trigger_kind: String = row.get(38)?;
+    let activation_at: Option<String> = row.get(39)?;
+    let cron_expression: Option<String> = row.get(40)?;
+    let timezone: String = row.get(41)?;
+    let profile: String = row.get(42)?;
+    let next_activation: String = row.get(43)?;
+    let state: String = row.get(44)?;
     let trigger = rehydrate_trigger(&trigger_kind, activation_at, cron_expression)?;
     let schedule = Schedule::restore(
         ScheduleId::new(id),
@@ -385,7 +385,9 @@ mod tests {
             ticket.priority(),
             state,
             ticket.body().clone(),
+            ticket.predecessor(),
             ticket.profile().cloned(),
+            ticket.pinned_version(),
             ticket.version() + 1,
         )
     }

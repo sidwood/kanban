@@ -622,6 +622,8 @@ mod schedule_rules {
             state,
             body,
             None,
+            None,
+            None,
             1,
         )
     }

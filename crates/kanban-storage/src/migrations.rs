@@ -917,7 +917,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0031 applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![31] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![31, 32]
+            }
+        );
         let conn = database.connection();
         conn.execute(
             "INSERT INTO projects

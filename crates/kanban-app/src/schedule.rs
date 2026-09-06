@@ -1,12 +1,13 @@
 //! The Schedule storage port and the activation pass the core
 //! service's scheduler drives (KAN-T53, DR-SA-01 to DR-SA-06). The
 //! port lands one Schedule with the Ticket it holds in a single
-//! write, answers which one-time activations have come due, and
-//! spends a fired activation atomically; the pass applies the
-//! domain's activation rule to each due Schedule and announces the
-//! Tickets it made ready. The scheduling command itself stays with
-//! the lifecycle (`ticket.schedule`), which now carries the
-//! Schedule's facts when the operator sets one.
+//! write, answers which one-time activations have come due on live
+//! Projects, and spends a fired activation atomically under the
+//! archived guard. The pass applies the domain's activation rule to
+//! each due Schedule and announces the Tickets it made ready. The
+//! scheduling command itself stays with the lifecycle
+//! (`ticket.schedule`), which now carries the Schedule's facts when
+//! the operator sets one.
 
 use std::sync::Arc;
 
@@ -65,14 +66,18 @@ pub trait ScheduleStore: Send + Sync {
 
     /// Every waiting one-time Schedule whose activation has come due
     /// at `now` — a stored-shape instant — with the Ticket it holds
-    /// and that Ticket's Project, in activation order.
+    /// and that Ticket's Project, in activation order. Archived is
+    /// terminal, so a Schedule an archived Project holds never
+    /// answers; it waits outside every scan.
     fn due(&self, now: &str) -> Result<Vec<DueActivation>, ApiError>;
 
     /// Spend one due activation: mark the Schedule fired, move the
     /// Ticket row when `moved` carries the activated Ticket, and
     /// append the timeline envelope, all in one write guarded by the
-    /// Schedule's waiting state and the Ticket's version. `Ok(false)`
-    /// names an activation another writer already spent.
+    /// Schedule's waiting state, the Ticket's version, and the
+    /// Project staying live. `Ok(false)` names an activation another
+    /// writer already spent, or one whose Project archived since the
+    /// scan.
     fn fire(
         &self,
         due: &DueActivation,
@@ -268,20 +273,22 @@ mod activation_pass {
         .expect("the fixture body validates")
     }
 
-    /// Create one Task Ticket through the Ticket port and return the
-    /// stored aggregate.
-    fn created(harness: &PassHarness) -> Ticket {
-        let mut project = harness
+    /// Create one Task Ticket under the Project `project` through the
+    /// Ticket port and return the stored aggregate.
+    fn created_under(harness: &PassHarness, project: ProjectId) -> Ticket {
+        let mut aggregate = harness
             .projects
-            .find(ProjectId::new(1))
+            .find(project)
             .expect("the reload serves")
             .expect("the Project exists");
-        let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
+        let number = TicketNumber::new(aggregate.mint(NumberKind::Ticket).expect("active mints"))
             .expect("a minted number is positive");
+        let scope = aggregate.id().value();
         harness
             .rows
-            .create(&project, number, Priority::Normal, &task_body(), &|id| {
+            .create(&aggregate, number, Priority::Normal, &task_body(), &|id| {
                 envelope(
+                    scope,
                     id.value(),
                     "created",
                     json!({ "from": "none", "to": "draft" }),
@@ -290,9 +297,15 @@ mod activation_pass {
             .expect("the fixture Ticket lands")
     }
 
-    /// Schedule `ticket` through the port, the way the command will:
-    /// the moved aggregate and the Schedule land together.
-    fn scheduled(harness: &PassHarness, ticket: &Ticket) {
+    /// Create one Task Ticket under the seeded live Project.
+    fn created(harness: &PassHarness) -> Ticket {
+        created_under(harness, ProjectId::new(1))
+    }
+
+    /// Schedule `ticket` under the Project `project` through the
+    /// port, the way the command will: the moved aggregate and the
+    /// Schedule land together.
+    fn scheduled_under(harness: &PassHarness, project: ProjectId, ticket: &Ticket) {
         let moved = Ticket::restore(
             ticket.id(),
             ticket.project(),
@@ -310,6 +323,7 @@ mod activation_pass {
                 .expect("the fixture schedule validates"),
             &|id| {
                 envelope(
+                    project.value(),
                     ticket.id().value(),
                     "scheduled",
                     json!({ "from": "draft", "to": "scheduled", "schedule": id.value() }),
@@ -319,8 +333,15 @@ mod activation_pass {
         .expect("the fixture schedule lands");
     }
 
-    /// The timeline envelope one Ticket change lands.
+    /// Schedule `ticket` under the seeded live Project.
+    fn scheduled(harness: &PassHarness, ticket: &Ticket) {
+        scheduled_under(harness, ProjectId::new(1), ticket);
+    }
+
+    /// The timeline envelope one Ticket change lands, scoped to the
+    /// Project `project`.
     fn envelope(
+        project: u64,
         ticket: u64,
         action: &str,
         facts: serde_json::Value,
@@ -330,7 +351,7 @@ mod activation_pass {
         object.insert("action".to_owned(), serde_json::Value::from(action));
         object.insert("id".to_owned(), serde_json::Value::from(ticket));
         crate::timeline::TimelineEnvelope::project(
-            1,
+            project,
             kanban_dto::TimelineEventKind::Transition,
             Some(kanban_dto::TimelineEntityRef {
                 kind: kanban_dto::TimelineEntityKind::Ticket,
@@ -371,6 +392,93 @@ mod activation_pass {
         assert!(
             harness.rows.due(NOW).expect("the rescan serves").is_empty(),
             "the spent Schedule is due never again"
+        );
+    }
+
+    #[test]
+    fn an_archived_projects_schedule_never_fires_while_a_live_one_does() {
+        let harness = harness();
+        // A second Project holds one due Schedule, then archives.
+        harness
+            .projects
+            .seed(active_project(2, "OLD", ProjectCounters::restore(0, 0, 0)));
+        let retired_task = created_under(&harness, ProjectId::new(2));
+        scheduled_under(&harness, ProjectId::new(2), &retired_task);
+        let mut retired = harness
+            .projects
+            .find(ProjectId::new(2))
+            .expect("the reload serves")
+            .expect("the Project exists");
+        retired.archive().expect("the fixture Project archives");
+        harness.projects.replace(retired);
+        // A live Project's due Schedule stands beside it in the same
+        // tick.
+        let live = created(&harness);
+        scheduled(&harness, &live);
+        let sink = RecordingSink::default();
+
+        let report = harness.pass.fire_due(NOW, &sink).expect("the pass serves");
+
+        assert_eq!(
+            report.fired, 1,
+            "only the live Project's Schedule fired; the exclusion aborted no tick"
+        );
+        assert_eq!(report.skipped, 0);
+        let (tickets, timeline) = harness.rows.snapshot();
+        let archived_row = tickets
+            .iter()
+            .find(|row| row.id() == retired_task.id())
+            .expect("the archived Ticket stands");
+        assert_eq!(
+            archived_row.state(),
+            TicketState::Scheduled,
+            "archival prevents the transition"
+        );
+        assert_eq!(archived_row.version(), 2, "the pass moved nothing");
+        let live_row = tickets
+            .iter()
+            .find(|row| row.id() == live.id())
+            .expect("the live Ticket stands");
+        assert_eq!(live_row.state(), TicketState::Ready, "the live one fired");
+        assert_eq!(live_row.version(), 3);
+        assert_eq!(
+            harness
+                .rows
+                .schedules()
+                .iter()
+                .find(|schedule| schedule.ticket() == retired_task.id())
+                .expect("the archived Schedule stands")
+                .state(),
+            ScheduleState::Waiting,
+            "the archived Project's Schedule spends nothing"
+        );
+        assert!(
+            !timeline.iter().any(|row| {
+                row.detail()["id"] == json!(retired_task.id().value())
+                    && row.detail()["action"] == json!("activated")
+            }),
+            "archival prevents the activation timeline entry"
+        );
+        assert!(
+            timeline.iter().any(|row| {
+                row.detail()["id"] == json!(live.id().value())
+                    && row.detail()["action"] == json!("activated")
+            }),
+            "the live activation still appends"
+        );
+        let events = sink.events.lock().expect("the recorder lock is sound");
+        assert_eq!(events.len(), 1, "only the live Ticket announces");
+        assert!(
+            events
+                .iter()
+                .any(|(name, payload)| name == "ticket.state.changed"
+                    && payload["id"] == json!(live.id().value())
+                    && payload["state"] == json!("ready")),
+            "the made-ready Ticket announces live, got {events:?}"
+        );
+        assert!(
+            harness.rows.due(NOW).expect("the rescan serves").is_empty(),
+            "the archived Project's Schedule stays outside every scan"
         );
     }
 

@@ -1070,6 +1070,12 @@ pub(crate) mod testing {
                         "a stored Schedule names no stored Project",
                     ));
                 };
+                if project.is_archived() {
+                    // The SQLite scan leaves an archived Project's
+                    // Schedules waiting outside `due`; the fixture
+                    // rows answer the same way.
+                    continue;
+                }
                 due.push(crate::schedule::DueActivation {
                     schedule: schedule.clone(),
                     ticket,
@@ -1098,6 +1104,13 @@ pub(crate) mod testing {
                 return Ok(false);
             };
             if schedule.state() != kanban_domain::ScheduleState::Waiting {
+                return Ok(false);
+            }
+            // The SQLite spend refuses a Ticket whose Project is not
+            // live; the fixture rows answer the same way.
+            let live = crate::project::ProjectStore::find(&*self.projects, due.ticket.project())?
+                .is_some_and(|project| !project.is_archived());
+            if !live {
                 return Ok(false);
             }
             *schedule = schedule.fired();

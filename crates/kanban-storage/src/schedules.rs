@@ -4,10 +4,12 @@
 //! activation (DR-SA-01) — with the Ticket row it holds and the
 //! timeline envelope landing unchanged in the same transaction as
 //! every change. Attaching guards the Ticket's version; the due scan
-//! reads waiting one-time Schedules in activation order; firing
-//! spends the Schedule under its waiting state, moves the Ticket row
-//! the domain activated, and appends the audit row, all in one write,
-//! so a fired activation can never land twice (DR-SA-06).
+//! reads waiting one-time Schedules in activation order, an archived
+//! Project's never among them; firing spends the Schedule under its
+//! waiting state on a Project still live, moves the Ticket row the
+//! domain activated, and appends the audit row, all in one write, so
+//! a fired activation can never land twice (DR-SA-06) and an archived
+//! Project's never lands at all.
 
 use kanban_app::{DueActivation, ScheduleStore, TimelineEnvelope};
 use kanban_domain::{Schedule, ScheduleId, ScheduleState, ScheduleTrigger, Ticket};
@@ -91,6 +93,7 @@ impl ScheduleStore for SqliteScheduleStore {
                  WHERE s.state = 'waiting'
                    AND s.trigger_kind = 'one_time'
                    AND s.next_activation <= ?1
+                   AND p.archived = 0
                  ORDER BY s.next_activation, s.id",
                 ticket_columns = qualified(TICKET_COLUMNS, "t"),
                 project_columns = qualified(PROJECT_COLUMNS, "p"),
@@ -117,15 +120,26 @@ impl ScheduleStore for SqliteScheduleStore {
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let changed = span
             .execute(
+                // The spend also refuses a Ticket whose Project
+                // archived since the scan: archived is terminal, so
+                // the whole span rolls back and nothing moves.
                 "UPDATE schedules
                  SET state = 'fired', fired_at = ?2, version = version + 1
-                 WHERE id = ?1 AND state = 'waiting'",
+                 WHERE id = ?1
+                   AND state = 'waiting'
+                   AND ticket_id IN (
+                       SELECT t.id
+                       FROM tickets AS t
+                       JOIN projects AS p ON p.id = t.project_id
+                       WHERE p.archived = 0
+                   )",
                 params![due.id().value() as i64, fired_at],
             )
             .map_err(internal)?;
         if changed != 1 {
-            // Another writer spent this activation; everything this
-            // span wrote rolls back with it.
+            // Another writer spent this activation, or the Project
+            // archived since the scan; everything this span wrote
+            // rolls back with it.
             return Ok(false);
         }
         if let Some(ticket) = moved {
@@ -376,6 +390,30 @@ mod tests {
         )
     }
 
+    /// Archive `project` the way the archive command would: one save
+    /// that lands the terminal state and its timeline append.
+    fn archived_project(database: &Database) {
+        let mut project = SqliteProjectStore::new(database)
+            .find(ProjectId::new(1))
+            .expect("the reload serves")
+            .expect("the stored Project reloads at its current version");
+        project.archive().expect("the fixture Project archives");
+        SqliteProjectStore::new(database)
+            .save(
+                &project,
+                TimelineEnvelope::project(
+                    project.id().value(),
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Project,
+                        id: project.id().value().to_string(),
+                    }),
+                    json!({ "action": "archived", "id": project.id().value() }),
+                ),
+            )
+            .expect("the fixture archive lands");
+    }
+
     /// The timeline envelope one Ticket transition lands.
     fn transition_envelope(
         ticket: TicketId,
@@ -579,6 +617,104 @@ mod tests {
         assert_eq!(due[0].ticket.state(), TicketState::Scheduled);
         assert_eq!(due[0].project.code().as_str(), "CORE");
         assert!(due[0].schedule.is_due(NOW));
+    }
+
+    #[test]
+    fn an_archived_projects_due_schedule_stays_outside_the_scan() {
+        let (_dir, database, schedules, _tickets) = store();
+        seeded_project(&database);
+        let task = created_task(&database);
+        schedules
+            .attach(
+                &moved_to(&task, TicketState::Scheduled),
+                &schedule_for(task.id(), ACTIVATION),
+                &|id| {
+                    transition_envelope(task.id(), "scheduled", json!({ "schedule": id.value() }))
+                },
+            )
+            .expect("the schedule attaches");
+        archived_project(&database);
+
+        assert!(
+            schedules.due(NOW).expect("the scan serves").is_empty(),
+            "an archived Project's Schedule is never due; archived is terminal"
+        );
+        assert_eq!(
+            stored_schedule(&database, 1).5,
+            "waiting".to_owned(),
+            "the excluded Schedule spends nothing and stays waiting"
+        );
+    }
+
+    #[test]
+    fn firing_after_the_project_archives_lands_nothing() {
+        let (_dir, database, schedules, _tickets) = store();
+        seeded_project(&database);
+        let task = created_task(&database);
+        schedules
+            .attach(
+                &moved_to(&task, TicketState::Scheduled),
+                &schedule_for(task.id(), ACTIVATION),
+                &|id| {
+                    transition_envelope(task.id(), "scheduled", json!({ "schedule": id.value() }))
+                },
+            )
+            .expect("the schedule attaches");
+        let due = schedules
+            .due(NOW)
+            .expect("the scan serves")
+            .pop()
+            .expect("one is due while the Project lives");
+        // The Project archives between the scan and the write.
+        archived_project(&database);
+        let mut activated = due.ticket.clone();
+        due.schedule
+            .activate(&mut activated, &clear_readiness())
+            .expect("the activation applies");
+        let timeline_before = ticket_timeline(&database).len();
+
+        let spent = schedules
+            .fire(
+                &due,
+                Some(&activated),
+                NOW,
+                transition_envelope(
+                    task.id(),
+                    "activated",
+                    json!({
+                        "from": "scheduled", "to": "ready", "schedule": due.id().value(),
+                    }),
+                ),
+            )
+            .expect("the fire answers");
+
+        assert!(
+            !spent,
+            "the mutation boundary refuses an archived Project's Ticket"
+        );
+        let ticket_row: (String, i64) = database
+            .connection()
+            .query_row(
+                "SELECT state, version FROM tickets WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the Ticket row reads");
+        assert_eq!(
+            ticket_row,
+            ("scheduled".to_owned(), 2),
+            "no transition landed for the archived Project"
+        );
+        assert_eq!(
+            stored_schedule(&database, 1).5,
+            "waiting".to_owned(),
+            "the Schedule spent nothing"
+        );
+        assert_eq!(
+            ticket_timeline(&database).len(),
+            timeline_before,
+            "no activation timeline entry appended"
+        );
     }
 
     #[test]

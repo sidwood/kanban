@@ -216,6 +216,39 @@ describe('board cards', () => {
     expect(chip(wrapper, 'progress', 9).text()).toBe('Progress2 criteria')
   })
 
+  it('shows an unqualified Bug a progress that invents nothing', async () => {
+    const unqualified = ticket({
+      id: 10,
+      number: 15,
+      kind: 'bug',
+      state: 'draft',
+      title: 'Clone guard misses a dirty tree',
+      criteria: [],
+      bug: {
+        actual_behaviour: 'The guard lands a dirty tree.',
+        evidence_ids: [],
+        external_references: [],
+        occurrence_snapshots: [],
+        qualification: null,
+        reporter_evidence: 'A landing run failed',
+      },
+      subtype: null,
+      mode: null,
+      completion: [],
+      profile: null,
+    })
+    const { wrapper } = await mounted([unqualified])
+
+    // Every card carries progress (DR-BP-08): the unqualified Bug's
+    // names its state rather than a count it cannot honestly claim.
+    expect(chip(wrapper, 'progress', 10).text()).toBe('ProgressNot yet qualified')
+    expect(chip(wrapper, 'progress', 10).attributes('data-tone')).toBe('neutral')
+    // Qualification still owns severity and frequency; until it
+    // lands, those regions stay off the card.
+    expect(chip(wrapper, 'severity', 10).exists()).toBe(false)
+    expect(chip(wrapper, 'frequency', 10).exists()).toBe(false)
+  })
+
   it('adds the implementation chips: spec, implementer, lane, and blockers', async () => {
     const { wrapper } = await mounted(boardTickets(), lanes(), { 8: [waiting(3), waiting(5)] })
 

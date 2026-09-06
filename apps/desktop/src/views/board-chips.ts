@@ -83,15 +83,20 @@ function dayOf(instant: string): string {
 }
 
 /** The progress every card carries, resolved per kind: Acceptance
- * Criteria progress for Implementations and Bugs — absent until a Bug
- * is qualified — and completion progress for Tasks (DR-BP-08). */
+ * Criteria progress for Implementations and Bugs, completion progress
+ * for Tasks (DR-BP-08). A Bug not yet qualified has no criteria to
+ * count, so its progress names that state — off the card it would be
+ * the only kind without one, and a count would invent criteria the
+ * qualification has not defined. */
 function progressChip(ticket: TicketRecord): CardChip | null {
   if (ticket.kind === 'implementation') {
     return chip('progress', 'Progress', `${ticket.criteria.length} criteria`)
   }
   if (ticket.kind === 'bug') {
     const criteria = ticket.bug?.qualification?.criteria
-    return criteria ? chip('progress', 'Progress', `${criteria.length} criteria`) : null
+    return criteria
+      ? chip('progress', 'Progress', `${criteria.length} criteria`)
+      : chip('progress', 'Progress', 'Not yet qualified')
   }
   return chip('progress', 'Progress', `${ticket.completion.length} outcomes`)
 }

@@ -172,7 +172,9 @@ describe('board chips', () => {
     )
     expect(chipByKind(bug, 'progress')).toMatchObject({ value: '1 criteria' })
 
-    // An unqualified Bug carries no progress yet.
+    // An unqualified Bug has no criteria to count yet, so its
+    // progress says so plainly — never off the card, never a count
+    // that implies any completion (DR-BP-08).
     const unqualified = chipsFor(
       ticket({
         kind: 'bug',
@@ -189,7 +191,26 @@ describe('board chips', () => {
       }),
       sources(),
     )
-    expect(chipByKind(unqualified, 'progress')).toBeUndefined()
+    expect(chipByKind(unqualified, 'progress')).toMatchObject({
+      label: 'Progress',
+      value: 'Not yet qualified',
+    })
+    expect(chipByKind(unqualified, 'progress')?.tone).toBeUndefined()
+
+    // A Bug with no facts recorded at all is equally unqualified.
+    const bare = chipsFor(
+      ticket({
+        kind: 'bug',
+        title: 'Clone guard misses a dirty tree',
+        criteria: [],
+        bug: null,
+      }),
+      sources(),
+    )
+    expect(chipByKind(bare, 'progress')).toMatchObject({
+      label: 'Progress',
+      value: 'Not yet qualified',
+    })
 
     const task = chipsFor(
       ticket({

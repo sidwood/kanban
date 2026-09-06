@@ -7,6 +7,7 @@ pub mod comment;
 pub mod coverage;
 pub mod deferral;
 pub mod diagnostics;
+pub mod dispatch;
 pub mod error;
 pub mod event;
 pub mod evidence;
@@ -47,6 +48,10 @@ pub use deferral::{
     DeferralSupersedeRequest,
 };
 pub use diagnostics::{DiagnosticsExportQuery, DiagnosticsExportResponse};
+pub use dispatch::{
+    DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery, DispatchQueueResponse,
+    DispatchRequestCreateRequest, DispatchRequestRecord, DispatchStatus,
+};
 pub use error::{ApiError, ErrorCode};
 pub use event::{
     DecodeLiveEventError, DeferralIdentity, EventEnvelope, EvidenceListSummary,
@@ -193,6 +198,13 @@ mod tests {
                 "DeferralIdentity",
                 "DiagnosticsExportQuery",
                 "DiagnosticsExportResponse",
+                "DispatchClaimRequest",
+                "DispatchClaimResponse",
+                "DispatchQueueQuery",
+                "DispatchQueueResponse",
+                "DispatchRequestCreateRequest",
+                "DispatchRequestRecord",
+                "DispatchStatus",
                 "EventEnvelope",
                 "ExportDriftEntry",
                 "ExportDriftQuery",

@@ -12,6 +12,7 @@ pub mod deferrals;
 pub mod dependency;
 pub mod diagnostics;
 pub mod dispatch;
+pub mod dispatch_request;
 pub mod event_catalog;
 pub mod events;
 pub mod evidence;
@@ -49,6 +50,10 @@ pub use deadlines::{
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dependency::DependencyStore;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
+pub use dispatch_request::{
+    ClaimContext, CoordinatorWake, CoordinatorWakeRequest, DispatchEnqueue, DispatchStore,
+    NoopCoordinatorWake, evaluate_dispatch_claim,
+};
 pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};
 pub use evidence::{EvidenceFilter, EvidenceStore};

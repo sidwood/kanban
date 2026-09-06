@@ -533,6 +533,27 @@ define_exposed_catalogue! {
         mcp: "capacity_settings_update",
         description: "Replace one Project's stricter capacity caps and maximum active Lane count; a cap may never relax a global default.",
     },
+    "dispatch.request" => {
+        kind: Command,
+        request: "DispatchRequestCreateRequest",
+        response: "DispatchRequestRecord",
+        mcp: "dispatch_request",
+        description: "Create a durable Dispatch Request for a Ticket, queue it, and wake the Project Coordinator. Kanban never launches implementation agents directly.",
+    },
+    "dispatch.claim" => {
+        kind: Command,
+        request: "DispatchClaimRequest",
+        response: "DispatchClaimResponse",
+        mcp: "dispatch_claim",
+        description: "Claim one Dispatch Request atomically. Exactly one concurrent claimant wins; without capacity the request stays queued.",
+    },
+    "dispatch.queue" => {
+        kind: Query,
+        request: "DispatchQueueQuery",
+        response: "DispatchQueueResponse",
+        mcp: "dispatch_queue",
+        description: "List a Project's queued Dispatch Requests in deterministic priority, readiness, age order.",
+    },
     "timeline.query" => {
         kind: Query,
         request: "TimelineQuery",

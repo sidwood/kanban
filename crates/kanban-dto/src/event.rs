@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::clone::{CloneCreatedRecord, CloneRemovedRecord};
 use crate::comment::CommentRecord;
+use crate::dispatch::DispatchRequestRecord;
 use crate::evidence::EvidenceRecord;
 use crate::initiative::InitiativeRecord;
 use crate::lane::LaneRecord;
@@ -258,6 +259,14 @@ define_live_event_catalogue! {
         payload: "CloneRemovedRecord",
         description: "A branch clone was removed through the guarded fleet skill. The Workspace record is preserved.",
     },
+    DispatchRequested @ "dispatch.requested" => {
+        payload: "DispatchRequestRecord",
+        description: "A Dispatch Request was created and queued.",
+    },
+    DispatchClaimed @ "dispatch.claimed" => {
+        payload: "DispatchRequestRecord",
+        description: "A Dispatch Request was claimed by exactly one claimant.",
+    },
 }
 
 /// The identity carried on ruling live events.
@@ -449,6 +458,14 @@ pub enum LiveEvent {
         sequence: u64,
         payload: CloneRemovedRecord,
     },
+    DispatchRequested {
+        sequence: u64,
+        payload: DispatchRequestRecord,
+    },
+    DispatchClaimed {
+        sequence: u64,
+        payload: DispatchRequestRecord,
+    },
 }
 
 impl LiveEvent {
@@ -496,6 +513,8 @@ impl LiveEvent {
             Self::LaneTicketReleased { .. } => LiveEventName::LaneTicketReleased,
             Self::CloneCreated { .. } => LiveEventName::CloneCreated,
             Self::CloneRemoved { .. } => LiveEventName::CloneRemoved,
+            Self::DispatchRequested { .. } => LiveEventName::DispatchRequested,
+            Self::DispatchClaimed { .. } => LiveEventName::DispatchClaimed,
         }
     }
 
@@ -542,7 +561,9 @@ impl LiveEvent {
             | Self::LaneTicketAssigned { sequence, .. }
             | Self::LaneTicketReleased { sequence, .. }
             | Self::CloneCreated { sequence, .. }
-            | Self::CloneRemoved { sequence, .. } => *sequence,
+            | Self::CloneRemoved { sequence, .. }
+            | Self::DispatchRequested { sequence, .. }
+            | Self::DispatchClaimed { sequence, .. } => *sequence,
         }
     }
 }
@@ -756,6 +777,14 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::CloneRemoved => LiveEvent::CloneRemoved {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::DispatchRequested => LiveEvent::DispatchRequested {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::DispatchClaimed => LiveEvent::DispatchClaimed {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

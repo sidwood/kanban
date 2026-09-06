@@ -24,11 +24,11 @@ use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHan
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
-    SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore,
-    SqliteGraphProposalStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore,
-    SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore, SqliteProfileStore,
-    SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
-    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteDispatchStore,
+    SqliteEvidenceStore, SqliteGraphProposalStore, SqliteHerdrSettingsStore,
+    SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
+    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore,
+    SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -141,6 +141,7 @@ fn assemble_core(
     let graph_proposal_store = Arc::new(SqliteGraphProposalStore::new(&database));
     let profile_store = Arc::new(SqliteProfileStore::new(&database));
     let capacity_store = Arc::new(SqliteCapacityStore::new(&database));
+    let dispatch_store = Arc::new(SqliteDispatchStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -180,7 +181,7 @@ fn assemble_core(
         evidence_store.clone(),
     )?;
     core.register_lanes(
-        lane_store,
+        lane_store.clone(),
         projects.clone(),
         workspace_store.clone(),
         ticket_store.clone(),
@@ -196,7 +197,11 @@ fn assemble_core(
         ticket_store.clone(),
         projects.clone(),
     )?;
-    core.register_lifecycle(ticket_store.clone(), dependency_store, projects.clone())?;
+    core.register_lifecycle(
+        ticket_store.clone(),
+        dependency_store.clone(),
+        projects.clone(),
+    )?;
     core.register_graph_proposals(
         graph_proposal_store,
         ticket_store.clone(),
@@ -204,8 +209,22 @@ fn assemble_core(
         projects.clone(),
     )?;
     core.register_reassignment(ticket_store.clone(), projects.clone(), spec_store.clone())?;
-    core.register_profiles(profile_store, ticket_store.clone(), projects.clone())?;
-    core.register_capacity(capacity_store, projects.clone())?;
+    core.register_profiles(
+        profile_store.clone(),
+        ticket_store.clone(),
+        projects.clone(),
+    )?;
+    core.register_capacity(capacity_store.clone(), projects.clone())?;
+    core.register_dispatch(
+        dispatch_store,
+        ticket_store.clone(),
+        profile_store.clone(),
+        project_store.clone(),
+        capacity_store,
+        lane_store.clone(),
+        dependency_store.clone(),
+        herdr.clone(),
+    )?;
     core.register_exports(
         plan_store,
         spec_store,

@@ -22,12 +22,15 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kanban_app::deadlines::{DeadlineConfig, DeadlineMonitor};
 use kanban_app::telemetry::{AttentionSignal, TelemetryProjection, project_herdr_event};
-use kanban_app::{HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, TimelineEnvelope};
-use kanban_domain::Project;
+use kanban_app::{
+    CoordinatorWake, CoordinatorWakeRequest, HerdrDiagnostics, HerdrProjectObserver,
+    HerdrSettingsStore, TimelineEnvelope,
+};
+use kanban_domain::{HerdrSession, Project};
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
 use kanban_herdr::{
     HerdrError, PollingFallback, Reconciler, ReconciliationPlan, SESSION_IO_TIMEOUT, SessionClient,
-    SessionMapping, SnapshotDifference,
+    SessionMapping, SnapshotDifference, WakeRequest,
 };
 use kanban_storage::{Database, SqliteHerdrSettingsStore};
 use serde_json::{Value, json};
@@ -379,6 +382,28 @@ impl HerdrProjectObserver for HerdrObserver {
 
     fn stop_observing(&self, project_id: u64) {
         HerdrObserver::stop_observing(self, project_id);
+    }
+}
+
+impl CoordinatorWake for HerdrObserver {
+    fn wake(&self, request: CoordinatorWakeRequest) {
+        // The Dispatch Request is already durable; a session that
+        // cannot be reached leaves the request queued for the next
+        // Coordinator loop rather than rolling dispatch back.
+        let session = match request.herdr_session.as_deref() {
+            Some(name) => match HerdrSession::named(name) {
+                Ok(session) => session,
+                Err(_) => return,
+            },
+            None => HerdrSession::Default,
+        };
+        let mapping =
+            SessionMapping::new(session, &request.seed_workspace, &request.herdr_workspace);
+        if let Ok(mut client) = SessionClient::connect(mapping, &self.socket_root) {
+            let _ = client.wake_coordinator(WakeRequest {
+                dispatch_request_id: request.dispatch_request_id,
+            });
+        }
     }
 }
 

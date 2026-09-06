@@ -1347,7 +1347,7 @@ mod tests {
         let report = database
             .migrate(&AllowAllMigrations)
             .expect("the upgrade applies");
-        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
 
         let store = SqliteTicketStore::new(&database);
         let found = store

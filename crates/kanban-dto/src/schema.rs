@@ -23,6 +23,10 @@ use crate::deferral::{
     DeferralSupersedeRequest,
 };
 use crate::diagnostics::{DiagnosticsExportQuery, DiagnosticsExportResponse};
+use crate::dispatch::{
+    DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery, DispatchQueueResponse,
+    DispatchRequestCreateRequest, DispatchRequestRecord, DispatchStatus,
+};
 use crate::error::{ApiError, ErrorCode};
 use crate::event::{
     DeferralIdentity, EventEnvelope, EvidenceListSummary, LiveEventName, RulingIdentity,
@@ -156,6 +160,16 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "DiagnosticsExportResponse",
             schema_for!(DiagnosticsExportResponse),
         ),
+        ("DispatchClaimRequest", schema_for!(DispatchClaimRequest)),
+        ("DispatchClaimResponse", schema_for!(DispatchClaimResponse)),
+        ("DispatchQueueQuery", schema_for!(DispatchQueueQuery)),
+        ("DispatchQueueResponse", schema_for!(DispatchQueueResponse)),
+        (
+            "DispatchRequestCreateRequest",
+            schema_for!(DispatchRequestCreateRequest),
+        ),
+        ("DispatchRequestRecord", schema_for!(DispatchRequestRecord)),
+        ("DispatchStatus", schema_for!(DispatchStatus)),
         ("EventEnvelope", schema_for!(EventEnvelope)),
         ("ExportDriftEntry", schema_for!(ExportDriftEntry)),
         ("ExportDriftQuery", schema_for!(ExportDriftQuery)),

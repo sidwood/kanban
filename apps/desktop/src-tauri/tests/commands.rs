@@ -38,6 +38,15 @@ use kanban_dto::{
     TicketScheduleRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind,
     TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
     WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    SpecCoverageMatrixQuery, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest, SpecVersionGetQuery,
+    SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
+    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
+    TicketCreateRequest, TicketDependenciesQuery, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery,
+    TicketGraphProposeRequest, TicketListQuery, TicketReadinessQuery, TicketSpecMoveRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -312,6 +321,21 @@ fn sample_request(schema: &str) -> Value {
             "who": "Sid Wood",
             "why": "Recovery after the core crashed mid move",
         }),
+        "TicketSpecMoveRequest" => {
+            json!({ "mutation": mutation, "ticket_id": 1, "spec_id": 2 })
+        }
+        "TicketGraphProposeRequest" => json!({
+            "mutation": mutation,
+            "spec_id": 1,
+            "spec_version": 1,
+            "tickets": [1, 2],
+            "edges": [{ "from_ticket": 1, "to_ticket": 2 }],
+        }),
+        "TicketGraphApproveRequest" => {
+            json!({ "mutation": mutation, "proposal_id": 1 })
+        }
+        "TicketGraphListQuery" => json!({ "spec_id": 1 }),
+        "SpecCoverageMatrixQuery" => json!({ "spec_id": 1, "version": null }),
         "ProfileDefineRequest" => json!({
             "mutation": mutation,
             "name": "standard",
@@ -610,6 +634,17 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "SpecGetQuery" => decode_invoke_args::<SpecGetQuery>(request).is_err(),
         "SpecVersionGetQuery" => decode_invoke_args::<SpecVersionGetQuery>(request).is_err(),
         "SpecCoverageCheckQuery" => decode_invoke_args::<SpecCoverageCheckQuery>(request).is_err(),
+        "SpecCoverageMatrixQuery" => {
+            decode_invoke_args::<SpecCoverageMatrixQuery>(request).is_err()
+        }
+        "TicketSpecMoveRequest" => decode_invoke_args::<TicketSpecMoveRequest>(request).is_err(),
+        "TicketGraphProposeRequest" => {
+            decode_invoke_args::<TicketGraphProposeRequest>(request).is_err()
+        }
+        "TicketGraphApproveRequest" => {
+            decode_invoke_args::<TicketGraphApproveRequest>(request).is_err()
+        }
+        "TicketGraphListQuery" => decode_invoke_args::<TicketGraphListQuery>(request).is_err(),
         "TicketCreateRequest" => decode_invoke_args::<TicketCreateRequest>(request).is_err(),
         "TicketBugQualifyRequest" => {
             decode_invoke_args::<TicketBugQualifyRequest>(request).is_err()

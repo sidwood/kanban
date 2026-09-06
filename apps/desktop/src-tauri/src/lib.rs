@@ -34,7 +34,8 @@ use kanban_dto::{
     ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCreateRequest,
+    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
+    SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
     SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
     SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
@@ -47,6 +48,13 @@ use kanban_dto::{
     TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, WorkspaceListQuery,
     WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
     WorkspaceRetireRequest,
+    TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
+    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketGetQuery,
+    TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphListResponse,
+    TicketGraphProposeRequest, TicketGraphRecord, TicketListQuery, TicketListResponse,
+    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketSpecMoveRequest,
+    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -551,6 +559,24 @@ async fn spec_coverage_check(
 }
 
 #[tauri::command]
+async fn spec_coverage_matrix(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<SpecCoverageMatrixResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecCoverageMatrixQuery>(request)?;
+    run_blocking(shell, "spec coverage matrix", |shell| {
+        forward_query(
+            shell,
+            "spec.coverage.matrix",
+            "spec coverage matrix",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ticket_create(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -720,6 +746,7 @@ async fn ticket_assign(
 
 #[tauri::command]
 async fn ticket_transition(
+async fn ticket_spec_move(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
 ) -> Result<TicketRecord, ApiError> {
@@ -792,6 +819,14 @@ async fn ticket_review(
     let request = decode_invoke_args::<TicketReviewRequest>(request)?;
     run_blocking(shell, "ticket review", |shell| {
         forward_command(shell, "ticket.review", "reviewed Ticket", request)
+    let request = decode_invoke_args::<TicketSpecMoveRequest>(request)?;
+    run_blocking(shell, "ticket spec move", |shell| {
+        forward_command(
+            shell,
+            "ticket.spec.move",
+            "moved Ticket between Specs",
+            request,
+        )
     })
     .await
 }
@@ -805,6 +840,19 @@ async fn ticket_prioritise(
     let request = decode_invoke_args::<TicketPrioritiseRequest>(request)?;
     run_blocking(shell, "ticket prioritise", |shell| {
         forward_command(shell, "ticket.prioritise", "prioritised Ticket", request)
+async fn ticket_graph_propose(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketGraphRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketGraphProposeRequest>(request)?;
+    run_blocking(shell, "ticket graph propose", |shell| {
+        forward_command(
+            shell,
+            "ticket.graph.propose",
+            "recorded Ticket graph",
+            request,
+        )
     })
     .await
 }
@@ -818,6 +866,19 @@ async fn ticket_edit(
     let request = decode_invoke_args::<TicketEditRequest>(request)?;
     run_blocking(shell, "ticket edit", |shell| {
         forward_command(shell, "ticket.edit", "edited Ticket", request)
+async fn ticket_graph_approve(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketGraphRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketGraphApproveRequest>(request)?;
+    run_blocking(shell, "ticket graph approve", |shell| {
+        forward_command(
+            shell,
+            "ticket.graph.approve",
+            "approved Ticket graph",
+            request,
+        )
     })
     .await
 }
@@ -836,6 +897,14 @@ async fn ticket_emergency_override(
             "overrode Ticket lifecycle",
             request,
         )
+async fn ticket_graph_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketGraphListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketGraphListQuery>(request)?;
+    run_blocking(shell, "ticket graph list", |shell| {
+        forward_query(shell, "ticket.graph.list", "ticket graph list", request)
     })
     .await
 }
@@ -1387,6 +1456,7 @@ shell_handlers::shell_handler_catalogue! {
     spec_get,
     spec_version_get,
     spec_coverage_check,
+    spec_coverage_matrix,
     ticket_create,
     ticket_bug_qualify,
     ticket_bug_facts,
@@ -1408,6 +1478,10 @@ shell_handlers::shell_handler_catalogue! {
     ticket_prioritise,
     ticket_edit,
     ticket_emergency_override,
+    ticket_spec_move,
+    ticket_graph_propose,
+    ticket_graph_approve,
+    ticket_graph_list,
     profile_define,
     profile_update,
     profile_retire,

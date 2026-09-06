@@ -232,37 +232,12 @@ impl HerdrObserver {
         if sessions.contains_key(&project.id().value()) {
             return;
         }
-        let registration = project.registration();
-        let session = registration.effective_herdr_session();
-        self.diagnostics.lock().unwrap().insert(
-            project.id().value(),
-            SessionDiagnostics {
-                session_name: registration.herdr_session().map(str::to_owned),
-                product_workspace: registration.seed_workspace().to_owned(),
-                herdr_workspace: registration.herdr_workspace().to_owned(),
-                ..SessionDiagnostics::default()
-            },
-        );
         let stop = Arc::new(AtomicBool::new(false));
         let socket = Arc::new(Mutex::new(None));
-        let handle = HerdrObserverHandle {
-            project_id: project.id().value(),
-            mapping: SessionMapping::new(
-                session.clone(),
-                registration.seed_workspace(),
-                registration.herdr_workspace(),
-            ),
-            socket_root: self.socket_root.clone(),
-            database: self.database.clone(),
-            diagnostics: self.diagnostics.clone(),
-            signals: self.signals.clone(),
-            stop: stop.clone(),
-            socket: socket.clone(),
-            backoff: self.backoff,
-            settle: self.settle,
-            io_timeout: self.io_timeout,
-        };
-        let thread_name = session
+        let handle = self.observation_handle(project, stop.clone(), socket.clone());
+        let thread_name = project
+            .registration()
+            .effective_herdr_session()
             .as_name()
             .map(|name| format!("herdr-{name}"))
             .unwrap_or_else(|| "herdr-default".to_owned());
@@ -278,6 +253,57 @@ impl HerdrObserver {
                 handle: Some(thread),
             },
         );
+    }
+
+    /// Register the Project's diagnostics entry and build the handle
+    /// its observation thread runs.
+    fn observation_handle(
+        &self,
+        project: &Project,
+        stop: Arc<AtomicBool>,
+        socket: Arc<Mutex<Option<UnixStream>>>,
+    ) -> HerdrObserverHandle {
+        let registration = project.registration();
+        let session = registration.effective_herdr_session();
+        self.diagnostics.lock().unwrap().insert(
+            project.id().value(),
+            SessionDiagnostics {
+                session_name: registration.herdr_session().map(str::to_owned),
+                product_workspace: registration.seed_workspace().to_owned(),
+                herdr_workspace: registration.herdr_workspace().to_owned(),
+                ..SessionDiagnostics::default()
+            },
+        );
+        HerdrObserverHandle {
+            project_id: project.id().value(),
+            mapping: SessionMapping::new(
+                session,
+                registration.seed_workspace(),
+                registration.herdr_workspace(),
+            ),
+            socket_root: self.socket_root.clone(),
+            database: self.database.clone(),
+            diagnostics: self.diagnostics.clone(),
+            signals: self.signals.clone(),
+            stop,
+            socket,
+            backoff: self.backoff,
+            settle: self.settle,
+            io_timeout: self.io_timeout,
+        }
+    }
+
+    /// Build one Project's handle without spawning its thread: tests
+    /// drive the reconnect lifecycle cycle by cycle on their own
+    /// thread, so every transition is asserted after the cycle that
+    /// caused it, with no sleeps (KAN-T94-AC2).
+    #[cfg(test)]
+    fn test_driven_handle(&self, project: &Project) -> HerdrObserverHandle {
+        self.observation_handle(
+            project,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+        )
     }
 
     /// Whether this observer still owns one Project's session.
@@ -806,8 +832,8 @@ mod tests {
 
     use kanban_app::{HerdrDiagnostics, HerdrSettingsStore, ProjectStore, TimelineStore};
     use kanban_dto::{
-        HerdrSettingsUpdateRequest, MutationContext, TimelineEventKind, TimelineQuery,
-        TimelineScope,
+        HerdrConnectionDiagnostics, HerdrSettingsUpdateRequest, MutationContext, TimelineEventKind,
+        TimelineQuery, TimelineScope,
     };
     use kanban_herdr::fixture::{ScriptedSession, SessionScript};
     use serde_json::json;
@@ -818,7 +844,9 @@ mod tests {
         production_socket_root,
     };
     use crate::timeline::StorageTimelineStore;
-    use kanban_app::deadlines::{MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON};
+    use kanban_app::deadlines::{
+        DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,
+    };
     use kanban_domain::{Project, ProjectId, ProjectRegistration};
     use kanban_storage::{AllowAllMigrations, Database, SqliteHerdrSettingsStore};
 
@@ -858,6 +886,27 @@ mod tests {
             settle: Duration::from_millis(100),
             io_timeout: Duration::from_millis(100),
         }
+    }
+
+    /// A tuning whose settle window is short enough to drive a whole
+    /// observation cycle synchronously while a held connection still
+    /// outlasts it by a wide margin.
+    fn driven_observation() -> ObservationTuning {
+        ObservationTuning {
+            backoff: fast_backoff(),
+            settle: Duration::from_millis(50),
+            io_timeout: Duration::from_millis(500),
+        }
+    }
+
+    /// The served diagnostics for Project 1's binding.
+    fn binding_diagnostics(observer: &HerdrObserver) -> HerdrConnectionDiagnostics {
+        LiveHerdrDiagnostics::new(observer).for_project(
+            1,
+            Some("kanban-main"),
+            "/workspaces/kanban.seed",
+            "kanban.seed",
+        )
     }
 
     fn telemetry_details(database: &Arc<Database>) -> Vec<serde_json::Value> {
@@ -1276,6 +1325,314 @@ mod tests {
         );
 
         observer.shutdown();
+    }
+
+    /// KAN-T94-AC2: the diagnostics report the Project's binding
+    /// before any cycle runs — its named session and both
+    /// workspaces, with no connection claimed and no error invented —
+    /// and a Project nothing observes falls back to the same quiet
+    /// defaults.
+    #[test]
+    fn diagnostics_report_the_binding_before_any_connection() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_observation(
+            database,
+            dir.path().join("sessions"),
+            driven_observation(),
+        );
+        let _handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let diagnostics = LiveHerdrDiagnostics::new(&observer);
+
+        let state = binding_diagnostics(&observer);
+        assert_eq!(state.session_name.as_deref(), Some("kanban-main"));
+        assert_eq!(state.product_workspace, "/workspaces/kanban.seed");
+        assert_eq!(state.herdr_workspace, "kanban.seed");
+        assert!(
+            !state.connected,
+            "no connection is claimed before one settles"
+        );
+        assert_eq!(state.last_error, None, "a quiet binding invents no error");
+        assert_eq!(
+            state.last_snapshot_at, None,
+            "no capture is claimed before one settles"
+        );
+
+        let unobserved = diagnostics.for_project(7, None, "/workspaces/other.seed", "other.seed");
+        assert!(!unobserved.connected);
+        assert_eq!(unobserved.last_error, None);
+        assert_eq!(unobserved.last_snapshot_at, None);
+    }
+
+    /// KAN-T94-AC2: a connect that cannot reach the session socket
+    /// reports the socket's absence. Driven on the test thread, the
+    /// cycle returns the moment the refusal is decided: no sleep, no
+    /// spawned observer.
+    #[test]
+    fn connect_refusals_report_the_missing_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        // No fixture: the session socket is simply not there.
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_observation(
+            database.clone(),
+            dir.path().join("sessions"),
+            driven_observation(),
+        );
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            !handle.observe_live(&mut live_once, &mut deadlines),
+            "a connect to a missing socket never settles"
+        );
+
+        let state = binding_diagnostics(&observer);
+        assert!(!state.connected);
+        assert!(
+            state
+                .last_error
+                .expect("the refusal is reported")
+                .contains("not available"),
+            "the missing socket is the reported failure"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a refused connect appends no telemetry"
+        );
+    }
+
+    /// KAN-T94-AC2: a refused subscription reports the session's own
+    /// refusal word, synchronously through one driven cycle.
+    #[test]
+    fn refused_subscriptions_report_the_remote_refusal() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_subscribe_error("session is sealed"),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            !handle.observe_live(&mut live_once, &mut deadlines),
+            "a refused subscription never settles"
+        );
+
+        let state = binding_diagnostics(&observer);
+        assert!(!state.connected);
+        assert!(
+            state
+                .last_error
+                .expect("the refusal is reported")
+                .contains("sealed"),
+            "the session's own refusal word is the reported failure"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a refused subscription appends no telemetry"
+        );
+    }
+
+    /// KAN-T94-AC2: a stream dropped inside the settle window reports
+    /// the drop itself — the exact wording the operator surface
+    /// serves, not a stale connected claim.
+    #[test]
+    fn streams_dropped_inside_the_settle_window_report_disconnected() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_flapping_subscriptions(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            !handle.observe_live(&mut live_once, &mut deadlines),
+            "a subscription that drops inside the window never settles"
+        );
+
+        let state = binding_diagnostics(&observer);
+        assert!(!state.connected);
+        assert_eq!(
+            state.last_error,
+            Some("disconnected".to_owned()),
+            "the dropped stream is reported as a disconnection"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a subscription that never settles appends no telemetry"
+        );
+    }
+
+    /// KAN-T94-AC2: a session that never answers reports the bounded
+    /// I/O window, decided by the read deadline the cycle itself
+    /// armed.
+    #[test]
+    fn silent_handshakes_report_the_bounded_window() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_silent_handshake(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            !handle.observe_live(&mut live_once, &mut deadlines),
+            "a session that never answers never settles"
+        );
+
+        let state = binding_diagnostics(&observer);
+        assert!(!state.connected);
+        assert!(
+            state
+                .last_error
+                .expect("the silent handshake is reported")
+                .contains("window"),
+            "the bounded I/O window is the reported failure"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a silent handshake appends no telemetry"
+        );
+    }
+
+    /// KAN-T94-AC2: a subscription that settles records its capture —
+    /// the snapshot clock the diagnostics serve — and the stream's
+    /// later drop is reported as a disconnection.
+    #[test]
+    fn a_settled_subscription_keeps_its_clock_and_reports_the_drop() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().close_after_hold(Duration::from_millis(500)),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            handle.observe_live(&mut live_once, &mut deadlines),
+            "a subscription held past the settle window settles before the scripted drop"
+        );
+
+        let details = telemetry_details(&database);
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0]["event"], json!("snapshot"));
+        assert_eq!(details[0]["reason"], json!("startup"));
+        let state = binding_diagnostics(&observer);
+        assert_eq!(
+            state.last_snapshot_at.as_deref(),
+            Some("2026-09-05T04:46:00Z"),
+            "the settled capture sets the snapshot clock"
+        );
+        assert!(
+            !state.connected,
+            "the drop is reported, never left stale-connected"
+        );
+        assert_eq!(
+            state.last_error,
+            Some("disconnected".to_owned()),
+            "the steady stream's end is reported as a disconnection"
+        );
+    }
+
+    /// KAN-T94-AC1, KAN-T94-AC2: after the drop the next cycle
+    /// redials, lands its reconnect snapshot, and the new capture
+    /// replaces the clock — the reconnect arc proven end to end, one
+    /// synchronous cycle at a time.
+    #[test]
+    fn the_reconnect_cycle_lands_its_snapshot_and_advances_the_clock() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .close_after_hold(Duration::from_millis(500))
+                .with_reconnect_script(
+                    SessionScript::default()
+                        .with_captured_at("2026-09-05T04:47:00Z")
+                        .close_after_hold_every(Duration::from_millis(500)),
+                ),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            handle.observe_live(&mut live_once, &mut deadlines),
+            "the first held subscription settles before its scripted drop"
+        );
+        assert!(
+            handle.observe_live(&mut live_once, &mut deadlines),
+            "the redial settles in its turn"
+        );
+
+        let reasons: Vec<_> = telemetry_details(&database)
+            .iter()
+            .filter(|detail| detail["event"] == json!("snapshot"))
+            .map(|detail| detail["reason"].clone())
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![json!("startup"), json!("reconnect")],
+            "each settled cycle lands exactly its own snapshot"
+        );
+        let state = binding_diagnostics(&observer);
+        assert_eq!(
+            state.last_snapshot_at.as_deref(),
+            Some("2026-09-05T04:47:00Z"),
+            "the reconnect capture replaces the snapshot clock"
+        );
+        assert_eq!(
+            state.last_error,
+            Some("disconnected".to_owned()),
+            "the second scripted drop is reported the same way"
+        );
     }
 
     #[test]

@@ -293,7 +293,7 @@ impl CommandHandler for MoveTicketSpec {
             ));
         }
         ticket
-            .move_to_spec(spec.id(), spec.number())
+            .move_to_spec(spec.id(), spec.number(), None)
             .map_err(refuse)?;
         self.0.tickets.save(
             &ticket,

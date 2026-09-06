@@ -546,6 +546,9 @@ pub enum TicketError {
     /// Only an Implementation Ticket carries a slice description to
     /// edit; the other kinds are named by their titles.
     NotSliced,
+    /// Only an Implementation Ticket carries story-linked criteria
+    /// (DR-TK-04); no other kind replaces them on a move.
+    NotAnImplementation,
 }
 
 /// Why an Occurrence Snapshot was refused.
@@ -620,6 +623,12 @@ impl fmt::Display for TicketError {
                 write!(
                     f,
                     "only an Implementation Ticket carries a slice description"
+                )
+            }
+            Self::NotAnImplementation => {
+                write!(
+                    f,
+                    "only an Implementation Ticket carries story-linked criteria"
                 )
             }
         }
@@ -1550,10 +1559,16 @@ impl Ticket {
     /// Ticket moves: a pinned Ticket stays with the version it was
     /// approved against, and execution past draft pins the Ticket
     /// where it stands. An Implementation keeps claiming the stories
-    /// of the Spec it delivers, so a move is refused while any
-    /// criterion names the story of another Spec. A refusal changes
-    /// nothing.
-    pub fn move_to_spec(&mut self, spec: SpecId, number: SpecNumber) -> Result<(), TicketError> {
+    /// of the Spec it delivers, so one move carries the replacement
+    /// criteria the new Spec's stories claim — `replacement` — while
+    /// the criteria that stand must already name the destination when
+    /// no replacement arrives. A refusal changes nothing.
+    pub fn move_to_spec(
+        &mut self,
+        spec: SpecId,
+        number: SpecNumber,
+        replacement: Option<Vec<AcceptanceCriterion>>,
+    ) -> Result<(), TicketError> {
         if self.state.is_terminal() {
             return Err(TicketError::Terminal);
         }
@@ -1565,8 +1580,17 @@ impl Ticket {
         }
         match &mut self.body {
             TicketBody::Implementation(implementation) => {
-                if let Some(foreign) = implementation
-                    .criteria
+                // The claims that will stand after the move: the
+                // replacement when one arrives, else the criteria the
+                // move must find already naming the destination.
+                let standing = match &replacement {
+                    Some(replacement) if replacement.is_empty() => {
+                        return Err(TicketError::Unclaimed);
+                    }
+                    Some(replacement) => replacement,
+                    None => &implementation.criteria,
+                };
+                if let Some(foreign) = standing
                     .iter()
                     .flat_map(|criterion| criterion.stories())
                     .copied()
@@ -1575,9 +1599,22 @@ impl Ticket {
                     return Err(TicketError::ForeignStory { story: foreign });
                 }
                 implementation.spec = spec;
+                if let Some(replacement) = replacement {
+                    implementation.criteria = replacement;
+                }
             }
-            TicketBody::Bug(bug) => bug.spec = Some(spec),
-            TicketBody::Task(task) => task.spec = Some(spec),
+            TicketBody::Bug(bug) => {
+                if replacement.is_some() {
+                    return Err(TicketError::NotAnImplementation);
+                }
+                bug.spec = Some(spec);
+            }
+            TicketBody::Task(task) => {
+                if replacement.is_some() {
+                    return Err(TicketError::NotAnImplementation);
+                }
+                task.spec = Some(spec);
+            }
         }
         self.version += 1;
         Ok(())
@@ -2252,7 +2289,7 @@ mod ticket_pinning {
         let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
 
         ticket
-            .move_to_spec(SpecId::new(4), spec(4))
+            .move_to_spec(SpecId::new(4), spec(4), None)
             .expect("a draft, unpinned Ticket moves inside its Project");
 
         assert_eq!(ticket.spec(), Some(SpecId::new(4)));
@@ -2261,7 +2298,7 @@ mod ticket_pinning {
         // An unattached Bug or Task attaches on the move the same way.
         let mut standing = bug(TicketState::Draft, None);
         standing
-            .move_to_spec(SpecId::new(4), spec(4))
+            .move_to_spec(SpecId::new(4), spec(4), None)
             .expect("a standing Ticket attaches by the same move");
         assert_eq!(standing.spec(), Some(SpecId::new(4)));
     }
@@ -2272,7 +2309,9 @@ mod ticket_pinning {
         ticket.pin_to(2).expect("the approval pins");
 
         assert_eq!(
-            ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err(),
+            ticket
+                .move_to_spec(SpecId::new(4), spec(4), None)
+                .unwrap_err(),
             TicketError::Pinned,
             "approved Tickets stay pinned (DR-DE-06)"
         );
@@ -2303,7 +2342,9 @@ mod ticket_pinning {
             let mut ticket = bug(executed, Some(SpecId::new(1)));
 
             assert_eq!(
-                ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err(),
+                ticket
+                    .move_to_spec(SpecId::new(4), spec(4), None)
+                    .unwrap_err(),
                 if executed.is_terminal() {
                     TicketError::Terminal
                 } else {
@@ -2325,7 +2366,9 @@ mod ticket_pinning {
     fn an_implementation_keeps_claiming_the_spec_it_delivers() {
         let mut ticket = implementation();
 
-        let refused = ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err();
+        let refused = ticket
+            .move_to_spec(SpecId::new(4), spec(4), None)
+            .unwrap_err();
 
         assert_eq!(
             refused,
@@ -2338,9 +2381,86 @@ mod ticket_pinning {
         // Naming the Spec the claims already deliver is the one
         // implementation move that holds its claims true.
         ticket
-            .move_to_spec(SpecId::new(1), spec(1))
+            .move_to_spec(SpecId::new(1), spec(1), None)
             .expect("the claims still name the destination's stories");
         assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+    }
+
+    #[test]
+    fn a_draft_implementation_moves_with_replacement_criteria() {
+        let mut ticket = implementation();
+        let replacement = vec![
+            AcceptanceCriterion::new("Tickets claim the Spec they move to.", vec![story(4, 2)])
+                .expect("the fixture criterion links"),
+        ];
+
+        ticket
+            .move_to_spec(SpecId::new(4), spec(4), Some(replacement.clone()))
+            .expect("the move replaces the claims the move invalidates");
+
+        assert_eq!(ticket.spec(), Some(SpecId::new(4)));
+        assert_eq!(ticket.criteria(), replacement.as_slice());
+        assert_eq!(ticket.version(), 2, "the move is one applied change");
+    }
+
+    #[test]
+    fn a_replacement_claiming_a_foreign_story_is_refused_without_a_move() {
+        let mut ticket = implementation();
+        let foreign = vec![
+            AcceptanceCriterion::new("A claim that belongs elsewhere.", vec![story(9, 1)])
+                .expect("the fixture criterion links"),
+        ];
+
+        let refused = ticket
+            .move_to_spec(SpecId::new(4), spec(4), Some(foreign))
+            .unwrap_err();
+
+        assert_eq!(
+            refused,
+            TicketError::ForeignStory { story: story(9, 1) },
+            "the replacement must claim the destination Spec's stories"
+        );
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+        assert_eq!(
+            ticket.criteria()[0].stories(),
+            [story(1, 1)].as_slice(),
+            "the standing criteria survive the refusal"
+        );
+        assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn a_replacement_claiming_no_story_is_refused() {
+        let mut ticket = implementation();
+
+        assert_eq!(
+            ticket.move_to_spec(SpecId::new(4), spec(4), Some(Vec::new())),
+            Err(TicketError::Unclaimed),
+            "a moved Implementation still carries story-linked criteria (DR-TK-04)"
+        );
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+        assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn only_an_implementation_replaces_criteria_on_a_move() {
+        let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
+        let criteria = vec![
+            AcceptanceCriterion::new("A claim no Bug carries.", vec![story(4, 1)])
+                .expect("the fixture criterion links"),
+        ];
+
+        assert_eq!(
+            ticket.move_to_spec(SpecId::new(4), spec(4), Some(criteria)),
+            Err(TicketError::NotAnImplementation),
+            "only an Implementation carries story-linked criteria (DR-TK-04)"
+        );
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+        assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+        assert_eq!(
+            TicketError::NotAnImplementation.to_string(),
+            "only an Implementation Ticket carries story-linked criteria"
+        );
     }
 }
 

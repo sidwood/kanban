@@ -37,6 +37,14 @@ const TRUNCATED: &str = "... [truncated]";
 const UNREDACTABLE_REPORT: &str =
     "the skill's report is withheld: redaction knowledge is unavailable";
 
+/// The signature the fleet skills' own `bc_abort` writes when they
+/// refuse deliberately — an `Error:` line naming the refusing skill —
+/// as opposed to the unformatted stderr a death by `set -e` leaves
+/// behind. Colour is stripped before the match, so this is the human
+/// text of a refusal, and it is the only signal separating a refusal
+/// the caller caused from a skill that simply died.
+const REFUSAL_MARKER: &str = "Error: git-bc-";
+
 /// Run the fleet's `git bc-add` and `git bc-rm` skills locally.
 #[derive(Debug)]
 pub struct LocalFleetCloneTool {
@@ -86,23 +94,34 @@ impl LocalFleetCloneTool {
     }
 
     /// Report one finished-but-failed skill invocation from its stderr:
-    /// colour stripped, secrets scrubbed through the one redaction
-    /// policy the core already owns, and the result bounded. A
-    /// configuration that cannot feed redaction withholds the report
-    /// wholesale, because repeating text nobody can vouch for is how a
-    /// secret reaches the error surface.
+    /// classified by the fleet's own refusal signature, colour
+    /// stripped, secrets scrubbed through the one redaction policy the
+    /// core already owns, and the result bounded. A configuration that
+    /// cannot feed redaction withholds the report wholesale, because
+    /// repeating text nobody can vouch for is how a secret reaches the
+    /// error surface.
     fn report_failure(&self, skill: &str, stderr: &[u8]) -> ApiError {
         let report = strip_ansi(&String::from_utf8_lossy(stderr))
             .trim()
             .to_owned();
+        // Classified before redaction: whether the caller caused the
+        // outcome is a fact about the report, not its content, so even
+        // a withheld report still names its class.
+        let refusal = report.contains(REFUSAL_MARKER);
         let report = match Redactor::from_config(&self.data_dir) {
             Ok(redactor) => redactor.redact_text(&report).into_owned(),
             Err(source) => format!("{UNREDACTABLE_REPORT} ({})", source.reason()),
         };
-        ApiError::internal(&format!(
-            "the fleet clone skill `git {skill}` refused: {}",
-            cap_report(&report)
-        ))
+        let report = cap_report(&report);
+        if refusal {
+            ApiError::invalid_request(&format!(
+                "the fleet clone skill `git {skill}` refused: {report}"
+            ))
+        } else {
+            ApiError::internal(&format!(
+                "the fleet clone skill `git {skill}` failed: {report}"
+            ))
+        }
     }
 }
 
@@ -213,7 +232,7 @@ mod reports {
         );
         assert_eq!(
             error.message,
-            "the fleet clone skill `git bc-add` refused: \
+            "the fleet clone skill `git bc-add` failed: \
              Error: git died: Fatal: could not read From the remote",
             "the report carries exactly the human text, nothing the escapes wrapped"
         );
@@ -268,7 +287,7 @@ mod reports {
             "redaction leaves its marker behind: {}",
             error.message
         );
-        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
     }
 
     #[test]
@@ -335,7 +354,78 @@ mod reports {
             "an absent configuration is not a failure and withholds nothing: {}",
             error.message
         );
-        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+    }
+
+    /// The fleet skills refuse through `bc_abort`, whose deliberate
+    /// `Error:` line is the only signal separating a refusal the
+    /// caller caused from a skill that simply died.
+    #[test]
+    fn a_deliberate_refusal_is_classified_as_the_callers() {
+        let (_dir, tool) = tool_with_config(None);
+
+        let error = tool.report_failure("bc-rm", REFUSAL_STDERR.as_bytes());
+
+        assert_eq!(
+            error.code,
+            ErrorCode::InvalidRequest,
+            "the skill's own refusal is the caller's refusal, not a core fault: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("refused:"),
+            "the report names a refusal: {}",
+            error.message
+        );
+    }
+
+    /// A death by `set -e` — a failed fetch, a broken postadd —
+    /// leaves git's own stderr and no deliberate report, so it must
+    /// stay a tool failure and never pose as an invalid request.
+    #[test]
+    fn a_death_without_the_deliberate_report_stays_a_tool_failure() {
+        let (_dir, tool) = tool_with_config(None);
+        let stderr = "fatal: could not read from remote repository";
+
+        let error = tool.report_failure("bc-add", stderr.as_bytes());
+
+        assert_eq!(
+            error.code,
+            ErrorCode::Internal,
+            "a skill that died is a tool failure, never an invalid request: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("failed:"),
+            "the report names a failure: {}",
+            error.message
+        );
+        assert!(
+            error
+                .message
+                .contains("could not read from remote repository"),
+            "the human text still travels: {}",
+            error.message
+        );
+    }
+
+    /// A withheld report still classifies: the operator learns the
+    /// invocation was refused, without learning what it said.
+    #[test]
+    fn a_withheld_refusal_classifies_without_content() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        std::fs::write(dir.path().join("config.json"), "{ not json")
+            .expect("the malformed configuration is written");
+        let tool = LocalFleetCloneTool::new(dir.path().to_path_buf());
+
+        let error = tool.report_failure("bc-add", REFUSAL_STDERR.as_bytes());
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("refused:"),
+            "the withhold sits inside a refusal, not behind it: {}",
+            error.message
+        );
     }
 }
 

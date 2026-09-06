@@ -17,7 +17,7 @@ use kanban_domain::{
 };
 use kanban_dto::{
     ApiError, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord,
-    LiveEventName, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    ErrorCode, LiveEventName, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
@@ -49,9 +49,26 @@ pub trait CloneGuardStore: Send + Sync {
     fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError>;
 }
 
-/// The reason code recorded when the fleet skill itself refuses or
-/// fails after Kanban's own guards passed.
+/// The reason code recorded when the fleet skill itself refuses the
+/// request after Kanban's own guards passed: a refusal the caller
+/// caused, surfaced as an invalid request.
 pub const FLEET_TOOL_REFUSED: &str = "fleet_tool_refused";
+
+/// The reason code recorded when the fleet skill fails its way rather
+/// than refusing — it could not run, or it died without its own
+/// deliberate report — surfaced as an internal failure.
+pub const FLEET_TOOL_FAILED: &str = "fleet_tool_failed";
+
+/// Which fleet tool outcome a durable row names, keeping the timeline
+/// and the caller's error agreeing on what happened: the tool's error
+/// code already carries the classification.
+fn tool_failure_reason(error: &ApiError) -> &'static str {
+    if error.code == ErrorCode::InvalidRequest {
+        FLEET_TOOL_REFUSED
+    } else {
+        FLEET_TOOL_FAILED
+    }
+}
 
 /// One clone-guard timeline row: on the Project's timeline, about the
 /// entity the command touched, with `action` naming the outcome.
@@ -267,7 +284,7 @@ impl CommandHandler for CreateClone {
                     json!({
                         "path": path,
                         "branch": branch,
-                        "reason": FLEET_TOOL_REFUSED,
+                        "reason": tool_failure_reason(&error),
                         "error": error.message,
                     }),
                 ),
@@ -348,7 +365,7 @@ impl CommandHandler for RemoveClone {
                     json!({
                         "workspace_id": workspace.id().value(),
                         "path": path,
-                        "reason": FLEET_TOOL_REFUSED,
+                        "reason": tool_failure_reason(&error),
                         "error": error.message,
                     }),
                 ),
@@ -795,8 +812,11 @@ mod guarded_clone {
         assert!(!stored[0].is_retired(), "removal retires nothing");
     }
 
+    /// KAN-T121-AC3: an internal tool failure is a tool failure — it
+    /// must not pose as an invalid request, and the durable row must
+    /// agree with the caller's error about what happened.
     #[test]
-    fn a_failed_create_is_refused_and_recorded() {
+    fn an_internal_tool_failure_is_not_mapped_as_a_refusal() {
         let harness = clone_harness();
         harness
             .tool
@@ -804,7 +824,7 @@ mod guarded_clone {
             .lock()
             .expect("the script lock is sound")
             .push(Err(kanban_dto::ApiError::internal(
-                "the fleet clone tool refused: the target holds unpushed work",
+                "the fleet clone skill `git bc-add` failed: fatal: could not read from remote repository",
             )));
 
         let error = harness
@@ -815,23 +835,66 @@ mod guarded_clone {
             )
             .expect_err("the failed invocation refuses the command");
 
-        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(
+            error.code,
+            ErrorCode::Internal,
+            "a tool failure must never surface as invalid_request"
+        );
         assert!(
-            error.message.contains("unpushed work"),
-            "the fleet's own refusal text survives the wrapping: {}",
+            error
+                .message
+                .contains("could not read from remote repository"),
+            "the sanitised failure text survives the wrapping: {}",
             error.message
         );
         assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
         let rows = harness.timeline.rows();
         assert_eq!(rows.len(), 1, "the failed invocation still records");
         assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
-        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_failed"));
         assert!(
             rows[0].detail()["error"]
                 .as_str()
                 .expect("the error text is recorded")
-                .contains("unpushed work"),
-            "the durable row carries the fleet's refusal"
+                .contains("could not read from remote repository"),
+            "the durable row carries the sanitised failure"
+        );
+    }
+
+    /// KAN-T121-AC3: the fleet skill's own refusal is the caller's
+    /// refusal, and both surfaces — the caller's error and the durable
+    /// row — classify it the same way.
+    #[test]
+    fn a_refused_invocation_classifies_the_caller_on_both_surfaces() {
+        let harness = clone_harness();
+        harness
+            .tool
+            .outcomes
+            .lock()
+            .expect("the script lock is sound")
+            .push(Err(kanban_dto::ApiError::invalid_request(
+                "the fleet clone skill `git bc-rm` refused: refusing to remove the clone holding unpushed work",
+            )));
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("the refused invocation refuses the command");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refused invocation still records");
+        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_refused"));
+        assert_eq!(
+            rows[0].detail()["error"],
+            json!(
+                "the fleet clone skill `git bc-rm` refused: refusing to remove the clone holding unpushed work"
+            ),
+            "the durable row carries the refusal text verbatim"
         );
     }
 
@@ -845,7 +908,7 @@ mod guarded_clone {
             .lock()
             .expect("the script lock is sound")
             .push(Err(kanban_dto::ApiError::internal(
-                "the fleet clone tool refused: the clone holds unique commits",
+                "the fleet clone skill `git bc-rm` failed: the clone holds unique commits",
             )));
 
         let error = harness
@@ -858,7 +921,7 @@ mod guarded_clone {
         let rows = harness.timeline.rows();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].detail()["action"], json!("clone_remove_refused"));
-        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_failed"));
         let (stored, _) = harness.workspaces.snapshot();
         assert_eq!(stored.len(), 1, "nothing was removed");
     }

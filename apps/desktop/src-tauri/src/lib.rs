@@ -12,19 +12,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kanban_dto::{
-    ApiError, CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
-    CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
-    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest, CloneCreateRequest,
-    CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord, CommentCreateRequest,
-    CommentEditRequest, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
-    DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
-    DeferralSupersedeRequest, DiagnosticsExportQuery, DiagnosticsExportResponse,
-    DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery, DispatchQueueResponse,
-    DispatchRequestCreateRequest, DispatchRequestRecord, EvidenceAttachRequest, EvidenceListQuery,
-    EvidenceListResponse, EvidenceRecord, ExportDriftQuery, ExportDriftResponse,
-    ExportRenderRequest, ExportRenderResponse, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
-    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
-    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
+    ApiError, BoardGlobalQuery, BoardGlobalResponse, CapacityDefaultsGetQuery,
+    CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest, CapacityGlobalDefaults,
+    CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
+    CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
+    CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentRecord,
+    CommentRevisionsQuery, CommentRevisionsResponse, DeferralListQuery, DeferralListResponse,
+    DeferralRecord, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
+    DiagnosticsExportResponse, DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery,
+    DispatchQueueResponse, DispatchRequestCreateRequest, DispatchRequestRecord,
+    EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
+    ExportDriftQuery, ExportDriftResponse, ExportRenderRequest, ExportRenderResponse, HealthQuery,
+    HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest,
+    HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -1551,6 +1551,18 @@ async fn export_drift(
     .await
 }
 
+#[tauri::command]
+async fn board_global(
+    shell: State<'_, Arc<Shell>>,
+    request: BoardGlobalQuery,
+) -> Result<BoardGlobalResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "board global", |shell| {
+        forward_query(shell, "board.global", "global board", request)
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
     health_get,
     diagnostics_export,
@@ -1656,6 +1668,7 @@ shell_handlers::shell_handler_catalogue! {
     clone_remove,
     export_render,
     export_drift,
+    board_global,
 }
 
 /// Build the window, start the core on demand, and supervise the

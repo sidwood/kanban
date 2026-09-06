@@ -2083,10 +2083,11 @@ mod tests {
         );
     }
 
-    /// KAN-T94-AC1, KAN-T94-AC2: after the drop the next cycle
-    /// redials, lands its reconnect snapshot, and the new capture
-    /// replaces the clock — the reconnect arc proven end to end, one
-    /// synchronous cycle at a time.
+    /// KAN-T94-AC1, KAN-T94-AC2, KAN-T130-AC2: after the drop the
+    /// next cycle redials, lands its reconnect snapshot, and the new
+    /// capture replaces the clock — the reconnect arc proven end to
+    /// end, one synchronous cycle at a time, with both diagnostics
+    /// asserted: no connection claimed, and the drop reported.
     #[test]
     fn the_reconnect_cycle_lands_its_snapshot_and_advances_the_clock() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -2135,6 +2136,10 @@ mod tests {
             state.last_snapshot_at.as_deref(),
             Some("2026-09-05T04:47:00Z"),
             "the reconnect capture replaces the snapshot clock"
+        );
+        assert!(
+            !state.connected,
+            "the reconnect cycle's own drop leaves no stale connected claim"
         );
         assert_eq!(
             state.last_error,

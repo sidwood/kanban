@@ -6,7 +6,13 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectListResponse, TicketListResponse, TicketRecord } from '@kanban/contracts'
+import type {
+  LaneListResponse,
+  ProjectListResponse,
+  TicketListResponse,
+  TicketReadinessResponse,
+  TicketRecord,
+} from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -141,7 +147,7 @@ describe('deterministic card ordering', () => {
 // scans hold the deterministic order, and a reload holds the same
 // relative order from a different arrival order.
 function harness(ticketsForLoad: () => TicketRecord[]) {
-  const query = vi.fn((name: string) => {
+  const query = vi.fn((name: string, request: unknown) => {
     if (name === 'project.list') {
       return Promise.resolve({
         projects: [
@@ -161,6 +167,21 @@ function harness(ticketsForLoad: () => TicketRecord[]) {
           },
         ],
       } satisfies ProjectListResponse)
+    }
+    // BoardView loads Lanes beside Tickets (KAN-T26); an unanswered
+    // lane.list leaves the store's list undefined and card render
+    // throws before the ordered columns can appear.
+    if (name === 'lane.list') {
+      return Promise.resolve({ lanes: [] } satisfies LaneListResponse)
+    }
+    if (name === 'ticket.readiness') {
+      const { ticket_id } = request as { ticket_id: number }
+      return Promise.resolve({
+        blocked_by: [],
+        ready: true,
+        state: 'ready',
+        ticket_id,
+      } satisfies TicketReadinessResponse)
     }
     return Promise.resolve({
       tickets: ticketsForLoad(),

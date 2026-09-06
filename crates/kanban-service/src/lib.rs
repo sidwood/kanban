@@ -27,8 +27,8 @@ use kanban_storage::{
     SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteDispatchStore,
     SqliteEvidenceStore, SqliteGraphProposalStore, SqliteHerdrSettingsStore,
     SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
-    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore,
-    SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
+    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 

@@ -889,8 +889,6 @@ mod tests {
     }
 
     #[test]
-
-    #[test]
     fn migration_0031_creates_the_dispatch_request_table() {
         let (_dir, mut database) = scratch_database();
         apply_through(&database.connection(), 30).expect("the pre-dispatch schema applies");
@@ -952,6 +950,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn migrate_from_version_twelve_adds_workspaces() {
         let (_dir, mut database) = scratch_database();
         crate::migrations::apply_through(&database.connection(), 12)
@@ -1664,7 +1663,8 @@ mod tests {
         assert_eq!(
             report.applied,
             vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+                31
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
@@ -2050,7 +2050,10 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("the bounded rebuild applies");
 
-        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+        assert_eq!(
+            report.applied,
+            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        );
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn
             .query_row(

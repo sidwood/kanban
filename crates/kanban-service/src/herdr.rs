@@ -1188,6 +1188,84 @@ mod tests {
         );
     }
 
+    /// KAN-T94-AC2: stopping one Project's observation is
+    /// synchronous — it joins the thread — and leaves the diagnostics
+    /// back at the unobserved defaults rather than a stale connected
+    /// or error state. The registration happens on the caller's
+    /// thread, so no wait is needed on either side of the stop.
+    #[test]
+    fn stopping_observation_clears_the_live_diagnostics() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_observation(database, socket_root, driven_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        assert_eq!(
+            binding_diagnostics(&observer).session_name.as_deref(),
+            Some("kanban-main"),
+            "registration reports the binding before any cycle finishes"
+        );
+
+        observer.stop_observing(1);
+
+        assert!(
+            !observer.is_observing(1),
+            "the stop joins and releases the session"
+        );
+        let stopped = binding_diagnostics(&observer);
+        assert!(!stopped.connected);
+        assert_eq!(
+            stopped.last_error, None,
+            "a stopped observation leaves no stale error behind"
+        );
+        assert_eq!(
+            stopped.last_snapshot_at, None,
+            "a stopped observation claims no capture"
+        );
+    }
+
+    /// KAN-T94-AC2: while a subscription holds, the diagnostics
+    /// report the connected state with its capture clock and no
+    /// error. The wait is on the settled capture's own telemetry row —
+    /// the cause of the connected transition — never on a fixed
+    /// budget, and the live state is inherently concurrent so this is
+    /// the one transition observed while the observer thread runs.
+    #[test]
+    fn the_live_steady_state_reports_connected_with_its_snapshot_clock() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+
+        assert!(
+            soon_enough(Duration::from_secs(2), || {
+                !telemetry_details(&database).is_empty() && {
+                    let state = binding_diagnostics(&observer);
+                    state.connected
+                        && state.last_error.is_none()
+                        && state.last_snapshot_at == Some("2026-09-05T04:46:00Z".to_owned())
+                }
+            }),
+            "the live steady state reports connected, error-free, with its capture clock"
+        );
+
+        observer.shutdown();
+    }
+
     #[test]
     fn observer_backs_off_failed_connections_without_appending_rows() {
         let dir = TempDir::new().expect("a scratch directory is available");

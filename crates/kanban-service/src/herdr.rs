@@ -9,7 +9,7 @@
 //! stall and missing-result deadlines, evaluated on a bounded
 //! cadence and emitted as attention signals (KAN-S8-US4).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 #[cfg(test)]
@@ -132,6 +132,21 @@ const SETTINGS_REFRESH_WINDOW: Duration = Duration::from_secs(1);
 /// bounds what an unconsumed producer keeps.
 const RETAINED_SIGNALS_PER_PROJECT: usize = 256;
 
+/// How many Coordinator wakes one Project's observation retains
+/// before new ones are refused: the Dispatch Request behind every
+/// wake is already durable and waits for the Coordinator's next
+/// loop regardless, so the bound caps memory without losing work.
+const WAKE_INBOX_CAPACITY: usize = 16;
+
+/// One Coordinator wake waiting for its Project's observation
+/// thread: the mapping the wake speaks through, and the Dispatch
+/// Request it announces.
+#[derive(Debug, Clone)]
+struct WakeDelivery {
+    mapping: SessionMapping,
+    dispatch_request_id: u64,
+}
+
 /// The delay after `failures` consecutive failed attempts: the base
 /// doubling per failure, bounded by the policy maximum.
 fn backoff_delay(policy: BackoffPolicy, failures: u32) -> Duration {
@@ -140,11 +155,37 @@ fn backoff_delay(policy: BackoffPolicy, failures: u32) -> Duration {
 }
 
 /// One owned observation: the stop flag its thread polls, the socket
-/// duplicate that wakes a blocked read, and the thread itself.
+/// duplicate that wakes a blocked read, the bounded inbox of
+/// Coordinator wakes the thread delivers, and the thread itself.
 struct Observation {
     stop: Arc<AtomicBool>,
     socket: Arc<Mutex<Option<UnixStream>>>,
+    wakes: Arc<Mutex<VecDeque<WakeDelivery>>>,
     handle: Option<JoinHandle<()>>,
+}
+
+impl Observation {
+    /// Enqueue one Coordinator wake for the observation thread,
+    /// refusing it when the bounded inbox is full. The Dispatch
+    /// Request is already durable, so a refused wake loses only the
+    /// advisory nudge, never the work.
+    fn offer_wake(&self, delivery: WakeDelivery) -> bool {
+        let mut pending = self.wakes.lock().unwrap();
+        if pending.len() >= WAKE_INBOX_CAPACITY {
+            return false;
+        }
+        pending.push_back(delivery);
+        true
+    }
+
+    /// Rouse the observation thread from its backoff park so a
+    /// queued Coordinator wake is delivered promptly, not at the
+    /// next redial the backoff was spacing out.
+    fn nudge(&self) {
+        if let Some(handle) = &self.handle {
+            handle.thread().unpark();
+        }
+    }
 }
 
 /// End one observation: signal its thread, wake any blocked read
@@ -237,7 +278,8 @@ impl HerdrObserver {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let socket = Arc::new(Mutex::new(None));
-        let handle = self.observation_handle(project, stop.clone(), socket.clone());
+        let wakes: Arc<Mutex<VecDeque<WakeDelivery>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let handle = self.observation_handle(project, stop.clone(), socket.clone(), wakes.clone());
         let thread_name = project
             .registration()
             .effective_herdr_session()
@@ -253,6 +295,7 @@ impl HerdrObserver {
             Observation {
                 stop,
                 socket,
+                wakes,
                 handle: Some(thread),
             },
         );
@@ -265,6 +308,7 @@ impl HerdrObserver {
         project: &Project,
         stop: Arc<AtomicBool>,
         socket: Arc<Mutex<Option<UnixStream>>>,
+        wakes: Arc<Mutex<VecDeque<WakeDelivery>>>,
     ) -> HerdrObserverHandle {
         let registration = project.registration();
         let session = registration.effective_herdr_session();
@@ -290,6 +334,7 @@ impl HerdrObserver {
             signals: self.signals.clone(),
             stop,
             socket,
+            wakes,
             backoff: self.backoff,
             settle: self.settle,
             io_timeout: self.io_timeout,
@@ -306,6 +351,7 @@ impl HerdrObserver {
             project,
             Arc::new(AtomicBool::new(false)),
             Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(VecDeque::new())),
         )
     }
 
@@ -357,6 +403,19 @@ impl HerdrObserver {
         &self.socket_root
     }
 
+    /// The Coordinator wakes queued for one Project's observation
+    /// thread, oldest first, for tests that fill and inspect the
+    /// bounded inbox.
+    #[cfg(test)]
+    fn pending_wakes(&self, project_id: u64) -> Vec<WakeDelivery> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&project_id)
+            .map(|observation| observation.wakes.lock().unwrap().iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Stop every owned observer and join every thread: shutdown
     /// leaves no session observed and no resource held (KAN-T78-AC1).
     pub fn shutdown(&self) {
@@ -387,9 +446,14 @@ impl HerdrProjectObserver for HerdrObserver {
 
 impl CoordinatorWake for HerdrObserver {
     fn wake(&self, request: CoordinatorWakeRequest) {
-        // The Dispatch Request is already durable; a session that
-        // cannot be reached leaves the request queued for the next
-        // Coordinator loop rather than rolling dispatch back.
+        // The caller runs inside the global command gate, so this
+        // performs no socket I/O: it resolves the mapping, hands the
+        // Project's observation worker a bounded inbox entry, and
+        // rouses its thread. The worker delivers on its own thread
+        // (see [`HerdrObserverHandle::deliver_wakes`]); a full inbox,
+        // or a Project nothing observes, drops the wake — the
+        // Dispatch Request is already durable and stays queued for
+        // the Coordinator's next loop.
         let session = match request.herdr_session.as_deref() {
             Some(name) => match HerdrSession::named(name) {
                 Ok(session) => session,
@@ -399,10 +463,15 @@ impl CoordinatorWake for HerdrObserver {
         };
         let mapping =
             SessionMapping::new(session, &request.seed_workspace, &request.herdr_workspace);
-        if let Ok(mut client) = SessionClient::connect(mapping, &self.socket_root) {
-            let _ = client.wake_coordinator(WakeRequest {
-                dispatch_request_id: request.dispatch_request_id,
-            });
+        let sessions = self.sessions.lock().unwrap();
+        let Some(observation) = sessions.get(&request.project_id) else {
+            return;
+        };
+        if observation.offer_wake(WakeDelivery {
+            mapping,
+            dispatch_request_id: request.dispatch_request_id,
+        }) {
+            observation.nudge();
         }
     }
 }
@@ -416,6 +485,7 @@ struct HerdrObserverHandle {
     signals: Arc<Mutex<HashMap<u64, Vec<AttentionSignal>>>>,
     stop: Arc<AtomicBool>,
     socket: Arc<Mutex<Option<UnixStream>>>,
+    wakes: Arc<Mutex<VecDeque<WakeDelivery>>>,
     backoff: BackoffPolicy,
     settle: Duration,
     io_timeout: Duration,
@@ -432,6 +502,10 @@ impl HerdrObserverHandle {
         // breaching forever.
         let mut deadlines = DeadlineMonitor::new(self.session_tuning().1);
         while !self.stopped() {
+            // Between cycles — parked in backoff or redialling — the
+            // thread owns no live subscription, so queued wakes go
+            // out over their own bounded connections.
+            self.deliver_wakes(None);
             if self.observe_live(&mut live_once, &mut deadlines) {
                 // A settled session that ended is the first failure of
                 // the next cycle, not a reset.
@@ -457,6 +531,52 @@ impl HerdrObserverHandle {
 
     fn stopped(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Deliver every queued Coordinator wake, oldest first, on this
+    /// observation thread — never the command gate, which only
+    /// enqueues. A session that cannot be reached leaves the request
+    /// queued for the next Coordinator loop rather than rolling
+    /// dispatch back.
+    fn deliver_wakes(&self, live: Option<&mut SessionClient>) {
+        let mut live = live;
+        loop {
+            if self.stopped() {
+                return;
+            }
+            let delivery = self.wakes.lock().unwrap().pop_front();
+            let Some(delivery) = delivery else {
+                return;
+            };
+            self.deliver_wake(&delivery, live.as_deref_mut());
+        }
+    }
+
+    /// Deliver one Coordinator wake. With `live`, the settled
+    /// subscription's own connection carries the request — its
+    /// handshake already verified the session's identity. Without
+    /// one, the wake opens its own connection under this handle's
+    /// I/O deadline and verifies the mapping before it speaks, so a
+    /// dead or lying session can neither stall the worker
+    /// indefinitely nor be woken under the wrong identity.
+    fn deliver_wake(&self, delivery: &WakeDelivery, live: Option<&mut SessionClient>) {
+        let wake = WakeRequest {
+            dispatch_request_id: delivery.dispatch_request_id,
+        };
+        let delivered = match live {
+            Some(client) => client.wake_coordinator(wake).map(|_| ()),
+            None => SessionClient::open_with_io_timeout(
+                delivery.mapping.clone(),
+                &self.socket_root,
+                self.io_timeout,
+            )
+            .and_then(|mut client| {
+                let snapshot = client.snapshot()?;
+                client.mapping().verify_snapshot(&snapshot)?;
+                client.wake_coordinator(wake).map(|_| ())
+            }),
+        };
+        let _ = delivered;
     }
 
     /// Connect, subscribe, and observe the live subscription. Returns
@@ -571,6 +691,10 @@ impl HerdrObserverHandle {
         client: &mut SessionClient,
         deadlines: &mut DeadlineMonitor,
     ) -> Option<()> {
+        // Queued Coordinator wakes ride the live subscription this
+        // step already holds; each step is bounded by its read
+        // window, so wake delivery stays prompt while connected.
+        self.deliver_wakes(Some(&mut *client));
         self.evaluate_deadlines(deadlines);
         let window = reconciler
             .remaining_until(SystemTime::now())
@@ -850,23 +974,29 @@ pub fn production_socket_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use kanban_app::{HerdrDiagnostics, HerdrSettingsStore, ProjectStore, TimelineStore};
+    use kanban_app::{
+        CoordinatorWake, CoordinatorWakeRequest, HerdrDiagnostics, HerdrSettingsStore,
+        ProjectStore, TimelineStore,
+    };
     use kanban_dto::{
         HerdrConnectionDiagnostics, HerdrSettingsUpdateRequest, MutationContext, TimelineEventKind,
         TimelineQuery, TimelineScope,
     };
     use kanban_herdr::fixture::{ScriptedSession, SessionScript};
+    use kanban_herdr::{COORDINATOR_ROLE, HerdrRequest};
     use serde_json::json;
     use tempfile::TempDir;
 
     use super::{
-        BackoffPolicy, HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, backoff_delay,
-        production_socket_root,
+        BackoffPolicy, HerdrObserver, LiveHerdrDiagnostics, Observation, ObservationTuning,
+        WAKE_INBOX_CAPACITY, backoff_delay, production_socket_root,
     };
     use crate::timeline::StorageTimelineStore;
     use kanban_app::deadlines::{
@@ -2048,6 +2178,328 @@ mod tests {
             listed["projects"][0]["archived"],
             json!(true),
             "the archive that returned also landed"
+        );
+
+        core.shutdown();
+    }
+
+    /// KAN-T42 review: Coordinator wakes enqueue from the command
+    /// gate without socket I/O and deliver through the observation
+    /// worker, in commit order, over the settled session connection.
+    #[test]
+    fn coordinator_wakes_deliver_through_the_worker_in_commit_order() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_wake_accepted(true),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        // The wakes ride the settled subscription, so the startup
+        // snapshot — their carrier's proof — comes first.
+        assert!(
+            soon_enough(Duration::from_secs(5), || !telemetry_details(&database)
+                .is_empty()),
+            "the observation settles before the wakes enqueue"
+        );
+
+        for id in [7u64, 8, 9] {
+            CoordinatorWake::wake(
+                observer.as_ref(),
+                CoordinatorWakeRequest {
+                    project_id: 1,
+                    dispatch_request_id: id,
+                    seed_workspace: "/workspaces/kanban.seed".to_owned(),
+                    herdr_workspace: "kanban.seed".to_owned(),
+                    herdr_session: Some("kanban-main".to_owned()),
+                },
+            );
+        }
+
+        assert!(
+            soon_enough(Duration::from_secs(5), || delivered_wake_ids(&fixture)
+                == vec![7, 8, 9]),
+            "the worker delivers every wake, in commit order, over the session socket"
+        );
+
+        observer.shutdown();
+    }
+
+    /// KAN-T42 review: the wake inbox is bounded — a full inbox
+    /// refuses new wakes without ever blocking the caller — and a
+    /// Project nothing observes drops its wake the same way, because
+    /// the Dispatch Request behind it is durable either way.
+    #[test]
+    fn a_full_wake_inbox_refuses_new_wakes_without_blocking() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let database = migrated_database(&dir);
+        let observer = HerdrObserver::with_observation(
+            database,
+            dir.path().join("sessions"),
+            fast_observation(),
+        );
+        // A still observation with no thread: nothing drains the
+        // inbox while the test fills it.
+        observer.sessions.lock().unwrap().insert(
+            1,
+            Observation {
+                stop: Arc::new(AtomicBool::new(true)),
+                socket: Arc::new(Mutex::new(None)),
+                wakes: Arc::new(Mutex::new(VecDeque::new())),
+                handle: None,
+            },
+        );
+
+        let sender = observer.clone();
+        assert!(
+            bounded_within(Duration::from_secs(2), move || {
+                for id in 1..=(WAKE_INBOX_CAPACITY as u64 + 4) {
+                    CoordinatorWake::wake(
+                        sender.as_ref(),
+                        CoordinatorWakeRequest {
+                            project_id: 1,
+                            dispatch_request_id: id,
+                            seed_workspace: "/workspaces/kanban.seed".to_owned(),
+                            herdr_workspace: "kanban.seed".to_owned(),
+                            herdr_session: Some("kanban-main".to_owned()),
+                        },
+                    );
+                }
+                // A Project nothing observes drops its wake the same
+                // bounded way.
+                CoordinatorWake::wake(
+                    sender.as_ref(),
+                    CoordinatorWakeRequest {
+                        project_id: 9,
+                        dispatch_request_id: 99,
+                        seed_workspace: "/workspaces/kanban.seed".to_owned(),
+                        herdr_workspace: "kanban.seed".to_owned(),
+                        herdr_session: None,
+                    },
+                );
+            }),
+            "no wake enqueue blocks, however full the inbox"
+        );
+
+        let queued: Vec<u64> = observer
+            .pending_wakes(1)
+            .iter()
+            .map(|delivery| delivery.dispatch_request_id)
+            .collect();
+        assert_eq!(
+            queued,
+            (1..=(WAKE_INBOX_CAPACITY as u64)).collect::<Vec<_>>(),
+            "the inbox keeps the oldest wakes and refuses the new"
+        );
+        assert!(
+            observer.pending_wakes(9).is_empty(),
+            "an unobserved Project queues nothing"
+        );
+    }
+
+    /// The Dispatch Request identities of every wake the session
+    /// recorded, in arrival order.
+    fn delivered_wake_ids(fixture: &ScriptedSession) -> Vec<u64> {
+        fixture
+            .recorded_requests()
+            .into_iter()
+            .filter_map(|request| match request {
+                HerdrRequest::Wake {
+                    role,
+                    dispatch_request_id,
+                } if role == COORDINATOR_ROLE => Some(dispatch_request_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Seed the execution Profile and one open Ticket for
+    /// Project 1 straight into the core's database, returning the
+    /// Ticket's identity.
+    fn seed_dispatch_ticket(dir: &TempDir) -> u64 {
+        let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+            .expect("the core database reopens");
+        conn.execute(
+            "INSERT INTO execution_profiles
+                 (name, harness, model, effort, usage_pool, fallback, retired, version)
+             VALUES ('standard', 'claude-code', 'opus', 'high', 'operator', NULL, 0, 1)",
+            rusqlite::params![],
+        )
+        .expect("the fixture Profile lands");
+        conn.execute(
+            "INSERT INTO tickets
+                 (project_id, number, kind, priority, state, title, criteria,
+                  subtype, mode, completion, profile, version)
+             VALUES (1, 1, 'task', 'normal', 'draft', 'One slice', '[]',
+                     'operational', 'human', '[\"done\"]', 'standard', 1)",
+            rusqlite::params![],
+        )
+        .expect("the fixture Ticket lands");
+        conn.last_insert_rowid()
+            .try_into()
+            .expect("the Ticket identity fits")
+    }
+
+    /// KAN-T42 review: through the serving core, a landed Dispatch
+    /// Request still wakes the Coordinator over the session socket —
+    /// delivered by the observation worker, off the command gate.
+    #[test]
+    fn dispatch_wakes_the_coordinator_over_the_session_socket() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default().with_wake_accepted(true),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
+            }),
+        );
+        // The wake rides the settled subscription, so the startup
+        // snapshot comes first.
+        assert!(
+            soon_enough(Duration::from_secs(5), || {
+                client.query_with(
+                    "timeline.query",
+                    json!({
+                        "scope": { "project": 1 },
+                        "kinds": ["telemetry"],
+                    }),
+                )["events"]
+                    .as_array()
+                    .is_some_and(|events| !events.is_empty())
+            }),
+            "the observation settles before dispatch"
+        );
+        let ticket = seed_dispatch_ticket(&dir);
+
+        let created = client.command(
+            "dispatch.request",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "dispatch-wave" },
+                "ticket_id": ticket,
+            }),
+        );
+        let id = created["id"]
+            .as_u64()
+            .expect("the Dispatch Request identity is a number");
+
+        assert!(
+            soon_enough(Duration::from_secs(5), || {
+                delivered_wake_ids(&fixture) == vec![id]
+            }),
+            "the worker delivers the Coordinator wake over the session socket"
+        );
+        let queue = client.query_with("dispatch.queue", json!({ "project_id": 1 }));
+        assert_eq!(
+            queue["requests"].as_array().map(Vec::len),
+            Some(1),
+            "the Dispatch Request is durable and queued behind its wake"
+        );
+
+        core.shutdown();
+    }
+
+    /// KAN-T42 review: a Coordinator wake the session never answers
+    /// cannot stall the global command gate — the dispatch that
+    /// queued it, and every unrelated command after it, return while
+    /// the observation worker alone carries the blocked wake.
+    #[test]
+    fn an_unresponsive_coordinator_wake_cannot_stall_unrelated_commands() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let repository = dir.path().join("wave");
+        std::fs::create_dir_all(repository.join(".git")).expect("the scratch repository exists");
+        // The session answers nothing: every handshake, and every
+        // wake, blocks until its I/O window closes.
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "wave-main",
+            "/workspaces/wave.seed",
+            SessionScript::default().with_silent_handshake(),
+        );
+        let core = crate::serve_with_herdr_sessions(dir.path(), socket_root)
+            .expect("the core boots for the test");
+        let mut registration = crate::test_client::Client::connect(core.socket_path());
+        registration.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-wave" },
+                "code": "WAVE",
+                "name": "Wave pool",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/wave.seed",
+                "default_branch": "main",
+                "herdr_session": "wave-main",
+                "herdr_workspace": "wave.seed",
+            }),
+        );
+        let socket = core.socket_path().to_path_buf();
+        let ticket = seed_dispatch_ticket(&dir);
+
+        // Before the fix this held the global gate for the session's
+        // whole handshake window: the wake used to dial from the
+        // command path. Now the command only enqueues.
+        let dispatch_socket = socket.clone();
+        assert!(
+            bounded_within(Duration::from_secs(2), move || {
+                let mut client = crate::test_client::Client::connect(&dispatch_socket);
+                client.command(
+                    "dispatch.request",
+                    json!({
+                        "mutation": { "optimistic_version": 0, "idempotency_key": "dispatch-wave" },
+                        "ticket_id": ticket,
+                    }),
+                );
+            }),
+            "the dispatch returns even though its wake can never be answered"
+        );
+
+        assert!(
+            bounded_within(Duration::from_secs(2), move || {
+                let mut client = crate::test_client::Client::connect(&socket);
+                client.command(
+                    "comment.create",
+                    json!({
+                        "mutation": { "optimistic_version": 0, "idempotency_key": "comment-wave" },
+                        "project_id": 1,
+                        "target": { "kind": "ticket", "id": "wave-1" },
+                        "text": "unrelated to any Coordinator wake",
+                    }),
+                );
+            }),
+            "an unrelated command lands while the wake is still pending"
+        );
+
+        // The request is durable with or without its wake: nothing
+        // about the stalled wake rolled the dispatch back.
+        let mut reader = crate::test_client::Client::connect(core.socket_path());
+        let queue = reader.query_with("dispatch.queue", json!({ "project_id": 1 }));
+        assert_eq!(
+            queue["requests"].as_array().map(Vec::len),
+            Some(1),
+            "the Dispatch Request stays queued while its wake goes unanswered"
         );
 
         core.shutdown();

@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import BoardView from '../views/BoardView.vue'
+import GlobalBoardView from '../views/GlobalBoardView.vue'
 import HomeView from '../views/HomeView.vue'
 import InitiativesView from '../views/InitiativesView.vue'
 import PlanningView from '../views/PlanningView.vue'
@@ -29,6 +30,7 @@ const router = createRouter({
       name: 'planning-dependencies',
       component: DependencyEditorView,
     },
+    { path: '/board', name: 'global-board', component: GlobalBoardView },
     { path: '/projects/:projectId/board', name: 'board', component: BoardView },
     { path: '/projects/:projectId/workspaces', name: 'workspaces', component: WorkspacesView },
   ],

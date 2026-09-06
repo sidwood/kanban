@@ -192,7 +192,7 @@ mod tests {
         );
         assert_eq!(error.current_version, None);
         assert_eq!(
-            serde_json::to_value(&error.code).expect("the code serialises"),
+            serde_json::to_value(error.code).expect("the code serialises"),
             json!("ambiguous_idempotency_key")
         );
     }

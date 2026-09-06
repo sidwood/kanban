@@ -144,7 +144,10 @@ impl Core {
     /// (DR-SS-03). The dispatched name is the request's canonical
     /// operation identity, so the fingerprint that decides a replay
     /// separates two operations sharing an aggregate and a body
-    /// shape.
+    /// shape. An outcome recorded before that identity existed can
+    /// prove nothing about which operation spent its key: the guard
+    /// refuses the retry closed, preserving the row for audit, and
+    /// never replays or guesses on its behalf (KAN-T135).
     pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
         let handler = self
             .commands
@@ -163,8 +166,18 @@ impl Core {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if let Some(recorded) = self.idempotency.recorded(&command.idempotency_key)? {
-            if recorded.replays(&fingerprint, &command.legacy_fingerprint()) {
+            if recorded.replays(&fingerprint) {
                 return Ok(recorded.response);
+            }
+            if recorded.ambiguous_legacy(&command.legacy_fingerprint()) {
+                // The row names no operation, so no retry — not even
+                // the operation that may have spent the key — can
+                // prove it replays this outcome. Refuse the reuse,
+                // demand a fresh key, and leave the row exactly as
+                // recorded for audit.
+                return Err(ApiError::ambiguous_idempotency_key(
+                    &command.idempotency_key,
+                ));
             }
             return Err(ApiError::duplicate_idempotency_key(
                 &command.idempotency_key,

@@ -96,8 +96,9 @@ impl ParsedCommand {
 
     /// The operation-blind projection outcomes recorded before the
     /// fingerprint named its operation. A spent key whose outcome
-    /// predates the scheme still replays through it (see
-    /// [`RecordedOutcome::replays`]).
+    /// predates the scheme never replays: the guard fails such
+    /// retries closed instead of guessing the operation the row
+    /// recorded (see [`RecordedOutcome::ambiguous_legacy`]).
     pub fn legacy_fingerprint(&self) -> String {
         format!("{}:{}", self.aggregate, self.body)
     }
@@ -116,14 +117,25 @@ impl RecordedOutcome {
     /// Whether this outcome is the recorded answer to the request
     /// whose operation-aware fingerprint is `fingerprint`. An outcome
     /// recorded before operation awareness names no operation, so it
-    /// cannot prove which operation spent the key: it replays any
-    /// request whose legacy projection `legacy_projection` matches
-    /// the aggregate and body those rows recorded, and retention
-    /// bounds how long such an outcome can answer at all.
-    pub fn replays(&self, fingerprint: &str, legacy_projection: &str) -> bool {
+    /// can never prove which request spent the key: it replays
+    /// nothing, not even the request that may have spent it
+    /// (KAN-T135).
+    pub fn replays(&self, fingerprint: &str) -> bool {
         self.fingerprint == fingerprint
-            || (!self.fingerprint.starts_with(FINGERPRINT_SCHEME_PREFIX)
-                && self.fingerprint == legacy_projection)
+    }
+
+    /// Whether this outcome is an ambiguous legacy row for the
+    /// request retrying now: it predates the fingerprint scheme while
+    /// recording this request's aggregate and body, so which
+    /// operation spent the key cannot be proved. The guard refuses
+    /// such a retry rather than replay the row, and the row stays
+    /// exactly as recorded, preserved for audit. A legacy row that
+    /// does not match the projection, or any operation-aware row, is
+    /// not ambiguous: the first provably answers a different request,
+    /// the second names its operation.
+    pub fn ambiguous_legacy(&self, legacy_projection: &str) -> bool {
+        !self.fingerprint.starts_with(FINGERPRINT_SCHEME_PREFIX)
+            && self.fingerprint == legacy_projection
     }
 }
 
@@ -454,17 +466,11 @@ mod tests {
             response: json!({ "value": 1 }),
         };
         assert!(
-            aware.replays(
-                "v2:counter.bump:counter:{\"step\":1}",
-                "counter:{\"step\":1}"
-            ),
+            aware.replays("v2:counter.bump:counter:{\"step\":1}"),
             "the outcome replays the request that spent the key"
         );
         assert!(
-            !aware.replays(
-                "v2:counter.reset:counter:{\"step\":1}",
-                "counter:{\"step\":1}"
-            ),
+            !aware.replays("v2:counter.reset:counter:{\"step\":1}"),
             "an operation-aware outcome never answers through the legacy projection"
         );
 
@@ -477,25 +483,41 @@ mod tests {
         // the operation that may have spent it. Inferring the missing
         // operation is exactly what the guard must not do.
         assert!(
-            !legacy.replays(
-                "v2:counter.bump:counter:{\"step\":1}",
-                "counter:{\"step\":1}"
-            ),
+            !legacy.replays("v2:counter.bump:counter:{\"step\":1}"),
             "a pre-scheme outcome never replays, even for the operation that may have spent the key"
         );
         assert!(
-            !legacy.replays(
-                "v2:counter.reset:counter:{\"step\":1}",
-                "counter:{\"step\":1}"
-            ),
+            !legacy.replays("v2:counter.reset:counter:{\"step\":1}"),
             "a pre-scheme outcome never replays for another operation"
         );
         assert!(
-            !legacy.replays(
-                "v2:counter.bump:counter:{\"step\":2}",
-                "counter:{\"step\":2}"
-            ),
+            !legacy.replays("v2:counter.bump:counter:{\"step\":2}"),
             "a pre-scheme outcome still refuses a different body"
+        );
+    }
+
+    #[test]
+    fn only_a_matching_pre_scheme_row_is_ambiguous() {
+        let legacy = RecordedOutcome {
+            fingerprint: "counter:{\"step\":1}".to_owned(),
+            response: json!({ "value": 1 }),
+        };
+        assert!(
+            legacy.ambiguous_legacy("counter:{\"step\":1}"),
+            "a pre-scheme row sharing the retry's aggregate and body cannot prove its operation"
+        );
+        assert!(
+            !legacy.ambiguous_legacy("counter:{\"step\":2}"),
+            "a pre-scheme row with a different body provably answers a different request"
+        );
+
+        let aware = RecordedOutcome {
+            fingerprint: "v2:counter.bump:counter:{\"step\":1}".to_owned(),
+            response: json!({ "value": 1 }),
+        };
+        assert!(
+            !aware.ambiguous_legacy("counter:{\"step\":1}"),
+            "an operation-aware row names its operation and is never ambiguous"
         );
     }
 

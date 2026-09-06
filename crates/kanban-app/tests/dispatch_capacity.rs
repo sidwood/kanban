@@ -9,7 +9,10 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{assign_lane, cap_project, constrain_global, harness, insert_ticket, mutation};
+use common::{
+    assign_lane, cap_project, constrain_global, harness, insert_ticket, insert_ticket_with_profile,
+    mutation,
+};
 
 /// Queue one Dispatch Request and answer its identity.
 fn enqueue(core: &Core, ticket: u64, key: &str) -> u64 {
@@ -171,5 +174,43 @@ fn a_second_identical_candidate_is_refused_without_double_count_slack() {
         second["capacity_refusal"],
         json!("1 active Lanes already meet the maximum 1"),
         "the refusal names the one other active Lane, not double-count slack"
+    );
+}
+
+#[test]
+fn the_model_dimension_keys_verbatim_on_the_profile_model_string() {
+    // The profile schema owns no family vocabulary beyond the model
+    // string, so capacity never groups distinct strings into one
+    // family; the family-key ruling stays pending with the Operator.
+    let harness = harness();
+    constrain_global(&harness.database_path, "max_active_per_model", 1);
+    let conn = rusqlite::Connection::open(&harness.database_path).expect("the database reopens");
+    conn.execute(
+        "INSERT INTO execution_profiles
+             (name, harness, model, effort, usage_pool, version)
+         VALUES ('nightly', 'claude-code', 'claude-opus-5', 'high', 'operator', 1)",
+        rusqlite::params![],
+    )
+    .expect("the fixture profile lands");
+    let opus = insert_ticket(&harness.database_path, 1, "normal");
+    assign_lane(&harness.database_path, opus);
+    let nightly = insert_ticket_with_profile(&harness.database_path, 2, "normal", "nightly");
+
+    let first = claim(
+        &harness.core,
+        enqueue(&harness.core, opus, "key-create-opus"),
+        "key-claim-opus",
+    );
+    assert_eq!(first["claimed"], json!(true));
+
+    let second = claim(
+        &harness.core,
+        enqueue(&harness.core, nightly, "key-create-nightly"),
+        "key-claim-nightly",
+    );
+    assert_eq!(
+        second["claimed"],
+        json!(true),
+        "distinct model strings never share a quota"
     );
 }

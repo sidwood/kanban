@@ -133,14 +133,25 @@ fn seed_project_profile(database: &Database) {
 }
 
 pub fn insert_ticket(database_path: &std::path::Path, number: u64, priority: &str) -> u64 {
+    insert_ticket_with_profile(database_path, number, priority, "standard")
+}
+
+/// Seat a fixture Ticket under a named profile; the seeded catalogue
+/// carries `standard` and tests define any other entry they name.
+pub fn insert_ticket_with_profile(
+    database_path: &std::path::Path,
+    number: u64,
+    priority: &str,
+    profile: &str,
+) -> u64 {
     let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
     conn.execute(
         "INSERT INTO tickets
              (project_id, number, kind, priority, state, title, criteria,
               subtype, mode, completion, profile, version)
          VALUES (1, ?1, 'task', ?2, 'draft', 'One slice', '[]',
-                 'operational', 'human', '[\"done\"]', 'standard', 1)",
-        rusqlite::params![number as i64, priority],
+                 'operational', 'human', '[\"done\"]', ?3, 1)",
+        rusqlite::params![number as i64, priority, profile],
     )
     .expect("the fixture Ticket lands");
     conn.last_insert_rowid()

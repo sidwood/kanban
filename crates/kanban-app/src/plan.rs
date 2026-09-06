@@ -1142,7 +1142,9 @@ mod plan_commands {
     use kanban_dto::ErrorCode;
     use serde_json::json;
 
-    use super::testing::{command, create, created_record, harness, shaped_draft, shaped_record};
+    use super::testing::{
+        command, create, created_record, harness, shaped_draft, shaped_plan, shaped_record,
+    };
 
     #[test]
     fn creating_returns_the_draft_record_and_mints_the_project_number() {
@@ -1466,6 +1468,83 @@ mod plan_commands {
 
         assert_eq!(response["spec_numbers"], json!([1, 3]));
         assert_eq!(response["edges"], json!([]));
+    }
+
+    #[test]
+    fn a_key_spent_on_an_edge_add_cannot_replay_an_edge_remove() {
+        let harness = harness();
+        let (id, version) = shaped_plan(&harness.core, "shaped");
+
+        // Edge 1 → 3 joins the shaped draft's existing 1 → 2 and 3 → 2
+        // without closing a cycle.
+        let added = harness
+            .core
+            .command(
+                "plan.edge.add",
+                &command(
+                    id,
+                    json!({ "from_spec": 1, "to_spec": 3 }),
+                    version,
+                    "key-clash",
+                ),
+            )
+            .expect("the edge joins");
+        let moved = added["version"].as_u64().expect("the version is a number");
+        assert_eq!(added["edges"].as_array().map(Vec::len), Some(3));
+
+        // The same key, aggregate, and body shape spent on the
+        // opposite operation must not borrow the add's outcome.
+        let error = harness
+            .core
+            .command(
+                "plan.edge.remove",
+                &command(
+                    id,
+                    json!({ "from_spec": 1, "to_spec": 3 }),
+                    moved,
+                    "key-clash",
+                ),
+            )
+            .expect_err("a key spent on add cannot serve remove");
+
+        assert_eq!(error.code, ErrorCode::DuplicateIdempotencyKey);
+        assert!(
+            error.message.contains("key-clash"),
+            "the message should name the reused key: {}",
+            error.message
+        );
+
+        // The refusal applied nothing: the remove still lands at the
+        // version the add left behind, and only its own edge leaves.
+        let removed = harness
+            .core
+            .command(
+                "plan.edge.remove",
+                &command(
+                    id,
+                    json!({ "from_spec": 1, "to_spec": 3 }),
+                    moved,
+                    "key-remove",
+                ),
+            )
+            .expect("the remove applies under its own key");
+        assert_eq!(removed["version"], json!(moved + 1));
+        assert_eq!(removed["edges"].as_array().map(Vec::len), Some(2));
+
+        // The operation that spent the key still owns its replay.
+        let replay = harness
+            .core
+            .command(
+                "plan.edge.add",
+                &command(
+                    id,
+                    json!({ "from_spec": 1, "to_spec": 3 }),
+                    version,
+                    "key-clash",
+                ),
+            )
+            .expect("the add's own retry still replays");
+        assert_eq!(replay, added, "the recorded outcome is the add's alone");
     }
 
     #[test]

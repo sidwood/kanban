@@ -801,7 +801,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migrations 0027 through 0029 apply");
 
-        assert_eq!(report, MigrationReport { applied: vec![27, 28, 29] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: vec![27, 28, 29]
+            }
+        );
         let conn = database.connection();
         let seeded: (i64, i64, i64, i64) = conn
             .query_row(
@@ -1159,7 +1164,9 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+                applied: vec![
+                    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29
+                ]
             }
         );
         let after: i64 = database
@@ -1563,8 +1570,7 @@ mod tests {
         assert_eq!(
             report.applied,
             vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-                28, 29
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database

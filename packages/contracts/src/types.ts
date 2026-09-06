@@ -841,6 +841,23 @@ export type TicketReadinessResponse = {
   state: TicketState;
   ticket_id: number;
 };
+export type TicketReassignRequest = {
+  actual_behaviour?: string | null;
+  completion?: string[] | null;
+  criteria?: TicketCriterion[] | null;
+  due?: string | null;
+  kind: TicketKind;
+  mode?: TaskMode | null;
+  mutation: MutationContext;
+  priority: TicketPriority;
+  reporter_evidence?: string | null;
+  scheduled_for?: string | null;
+  slice?: string | null;
+  spec_id?: number | null;
+  subtype?: TaskSubtype | null;
+  ticket_id: number;
+  title?: string | null;
+};
 export type TicketRecord = {
   bug?: TicketBugRecord | null;
   completion: string[];
@@ -851,6 +868,7 @@ export type TicketRecord = {
   mode?: TaskMode | null;
   number: number;
   pinned_spec_version?: number | null;
+  predecessor_id?: number | null;
   priority: TicketPriority;
   profile?: string | null;
   project_id: number;

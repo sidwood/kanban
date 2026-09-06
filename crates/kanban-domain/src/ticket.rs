@@ -1281,6 +1281,7 @@ impl Ticket {
             body,
             predecessor: None,
             profile: None,
+            pin: None,
             version: 1,
         }
     }

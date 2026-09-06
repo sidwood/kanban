@@ -1,0 +1,308 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TaskMode": {
+      "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+      "oneOf": [
+        {
+          "description": "Sid executes the work.",
+          "enum": [
+            "human"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An agent executes the work under dispatch.",
+          "enum": [
+            "agent"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TaskSubtype": {
+      "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+      "oneOf": [
+        {
+          "description": "Keeping the product and its operations running.",
+          "enum": [
+            "operational"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Finding out what is true before acting on it.",
+          "enum": [
+            "investigative"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bookkeeping and record-keeping work.",
+          "enum": [
+            "administrative"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Learning without a deliverable committed up front.",
+          "enum": [
+            "research"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Proving an approach before committing to it.",
+          "enum": [
+            "prototype"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Moving work or data from one place to another.",
+          "enum": [
+            "migration"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Work done by hand, on purpose.",
+          "enum": [
+            "manual"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketCriterion": {
+      "additionalProperties": false,
+      "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+      "properties": {
+        "outcome": {
+          "description": "The observable outcome the criterion states.",
+          "type": "string"
+        },
+        "stories": {
+          "description": "The User Stories the criterion claims.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome",
+        "stories"
+      ],
+      "type": "object"
+    },
+    "TicketKind": {
+      "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+      "oneOf": [
+        {
+          "description": "A small vertical product slice of exactly one Spec.",
+          "enum": [
+            "implementation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A record of incorrect behaviour, with qualification evidence.",
+          "enum": [
+            "bug"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bounded operational, investigative, or administrative work.",
+          "enum": [
+            "task"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketPriority": {
+      "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+      "oneOf": [
+        {
+          "description": "Ahead of everything else.",
+          "enum": [
+            "urgent"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ahead of normal work.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The everyday order.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Behind normal work.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Request payload for the `ticket.reassign` command (DR-DE-07): reassignment creates a replacement Ticket under its kind's schema and supersedes the named original. The replacement carries the full creation shape — each kind sends exactly its own fields, as `ticket.create` does — because a reassignment states its changed plan whole, never a silent copy of the original. The replacement references its predecessor in the record the command returns, and the superseded original keeps its history and its number.",
+  "properties": {
+    "actual_behaviour": {
+      "description": "The Bug's actual behaviour (DR-TK-08); required for a Bug.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "completion": {
+      "description": "The Task's completion criteria: observable outcomes that bound the work, with no story links.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "criteria": {
+      "description": "The Implementation's story-linked criteria. A Task never carries these (DR-TK-07); it sends `completion` instead.",
+      "items": {
+        "$ref": "#/definitions/TicketCriterion"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "due": {
+      "description": "The Task's due date, RFC 3339.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketKind"
+        }
+      ],
+      "description": "The kind whose schema the replacement carries."
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TaskMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Task's human-or-agent mode."
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "priority": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketPriority"
+        }
+      ],
+      "description": "The replacement's priority (DR-LC-12)."
+    },
+    "reporter_evidence": {
+      "description": "The Bug's reporter evidence (DR-TK-08); required for a Bug.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scheduled_for": {
+      "description": "The Task's one-time activation instant, RFC 3339; stored for KAN-S11.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "slice": {
+      "description": "The Implementation slice description, naming the behaviour delivered end to end.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spec_id": {
+      "description": "The Spec the replacement attaches to. An Implementation must name exactly one (DR-TK-02); a Bug or Task may name one or none (DR-TK-03).",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "subtype": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TaskSubtype"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The Task's subtype; a Task names exactly one (DR-TK-06)."
+    },
+    "ticket_id": {
+      "description": "The Ticket being replaced. It moves to the terminal superseded state from any open state; a terminal or landed original is refused.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "title": {
+      "description": "The Bug or Task title.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "mutation",
+    "priority",
+    "ticket_id"
+  ],
+  "title": "TicketReassignRequest",
+  "type": "object"
+}

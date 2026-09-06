@@ -392,6 +392,15 @@
             "null"
           ]
         },
+        "predecessor_id": {
+          "description": "The Ticket this one replaced, when reassignment created it as a replacement (DR-DE-07); an ordinary Ticket references none and the field stays absent.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "priority": {
           "allOf": [
             {

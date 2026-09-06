@@ -86,6 +86,8 @@ describe('generated client', () => {
       'dispatch.request': 'dispatch_request',
       'dispatch.claim': 'dispatch_claim',
       'dispatch.queue': 'dispatch_queue',
+      'run.acknowledge': 'run_acknowledge',
+      'run.list': 'run_list',
       'timeline.query': 'timeline_query',
       'comment.create': 'comment_create',
       'comment.edit': 'comment_edit',
@@ -193,6 +195,8 @@ describe('generated client', () => {
       'dispatch.request',
       'dispatch.claim',
       'dispatch.queue',
+      'run.acknowledge',
+      'run.list',
       'timeline.query',
       'comment.create',
       'comment.edit',
@@ -271,6 +275,7 @@ describe('generated client', () => {
       'clone.removed',
       'dispatch.requested',
       'dispatch.claimed',
+      'run.acknowledged',
     ])
   })
 

@@ -6,7 +6,7 @@
 -- proposed/approved lifecycle. The partial UNIQUE keeps one approved
 -- graph per Spec version — a second approval of the same version is
 -- refused at the schema as much as at the gate — and approval's
--- Ticket pins live in the `tickets.pinned_version` column 0027 added.
+-- Ticket pins live in the `tickets.pinned_version` column 0028 added.
 
 CREATE TABLE ticket_graph_proposals (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

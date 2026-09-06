@@ -23,7 +23,8 @@ use std::time::Duration;
 use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
-    BackupStore, Database, RetentionPolicy, SqliteCloneGuardStore, SqliteCommentStore,
+    BackupStore, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
+    SqliteCommentStore,
     SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore, SqliteHerdrSettingsStore,
     SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
     SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
@@ -138,6 +139,7 @@ fn assemble_core(
     let ticket_store = Arc::new(SqliteTicketStore::new(&database));
     let dependency_store = Arc::new(SqliteDependencyStore::new(&database));
     let profile_store = Arc::new(SqliteProfileStore::new(&database));
+    let capacity_store = Arc::new(SqliteCapacityStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
     let ruling_store = Arc::new(SqliteRulingStore::new(&database));
     let deferral_store = Arc::new(SqliteDeferralStore::new(&database));
@@ -195,6 +197,7 @@ fn assemble_core(
     )?;
     core.register_lifecycle(ticket_store.clone(), dependency_store, projects.clone())?;
     core.register_profiles(profile_store, ticket_store.clone(), projects.clone())?;
+    core.register_capacity(capacity_store, projects.clone())?;
     core.register_exports(
         plan_store,
         spec_store,

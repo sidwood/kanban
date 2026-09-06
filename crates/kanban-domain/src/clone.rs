@@ -153,28 +153,61 @@ pub fn validate_clone_target(
     Ok((trimmed_path.to_owned(), trimmed_branch.to_owned()))
 }
 
+/// The form a clone path is judged by: not its spelling but the
+/// directory it names. A trailing separator, a doubled separator, and
+/// `.` or `..` segments are spelling, and none of them may steer a
+/// guarded request past a refusal. The form is lexical — the guard is
+/// pure and reads no filesystem — so `..` pops toward the anchor and
+/// stops there.
+fn normalised_path_form(path: &str) -> String {
+    let trimmed = path.trim();
+    let anchored = trimmed.starts_with('/');
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in trimmed.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    let joined = segments.join("/");
+    if anchored {
+        format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
 /// Decide whether a guarded create may proceed (DR-LW-10). The path is
 /// judged first — against the Project's declared Seed path, then every
 /// registered Workspace — and the branch against every non-retired
 /// Workspace's observed checkout: a retired record keeps history, not
-/// a live execution slot, so it blocks no branch. The first conflict
-/// wins and names itself.
+/// a live execution slot, so it blocks no branch. Paths are judged by
+/// their normal form on both sides, so an equivalent spelling of a
+/// refused path is refused too. The first conflict wins and names
+/// itself.
 pub fn clone_create_conflict(
     path: &str,
     branch: &str,
     seed_path: &str,
     workspaces: &[WorkspaceCloneFacts],
 ) -> Option<CloneConflict> {
-    if path == seed_path
+    let requested = normalised_path_form(path);
+    if requested == normalised_path_form(seed_path)
         || workspaces
             .iter()
-            .any(|facts| facts.is_seed && facts.path == path)
+            .any(|facts| facts.is_seed && normalised_path_form(&facts.path) == requested)
     {
         return Some(CloneConflict::SeedPath {
             path: path.to_owned(),
         });
     }
-    if let Some(holder) = workspaces.iter().find(|facts| facts.path == path) {
+    if let Some(holder) = workspaces
+        .iter()
+        .find(|facts| normalised_path_form(&facts.path) == requested)
+    {
         return Some(CloneConflict::PathTaken {
             path: path.to_owned(),
             workspace_id: holder.workspace_id,
@@ -254,6 +287,26 @@ mod clone_guard_rules {
 
     const SEED_PATH: &str = "/workspaces/kanban.seed";
 
+    /// Spellings that name the Seed path without spelling it plainly:
+    /// a trailing separator, a doubled separator, a `.` segment, a
+    /// `..` segment, and a `..` that runs past the anchor.
+    const EQUIVALENT_SEED_FORMS: [&str; 5] = [
+        "/workspaces/kanban.seed/",
+        "/workspaces//kanban.seed",
+        "/workspaces/./kanban.seed",
+        "/workspaces/clone/../kanban.seed",
+        "/../workspaces/kanban.seed",
+    ];
+
+    /// The same spellings of one registered clone path.
+    const EQUIVALENT_CLONE_FORMS: [&str; 5] = [
+        "/workspaces/kanban.fleet-t31/",
+        "/workspaces//kanban.fleet-t31",
+        "/workspaces/./kanban.fleet-t31",
+        "/workspaces/clone/../kanban.fleet-t31",
+        "/../workspaces/kanban.fleet-t31",
+    ];
+
     #[test]
     fn a_clean_target_conflicts_with_nothing() {
         let registered = vec![seed(1, SEED_PATH), facts(2, "/workspaces/kanban.other")];
@@ -268,6 +321,23 @@ mod clone_guard_rules {
             None,
             "a fresh path on a fresh branch is free"
         );
+    }
+
+    #[test]
+    fn equivalent_spellings_of_a_free_path_conflict_with_nothing() {
+        let registered = vec![seed(1, SEED_PATH), facts(2, "/workspaces/kanban.fleet-t31")];
+
+        for path in [
+            "/workspaces/kanban.fleet-t34/",
+            "/workspaces//kanban.fleet-t34",
+            "/workspaces/./kanban.fleet-t34",
+        ] {
+            assert_eq!(
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered),
+                None,
+                "`{path}` names no registered path, whatever its spelling"
+            );
+        }
     }
 
     #[test]
@@ -298,6 +368,34 @@ mod clone_guard_rules {
                 path: SEED_PATH.to_owned()
             }
         );
+    }
+
+    #[test]
+    fn equivalent_spellings_of_the_declared_seed_path_are_refused() {
+        for path in EQUIVALENT_SEED_FORMS {
+            assert_eq!(
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &[]),
+                Some(CloneConflict::SeedPath {
+                    path: path.to_owned(),
+                }),
+                "`{path}` names the declared Seed path `{SEED_PATH}`"
+            );
+        }
+    }
+
+    #[test]
+    fn equivalent_spellings_of_a_registered_seed_workspace_are_refused() {
+        let registered = vec![seed(1, SEED_PATH), facts(2, "/workspaces/kanban.other")];
+
+        for path in EQUIVALENT_SEED_FORMS {
+            assert_eq!(
+                clone_create_conflict(path, "fleet/kan-t34", "/declared/kanban.seed", &registered),
+                Some(CloneConflict::SeedPath {
+                    path: path.to_owned(),
+                }),
+                "`{path}` names registered Seed Workspace 1"
+            );
+        }
     }
 
     #[test]
@@ -345,6 +443,54 @@ mod clone_guard_rules {
             CloneConflict::PathTaken {
                 path: "/workspaces/kanban.old".to_owned(),
                 workspace_id: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn equivalent_spellings_of_a_registered_path_are_refused_and_named() {
+        let registered = vec![facts(5, "/workspaces/kanban.fleet-t31")];
+
+        for path in EQUIVALENT_CLONE_FORMS {
+            assert_eq!(
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered),
+                Some(CloneConflict::PathTaken {
+                    path: path.to_owned(),
+                    workspace_id: 5,
+                }),
+                "`{path}` names the path registered by Workspace 5"
+            );
+        }
+    }
+
+    #[test]
+    fn non_canonical_registered_paths_are_matched_by_their_plain_form() {
+        let registered = vec![
+            seed(1, "/workspaces/kanban.seed/"),
+            facts(2, "/workspaces//kanban.old"),
+        ];
+
+        let seed_conflict = clone_create_conflict(
+            "/workspaces/kanban.seed",
+            "fleet/kan-t34",
+            "/declared/kanban.seed",
+            &registered,
+        )
+        .expect("the registered Seed is judged by its normal form");
+        assert_eq!(seed_conflict.reason(), "seed_path");
+
+        let conflict = clone_create_conflict(
+            "/workspaces/kanban.old",
+            "fleet/kan-t35",
+            SEED_PATH,
+            &registered,
+        )
+        .expect("the registered path is judged by its normal form");
+        assert_eq!(
+            conflict,
+            CloneConflict::PathTaken {
+                path: "/workspaces/kanban.old".to_owned(),
+                workspace_id: 2,
             }
         );
     }

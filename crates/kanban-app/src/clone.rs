@@ -1053,6 +1053,39 @@ mod clone_conflicts {
     }
 
     #[test]
+    fn creating_refuses_an_equivalent_spelling_of_the_seed_path() {
+        let harness = clone_harness();
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.seed/", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("a trailing separator still names the Seed path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("Seed"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the conflict is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refusal is recorded");
+        assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("seed_path"));
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!("/workspaces/kanban.seed/"),
+            "the row records the spelling that was asked for"
+        );
+    }
+
+    #[test]
     fn creating_refuses_a_registered_workspace_path_and_names_the_holder() {
         let harness = clone_harness();
         harness

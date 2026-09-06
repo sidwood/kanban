@@ -6,17 +6,21 @@
 // plan-editor and plan-diagnostics stores, and the terminal states
 // stay listed but sit off the active surface (KAN-S3-US1, KAN-S3-US2,
 // KAN-S3-US3). The blocking diagnostics of the graph on display ride
-// beside it (KAN-S3-US7).
+// beside it (KAN-S3-US7), and the coverage matrix completes them with
+// the story-to-criterion-to-Ticket view of one Spec version
+// (DR-PS-18).
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { usePlanEditorStore } from '../stores/plan-editor'
 import { usePlanDiagnosticsStore } from '../stores/plan-diagnostics'
+import { useCoverageMatrixStore } from '../stores/coverage-matrix'
 
 const transport = inject(kanbanTransportKey)
 const projects = useProjectRegisterStore()
 const editor = usePlanEditorStore()
 const diagnostics = usePlanDiagnosticsStore()
+const matrix = useCoverageMatrixStore()
 
 const pickedProjectId = ref<number | null>(null)
 const specDraft = ref('')
@@ -30,16 +34,18 @@ onMounted(() => {
       if (first) {
         pickedProjectId.value = first.id
         void editor.refresh(transport, first.id)
+        void matrix.loadSpecs(transport, first.id)
       }
     })
   }
 })
 
-// Loading the picked Project's Plans.
+// Loading the picked Project's Plans and its coverage matrix.
 async function loadPlans(): Promise<void> {
   if (transport && pickedProjectId.value !== null) {
     editor.select(0)
     await editor.refresh(transport, pickedProjectId.value)
+    await matrix.loadSpecs(transport, pickedProjectId.value)
   }
 }
 
@@ -54,6 +60,19 @@ function planId(plan: { number: number }): string {
 
 function specId(spec: number): string {
   return `${projectCode.value}-S${spec}`
+}
+
+// The identity of one Ticket a matrix claim names, for example
+// `CORE-T17`.
+function ticketId(ticket: number): string {
+  return `${projectCode.value}-T${ticket}`
+}
+
+// Switching the coverage matrix to one of the picked Project's Specs.
+async function pickSpec(): Promise<void> {
+  if (transport && matrix.pickedSpecId !== null) {
+    await matrix.pick(transport, matrix.pickedSpecId)
+  }
 }
 
 // The Plan the editor has open.
@@ -291,6 +310,90 @@ const stateLabels: Record<string, string> = {
     >
       Loading Plans…
     </p>
+
+    <section
+      v-if="matrix.specs.length"
+      data-testid="coverage-matrix"
+      class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4"
+    >
+      <header class="flex flex-wrap items-center gap-3">
+        <h3 class="text-sm font-semibold text-slate-700">
+          Coverage matrix
+        </h3>
+        <select
+          v-model="matrix.pickedSpecId"
+          data-testid="coverage-spec"
+          aria-label="Spec"
+          class="rounded border border-slate-300 px-3 py-1.5 text-sm"
+          @change="pickSpec"
+        >
+          <option
+            v-for="spec in matrix.specs"
+            :key="spec.id"
+            :value="spec.id"
+          >
+            {{ specId(spec.number) }} — {{ spec.name }}
+          </option>
+        </select>
+        <span
+          v-if="matrix.report"
+          data-testid="coverage-version"
+          class="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600"
+        >v{{ matrix.report.version }}</span>
+      </header>
+
+      <p
+        v-if="matrix.error"
+        data-testid="coverage-error"
+        role="alert"
+        class="text-sm text-red-700"
+      >
+        {{ matrix.error }}
+      </p>
+
+      <ul
+        v-if="matrix.report"
+        data-testid="coverage-rows"
+        class="flex flex-col divide-y divide-slate-200 rounded border border-slate-200"
+      >
+        <li
+          v-for="row in matrix.report.stories"
+          :key="row.story"
+          :data-testid="`coverage-row-${row.story}`"
+          class="flex flex-col gap-1 px-3 py-2"
+        >
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-sm">{{ row.story }}</span>
+            <span
+              v-if="row.claims.length === 0"
+              :data-testid="`coverage-gap-${row.story}`"
+              class="rounded bg-red-50 px-2 py-0.5 text-xs text-red-700"
+            >uncovered</span>
+          </div>
+          <ul
+            v-if="row.claims.length"
+            class="flex flex-col gap-0.5"
+          >
+            <li
+              v-for="claim in row.claims"
+              :key="`${claim.ticket_id}-${claim.outcome}`"
+              :data-testid="`coverage-claim-${row.story}-${claim.ticket_number}`"
+              class="text-sm text-slate-600"
+            >
+              <span class="font-mono">{{ ticketId(claim.ticket_number) }}</span>
+              — {{ claim.outcome }}
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p
+        v-else-if="!matrix.error"
+        data-testid="coverage-loading"
+        class="text-sm text-slate-500"
+      >
+        Loading the coverage matrix…
+      </p>
+    </section>
 
     <section
       v-if="selected && displayed"

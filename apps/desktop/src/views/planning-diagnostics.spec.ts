@@ -89,6 +89,9 @@ function harness(answers: Record<string, unknown> = {}) {
     if (name === 'project.list') {
       return { projects: [project] } satisfies ProjectListResponse
     }
+    if (name === 'spec.list') {
+      return { specs: [] }
+    }
     if (name === 'plan.list') {
       return { plans: [{ ...draft, version: planVersion }] } satisfies PlanListResponse
     }

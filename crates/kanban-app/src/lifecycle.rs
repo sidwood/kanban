@@ -695,6 +695,7 @@ pub(crate) mod testing {
                     row.priority(),
                     state,
                     row.body().clone(),
+                    row.predecessor(),
                     row.profile().cloned(),
                     row.pinned_version(),
                     row.version() + 1,

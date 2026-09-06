@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod plan;
 pub mod profile;
 pub mod project;
+pub mod reassignment;
 pub mod ruling;
 pub mod spec;
 pub mod ticket;
@@ -72,6 +73,7 @@ pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,
     ProjectRegistration, ProjectState, RegistrationError,
 };
+pub use reassignment::{ReassignmentError, apply_reassignment};
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use spec::{
     ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,

@@ -318,6 +318,9 @@ impl LoadedTicket {
             Priority::parse(&self.priority).ok_or_else(corrupt)?,
             TicketState::parse(&self.state).ok_or_else(corrupt)?,
             body,
+            // The predecessor column arrives with the reassignment
+            // storage slice; no stored row names one until then.
+            None,
             self.profile
                 .as_deref()
                 .map(kanban_domain::ProfileName::new)

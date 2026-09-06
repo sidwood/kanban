@@ -19,9 +19,10 @@
 //! and the Bug's severity the closed critical, high, medium, low
 //! (DR-LC-13); every kind starts its lifecycle in draft (DR-LC-01).
 //! The lifecycle's transitions and readiness rules land in KAN-T21,
-//! dependencies in KAN-T20, and graph approval pinning in KAN-T23;
-//! this module owns the shape a Ticket is created with, the Bug's
-//! capture and qualification rules, and the Task's bounds.
+//! dependencies in KAN-T20, reassignment in KAN-T22, and graph
+//! approval pinning in KAN-T23; this module owns the shape a Ticket
+//! is created with, the Bug's capture and qualification rules, and
+//! the Task's bounds.
 
 use std::fmt;
 
@@ -1238,11 +1239,14 @@ impl TicketBody {
 
 /// One Ticket aggregate: the Project it belongs to, the number that
 /// Project minted for it, its priority, its lifecycle state, the
+<<<<<<< HEAD
 /// kind-specific body, the Execution Profile its assignment names by
-/// reference (DR-EP-03), and the Spec content version an approved
-/// graph pinned it to (DR-DE-06). The version counts applied changes:
-/// creation lands at 1 and every later legal change bumps it, so a
-/// stored version is all a caller needs for optimistic checks.
+/// reference (DR-EP-03), the Spec content version an approved graph
+/// pinned it to (DR-DE-06), and, when reassignment created it as a
+/// replacement, the predecessor it references (DR-DE-07). The version
+/// counts applied changes: creation lands at 1 and every later legal
+/// change bumps it, so a stored version is all a caller needs for
+/// optimistic checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ticket {
     id: TicketId,
@@ -1251,6 +1255,7 @@ pub struct Ticket {
     priority: Priority,
     state: TicketState,
     body: TicketBody,
+    predecessor: Option<TicketId>,
     profile: Option<ProfileName>,
     pin: Option<u64>,
     version: u64,
@@ -1275,6 +1280,34 @@ impl Ticket {
             priority,
             state: TicketState::Draft,
             body,
+            predecessor: None,
+            profile: None,
+            version: 1,
+        }
+    }
+
+    /// A replacement Ticket (DR-DE-07): created into draft, at
+    /// version 1, referencing `predecessor`, the Ticket this one
+    /// replaces. The reference is one-directional and immutable — set
+    /// here, carried forever — and the supersession of the
+    /// predecessor is [`crate::reassignment`]'s act, never this
+    /// constructor's.
+    pub fn replacement(
+        id: TicketId,
+        project: ProjectId,
+        number: TicketNumber,
+        priority: Priority,
+        predecessor: TicketId,
+        body: TicketBody,
+    ) -> Self {
+        Self {
+            id,
+            project,
+            number,
+            priority,
+            state: TicketState::Draft,
+            body,
+            predecessor: Some(predecessor),
             profile: None,
             pin: None,
             version: 1,
@@ -1290,6 +1323,7 @@ impl Ticket {
         priority: Priority,
         state: TicketState,
         body: TicketBody,
+        predecessor: Option<TicketId>,
         profile: Option<ProfileName>,
         pin: Option<u64>,
         version: u64,
@@ -1301,6 +1335,7 @@ impl Ticket {
             priority,
             state,
             body,
+            predecessor,
             profile,
             pin,
             version,
@@ -1315,6 +1350,12 @@ impl Ticket {
     /// The Project this Ticket belongs to.
     pub fn project(&self) -> ProjectId {
         self.project
+    }
+
+    /// The Ticket this one replaced, when reassignment created it as a
+    /// replacement (DR-DE-07); an ordinary Ticket references nothing.
+    pub fn predecessor(&self) -> Option<TicketId> {
+        self.predecessor
     }
 
     /// The number this Project minted for this Ticket, rendered with
@@ -1887,6 +1928,7 @@ mod ticket_kinds {
                 ],
             )
             .expect("the fixture body validates"),
+            None,
             Some(crate::profile::ProfileName::new("standard").expect("the name validates")),
             None,
             7,

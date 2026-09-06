@@ -224,11 +224,11 @@ pub struct BoardFilterOptions {
     pub plans: Vec<BoardFilterOption>,
     /// Every Spec, by rendered number and name.
     pub specs: Vec<BoardFilterOption>,
-    /// Every Lane, by its Project and identity; the values populate
-    /// as the Lane surface lands.
+    /// Every Lane, by its Project and identity.
     pub lanes: Vec<BoardFilterOption>,
-    /// Every Execution Profile, by name.
-    pub profiles: Vec<BoardFilterOption>,
+    /// Every Execution Profile, by name: a profile's identity is its
+    /// name, so the name is the whole option.
+    pub profiles: Vec<String>,
     /// The closed attention vocabulary, whole.
     pub attention: Vec<AttentionState>,
 }
@@ -385,10 +385,7 @@ mod tests {
                     id: 5,
                     label: "CORE lane 5".to_owned(),
                 }],
-                profiles: vec![BoardFilterOption {
-                    id: 1,
-                    label: "standard".to_owned(),
-                }],
+                profiles: vec!["standard".to_owned()],
                 attention: AttentionState::ALL.to_vec(),
             },
         };

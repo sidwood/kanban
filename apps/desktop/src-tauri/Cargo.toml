@@ -35,4 +35,5 @@ tauri = { version = "2", features = [] }
 
 [dev-dependencies]
 kanban-app = { path = "../../../crates/kanban-app", features = ["test-support"] }
+tauri = { version = "2", features = ["test"] }
 tempfile = "3.27.0"

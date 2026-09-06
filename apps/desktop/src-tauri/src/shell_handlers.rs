@@ -10,8 +10,10 @@ macro_rules! shell_handler_catalogue {
         pub const REGISTERED_TAURI_COMMANDS: &[&str] = &[$(stringify!($handler)),*];
 
         /// Register every catalogue operation with one typed handler.
-        pub fn catalogue_invoke_handler(
-        ) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+        /// Generic over the runtime so the tests drive this same
+        /// registration on Tauri's mock runtime.
+        pub fn catalogue_invoke_handler<R: tauri::Runtime>(
+        ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
             tauri::generate_handler![$($handler),*]
         }
     };

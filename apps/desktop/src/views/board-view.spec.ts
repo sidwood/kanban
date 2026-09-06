@@ -23,6 +23,8 @@ const project = {
   version: 1,
 }
 
+const otherProject = { ...project, id: 2, code: 'SFC', name: 'Surface fleet' }
+
 const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
   id: 7,
   project_id: 1,
@@ -79,10 +81,25 @@ function boardTickets(): TicketRecord[] {
   ]
 }
 
-function harness(tickets: TicketRecord[]) {
+// A ticket.list answer the test settles by hand: the load that is
+// still on the wire when the board changes Project.
+function deferred<T>() {
+  let settle!: (value: T) => void
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve
+  })
+  return { promise, settle }
+}
+
+// Answers the queries a board load spends. ticket.list for a Project
+// named in pendingProjects stays on the wire for good: the board it
+// asked for never settles while the test is watching.
+function harness(tickets: TicketRecord[], pendingProjects: readonly number[] = []) {
   const query = vi.fn((name: string, request: unknown) => {
     if (name === 'project.list') {
-      return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
+      return Promise.resolve({
+        projects: [project, otherProject],
+      } satisfies ProjectListResponse)
     }
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
@@ -96,6 +113,10 @@ function harness(tickets: TicketRecord[]) {
         ticket_id,
       })
     }
+    const { project_id } = request as { project_id: number }
+    if (pendingProjects.includes(project_id)) {
+      return new Promise<TicketListResponse>(() => undefined)
+    }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   })
   const command = vi.fn()
@@ -108,19 +129,30 @@ function harness(tickets: TicketRecord[]) {
   return { transport, query, command }
 }
 
-async function mounted(tickets: TicketRecord[]) {
+// Mount the board on one Project's route, flushing the load that
+// arrival spends. A shared pinia carries one store across mounts,
+// the way the running application does across views.
+async function mountBoard(
+  transport: ShellTransport,
+  projectId: number,
+  pinia = createPinia(),
+) {
   document.documentElement.classList.remove('dark')
   localStorage.clear()
-  const { transport, query, command } = harness(tickets)
-  router.push('/projects/1/board')
-  await router.isReady()
+  await router.push(`/projects/${projectId}/board`)
   const wrapper = mount(BoardView, {
     global: {
-      plugins: [createPinia(), router],
+      plugins: [pinia, router],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })
   await flushPromises()
+  return wrapper
+}
+
+async function mounted(tickets: TicketRecord[], pendingProjects: readonly number[] = []) {
+  const { transport, query, command } = harness(tickets, pendingProjects)
+  const wrapper = await mountBoard(transport, 1)
   return { wrapper, transport, query, command }
 }
 
@@ -415,5 +447,155 @@ describe('BoardView', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="board-project-missing"]').exists()).toBe(true)
+  })
+
+  it('clears the previous Project\'s cards while the next load is on the wire', async () => {
+    const { wrapper, query } = await mounted(boardTickets())
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+
+    // The Project register itself answers slowly: the board's own
+    // load has not even begun when the Project changes.
+    ;(query as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => undefined),
+    )
+    router.push('/projects/2/board')
+    await flushPromises()
+
+    // Cards, counts, everything of the Project left behind goes
+    // before the next load settles (KAN-T125-AC1).
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="board-loading"]').exists()).toBe(true)
+  })
+
+  it('takes the drawer with it when the Project changes', async () => {
+    const { wrapper } = await mounted(boardTickets(), [2])
+
+    await wrapper.find('[data-testid="open-ticket-7"]').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+    router.push('/projects/2/board')
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+    // Returning to the first Project reopens nothing on its own.
+    router.push('/projects/1/board')
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('keeps no cards for a Project that is not registered', async () => {
+    const { wrapper } = await mounted(boardTickets())
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+
+    router.push('/projects/3/board')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="board-project-missing"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(false)
+  })
+
+  it('refuses a drop of a card captured on another Project\'s board', async () => {
+    const { wrapper, query, command } = await mounted(boardTickets())
+    const dataTransfer = { effectAllowed: '', setData: () => undefined }
+
+    await wrapper
+      .find('[data-testid="kanban-card-7"]')
+      .trigger('dragstart', { dataTransfer })
+
+    // The next Project's board fails to arrive at all.
+    ;(query as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'project.list') {
+        return Promise.resolve({
+          projects: [project, otherProject],
+        } satisfies ProjectListResponse)
+      }
+      return Promise.reject({ code: 'unavailable', message: 'the core is offline' })
+    })
+    router.push('/projects/2/board')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="kanban-column-current"]').trigger('drop', {
+      preventDefault: () => undefined,
+      dataTransfer,
+    })
+    await flushPromises()
+
+    // The drag was captured under the previous Project's heading; the
+    // board it landed on never sends it (KAN-T125-AC3).
+    expect(command).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="board-error"]').text()).toContain(
+      'does not hold Ticket 7',
+    )
+  })
+
+  it('keeps the last Project when a slower earlier load settles late', async () => {
+    const slow = deferred<TicketListResponse>()
+    const query = vi.fn((name: string, request: unknown) => {
+      if (name === 'project.list') {
+        return Promise.resolve({
+          projects: [project, otherProject],
+        } satisfies ProjectListResponse)
+      }
+      if (name === 'lane.list') {
+        return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
+      }
+      if (name === 'ticket.readiness') {
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve({
+          blocked_by: [],
+          ready: true,
+          state: 'ready',
+          ticket_id,
+        })
+      }
+      const { project_id } = request as { project_id: number }
+      if (project_id === 2) return slow.promise
+      return Promise.resolve({ tickets: boardTickets() } satisfies TicketListResponse)
+    })
+    const transport = {
+      query,
+      command: vi.fn(),
+      subscribe: () => () => undefined,
+      onConnectionChange: () => () => undefined,
+    } as unknown as ShellTransport
+    const wrapper = await mountBoard(transport, 1)
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+
+    router.push('/projects/2/board')
+    await flushPromises()
+    router.push('/projects/1/board')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+
+    // The slower board for the Project in between settles last and
+    // renders none of it (KAN-T125-AC2).
+    slow.settle({ tickets: [ticket({ id: 21, project_id: 2, number: 22 })] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="kanban-card-21"]').exists()).toBe(false)
+  })
+
+  it('mounts empty over the board a previous view kept', async () => {
+    const pinia = createPinia()
+    const first = harness(boardTickets())
+    const firstWrapper = await mountBoard(first.transport, 1, pinia)
+    expect(firstWrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+    firstWrapper.unmount()
+
+    // The register answers slowly, so the new board's own load has
+    // not even begun.
+    const slow = {
+      query: () => new Promise(() => undefined),
+      command: vi.fn(),
+      subscribe: () => () => undefined,
+      onConnectionChange: () => () => undefined,
+    } as unknown as ShellTransport
+    const wrapper = await mountBoard(slow, 2, pinia)
+
+    // A fresh mount over a store still holding another Project's
+    // board renders none of it (KAN-T125-AC1).
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="board-loading"]').exists()).toBe(true)
   })
 })

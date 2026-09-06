@@ -8,7 +8,9 @@
 // vocabulary the application schema pins (KAN-T26-AC1 to
 // KAN-T26-AC3), and a drag is one ticket.transition the core judges;
 // a refusal — an agent-owned drag above all — surfaces as the core's
-// own explanation (KAN-T24-AC3).
+// own explanation (KAN-T24-AC3). The board belongs to one Project at
+// a time: changing Project empties it before the next load settles
+// (KAN-T125).
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { TicketRecord, TicketState } from '@kanban/contracts'
@@ -124,11 +126,25 @@ function setTheme(next: ThemeName): void {
   saveTheme(next)
 }
 
-onMounted(load)
-
-watch(projectId, () => {
+onMounted(() => {
+  clearBoard()
   void load()
 })
+
+watch(projectId, () => {
+  clearBoard()
+  void load()
+})
+
+// A board arriving — mounted over a store that may still hold
+// another Project's, or navigated from one — carries nothing of the
+// Project before it: cards, counts, and the drawer leave before the
+// next load settles, and a load that never settles leaves the board
+// empty rather than showing the wrong Project (KAN-T125-AC1).
+function clearBoard(): void {
+  closeDrawer()
+  board.clear()
+}
 
 async function load(): Promise<void> {
   if (!transport) return

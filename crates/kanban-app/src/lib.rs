@@ -36,6 +36,8 @@ pub mod timeline;
 pub mod workspace;
 
 #[cfg(test)]
+mod profile_validation;
+#[cfg(test)]
 mod project_scope;
 
 pub use capacity::CapacityStore;
@@ -50,6 +52,7 @@ pub use deadlines::{
 };
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dependency::DependencyStore;
+pub use diagnostics::StoredProfileCatalogue;
 pub use dispatch::{Core, QueryHandler, RegistrationError};
 pub use dispatch_request::{
     ClaimContext, CoordinatorWake, CoordinatorWakeRequest, DispatchEnqueue, DispatchStore,

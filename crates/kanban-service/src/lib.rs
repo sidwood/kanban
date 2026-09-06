@@ -22,7 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kanban_app::{
-    ActivationPass, Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler,
+    ActivationPass, Core, EventSink, GitObservation, ProjectStore, StoredProfileCatalogue,
+    TimelineQueryHandler,
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
@@ -229,6 +230,16 @@ fn assemble_core(
         profile_store.clone(),
         ticket_store.clone(),
         projects.clone(),
+    )?;
+    core.register_plan_diagnostics(
+        plan_store.clone(),
+        projects.clone(),
+        spec_store.clone(),
+        Arc::new(StoredProfileCatalogue::new(
+            profile_store.clone(),
+            ticket_store.clone(),
+            spec_store.clone(),
+        )),
     )?;
     core.register_capacity(capacity_store.clone(), projects.clone())?;
     core.register_dispatch(

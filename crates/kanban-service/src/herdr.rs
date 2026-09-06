@@ -1337,6 +1337,68 @@ mod tests {
         assert_eq!(backoff_delay(policy, 60), Duration::from_secs(60));
     }
 
+    /// KAN-T130-AC1 (negative test 2): cancelling one Project's
+    /// observation while its loop is parked in the steady read — the
+    /// settled snapshot row is the cause-based proof it got there —
+    /// joins the thread before the stop returns, so no entry, row, or
+    /// session request can follow the cancel: the join is the proof,
+    /// and no timing sleep backs it.
+    #[test]
+    fn cancelling_mid_loop_leaves_no_leftover_entry() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        assert!(
+            soon_enough(Duration::from_secs(2), || !telemetry_details(&database)
+                .is_empty()),
+            "the loop settles into its steady read before the cancel"
+        );
+        let served = fixture.requests_seen();
+
+        observer.stop_observing(1);
+
+        assert!(
+            !observer.is_observing(1),
+            "the cancelled observation leaves no session entry"
+        );
+        let stopped = binding_diagnostics(&observer);
+        assert!(
+            !stopped.connected,
+            "the cancelled entry claims no connection"
+        );
+        assert_eq!(
+            stopped.last_error, None,
+            "the cancelled entry invents no failure"
+        );
+        assert_eq!(
+            stopped.last_snapshot_at, None,
+            "the cancelled entry claims no capture"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            1,
+            "exactly the settled startup snapshot survives the cancel"
+        );
+        assert_eq!(
+            fixture.requests_seen(),
+            served,
+            "the joined thread sends the session nothing after the cancel"
+        );
+    }
+
+    /// KAN-T130-AC1: shutdown stops the owned session and joins every
+    /// observation thread before it returns — the startup row is
+    /// waited on by its cause, and the post-shutdown absence of rows
+    /// rests on the join, not on a timing sleep.
     #[test]
     fn observer_shutdown_stops_the_owned_session() {
         let dir = TempDir::new().expect("a scratch directory is available");
@@ -1351,9 +1413,13 @@ mod tests {
         let observer =
             HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
         observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
-        thread::sleep(Duration::from_millis(300));
+        assert!(
+            soon_enough(Duration::from_secs(2), || telemetry_details(&database)
+                .len()
+                == 1),
+            "the startup snapshot lands before the shutdown"
+        );
         assert!(observer.is_observing(1));
-        assert_eq!(telemetry_details(&database).len(), 1);
 
         observer.shutdown();
 
@@ -1361,7 +1427,9 @@ mod tests {
             !observer.is_observing(1),
             "shutdown releases the owned session"
         );
-        thread::sleep(Duration::from_millis(150));
+        // The join inside shutdown means no observation thread can
+        // append after it returns; a wait here would prove nothing the
+        // join has not already guaranteed.
         assert_eq!(
             telemetry_details(&database).len(),
             1,

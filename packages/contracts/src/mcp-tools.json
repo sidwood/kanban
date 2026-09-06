@@ -17171,6 +17171,416 @@
     }
   },
   {
+    "description": "Return the global capacity defaults that constrain active runs by harness, model family, and usage pool.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `capacity.defaults.get` query.",
+      "title": "CapacityDefaultsGetQuery",
+      "type": "object"
+    },
+    "name": "capacity_defaults_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CapacityGlobalDefaults": {
+          "additionalProperties": false,
+          "description": "The global capacity defaults as every client sees them: the maximum active runs one harness, model family, or usage pool may carry across every Project (DR-EP-06).",
+          "properties": {
+            "max_active_per_harness": {
+              "description": "The most active runs one harness family may carry.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "max_active_per_model": {
+              "description": "The most active runs one model family may carry.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "max_active_per_usage_pool": {
+              "description": "The most active runs one usage pool may carry.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max_active_per_harness",
+            "max_active_per_model",
+            "max_active_per_usage_pool",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `capacity.defaults.get` query.",
+      "properties": {
+        "defaults": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CapacityGlobalDefaults"
+            }
+          ],
+          "description": "The global capacity defaults."
+        }
+      },
+      "required": [
+        "defaults"
+      ],
+      "title": "CapacityDefaultsGetResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Replace the global capacity defaults.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `capacity.defaults.update` command: the three global limits, replaced wholesale.",
+      "properties": {
+        "max_active_per_harness": {
+          "description": "The most active runs one harness family may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "max_active_per_model": {
+          "description": "The most active runs one model family may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "max_active_per_usage_pool": {
+          "description": "The most active runs one usage pool may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "max_active_per_harness",
+        "max_active_per_model",
+        "max_active_per_usage_pool",
+        "mutation"
+      ],
+      "title": "CapacityDefaultsUpdateRequest",
+      "type": "object"
+    },
+    "name": "capacity_defaults_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The global capacity defaults as every client sees them: the maximum active runs one harness, model family, or usage pool may carry across every Project (DR-EP-06).",
+      "properties": {
+        "max_active_per_harness": {
+          "description": "The most active runs one harness family may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "max_active_per_model": {
+          "description": "The most active runs one model family may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "max_active_per_usage_pool": {
+          "description": "The most active runs one usage pool may carry.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_active_per_harness",
+        "max_active_per_model",
+        "max_active_per_usage_pool",
+        "version"
+      ],
+      "title": "CapacityGlobalDefaults",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Return one Project's capacity caps; every cap is null while it imposes none.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `capacity.settings.get` query.",
+      "properties": {
+        "project_id": {
+          "description": "The Project whose caps are being read.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "CapacitySettingsGetQuery",
+      "type": "object"
+    },
+    "name": "capacity_settings_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CapacityProjectCaps": {
+          "additionalProperties": false,
+          "description": "The caps one Project imposes (DR-EP-07): stricter ceilings on the global dimensions plus a maximum active Lane count. A `null` cap constrains nothing; a set cap never relaxes the global default on its dimension.",
+          "properties": {
+            "max_active_lanes": {
+              "description": "The Project's maximum active Lane count, when it imposes one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_active_per_harness": {
+              "description": "The Project's harness ceiling, when it imposes one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_active_per_model": {
+              "description": "The Project's model family ceiling, when it imposes one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_active_per_usage_pool": {
+              "description": "The Project's usage pool ceiling, when it imposes one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `capacity.settings.get` query.",
+      "properties": {
+        "caps": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CapacityProjectCaps"
+            }
+          ],
+          "description": "The Project's caps; every field null when it imposes none."
+        },
+        "project_id": {
+          "description": "The Project the caps belong to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "caps",
+        "project_id"
+      ],
+      "title": "CapacitySettingsGetResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Replace one Project's stricter capacity caps and maximum active Lane count; a cap may never relax a global default.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `capacity.settings.update` command: the Project's caps, replaced wholesale. An omitted cap field clears that cap, so the global default stands on the dimension again.",
+      "properties": {
+        "max_active_lanes": {
+          "description": "The Project's maximum active Lane count; omitted imposes none.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_harness": {
+          "description": "The Project's harness ceiling; omitted imposes none.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_model": {
+          "description": "The Project's model family ceiling; omitted imposes none.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_usage_pool": {
+          "description": "The Project's usage pool ceiling; omitted imposes none.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "description": "The Project whose caps are being replaced.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id"
+      ],
+      "title": "CapacitySettingsUpdateRequest",
+      "type": "object"
+    },
+    "name": "capacity_settings_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The caps one Project imposes (DR-EP-07): stricter ceilings on the global dimensions plus a maximum active Lane count. A `null` cap constrains nothing; a set cap never relaxes the global default on its dimension.",
+      "properties": {
+        "max_active_lanes": {
+          "description": "The Project's maximum active Lane count, when it imposes one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_harness": {
+          "description": "The Project's harness ceiling, when it imposes one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_model": {
+          "description": "The Project's model family ceiling, when it imposes one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_active_per_usage_pool": {
+          "description": "The Project's usage pool ceiling, when it imposes one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "CapacityProjectCaps",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

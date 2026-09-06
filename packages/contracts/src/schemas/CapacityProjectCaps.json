@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The caps one Project imposes (DR-EP-07): stricter ceilings on the global dimensions plus a maximum active Lane count. A `null` cap constrains nothing; a set cap never relaxes the global default on its dimension.",
+  "properties": {
+    "max_active_lanes": {
+      "description": "The Project's maximum active Lane count, when it imposes one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_active_per_harness": {
+      "description": "The Project's harness ceiling, when it imposes one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_active_per_model": {
+      "description": "The Project's model family ceiling, when it imposes one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_active_per_usage_pool": {
+      "description": "The Project's usage pool ceiling, when it imposes one.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The aggregate version, for optimistic mutation checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "CapacityProjectCaps",
+  "type": "object"
+}

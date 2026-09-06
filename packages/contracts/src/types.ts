@@ -13,6 +13,44 @@ export type ApiError = {
   current_version?: number | null;
   message: string;
 };
+export type CapacityDefaultsGetQuery = Record<string, never>;
+export type CapacityDefaultsGetResponse = {
+  defaults: CapacityGlobalDefaults;
+};
+export type CapacityDefaultsUpdateRequest = {
+  max_active_per_harness: number;
+  max_active_per_model: number;
+  max_active_per_usage_pool: number;
+  mutation: MutationContext;
+};
+export type CapacityGlobalDefaults = {
+  max_active_per_harness: number;
+  max_active_per_model: number;
+  max_active_per_usage_pool: number;
+  version: number;
+};
+export type CapacityProjectCaps = {
+  max_active_lanes?: number | null;
+  max_active_per_harness?: number | null;
+  max_active_per_model?: number | null;
+  max_active_per_usage_pool?: number | null;
+  version: number;
+};
+export type CapacitySettingsGetQuery = {
+  project_id: number;
+};
+export type CapacitySettingsGetResponse = {
+  caps: CapacityProjectCaps;
+  project_id: number;
+};
+export type CapacitySettingsUpdateRequest = {
+  max_active_lanes?: number | null;
+  max_active_per_harness?: number | null;
+  max_active_per_model?: number | null;
+  max_active_per_usage_pool?: number | null;
+  mutation: MutationContext;
+  project_id: number;
+};
 export type CloneCreateRequest = {
   branch: string;
   mutation: MutationContext;

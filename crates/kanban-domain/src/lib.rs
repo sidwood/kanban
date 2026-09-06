@@ -19,6 +19,7 @@ pub mod profile;
 pub mod project;
 pub mod reassignment;
 pub mod ruling;
+pub mod schedule;
 pub mod spec;
 pub mod ticket;
 pub mod timeline;
@@ -80,6 +81,10 @@ pub use project::{
 };
 pub use reassignment::{ReassignmentError, apply_reassignment};
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
+pub use schedule::{
+    Activation, CronExpression, Schedule, ScheduleError, ScheduleId, ScheduleState,
+    ScheduleTrigger, Timezone, accepts, stored_instant_of,
+};
 pub use spec::{
     ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,
     SpecVersion,

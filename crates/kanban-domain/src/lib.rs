@@ -1,6 +1,7 @@
 //! Pure domain rules: entities, closed state vocabularies, transition
 //! rules, and invariants. No I/O, no async, no DTO types, no clock.
 
+pub mod clone;
 pub mod comment;
 pub mod coverage;
 pub mod deferral;
@@ -19,6 +20,10 @@ pub mod timeline;
 pub mod timeline_time;
 pub mod workspace;
 
+pub use clone::{
+    CloneConflict, CloneTargetError, WorkspaceCloneFacts, clone_create_conflict,
+    clone_remove_conflict, validate_clone_target,
+};
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
 };

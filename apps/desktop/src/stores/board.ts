@@ -142,6 +142,17 @@ export const useBoardStore = defineStore('board', {
         this.error = `the board does not hold Ticket ${ticketId}`
         return false
       }
+      // The board speaks for one Project: a card that reached it from
+      // another Project never mutates through it, however it came to
+      // be held (KAN-T125-AC3).
+      if (ticket.project_id !== this.projectId) {
+        this.error = `Ticket ${ticketId} does not belong to the board's Project`
+        return false
+      }
+      // A move the board issued before it changed Project belongs to
+      // the Project it was issued for: its result — landed or refused
+      // — renders nowhere here.
+      const attempt = this.issued
       try {
         const moved = await new KanbanClient(transport).commandTicketTransition({
           mutation: {
@@ -151,6 +162,7 @@ export const useBoardStore = defineStore('board', {
           ticket_id: ticketId,
           to,
         })
+        if (attempt !== this.issued) return false
         this.tickets = this.tickets.map((entry) =>
           entry.id === moved.id ? moved : entry,
         )
@@ -161,9 +173,12 @@ export const useBoardStore = defineStore('board', {
         try {
           await this.refreshReadiness(transport, [moved.id])
         } catch (projection) {
-          this.error = asApiError(projection).message
+          if (attempt === this.issued) {
+            this.error = asApiError(projection).message
+          }
         }
       } catch (failure) {
+        if (attempt !== this.issued) return false
         this.error = asApiError(failure).message
         return false
       }

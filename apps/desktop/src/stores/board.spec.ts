@@ -82,13 +82,13 @@ function readinessRequests(
     .map((entry) => entry.request)
 }
 
-// A ticket.list answer the test settles by hand: the load that is
-// still on the wire when another Project takes the board.
-function deferredList() {
-  let settle!: (tickets: TicketRecord[]) => void
+// An answer the test settles by hand: the load or command still on
+// the wire when another Project takes the board.
+function deferred<T>() {
+  let settle!: (value: T) => void
   let fail!: (reason: unknown) => void
-  const promise = new Promise<TicketListResponse>((resolve, reject) => {
-    settle = (tickets) => resolve({ tickets })
+  const promise = new Promise<T>((resolve, reject) => {
+    settle = resolve
     fail = reject
   })
   return { promise, settle, fail }
@@ -320,7 +320,7 @@ describe('board store', () => {
     await board.refresh(transport, 1)
     expect(board.tickets).toHaveLength(1)
 
-    const second = deferredList()
+    const second = deferred<TicketListResponse>()
     query.mockImplementation(() => second.promise)
     void board.refresh(transport, 2)
 
@@ -330,7 +330,7 @@ describe('board store', () => {
     expect(board.tickets).toEqual([])
     expect(board.blockers).toEqual({})
     expect(board.loaded).toBe(false)
-    second.settle([])
+    second.settle({ tickets: [] })
   })
 
   it('keeps no other Project\'s cards when a load fails', async () => {
@@ -352,7 +352,7 @@ describe('board store', () => {
   it('rejects a slower response for the Project the board has left', async () => {
     setActivePinia(createPinia())
     const { transport, query } = harness()
-    const slow = deferredList()
+    const slow = deferred<TicketListResponse>()
     query.mockImplementation((name: string, request: unknown) => {
       const { project_id } = request as { project_id: number }
       if (name === 'ticket.list' && project_id === 1) return slow.promise
@@ -362,7 +362,7 @@ describe('board store', () => {
     const loadingOne = board.refresh(transport, 1)
 
     await board.refresh(transport, 2)
-    slow.settle([task()])
+    slow.settle({ tickets: [task()] })
     await loadingOne
 
     expect(board.projectId).toBe(2)
@@ -372,7 +372,7 @@ describe('board store', () => {
   it('rejects a slower failure for the Project the board has left', async () => {
     setActivePinia(createPinia())
     const { transport, query } = harness()
-    const slow = deferredList()
+    const slow = deferred<TicketListResponse>()
     query.mockImplementation((name: string, request: unknown) => {
       const { project_id } = request as { project_id: number }
       if (name === 'ticket.list' && project_id === 1) return slow.promise
@@ -396,11 +396,11 @@ describe('board store', () => {
     const board = useBoardStore()
     await board.refresh(transport, 1)
 
-    const slow = deferredList()
+    const slow = deferred<TicketListResponse>()
     query.mockImplementation(() => slow.promise)
     const loading = board.refresh(transport, 2)
     board.clear()
-    slow.settle([task({ id: 30, project_id: 3 })])
+    slow.settle({ tickets: [task({ id: 30, project_id: 3 })] })
     await loading
 
     expect(board.projectId).toBeNull()
@@ -408,5 +408,50 @@ describe('board store', () => {
     expect(board.blockers).toEqual({})
     expect(board.loaded).toBe(false)
     expect(board.error).toBeNull()
+  })
+
+  it('refuses a drag for a Ticket of a Project the board has left', async () => {
+    setActivePinia(createPinia())
+    const { transport, query, command } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+
+    const slow = deferred<TicketListResponse>()
+    query.mockImplementation(() => slow.promise)
+    void board.refresh(transport, 2)
+
+    const landed = await board.move(transport, 7, 'done')
+
+    // A card captured under one Project's heading never mutates
+    // through another Project's board (KAN-T125-AC3).
+    expect(landed).toBe(false)
+    expect(command).not.toHaveBeenCalled()
+    slow.settle({ tickets: [] })
+  })
+
+  it('renders nothing from a move that lands after the board has left', async () => {
+    setActivePinia(createPinia())
+    const { transport, query, command } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+
+    const answered = deferred<TicketRecord>()
+    command.mockImplementation(() => answered.promise)
+    const moving = board.move(transport, 7, 'done')
+    const slow = deferred<TicketListResponse>()
+    query.mockImplementation(() => slow.promise)
+    void board.refresh(transport, 2)
+    answered.settle(task({ state: 'done', version: 4 }))
+    const landed = await moving
+
+    // The core may have accepted the move; the board it left renders
+    // no trace of it and reports no refusal it cannot own.
+    expect(landed).toBe(false)
+    expect(board.projectId).toBe(2)
+    expect(board.tickets).toEqual([])
+    expect(board.error).toBeNull()
+    slow.settle({ tickets: [] })
   })
 })

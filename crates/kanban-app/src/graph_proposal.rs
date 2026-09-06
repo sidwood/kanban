@@ -3,18 +3,22 @@
 //! version it proposes for, approve it through the human gate —
 //! pinning every Ticket in the graph to that Spec content version —
 //! and read the proposals of one Spec back (KAN-S4-US8, DR-PS-16,
-//! DR-PS-17, DR-DE-06). Recording mutates no Ticket; approval's
-//! proposal move, Ticket pins, and timeline rows land in one storage
-//! write, so a graph approval never splits across a crash boundary.
-//! The gate also refuses a graph whose Tickets carry assignments
-//! referencing profiles the catalogue no longer offers (KAN-S7-US4,
-//! T38), so approval never pins a Ticket nothing can dispatch.
+//! DR-PS-17, DR-DE-06). Recording mutates no Ticket and names only
+//! executable members — a Ticket pinned to an earlier version or a
+//! terminal one stays history, never a member of a new graph;
+//! approval's proposal move, Ticket pins, and timeline rows land in
+//! one storage write, so a graph approval never splits across a
+//! crash boundary. The gate also refuses a graph whose Tickets carry
+//! assignments referencing profiles the catalogue no longer offers
+//! (KAN-S7-US4, T38), so approval never pins a Ticket nothing can
+//! dispatch.
 
 use std::sync::Arc;
 
 use kanban_domain::{
     GraphProposalId, GraphProposalState, Project, SpecId, SpecNumber, StoryScope, TicketDependency,
     TicketGraphProposal, TicketId, enforce_approvable, enforce_assignable,
+    enforce_executable_member,
 };
 use kanban_dto::{
     ApiError, TicketGraphApproveRequest, TicketGraphEdgeRecord, TicketGraphListQuery,
@@ -306,6 +310,7 @@ impl CommandHandler for ProposeGraph {
                     "the Ticket is not attached to the Spec",
                 ));
             }
+            enforce_executable_member(&ticket).map_err(refuse)?;
             tickets.push(ticket.id());
         }
         let edges: Vec<TicketDependency> = request
@@ -1260,17 +1265,9 @@ mod graph_approval {
         let second = replacement["id"]
             .as_u64()
             .expect("the identity is a number");
-        harness
-            .core
-            .command(
-                "ticket.graph.approve",
-                &json!({
-                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-second" },
-                    "proposal_id": second,
-                }),
-            )
-            .expect("the second graph approves");
-
+        // The rival graph records before the second one approves:
+        // after that approval its members are pinned to version two,
+        // and a later graph may no longer name them.
         let again = harness
             .core
             .command(
@@ -1285,6 +1282,16 @@ mod graph_approval {
             )
             .expect("a third graph records");
         let third = again["id"].as_u64().expect("the identity is a number");
+        harness
+            .core
+            .command(
+                "ticket.graph.approve",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-second" },
+                    "proposal_id": second,
+                }),
+            )
+            .expect("the second graph approves");
         let error = harness
             .core
             .command(
@@ -1341,6 +1348,458 @@ mod graph_approval {
             .command("ticket.graph.approve", &approve(9, 1, "key-unknown"))
             .expect_err("an unknown proposal is refused");
         assert_eq!(error.code, kanban_dto::ErrorCode::NotFound);
+    }
+}
+
+#[cfg(test)]
+mod later_versions {
+    use kanban_domain::{Ticket, TicketId, TicketState};
+    use serde_json::{Value, json};
+
+    use super::graph_approval::{approve, covered_graph, graph_content, implementation};
+    use super::testing::graph_harness;
+    use crate::ticket::TicketStore;
+    use crate::ticket::testing::TicketHarness;
+
+    /// Rewrite one stored Ticket row the way the lifecycle slice
+    /// moves it, so a test can stand a member in a state the graph
+    /// commands refuse to reach themselves.
+    fn force_state(harness: &TicketHarness, id: u64, state: TicketState) {
+        let standing = harness
+            .tickets
+            .find(TicketId::new(id))
+            .expect("the find serves")
+            .expect("the Ticket stands");
+        let moved = Ticket::restore(
+            standing.id(),
+            standing.project(),
+            standing.number(),
+            standing.priority(),
+            state,
+            standing.body().clone(),
+            standing.predecessor(),
+            standing.profile().cloned(),
+            standing.pinned_version(),
+            standing.version() + 1,
+        );
+        harness
+            .tickets
+            .replace_pinned(moved)
+            .expect("the row moves");
+    }
+
+    /// Rewrite one stored Ticket row to reference the predecessor a
+    /// reassignment created it from (DR-DE-07), the way the
+    /// reassignment command writes the reference.
+    fn carry_predecessor(harness: &TicketHarness, id: u64, predecessor: u64) {
+        let standing = harness
+            .tickets
+            .find(TicketId::new(id))
+            .expect("the find serves")
+            .expect("the Ticket stands");
+        let moved = Ticket::restore(
+            standing.id(),
+            standing.project(),
+            standing.number(),
+            standing.priority(),
+            standing.state(),
+            standing.body().clone(),
+            Some(TicketId::new(predecessor)),
+            standing.profile().cloned(),
+            standing.pinned_version(),
+            standing.version() + 1,
+        );
+        harness
+            .tickets
+            .replace_pinned(moved)
+            .expect("the row moves");
+    }
+
+    /// Supersede the Spec's approved version one and approve a second
+    /// version of the same stories: the later graph's Spec state.
+    fn second_version(core: &crate::dispatch::Core, spec: u64) {
+        core.command(
+            "spec.version.supersede",
+            &json!({
+                "mutation": { "optimistic_version": 2, "idempotency_key": "key2-supersede" },
+                "spec_id": spec,
+                "version": 1,
+            }),
+        )
+        .expect("the approved version supersedes");
+        core.command(
+            "spec.content.update",
+            &json!({
+                "mutation": { "optimistic_version": 3, "idempotency_key": "key2-revise" },
+                "spec_id": spec,
+                "content": graph_content("Registration again"),
+            }),
+        )
+        .expect("the material change mints a draft");
+        core.command(
+            "spec.version.approve",
+            &json!({
+                "mutation": { "optimistic_version": 4, "idempotency_key": "key2-approve" },
+                "spec_id": spec,
+            }),
+        )
+        .expect("the second version approves");
+    }
+
+    /// One proposal request over `tickets`, against the Spec
+    /// `version` a test chooses.
+    fn propose(spec: u64, version: u64, tickets: Value, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+            "spec_id": spec,
+            "spec_version": version,
+            "tickets": tickets,
+            "edges": [],
+        })
+    }
+
+    /// The stored row of one Ticket, by identity.
+    fn stored_ticket(harness: &TicketHarness, id: u64) -> Option<Ticket> {
+        harness
+            .tickets
+            .find(TicketId::new(id))
+            .expect("the find serves")
+    }
+
+    #[test]
+    fn a_second_version_approves_active_unpinned_members_alone() {
+        let (harness, _proposals) = graph_harness();
+        let (spec, first, earlier) = covered_graph(&harness.core);
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(first, 1, "key2-first"))
+            .expect("the first graph approves");
+        second_version(&harness.core, spec);
+
+        // The changed work of the second version: fresh active
+        // unpinned Tickets claiming the same stories.
+        let third = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely again",
+            json!([
+                { "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key2-ticket-3",
+        );
+        let fourth = implementation(
+            &harness.core,
+            spec,
+            "Stories stay covered again",
+            json!([{ "outcome": "Stories stay covered.", "stories": ["CORE-S1-US3"] }]),
+            "key2-ticket-4",
+        );
+
+        let proposed = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([third, fourth]), "key2-propose"),
+            )
+            .expect("the second-version graph records");
+        let second = proposed["id"].as_u64().expect("the identity is a number");
+        let response = harness
+            .core
+            .command(
+                "ticket.graph.approve",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key2-gate" },
+                    "proposal_id": second,
+                }),
+            )
+            .expect("the second graph approves over active unpinned members");
+
+        assert_eq!(response["state"], json!("approved"));
+        for id in [third, fourth] {
+            let read = harness
+                .core
+                .query("ticket.get", &json!({ "ticket_id": id }))
+                .expect("the get serves");
+            assert_eq!(read["pinned_spec_version"], json!(2));
+        }
+        for id in earlier {
+            let read = harness
+                .core
+                .query("ticket.get", &json!({ "ticket_id": id }))
+                .expect("the get serves");
+            assert_eq!(
+                read["pinned_spec_version"],
+                json!(1),
+                "the earlier version's pins are never rewritten"
+            );
+        }
+    }
+
+    #[test]
+    fn recording_refuses_terminal_and_pinned_members() {
+        let (harness, proposals) = graph_harness();
+        let (spec, first, earlier) = covered_graph(&harness.core);
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(first, 1, "key2-first"))
+            .expect("the first graph approves");
+        second_version(&harness.core, spec);
+        let cancelled = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely again",
+            json!([{ "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] }]),
+            "key2-ticket-3",
+        );
+        force_state(&harness, cancelled, TicketState::Cancelled);
+
+        let pinned = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([earlier[0]]), "key2-pinned"),
+            )
+            .expect_err("a member already pinned to the earlier version is refused");
+        assert_eq!(pinned.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            pinned.message,
+            "the Ticket graph names Ticket 1, already pinned to Spec version 1; \
+             a pin is never rewritten or inherited"
+        );
+
+        let terminal = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([cancelled]), "key2-terminal"),
+            )
+            .expect_err("a cancelled member is refused");
+        assert_eq!(terminal.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            terminal.message,
+            "the Ticket graph names Ticket 3, which is cancelled or superseded; \
+             a terminal Ticket stays history, never an executable member of a new graph"
+        );
+
+        let (rows, _) = proposals.snapshot();
+        assert_eq!(
+            rows.len(),
+            1,
+            "the refusals recorded no proposal; only the first graph stands"
+        );
+    }
+
+    #[test]
+    fn an_eligible_attachment_left_outside_stays_incomplete() {
+        let (harness, _) = graph_harness();
+        let (spec, first, _earlier) = covered_graph(&harness.core);
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(first, 1, "key2-first"))
+            .expect("the first graph approves");
+        second_version(&harness.core, spec);
+        let third = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely again",
+            json!([
+                { "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key2-ticket-3",
+        );
+        let fourth = implementation(
+            &harness.core,
+            spec,
+            "Stories stay covered again",
+            json!([{ "outcome": "Stories stay covered.", "stories": ["CORE-S1-US3"] }]),
+            "key2-ticket-4",
+        );
+
+        // The graph names the eligible third Ticket and leaves the
+        // eligible fourth outside it.
+        let proposed = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([third]), "key2-propose"),
+            )
+            .expect("the graph records");
+        let second = proposed["id"].as_u64().expect("the identity is a number");
+        let error = harness
+            .core
+            .command("ticket.graph.approve", &approve(second, 1, "key2-gate"))
+            .expect_err("an eligible attachment never silently drops completeness");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "the Ticket graph is not complete; Tickets 4 sit outside it"
+        );
+        assert_eq!(
+            stored_ticket(&harness, fourth)
+                .expect("the Ticket stands")
+                .pinned_version(),
+            None,
+            "the refusal pinned nothing"
+        );
+    }
+
+    #[test]
+    fn a_replacement_enters_the_new_graph_alone() {
+        let (harness, _) = graph_harness();
+        let (spec, first, earlier) = covered_graph(&harness.core);
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(first, 1, "key2-first"))
+            .expect("the first graph approves");
+        second_version(&harness.core, spec);
+        // Reassignment replaces the first slice: the original turns
+        // superseded and the replacement references it (DR-DE-07).
+        let replacement = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely anew",
+            json!([
+                { "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key2-replacement",
+        );
+        carry_predecessor(&harness, replacement, earlier[0]);
+        force_state(&harness, earlier[0], TicketState::Superseded);
+        let fresh = implementation(
+            &harness.core,
+            spec,
+            "Stories stay covered again",
+            json!([{ "outcome": "Stories stay covered.", "stories": ["CORE-S1-US3"] }]),
+            "key2-ticket-4",
+        );
+
+        let proposed = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([replacement, fresh]), "key2-propose"),
+            )
+            .expect("the replacement's graph records");
+        let second = proposed["id"].as_u64().expect("the identity is a number");
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(second, 1, "key2-gate"))
+            .expect("the replacement and the fresh slice approve");
+
+        let superseded = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": earlier[0] }))
+            .expect("the get serves");
+        assert_eq!(superseded["state"], json!("superseded"));
+        assert_eq!(
+            superseded["spec_id"],
+            json!(spec),
+            "the superseded original stays visible as attached history"
+        );
+        assert_eq!(
+            superseded["pinned_spec_version"],
+            json!(1),
+            "the old pin is never inherited"
+        );
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": replacement }))
+            .expect("the get serves");
+        assert_eq!(
+            read["pinned_spec_version"],
+            json!(2),
+            "the replacement earns its own pin, never the old one"
+        );
+        assert_eq!(read["predecessor_id"], json!(earlier[0]));
+    }
+
+    #[test]
+    fn a_cancelled_member_fails_the_approval_with_a_named_error() {
+        let (harness, proposals) = graph_harness();
+        let (spec, first, _earlier) = covered_graph(&harness.core);
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(first, 1, "key2-first"))
+            .expect("the first graph approves");
+        second_version(&harness.core, spec);
+        let third = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely again",
+            json!([
+                { "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key2-ticket-3",
+        );
+        let fourth = implementation(
+            &harness.core,
+            spec,
+            "Stories stay covered again",
+            json!([{ "outcome": "Stories stay covered.", "stories": ["CORE-S1-US3"] }]),
+            "key2-ticket-4",
+        );
+        let proposed = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, 2, json!([third, fourth]), "key2-propose"),
+            )
+            .expect("the graph records");
+        let second = proposed["id"].as_u64().expect("the identity is a number");
+        // The member cancels between the proposal and the gate.
+        force_state(&harness, third, TicketState::Cancelled);
+        let (_, timeline_before) = proposals.snapshot();
+
+        let error = harness
+            .core
+            .command("ticket.graph.approve", &approve(second, 1, "key2-gate"))
+            .expect_err("a cancelled member fails the gate by name");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "the Ticket graph names Ticket 3, which is cancelled or superseded; \
+             a terminal Ticket stays history, never an executable member of a new graph"
+        );
+        let (rows, timeline) = proposals.snapshot();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.id().value() == second)
+                .expect("the proposal stands")
+                .state()
+                .wire_name(),
+            "proposed",
+            "the refusal moved no proposal row"
+        );
+        for id in [third, fourth] {
+            assert_eq!(
+                stored_ticket(&harness, id)
+                    .expect("the Ticket stands")
+                    .pinned_version(),
+                None,
+                "the refusal pinned nothing"
+            );
+        }
+        assert_eq!(
+            timeline.len(),
+            timeline_before.len(),
+            "the refusal appended no timeline row"
+        );
+        let history = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": third }))
+            .expect("the get serves");
+        assert_eq!(history["state"], json!("cancelled"));
+        assert_eq!(
+            history["spec_id"],
+            json!(spec),
+            "the cancelled attachment stays visible as history"
+        );
     }
 }
 

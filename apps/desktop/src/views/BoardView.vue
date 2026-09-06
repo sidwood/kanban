@@ -59,6 +59,7 @@ import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
 import { chipSurfaceClass, chipsFor, laneFor, specFor } from './board-chips'
 import type { CardChip } from './board-chips'
 import { useLanesStore } from '../stores/lanes'
+import { useRunsStore } from '../stores/runs'
 import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
 import type { BoardChoices } from './board-layout.storage'
 import { orderCards } from './board-ordering'
@@ -92,6 +93,7 @@ const route = useRoute()
 const projects = useProjectRegisterStore()
 const board = useBoardStore()
 const lanes = useLanesStore()
+const runs = useRunsStore()
 
 const projectId = computed(() => Number(route.params.projectId))
 
@@ -150,11 +152,14 @@ async function load(): Promise<void> {
   if (!transport) return
   await projects.refresh(transport)
   if (project.value) {
-    // The Lanes arrive beside the Tickets: the Lane chip a card wears
-    // comes from the KAN-T32 contract, never from board state.
+    // The Lanes and the runs arrive beside the Tickets: the Lane chip
+    // a card wears comes from the KAN-T32 contract, and its execution
+    // chips from the run records the core owns — never from board
+    // state.
     await Promise.all([
       board.refresh(transport, projectId.value),
       lanes.load(transport, projectId.value),
+      runs.load(transport, projectId.value),
     ])
   }
 }
@@ -350,10 +355,9 @@ function cardChrome(ticket: TicketRecord, column: BoardColumnId): string {
 // The chips one card wears, resolved from the vocabulary against the
 // Ticket and the facts the board holds. The Spec identity is the
 // number its record minted; a Spec the board did not load leaves the
-// chip off rather than showing the row id. Reviewer and
-// effective-profile values arrive with KAN-S9's dispatch and run data;
-// until then the planned profile the assignment names is the profile
-// a card shows.
+// chip off rather than showing the row id. During execution the
+// profile chips speak the run's frozen effective snapshot; before
+// dispatch they show the planned profile the assignment names.
 function cardChips(ticket: TicketRecord): readonly CardChip[] {
   return chipsFor(ticket, {
     projectCode: projectCode.value,
@@ -361,7 +365,7 @@ function cardChips(ticket: TicketRecord): readonly CardChip[] {
     lane: laneFor(lanes.lanes, ticket.id),
     blockers: board.blockersFor(ticket.id),
     reviewers: [],
-    execution: null,
+    execution: runs.executionFor(ticket.id),
   })
 }
 

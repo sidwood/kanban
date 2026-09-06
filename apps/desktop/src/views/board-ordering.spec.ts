@@ -169,13 +169,16 @@ function harness(ticketsForLoad: () => TicketRecord[]) {
         ],
       } satisfies ProjectListResponse)
     }
-    // BoardView loads Lanes beside Tickets (KAN-T26); an unanswered
-    // lane.list leaves the store's list undefined and card render
-    // throws before the ordered columns can appear. The Specs answer
-    // the same way (KAN-T126): the board carries them for the Spec
-    // identities its cards render.
+    // BoardView loads Lanes and runs beside Tickets (KAN-T26); an
+    // unanswered lane.list or run.list leaves the store's list
+    // undefined and card render throws before the ordered columns can
+    // appear. The Specs answer the same way (KAN-T126): the board
+    // carries them for the Spec identities its cards render.
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies LaneListResponse)
+    }
+    if (name === 'run.list') {
+      return Promise.resolve({ project_id: 1, runs: [] })
     }
     if (name === 'spec.list') {
       return Promise.resolve({ specs: [] } satisfies SpecListResponse)

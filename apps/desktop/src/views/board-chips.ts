@@ -4,8 +4,9 @@
 // names every chip a kind of card carries and the builders below are
 // exhaustive over it, so a chip added to the schema has no renderer
 // until one is written — the type errors rather than the board
-// drifting (KAN-T26-AC4). Implementer, reviewer, and effective-profile
-// values populate as KAN-S9 lands; the regions land here.
+// drifting (KAN-T26-AC4). Effective-profile values arrive from the
+// run records the core owns; reviewer values populate with review
+// dispatch.
 import type {
   ChipKind,
   LaneRecord,
@@ -36,7 +37,7 @@ export interface CardChip {
 /** The facts beside the Ticket that feed its chips: the Project code
  * its numbers render with, the Spec its spec_id resolved to, the Lane
  * holding it, what the core's readiness projection says holds it
- * back, and the execution facts that populate as KAN-S9 lands. */
+ * back, and the run executing it. */
 export interface ChipSources {
   projectCode: string
   /** The Spec this Ticket's spec_id resolved to. Its minted number is
@@ -47,9 +48,9 @@ export interface ChipSources {
   lane?: LaneRecord | null
   /** The core's readiness projection for this Ticket. */
   blockers?: readonly TicketReadinessBlocker[]
-  /** Ordered reviewer names; empty until KAN-S9 lands. */
+  /** Ordered reviewer names; empty until review dispatch lands. */
   reviewers?: readonly string[]
-  /** The run's effective profile snapshot; absent until KAN-S9. */
+  /** The run's frozen effective profile; absent before dispatch. */
   execution?: { effective: string; fallback: boolean } | null
 }
 

@@ -171,6 +171,9 @@ async function mounted(
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: laneList } satisfies LaneListResponse)
     }
+    if (name === 'run.list') {
+      return Promise.resolve({ project_id: 1, runs: [] })
+    }
     if (name === 'spec.list') {
       return Promise.resolve({ specs: specList } satisfies SpecListResponse)
     }

@@ -115,6 +115,9 @@ function harness(
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
     }
+    if (name === 'run.list') {
+      return Promise.resolve({ project_id: 1, runs: [] })
+    }
     if (name === 'spec.list') {
       return Promise.resolve({ specs: specList } satisfies SpecListResponse)
     }
@@ -625,6 +628,9 @@ describe('BoardView', () => {
       }
       if (name === 'lane.list') {
         return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
+      }
+      if (name === 'run.list') {
+        return Promise.resolve({ project_id: 1, runs: [] })
       }
       if (name === 'spec.list') {
         return Promise.resolve({ specs: [] } satisfies SpecListResponse)

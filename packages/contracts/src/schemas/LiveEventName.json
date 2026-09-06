@@ -44,7 +44,8 @@
     "clone.created",
     "clone.removed",
     "dispatch.requested",
-    "dispatch.claimed"
+    "dispatch.claimed",
+    "run.acknowledged"
   ],
   "title": "LiveEventName",
   "type": "string"

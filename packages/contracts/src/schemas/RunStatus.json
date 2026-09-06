@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+  "oneOf": [
+    {
+      "description": "Minted from a claimed request and occupying its execution.",
+      "enum": [
+        "executing"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "RunStatus"
+}

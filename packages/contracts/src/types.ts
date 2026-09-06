@@ -360,7 +360,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -500,6 +500,13 @@ export type ProfileRetireRequest = {
   mutation: MutationContext;
   name: string;
 };
+export type ProfileSnapshotRecord = {
+  effort: string;
+  harness: string;
+  model: string;
+  name: string;
+  usage_pool: string;
+};
 export type ProfileUpdateRequest = {
   effort: string;
   fallback?: string | null;
@@ -581,6 +588,31 @@ export type RulingSupersedeRequest = {
   ruling_id: number;
   summary: string;
 };
+export type RunAcknowledgeRequest = {
+  dispatch_request_id: number;
+  mutation: MutationContext;
+};
+export type RunListQuery = {
+  project_id: number;
+};
+export type RunListResponse = {
+  project_id: number;
+  runs: RunRecord[];
+};
+export type RunRecord = {
+  created_at: number;
+  dispatch_request_id: number;
+  effective: ProfileSnapshotRecord;
+  fallback: boolean;
+  fallback_path: string[];
+  id: number;
+  project_id: number;
+  requested: ProfileSnapshotRecord;
+  status: RunStatus;
+  ticket_id: number;
+  version: number;
+};
+export type RunStatus = 'executing';
 export type SpecContent = {
   further_notes: string;
   implementation_decisions: string;

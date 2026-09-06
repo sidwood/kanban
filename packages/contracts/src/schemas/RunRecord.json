@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ProfileSnapshotRecord": {
+      "additionalProperties": false,
+      "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+      "properties": {
+        "effort": {
+          "description": "The snapshotted effort.",
+          "type": "string"
+        },
+        "harness": {
+          "description": "The snapshotted harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The snapshotted model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The snapshotted entry name.",
+          "type": "string"
+        },
+        "usage_pool": {
+          "description": "The snapshotted usage pool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "usage_pool"
+      ],
+      "type": "object"
+    },
+    "RunStatus": {
+      "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+      "oneOf": [
+        {
+          "description": "Minted from a claimed request and occupying its execution.",
+          "enum": [
+            "executing"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "One run as every client sees it: the claimed Dispatch Request it executes, the Ticket it works, and the requested and effective profile snapshots frozen at its mint.",
+  "properties": {
+    "created_at": {
+      "description": "When the run minted, as unix seconds.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "dispatch_request_id": {
+      "description": "The claimed Dispatch Request this run executes.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "effective": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ProfileSnapshotRecord"
+        }
+      ],
+      "description": "The effective profile snapshot: what actually runs after the fallback policy."
+    },
+    "fallback": {
+      "description": "Whether the effective profile is not the requested one.",
+      "type": "boolean"
+    },
+    "fallback_path": {
+      "description": "The names the fallback walk touched, requested first; empty when no fallback happened.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "id": {
+      "description": "The storage-assigned identity.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "project_id": {
+      "description": "The Project the run belongs to.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "requested": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ProfileSnapshotRecord"
+        }
+      ],
+      "description": "The requested profile snapshot: what the assignment named."
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/RunStatus"
+        }
+      ],
+      "description": "Executing."
+    },
+    "ticket_id": {
+      "description": "The Ticket the run executes.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "description": "The aggregate version, for optimistic mutation checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "created_at",
+    "dispatch_request_id",
+    "effective",
+    "fallback",
+    "fallback_path",
+    "id",
+    "project_id",
+    "requested",
+    "status",
+    "ticket_id",
+    "version"
+  ],
+  "title": "RunRecord",
+  "type": "object"
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+  "properties": {
+    "effort": {
+      "description": "The snapshotted effort.",
+      "type": "string"
+    },
+    "harness": {
+      "description": "The snapshotted harness family.",
+      "type": "string"
+    },
+    "model": {
+      "description": "The snapshotted model family.",
+      "type": "string"
+    },
+    "name": {
+      "description": "The snapshotted entry name.",
+      "type": "string"
+    },
+    "usage_pool": {
+      "description": "The snapshotted usage pool.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "effort",
+    "harness",
+    "model",
+    "name",
+    "usage_pool"
+  ],
+  "title": "ProfileSnapshotRecord",
+  "type": "object"
+}

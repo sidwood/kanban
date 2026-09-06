@@ -195,7 +195,7 @@ fn assemble_core(
         ticket_store.clone(),
     )?;
     core.register_clones(
-        Arc::new(LocalFleetCloneTool),
+        Arc::new(LocalFleetCloneTool::new(data_dir.to_path_buf())),
         projects.clone(),
         workspace_store.clone(),
         clone_guard_store,

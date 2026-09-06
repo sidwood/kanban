@@ -15,6 +15,12 @@ pub enum HerdrRequest {
     Wait { condition: String, timeout_ms: u64 },
     /// Deliver a prompt to one role tab.
     Prompt { role: String, message: String },
+    /// Wake one role tab — the Project Coordinator on dispatch —
+    /// without launching an implementation agent (DR-HB-14, DR-HB-16).
+    Wake {
+        role: String,
+        dispatch_request_id: u64,
+    },
 }
 
 /// One line back from Herdr.
@@ -26,6 +32,7 @@ pub enum HerdrResponse {
     Event { payload: Value },
     WaitResult { met: bool, detail: Value },
     PromptResult { accepted: bool },
+    WakeResult { accepted: bool },
     Error { message: String },
 }
 
@@ -63,6 +70,10 @@ mod tests {
             HerdrRequest::Prompt {
                 role: "implementer".to_owned(),
                 message: "continue".to_owned(),
+            },
+            HerdrRequest::Wake {
+                role: "coordinator".to_owned(),
+                dispatch_request_id: 17,
             },
         ];
 

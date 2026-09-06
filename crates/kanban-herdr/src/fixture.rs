@@ -3,8 +3,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -19,6 +19,7 @@ pub struct ScriptedSession {
     root: PathBuf,
     socket_path: PathBuf,
     requests: Arc<AtomicUsize>,
+    recorded: Arc<Mutex<Vec<HerdrRequest>>>,
     server: JoinHandle<()>,
 }
 
@@ -89,7 +90,9 @@ impl ScriptedSession {
         let session_name = session.as_name().unwrap_or("default").to_owned();
         let accept_connections = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(AtomicUsize::new(0));
+        let recorded = Arc::new(Mutex::new(Vec::new()));
         let served_requests = requests.clone();
+        let served_recorded = recorded.clone();
         let server = thread::Builder::new()
             .name(format!("herdr-fixture-{session_name}"))
             .spawn(move || {
@@ -111,6 +114,7 @@ impl ScriptedSession {
                         script,
                         index,
                         &served_requests,
+                        &served_recorded,
                     );
                 }
             })
@@ -119,6 +123,7 @@ impl ScriptedSession {
             root: root.to_path_buf(),
             socket_path,
             requests,
+            recorded,
             server,
         }
     }
@@ -139,6 +144,15 @@ impl ScriptedSession {
     pub fn requests_seen(&self) -> usize {
         self.requests.load(Ordering::Relaxed)
     }
+
+    /// Every request line this session decoded, in arrival order,
+    /// across every connection.
+    pub fn recorded_requests(&self) -> Vec<HerdrRequest> {
+        self.recorded
+            .lock()
+            .expect("the fixture request log is sound")
+            .clone()
+    }
 }
 
 impl Drop for ScriptedSession {
@@ -158,6 +172,7 @@ pub struct SessionScript {
     wait_met: bool,
     wait_detail: Value,
     prompt_accepted: bool,
+    wake_accepted: bool,
     subscribe_error: Option<String>,
     close_after_events: bool,
     hold_before_close: Option<Duration>,
@@ -208,6 +223,12 @@ impl SessionScript {
     /// Whether prompt requests are accepted.
     pub fn with_prompt_accepted(mut self, accepted: bool) -> Self {
         self.prompt_accepted = accepted;
+        self
+    }
+
+    /// Whether coordinator wake requests are accepted.
+    pub fn with_wake_accepted(mut self, accepted: bool) -> Self {
+        self.wake_accepted = accepted;
         self
     }
 
@@ -270,6 +291,7 @@ impl SessionScript {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve_connection(
     stream: UnixStream,
     session_name: &str,
@@ -278,6 +300,7 @@ fn serve_connection(
     script: Arc<SessionScript>,
     connection_index: usize,
     requests: &Arc<AtomicUsize>,
+    recorded: &Arc<Mutex<Vec<HerdrRequest>>>,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
     let mut writer = stream;
@@ -306,6 +329,10 @@ fn serve_connection(
                 continue;
             }
         };
+        recorded
+            .lock()
+            .expect("the fixture request log is sound")
+            .push(request.clone());
 
         let response = match request {
             HerdrRequest::Snapshot => {
@@ -353,6 +380,12 @@ fn serve_connection(
                 message: _,
             } => HerdrResponse::PromptResult {
                 accepted: script.prompt_accepted,
+            },
+            HerdrRequest::Wake {
+                role: _,
+                dispatch_request_id: _,
+            } => HerdrResponse::WakeResult {
+                accepted: script.wake_accepted,
             },
         };
 

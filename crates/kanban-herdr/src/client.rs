@@ -35,6 +35,17 @@ pub struct PromptRequest {
     pub message: String,
 }
 
+/// The role tab dispatch wakes: the Project Coordinator, never an
+/// implementation agent (DR-HB-14, DR-HB-16).
+pub const COORDINATOR_ROLE: &str = "coordinator";
+
+/// A wake delivered to the Project Coordinator on dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeRequest {
+    /// The Dispatch Request that just entered the queue.
+    pub dispatch_request_id: u64,
+}
+
 /// One connected Herdr session client.
 pub struct SessionClient {
     mapping: SessionMapping,
@@ -196,6 +207,22 @@ impl SessionClient {
             HerdrResponse::Error { message } => Err(HerdrError::Remote { message }),
             other => Err(HerdrError::Decode(format!(
                 "expected prompt_result, got `{other:?}`"
+            ))),
+        }
+    }
+
+    /// Wake the Project Coordinator over this session socket. The
+    /// role is fixed: Kanban never uses this path to launch an
+    /// implementation agent.
+    pub fn wake_coordinator(&mut self, request: WakeRequest) -> Result<bool, HerdrError> {
+        match self.request(HerdrRequest::Wake {
+            role: COORDINATOR_ROLE.to_owned(),
+            dispatch_request_id: request.dispatch_request_id,
+        })? {
+            HerdrResponse::WakeResult { accepted } => Ok(accepted),
+            HerdrResponse::Error { message } => Err(HerdrError::Remote { message }),
+            other => Err(HerdrError::Decode(format!(
+                "expected wake_result, got `{other:?}`"
             ))),
         }
     }

@@ -6,6 +6,7 @@ use crate::capacity::{
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
     CapacitySettingsGetResponse, CapacitySettingsUpdateRequest,
 };
+use crate::chip::{ChipKind, ChipSet, ChipVocabulary};
 use crate::clone::{
     CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
@@ -136,6 +137,9 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "CapacitySettingsUpdateRequest",
             schema_for!(CapacitySettingsUpdateRequest),
         ),
+        ("ChipKind", schema_for!(ChipKind)),
+        ("ChipSet", schema_for!(ChipSet)),
+        ("ChipVocabulary", schema_for!(ChipVocabulary)),
         ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),

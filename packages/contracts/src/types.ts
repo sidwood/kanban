@@ -51,6 +51,15 @@ export type CapacitySettingsUpdateRequest = {
   mutation: MutationContext;
   project_id: number;
 };
+export type ChipKind = 'priority' | 'progress' | 'spec' | 'implementer' | 'reviewers' | 'lane' | 'blockers' | 'severity' | 'frequency' | 'origin' | 'profiles' | 'subtype' | 'mode' | 'schedule' | 'executor';
+export type ChipSet = {
+  chips: ChipKind[];
+  kind: TicketKind;
+};
+export type ChipVocabulary = {
+  sets: ChipSet[];
+  version: number;
+};
 export type CloneCreateRequest = {
   branch: string;
   mutation: MutationContext;

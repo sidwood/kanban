@@ -2,6 +2,7 @@
 //! with schema derivation. Depends on nothing internal.
 
 pub mod capacity;
+pub mod chip;
 pub mod clone;
 pub mod comment;
 pub mod coverage;
@@ -33,6 +34,7 @@ pub use capacity::{
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
     CapacitySettingsGetResponse, CapacitySettingsUpdateRequest,
 };
+pub use chip::{CHIP_VOCABULARY_VERSION, ChipKind, ChipSet, ChipVocabulary};
 pub use clone::{CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord};
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
@@ -186,6 +188,9 @@ mod tests {
                 "CapacitySettingsGetQuery",
                 "CapacitySettingsGetResponse",
                 "CapacitySettingsUpdateRequest",
+                "ChipKind",
+                "ChipSet",
+                "ChipVocabulary",
                 "CommentCreateRequest",
                 "CommentEditRequest",
                 "CommentRecord",

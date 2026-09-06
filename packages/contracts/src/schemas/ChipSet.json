@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ChipKind": {
+      "description": "One chip kind a card can carry. The set is closed: a card renders only chips this enum names, so a new chip kind cannot reach the board without a schema change (DR-BP-07, DR-BP-16).",
+      "oneOf": [
+        {
+          "description": "The Ticket's priority (DR-LC-12). Every card carries it.",
+          "enum": [
+            "priority"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The kind-scoped progress: Acceptance Criteria progress for Implementations and Bugs, completion progress for Tasks. Every card carries it.",
+          "enum": [
+            "progress"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Spec the Ticket attaches to; optional for a Bug.",
+          "enum": [
+            "spec"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The effective implementer of an Implementation, named by its Execution Profile.",
+          "enum": [
+            "implementer"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The reviewers of an Implementation; more than two collapse to `+N` on the card (DR-BP-14).",
+          "enum": [
+            "reviewers"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Lane holding the Ticket's active execution (DR-LW-01).",
+          "enum": [
+            "lane"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "What holds the Ticket back: registered dependencies and explicit external blockers.",
+          "enum": [
+            "blockers"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Bug's qualified severity (DR-LC-13).",
+          "enum": [
+            "severity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Bug's qualified frequency.",
+          "enum": [
+            "frequency"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Where the Bug report came from: its reporter evidence.",
+          "enum": [
+            "origin"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The execution profiles a Bug runs under: planned before dispatch, effective with a fallback indicator during execution (DR-BP-12, DR-BP-13).",
+          "enum": [
+            "profiles"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Task's subtype of the closed set (DR-TK-08).",
+          "enum": [
+            "subtype"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Task's human-or-agent mode (DR-TK-09).",
+          "enum": [
+            "mode"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Task's schedule or due date.",
+          "enum": [
+            "schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Who executes a Task: the operator, or the named profile.",
+          "enum": [
+            "executor"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketKind": {
+      "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+      "oneOf": [
+        {
+          "description": "A small vertical product slice of exactly one Spec.",
+          "enum": [
+            "implementation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A record of incorrect behaviour, with qualification evidence.",
+          "enum": [
+            "bug"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bounded operational, investigative, or administrative work.",
+          "enum": [
+            "task"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "The chip set one kind of card carries, in the order the card renders it.",
+  "properties": {
+    "chips": {
+      "description": "Every chip a card of this kind carries, in render order.",
+      "items": {
+        "$ref": "#/definitions/ChipKind"
+      },
+      "type": "array"
+    },
+    "kind": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketKind"
+        }
+      ],
+      "description": "The Ticket kind this chip set belongs to."
+    }
+  },
+  "required": [
+    "chips",
+    "kind"
+  ],
+  "title": "ChipSet",
+  "type": "object"
+}

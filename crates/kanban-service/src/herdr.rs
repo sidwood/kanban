@@ -1984,6 +1984,58 @@ mod tests {
         );
     }
 
+    /// KAN-T130-AC2 (negative test 1): a session whose snapshot
+    /// reports another workspace identity than the Project's binding
+    /// fails its cycle with error diagnostics — the mismatch named,
+    /// and no connection or capture claimed — driven through one
+    /// synchronous cycle. Connected alone would hide the refusal.
+    #[test]
+    fn a_mismatched_snapshot_reports_error_diagnostics() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind_with_workspace(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            "other.seed",
+            SessionScript::default(),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let handle =
+            observer.test_driven_handle(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let mut live_once = false;
+        let mut deadlines = DeadlineMonitor::new(handle.session_tuning().1);
+
+        assert!(
+            !handle.observe_live(&mut live_once, &mut deadlines),
+            "a snapshot from another workspace never settles"
+        );
+
+        let state = binding_diagnostics(&observer);
+        assert!(
+            !state.connected,
+            "a mismatched identity is never reported as connected"
+        );
+        let error = state
+            .last_error
+            .expect("the mismatch is reported as the cycle's failure");
+        assert!(
+            error.contains("does not map") && error.contains("other.seed"),
+            "the workspace mismatch is the reported failure: {error}"
+        );
+        assert_eq!(
+            state.last_snapshot_at, None,
+            "no capture is claimed for the refused identity"
+        );
+        assert_eq!(
+            telemetry_details(&database).len(),
+            0,
+            "a mismatched snapshot appends no telemetry"
+        );
+    }
+
     /// KAN-T94-AC2: a subscription that settles records its capture —
     /// the snapshot clock the diagnostics serve — and the stream's
     /// later drop is reported as a disconnection.

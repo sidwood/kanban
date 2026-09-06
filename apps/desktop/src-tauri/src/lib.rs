@@ -45,10 +45,11 @@ use kanban_dto::{
     TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
-    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketReviewRequest,
-    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
-    TimelineQuery, TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse,
-    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
+    TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest,
+    TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, WorkspaceListQuery,
+    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -928,6 +929,19 @@ async fn ticket_graph_list(
 }
 
 #[tauri::command]
+async fn ticket_reassign(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketReassignRequest>(request)?;
+    run_blocking(shell, "ticket reassign", |shell| {
+        forward_command(shell, "ticket.reassign", "reassigned Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn profile_define(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1500,6 +1514,7 @@ shell_handlers::shell_handler_catalogue! {
     ticket_graph_propose,
     ticket_graph_approve,
     ticket_graph_list,
+    ticket_reassign,
     profile_define,
     profile_update,
     profile_retire,

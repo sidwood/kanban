@@ -36,9 +36,10 @@ use kanban_dto::{
     TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
     TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphProposeRequest,
     TicketListQuery, TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery,
-    TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest,
-    TicketUnparkRequest, TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope,
-    WorkspaceListQuery, WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketReassignRequest, TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest,
+    TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind, TimelineEntityRef,
+    TimelineQuery, TimelineScope, WorkspaceListQuery, WorkspaceObserveRequest,
+    WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
 use serde_json::{Value, json};
@@ -328,6 +329,20 @@ fn sample_request(schema: &str) -> Value {
         }
         "TicketGraphListQuery" => json!({ "spec_id": 1 }),
         "SpecCoverageMatrixQuery" => json!({ "spec_id": 1, "version": null }),
+        "TicketReassignRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "kind": "implementation",
+            "priority": "high",
+            "spec_id": 1,
+            "slice": "Registration creates Projects end to end",
+            "criteria": [
+                {
+                    "outcome": "Projects register with unique codes.",
+                    "stories": ["CORE-S1-US1"],
+                }
+            ],
+        }),
         "ProfileDefineRequest" => json!({
             "mutation": mutation,
             "name": "standard",
@@ -676,6 +691,7 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "TicketEmergencyOverrideRequest" => {
             decode_invoke_args::<TicketEmergencyOverrideRequest>(request).is_err()
         }
+        "TicketReassignRequest" => decode_invoke_args::<TicketReassignRequest>(request).is_err(),
         "ProfileDefineRequest" => decode_invoke_args::<ProfileDefineRequest>(request).is_err(),
         "ProfileUpdateRequest" => decode_invoke_args::<ProfileUpdateRequest>(request).is_err(),
         "ProfileRetireRequest" => decode_invoke_args::<ProfileRetireRequest>(request).is_err(),

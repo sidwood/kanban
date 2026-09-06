@@ -557,3 +557,50 @@ fn workspace_observe_detached_head_persists_the_closed_state() {
         "the management surface reports the closed state"
     );
 }
+
+#[test]
+fn workspace_observe_reports_the_live_branch_without_coercing_main() {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let harness = wired(scratch.path());
+    let git_dir = TempDir::new().expect("a scratch directory is available");
+    let (repository, workspace) = branch_clone(&git_dir);
+    create_project(&harness.projects, &repository, workspace.to_str().unwrap());
+    // The Project declares `main`; the Workspace moves to real work on a
+    // differently named branch before anyone observes it.
+    git(&workspace, &["switch", "-c", "feature"]);
+
+    harness
+        .core
+        .command(
+            "workspace.register",
+            &register_workspace(1, workspace.to_str().unwrap(), "key-1"),
+        )
+        .expect("the workspace registers");
+    let response = harness
+        .core
+        .command("workspace.observe", &register(1, "key-2", 1))
+        .expect("the observation applies");
+
+    assert_eq!(response["health"], json!("available"));
+    assert_eq!(
+        response["observation"]["branch"],
+        json!("feature"),
+        "observation must report the repository's actual current branch"
+    );
+    assert_eq!(
+        response["observation"]["checkout"],
+        json!("branch"),
+        "a named branch stays a named branch, never a coerced main"
+    );
+
+    let stored = harness
+        .workspaces
+        .find(WorkspaceId::new(1))
+        .expect("the workspace loads")
+        .expect("the workspace exists");
+    assert_eq!(stored.observation().branch(), Some("feature"));
+    assert_eq!(
+        stored.observation().checkout(),
+        Some(&WorkspaceCheckout::Branch("feature".to_owned()))
+    );
+}

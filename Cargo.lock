@@ -374,6 +374,7 @@ dependencies = [
  "kanban-herdr",
  "kanban-storage",
  "kanban-transport",
+ "libc",
  "rusqlite",
  "serde_json",
  "tempfile",

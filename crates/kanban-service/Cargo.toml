@@ -13,6 +13,7 @@ kanban-dto = { workspace = true }
 kanban-herdr = { path = "../kanban-herdr" }
 kanban-storage = { workspace = true }
 kanban-transport = { workspace = true }
+libc = "0.2"
 serde_json = { workspace = true }
 thiserror = "2.0.20"
 

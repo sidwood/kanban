@@ -3,6 +3,7 @@
 
 pub mod board;
 pub mod board_query;
+pub mod capability;
 pub mod capacity;
 pub mod clone;
 pub mod comment;
@@ -31,6 +32,10 @@ pub mod workspace;
 
 pub use board::{BoardGroup, board_group_for};
 pub use board_query::{AttentionState, BoardCard, BoardFilter, admits, compare_cards, sort_cards};
+pub use capability::{
+    Capability, CapabilityError, CapabilityId, CapabilityRefusal, CapabilityRole, CapabilityScope,
+    CapabilityStatus, McpOperations, ReviewerSlotId, enforce_within_surface,
+};
 pub use capacity::{
     ActiveRun, CapacityError, CapacityInputs, CapacityRefusal, GlobalCapacity, ProjectCapacity,
     evaluate_capacity,

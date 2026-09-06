@@ -7,10 +7,14 @@
 //! the way in. Approval is the last human gate before execution: the
 //! graph must be complete, granular, verifiable, and story-covered
 //! (DR-PS-17), and approving pins every Ticket in the graph to the
-//! Spec content version it was approved against (DR-DE-06). The
-//! story rules themselves — scope extraction, linked criteria, the
-//! executable gate — belong to `coverage`; this module owns the
-//! record and the approval mechanics around them.
+//! Spec content version it was approved against (DR-DE-06). A
+//! later-version graph's executable members are the Spec's active
+//! unpinned Tickets alone: attachments pinned to an earlier version
+//! and terminal ones stay visible as history, and their pins are
+//! never rewritten or inherited. The story rules themselves — scope
+//! extraction, linked criteria, the executable gate — belong to
+//! `coverage`; this module owns the record and the approval
+//! mechanics around them.
 
 use std::fmt;
 
@@ -293,11 +297,31 @@ pub enum GraphApprovalRefusal {
         ticket: TicketId,
     },
     /// A Ticket attached to the Spec sits outside the graph, so the
-    /// graph is not complete.
+    /// graph is not complete. Only the Spec's active unpinned
+    /// attachments belong to that population: a Ticket pinned to an
+    /// earlier version and a terminal one stay attached as history
+    /// and never count against a later graph's completeness.
     Incomplete {
-        /// Every attached Ticket the graph left out, in attachment
-        /// order.
+        /// Every eligible attached Ticket the graph left out, in
+        /// attachment order.
         tickets: Vec<TicketId>,
+    },
+    /// The graph named a terminal Ticket as a member: a cancelled or
+    /// superseded attachment stays visible as history and never
+    /// executes again (DR-LC-02), so it is not an executable member
+    /// of a new graph.
+    TerminalMember {
+        /// The named Ticket that is cancelled or superseded.
+        ticket: TicketId,
+    },
+    /// The graph named a Ticket an earlier approved graph already
+    /// pinned: a pin is never rewritten or inherited (DR-DE-06), so
+    /// the Ticket is not an executable member of a new graph.
+    AlreadyPinnedMember {
+        /// The named Ticket that carries an earlier graph's pin.
+        ticket: TicketId,
+        /// The Spec content version that earlier graph pinned it to.
+        version: u64,
     },
     /// An Implementation Ticket in the graph claims no User Story of
     /// the Spec version, so the graph is not granular: a slice
@@ -361,6 +385,16 @@ impl fmt::Display for GraphApprovalRefusal {
                     named.join(", ")
                 )
             }
+            Self::TerminalMember { ticket } => write!(
+                f,
+                "the Ticket graph names Ticket {ticket}, which is cancelled or superseded; \
+                 a terminal Ticket stays history, never an executable member of a new graph"
+            ),
+            Self::AlreadyPinnedMember { ticket, version } => write!(
+                f,
+                "the Ticket graph names Ticket {ticket}, already pinned to Spec version {version}; \
+                 a pin is never rewritten or inherited"
+            ),
             Self::NotGranular { ticket } => write!(
                 f,
                 "the Ticket graph is not granular; Ticket {ticket} claims no User Story of the \
@@ -393,8 +427,11 @@ impl std::error::Error for GraphApprovalRefusal {}
 /// only when it is complete, granular, verifiable, and story-covered.
 ///
 /// - Complete: the graph names at least one Ticket, every Ticket it
-///   names is attached to the Spec it proposes for, and every Ticket
-///   attached to that Spec is in the graph.
+///   names is an executable member of a new graph for the Spec it
+///   proposes for, and every active unpinned Ticket attached to that
+///   Spec is in the graph. A Ticket pinned to an earlier version and
+///   a terminal one stay attached as history (DR-DE-06, DR-LC-02):
+///   visible, never executable members of the new graph.
 /// - Granular: every Implementation Ticket in the graph claims at
 ///   least one User Story of the Spec version's scope — a small
 ///   vertical slice delivers a claimed behaviour (DR-TK-04).
@@ -425,8 +462,12 @@ pub fn enforce_approvable(
                 .ok_or(GraphApprovalRefusal::Detached { ticket: *ticket })
         })
         .collect::<Result<_, _>>()?;
+    for ticket in &held {
+        enforce_executable_member(ticket)?;
+    }
     let outside: Vec<TicketId> = attached
         .iter()
+        .filter(|ticket| eligible_member(ticket))
         .map(|ticket| ticket.id())
         .filter(|ticket| !named.contains(ticket))
         .collect();
@@ -492,6 +533,36 @@ pub fn enforce_assignable(
         }
     }
     Ok(())
+}
+
+/// Refuse a Ticket that cannot be an executable member of a new
+/// Ticket graph: a terminal Ticket — cancelled or superseded — stays
+/// visible as history and never executes again (DR-LC-02), and a
+/// Ticket an earlier approved graph pinned keeps that pin, because a
+/// pin is never rewritten or inherited (DR-DE-06). Later-version
+/// graphs and every change a reassignment delivers run on the active
+/// unpinned Tickets alone; recording names the same refusal the gate
+/// does, so an ineligible member never reaches the human gate.
+pub fn enforce_executable_member(ticket: &Ticket) -> Result<(), GraphApprovalRefusal> {
+    if ticket.state().is_terminal() {
+        return Err(GraphApprovalRefusal::TerminalMember {
+            ticket: ticket.id(),
+        });
+    }
+    if let Some(version) = ticket.pinned_version() {
+        return Err(GraphApprovalRefusal::AlreadyPinnedMember {
+            ticket: ticket.id(),
+            version,
+        });
+    }
+    Ok(())
+}
+
+/// Whether one attached Ticket belongs to the population a new graph
+/// completes over: active — not cancelled or superseded — and
+/// unpinned.
+fn eligible_member(ticket: &Ticket) -> bool {
+    !ticket.state().is_terminal() && ticket.pinned_version().is_none()
 }
 
 /// Every criterion the graph's Tickets claim, in graph order — the
@@ -579,6 +650,36 @@ mod graph_rules {
             None,
             None,
             1,
+        )
+    }
+
+    /// One attached Ticket as a later graph reads it: carrying
+    /// `criteria`, in the state a test chooses, pinned to the Spec
+    /// version a test chooses, at version two — the one change the
+    /// state or the pin left on the row.
+    fn stored(
+        id: u64,
+        state: TicketState,
+        pin: Option<u64>,
+        criteria: Vec<AcceptanceCriterion>,
+    ) -> Ticket {
+        Ticket::restore(
+            ticket(id),
+            ProjectId::new(1),
+            TicketNumber::new(id).expect("the fixture number is positive"),
+            Priority::Normal,
+            state,
+            TicketBody::implementation(
+                Some(SpecId::new(1)),
+                spec(1),
+                "Registration creates Projects end to end",
+                criteria,
+            )
+            .expect("the fixture body validates"),
+            None,
+            None,
+            pin,
+            2,
         )
     }
 
@@ -886,6 +987,143 @@ mod graph_rules {
                 .unwrap_err()
                 .to_string(),
             "the Ticket graph is not complete; Tickets 2 sit outside it"
+        );
+    }
+
+    #[test]
+    fn the_gate_names_a_terminal_member() {
+        for state in [TicketState::Cancelled, TicketState::Superseded] {
+            let attached = [
+                implementation(
+                    1,
+                    1,
+                    vec![
+                        criterion(1, 1, "Graphs record completely."),
+                        criterion(1, 2, "Slices stay granular."),
+                        criterion(1, 3, "Stories stay covered."),
+                    ],
+                ),
+                stored(
+                    2,
+                    state,
+                    None,
+                    vec![criterion(1, 2, "Slices stay granular.")],
+                ),
+            ];
+            let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
+
+            let refusal = enforce_approvable(&proposal, &scope(), &attached).unwrap_err();
+
+            assert_eq!(
+                refusal,
+                GraphApprovalRefusal::TerminalMember { ticket: ticket(2) },
+                "a cancelled or superseded Ticket stays history, never an executable member"
+            );
+            assert_eq!(
+                refusal.to_string(),
+                "the Ticket graph names Ticket 2, which is cancelled or superseded; \
+                 a terminal Ticket stays history, never an executable member of a new graph"
+            );
+        }
+    }
+
+    #[test]
+    fn the_gate_names_a_member_already_pinned_to_an_earlier_version() {
+        let attached = [
+            implementation(1, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            stored(
+                2,
+                TicketState::Draft,
+                Some(1),
+                vec![criterion(1, 2, "Slices stay granular.")],
+            ),
+        ];
+        let proposal = proposal(vec![ticket(1), ticket(2)], Vec::new());
+
+        let refusal = enforce_approvable(&proposal, &scope(), &attached).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            GraphApprovalRefusal::AlreadyPinnedMember {
+                ticket: ticket(2),
+                version: 1,
+            },
+            "a Ticket pinned by an earlier graph never rides that pin into a later one"
+        );
+        assert_eq!(
+            refusal.to_string(),
+            "the Ticket graph names Ticket 2, already pinned to Spec version 1; \
+             a pin is never rewritten or inherited"
+        );
+    }
+
+    #[test]
+    fn history_attachments_never_block_a_later_graph() {
+        // A later version's graph: the one eligible Ticket alone is
+        // the complete graph, while the pinned and cancelled
+        // attachments stay outside it as history.
+        let attached = [
+            implementation(
+                1,
+                1,
+                vec![
+                    criterion(1, 1, "Graphs record completely."),
+                    criterion(1, 2, "Slices stay granular."),
+                    criterion(1, 3, "Stories stay covered."),
+                ],
+            ),
+            stored(
+                2,
+                TicketState::Draft,
+                Some(1),
+                vec![criterion(1, 2, "Slices stay granular.")],
+            ),
+            stored(
+                3,
+                TicketState::Cancelled,
+                None,
+                vec![criterion(1, 3, "Stories stay covered.")],
+            ),
+        ];
+        let proposal = proposal(vec![ticket(1)], Vec::new());
+
+        enforce_approvable(&proposal, &scope(), &attached)
+            .expect("a later graph completes over its active unpinned members alone");
+    }
+
+    #[test]
+    fn the_gate_still_refuses_an_eligible_attachment_left_outside() {
+        let attached = [
+            implementation(1, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            implementation(
+                2,
+                1,
+                vec![
+                    criterion(1, 2, "Slices stay granular."),
+                    criterion(1, 3, "Stories stay covered."),
+                ],
+            ),
+            stored(
+                3,
+                TicketState::Draft,
+                Some(1),
+                vec![criterion(1, 2, "Slices stay granular.")],
+            ),
+            stored(
+                4,
+                TicketState::Superseded,
+                None,
+                vec![criterion(1, 3, "Stories stay covered.")],
+            ),
+        ];
+        let proposal = proposal(vec![ticket(1)], Vec::new());
+
+        assert_eq!(
+            enforce_approvable(&proposal, &scope(), &attached).unwrap_err(),
+            GraphApprovalRefusal::Incomplete {
+                tickets: vec![ticket(2)]
+            },
+            "ineligible history drops no eligible member from completeness"
         );
     }
 

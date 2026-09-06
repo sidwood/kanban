@@ -22,6 +22,7 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod ruling;
+pub mod run;
 pub mod schema;
 pub mod spec;
 pub mod ticket;
@@ -99,6 +100,10 @@ pub use project::{
 };
 pub use ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
+};
+pub use run::{
+    ProfileSnapshotRecord, RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord,
+    RunStatus,
 };
 pub use schema::schema_definitions;
 pub use spec::{
@@ -393,6 +398,12 @@ mod tests {
                 "CloneRemoveRequest",
                 "CloneCreatedRecord",
                 "CloneRemovedRecord",
+                "ProfileSnapshotRecord",
+                "RunStatus",
+                "RunRecord",
+                "RunAcknowledgeRequest",
+                "RunListQuery",
+                "RunListResponse",
             ]
         );
     }

@@ -72,6 +72,10 @@ use crate::project::{
 use crate::ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
+use crate::run::{
+    ProfileSnapshotRecord, RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord,
+    RunStatus,
+};
 use crate::spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -507,5 +511,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("CloneRemoveRequest", schema_for!(CloneRemoveRequest)),
         ("CloneCreatedRecord", schema_for!(CloneCreatedRecord)),
         ("CloneRemovedRecord", schema_for!(CloneRemovedRecord)),
+        ("ProfileSnapshotRecord", schema_for!(ProfileSnapshotRecord)),
+        ("RunStatus", schema_for!(RunStatus)),
+        ("RunRecord", schema_for!(RunRecord)),
+        ("RunAcknowledgeRequest", schema_for!(RunAcknowledgeRequest)),
+        ("RunListQuery", schema_for!(RunListQuery)),
+        ("RunListResponse", schema_for!(RunListResponse)),
     ]
 }

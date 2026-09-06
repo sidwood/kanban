@@ -14,6 +14,7 @@ use crate::lane::LaneRecord;
 use crate::plan::PlanRecord;
 use crate::profile::ProfileRecord;
 use crate::project::ProjectRecord;
+use crate::run::RunRecord;
 use crate::spec::SpecRecord;
 use crate::ticket::TicketRecord;
 use crate::workspace::WorkspaceRecord;
@@ -267,6 +268,10 @@ define_live_event_catalogue! {
         payload: "DispatchRequestRecord",
         description: "A Dispatch Request was claimed by exactly one claimant.",
     },
+    RunAcknowledged @ "run.acknowledged" => {
+        payload: "RunRecord",
+        description: "A run was acknowledged from a claimed Dispatch Request with its requested and effective profile snapshots.",
+    },
 }
 
 /// The identity carried on ruling live events.
@@ -466,6 +471,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: DispatchRequestRecord,
     },
+    RunAcknowledged {
+        sequence: u64,
+        payload: RunRecord,
+    },
 }
 
 impl LiveEvent {
@@ -515,6 +524,7 @@ impl LiveEvent {
             Self::CloneRemoved { .. } => LiveEventName::CloneRemoved,
             Self::DispatchRequested { .. } => LiveEventName::DispatchRequested,
             Self::DispatchClaimed { .. } => LiveEventName::DispatchClaimed,
+            Self::RunAcknowledged { .. } => LiveEventName::RunAcknowledged,
         }
     }
 
@@ -563,7 +573,8 @@ impl LiveEvent {
             | Self::CloneCreated { sequence, .. }
             | Self::CloneRemoved { sequence, .. }
             | Self::DispatchRequested { sequence, .. }
-            | Self::DispatchClaimed { sequence, .. } => *sequence,
+            | Self::DispatchClaimed { sequence, .. }
+            | Self::RunAcknowledged { sequence, .. } => *sequence,
         }
     }
 }
@@ -785,6 +796,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::DispatchClaimed => LiveEvent::DispatchClaimed {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::RunAcknowledged => LiveEvent::RunAcknowledged {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -1159,6 +1174,50 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn catalogued_run_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 11,
+            event_type: "run.acknowledged".to_owned(),
+            payload: json!({
+                "id": 3,
+                "project_id": 1,
+                "ticket_id": 9,
+                "dispatch_request_id": 4,
+                "status": "executing",
+                "requested": {
+                    "name": "nightly",
+                    "harness": "claude-code",
+                    "model": "opus",
+                    "effort": "high",
+                    "usage_pool": "operator",
+                },
+                "effective": {
+                    "name": "standard",
+                    "harness": "claude-code",
+                    "model": "sonnet",
+                    "effort": "high",
+                    "usage_pool": "operator",
+                },
+                "fallback": true,
+                "fallback_path": ["nightly", "standard"],
+                "created_at": 20,
+                "version": 1,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        let LiveEvent::RunAcknowledged { sequence, payload } = event else {
+            panic!("the run event decodes to its variant, got {event:?}");
+        };
+        assert_eq!(sequence, 11);
+        assert_eq!(payload.id, 3);
+        assert_eq!(payload.requested.name, "nightly");
+        assert_eq!(payload.effective.name, "standard");
+        assert!(payload.fallback);
+        assert_eq!(payload.fallback_path, vec!["nightly", "standard"]);
     }
 
     #[test]

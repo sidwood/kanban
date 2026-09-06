@@ -98,7 +98,10 @@ impl ScriptedSession {
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let index = accept_connections.fetch_add(1, Ordering::Relaxed);
-                    let script = if index == 0 {
+                    let script = if let Some(per_connection) = script.connection_scripts.get(index)
+                    {
+                        Arc::new(per_connection.clone())
+                    } else if index == 0 {
                         script.clone()
                     } else {
                         script
@@ -180,6 +183,7 @@ pub struct SessionScript {
     flap: bool,
     silent: bool,
     reconnect_script: Option<Arc<SessionScript>>,
+    connection_scripts: Vec<SessionScript>,
 }
 
 impl SessionScript {
@@ -287,6 +291,17 @@ impl SessionScript {
     /// the test wants.
     pub fn with_silent_handshake(mut self) -> Self {
         self.silent = true;
+        self
+    }
+
+    /// The scripts successive connections serve, one connection each,
+    /// with the final script repeating once the list runs out. A test
+    /// can give every connection its own behaviour — this one refuses,
+    /// that one settles and drops — instead of one behaviour split
+    /// across them all. When set, the list overrides the base and
+    /// reconnect scripts.
+    pub fn with_connection_scripts(mut self, scripts: Vec<SessionScript>) -> Self {
+        self.connection_scripts = scripts;
         self
     }
 }

@@ -205,6 +205,62 @@ fn a_hold_before_close_ends_every_connection() {
     );
 }
 
+/// Every connection can carry its own script, the final one
+/// repeating: a test gives one connection a refusal, the next a held
+/// subscription that closes, so an observer loop is scripted cycle by
+/// cycle instead of one behaviour split across every connection
+/// (KAN-T130-AC1).
+#[test]
+fn connection_scripts_serve_each_connection_in_order() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let _fixture = ScriptedSession::bind(
+        dir.path(),
+        "kanban-main",
+        "/workspaces/kanban.seed",
+        SessionScript::default().with_connection_scripts(vec![
+            SessionScript::default().with_subscribe_error("first connection is sealed"),
+            SessionScript::default().close_after_hold_every(Duration::from_millis(100)),
+        ]),
+    );
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
+
+    // The refusal script keeps its connection open for further
+    // requests, so the client must close it before the fixture's
+    // sequential accept loop can serve the next script.
+    {
+        let mut first = SessionClient::connect(mapping.clone(), dir.path())
+            .expect("the first connection opens");
+        assert_eq!(
+            first.subscribe().err(),
+            Some(HerdrError::Remote {
+                message: "first connection is sealed".to_owned()
+            }),
+            "the first connection serves the first script"
+        );
+    }
+
+    let mut second =
+        SessionClient::connect(mapping.clone(), dir.path()).expect("the second connection opens");
+    second
+        .subscribe()
+        .expect("the second connection serves the second script");
+    assert_eq!(
+        second.read_event_within(Duration::from_secs(2)).err(),
+        Some(HerdrError::Disconnected),
+        "the second script's hold closes its own connection"
+    );
+
+    let mut third =
+        SessionClient::connect(mapping, dir.path()).expect("the third connection opens");
+    third
+        .subscribe()
+        .expect("the final script repeats for every later connection");
+}
+
 /// A stream that drops inside a bounded read must surface the drop:
 /// restoring the request deadline afterwards touches a socket the
 /// drop already killed, and that control failure must not stand in

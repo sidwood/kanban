@@ -173,6 +173,18 @@ impl Priority {
             .copied()
             .find(|priority| priority.wire_name() == stored)
     }
+
+    /// Rank for deterministic Dispatch Request queue order: urgent
+    /// first, then high, normal, and low. Lower ranks precede higher
+    /// ones.
+    pub fn queue_rank(self) -> u8 {
+        match self {
+            Self::Urgent => 0,
+            Self::High => 1,
+            Self::Normal => 2,
+            Self::Low => 3,
+        }
+    }
 }
 
 /// The closed Bug severity vocabulary (DR-LC-13): critical, high,

@@ -7,6 +7,7 @@ pub mod comment;
 pub mod coverage;
 pub mod deferral;
 pub mod dependency;
+pub mod dispatch;
 pub mod evidence;
 pub mod graph_proposal;
 pub mod herdr;
@@ -44,6 +45,10 @@ pub use dependency::{
     BlockerDescription, DependencyError, DependencyState, ExternalBlocker, ExternalBlockerId,
     Readiness, ReadinessBlocker, ReadinessInputs, TicketDependency, TicketDependencyGraph,
     compute_readiness, dependency_satisfied,
+};
+pub use dispatch::{
+    ClaimDecision, DispatchError, DispatchRequest, DispatchRequestId, DispatchStatus,
+    compare_queue, decide_claim, refuse_duplicate_open, sort_queue,
 };
 pub use evidence::{
     CommitIdentity, ContentHash, EvidenceError, EvidenceId, EvidenceItem, EvidenceKind,

@@ -10,6 +10,7 @@ pub mod git_observer;
 pub mod herdr;
 pub mod logs;
 pub mod redaction;
+mod schedule_scheduler;
 pub mod timeline;
 
 #[cfg(test)]
@@ -20,7 +21,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use kanban_app::{Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler};
+use kanban_app::{
+    ActivationPass, Core, EventSink, GitObservation, ProjectStore, TimelineQueryHandler,
+};
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
@@ -41,6 +44,7 @@ use diagnostics::DiagnosticsExportHandler;
 use fleet_clone::LocalFleetCloneTool;
 use git_observer::LocalWorkspaceGitObserver;
 use logs::{LogLevel, LogRecord, LogWriter};
+use schedule_scheduler::ActivationScheduler;
 
 /// How many replay outcomes the core keeps. A retry follows its
 /// original within seconds and the Operator drives one window, so a
@@ -75,6 +79,7 @@ pub struct CoreProcess {
     herdr: Arc<HerdrObserver>,
     logs: Arc<LogWriter>,
     _backup_scheduler: BackupScheduler,
+    _activation_scheduler: ActivationScheduler,
 }
 
 impl CoreProcess {
@@ -98,6 +103,7 @@ impl CoreProcess {
             herdr,
             logs,
             _backup_scheduler,
+            _activation_scheduler,
         } = self;
         server.shutdown();
         herdr.shutdown();
@@ -128,7 +134,7 @@ fn assemble_core(
     events: Arc<dyn EventSink>,
     herdr_socket_root: PathBuf,
     observation: ObservationTuning,
-) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>), ServiceError> {
+) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
@@ -199,6 +205,13 @@ fn assemble_core(
         ticket_store.clone(),
         projects.clone(),
     )?;
+    // The scheduler's pass shares the serving core's stores, so one
+    // activation lands through the same rules every command does.
+    let activation_pass = ActivationPass::new(
+        ticket_store.clone(),
+        dependency_store.clone(),
+        schedule_store.clone(),
+    );
     core.register_lifecycle(
         ticket_store.clone(),
         dependency_store.clone(),
@@ -253,7 +266,7 @@ fn assemble_core(
     herdr.observe_projects(&projects);
     let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
-    Ok((database, core, herdr))
+    Ok((database, core, herdr, activation_pass))
 }
 
 /// Open (creating if needed) the database inside `data_dir`, bring
@@ -263,10 +276,10 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
-    let (database, core, herdr) = assemble_core(
+    let (database, core, herdr, activation_pass) = assemble_core(
         data_dir,
         database,
-        broker,
+        broker.clone(),
         production_socket_root(),
         ObservationTuning::PRODUCTION,
     )?;
@@ -274,6 +287,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
     let backup_scheduler =
         BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
+    let activation_scheduler = ActivationScheduler::spawn(activation_pass, broker, logs.clone());
     let server = server.serve(Arc::new(core))?;
     let socket_path = server.socket_path().to_path_buf();
     // The startup record names the live socket, which is the fact a
@@ -289,6 +303,7 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         herdr,
         logs,
         _backup_scheduler: backup_scheduler,
+        _activation_scheduler: activation_scheduler,
     })
 }
 
@@ -302,10 +317,10 @@ pub(crate) fn serve_with_herdr_sessions(
     let broker = server.broker();
     // Observation tuned fast, so core-level tests settle and redial
     // within their own budgets.
-    let (database, core, herdr) = assemble_core(
+    let (database, core, herdr, activation_pass) = assemble_core(
         data_dir,
         database,
-        broker,
+        broker.clone(),
         herdr_socket_root,
         ObservationTuning {
             backoff: herdr::BackoffPolicy::new(
@@ -320,6 +335,7 @@ pub(crate) fn serve_with_herdr_sessions(
         Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
     let backup_scheduler =
         BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
+    let activation_scheduler = ActivationScheduler::spawn(activation_pass, broker, logs.clone());
     let server = server.serve(Arc::new(core))?;
     Ok(CoreProcess {
         database,
@@ -327,6 +343,7 @@ pub(crate) fn serve_with_herdr_sessions(
         herdr,
         logs,
         _backup_scheduler: backup_scheduler,
+        _activation_scheduler: activation_scheduler,
     })
 }
 
@@ -465,7 +482,7 @@ mod tests {
     fn registered_catalogue_matches_the_exposed_catalogue() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let database = prepare_database(dir.path()).expect("the production database prepares");
-        let (_, core, _) = assemble_core(
+        let (_, core, _, _) = assemble_core(
             dir.path(),
             database,
             Arc::new(NoopEventSink),

@@ -189,6 +189,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "capacity",
         sql: include_str!("../migrations/0027_capacity.sql"),
     },
+    Migration {
+        version: 28,
+        name: "tickets pinned version",
+        sql: include_str!("../migrations/0028_tickets_pinned_version.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -538,7 +543,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 27, "one event per applied migration");
+        assert_eq!(events.len(), 28, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -674,6 +679,11 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&events[26].2).expect("the detail is JSON"),
             serde_json::json!({ "version": 27, "name": "capacity" })
         );
+        assert_eq!(events[27].1, "migration.applied");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&events[27].2).expect("the detail is JSON"),
+            serde_json::json!({ "version": 28, "name": "tickets pinned version" })
+        );
     }
 
     #[test]
@@ -692,12 +702,12 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0026 applies");
+            .expect("migrations 0026 through 0028 apply");
 
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![26, 27]
+                applied: vec![26, 27, 28]
             }
         );
         let conn = database.connection();
@@ -779,9 +789,9 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migration 0027 applies");
+            .expect("migrations 0027 and 0028 apply");
 
-        assert_eq!(report, MigrationReport { applied: vec![27] });
+        assert_eq!(report, MigrationReport { applied: vec![27, 28] });
         let conn = database.connection();
         let seeded: (i64, i64, i64, i64) = conn
             .query_row(
@@ -1488,6 +1498,10 @@ mod tests {
                     version: 27,
                     name: "capacity",
                 },
+                PendingMigration {
+                    version: 28,
+                    name: "tickets pinned version",
+                },
             ]]
         );
     }
@@ -1528,12 +1542,13 @@ mod tests {
 
         let report = database
             .migrate(&AllowAllMigrations)
-            .expect("migrations 0010 through 0027 apply");
+            .expect("migrations 0010 through 0028 apply");
 
         assert_eq!(
             report.applied,
             vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
+                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+                28
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database

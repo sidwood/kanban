@@ -719,6 +719,7 @@ pub(crate) mod testing {
                 waiting.state(),
                 waiting.body().clone(),
                 waiting.profile().cloned(),
+                waiting.pinned_version(),
                 waiting.version() + 1,
             );
             state.tickets = state
@@ -755,6 +756,7 @@ pub(crate) mod testing {
                 waiting.state(),
                 waiting.body().clone(),
                 waiting.profile().cloned(),
+                waiting.pinned_version(),
                 waiting.version() + 1,
             );
             state.tickets = state
@@ -797,6 +799,7 @@ pub(crate) mod testing {
                 waiting.state(),
                 waiting.body().clone(),
                 waiting.profile().cloned(),
+                waiting.pinned_version(),
                 waiting.version() + 1,
             );
             state.tickets = state
@@ -833,6 +836,7 @@ pub(crate) mod testing {
                 waiting.state(),
                 waiting.body().clone(),
                 waiting.profile().cloned(),
+                waiting.pinned_version(),
                 waiting.version() + 1,
             );
             state.tickets = state
@@ -898,6 +902,7 @@ pub(crate) mod testing {
                 "The landing log names the drop immediately after the merge.",
             )
             .expect("the fixture body validates"),
+            None,
             None,
             1,
         )
@@ -1124,6 +1129,7 @@ mod cross_project_deps {
             )
             .expect("the fixture body validates"),
             None,
+            None,
             4,
         );
         harness.rows.replace(landed.clone());
@@ -1140,6 +1146,7 @@ mod cross_project_deps {
                 "The landing log names the drop immediately after the merge.",
             )
             .expect("the fixture body validates"),
+            None,
             None,
             2,
         );

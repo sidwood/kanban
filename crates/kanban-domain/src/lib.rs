@@ -8,6 +8,7 @@ pub mod coverage;
 pub mod deferral;
 pub mod dependency;
 pub mod evidence;
+pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
 pub mod lane;
@@ -46,6 +47,10 @@ pub use dependency::{
 pub use evidence::{
     CommitIdentity, ContentHash, EvidenceError, EvidenceId, EvidenceItem, EvidenceKind,
     EvidenceShape, RelativePath,
+};
+pub use graph_proposal::{
+    GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState,
+    TicketGraphProposal, enforce_approvable,
 };
 pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{

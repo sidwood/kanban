@@ -515,6 +515,15 @@ pub enum TicketError {
         /// The raw value that named no instant.
         value: String,
     },
+    /// A Ticket pins once: to the Spec content version its approved
+    /// graph named (DR-DE-06).
+    AlreadyPinned,
+    /// A pinned Ticket stays with the Spec and version it was
+    /// approved against (DR-DE-06); it moves between Specs no more.
+    Pinned,
+    /// Only a draft Ticket moves between Specs (DR-DE-05); execution
+    /// past draft pins the Ticket where it stands.
+    MoveRequiresDraft,
     /// A terminal Ticket — cancelled or superseded — accepts no
     /// further changes.
     Terminal,
@@ -578,6 +587,19 @@ impl fmt::Display for TicketError {
             Self::Unbounded => write!(f, "a Task Ticket carries completion criteria"),
             Self::MalformedTiming { field, value } => {
                 write!(f, "a Task {field} must be an RFC 3339 instant: `{value}`")
+            }
+            Self::AlreadyPinned => {
+                write!(
+                    f,
+                    "a Ticket pins once, to the version its approved graph named"
+                )
+            }
+            Self::Pinned => write!(
+                f,
+                "a pinned Ticket stays with the Spec version it was approved against"
+            ),
+            Self::MoveRequiresDraft => {
+                write!(f, "only a draft Ticket moves between Specs")
             }
             Self::Terminal => write!(f, "a terminal Ticket accepts no further changes"),
             Self::NotTitled => write!(f, "only a Bug or Task Ticket carries a title"),
@@ -1216,8 +1238,9 @@ impl TicketBody {
 
 /// One Ticket aggregate: the Project it belongs to, the number that
 /// Project minted for it, its priority, its lifecycle state, the
-/// kind-specific body, and the Execution Profile its assignment names
-/// by reference (DR-EP-03). The version counts applied changes:
+/// kind-specific body, the Execution Profile its assignment names by
+/// reference (DR-EP-03), and the Spec content version an approved
+/// graph pinned it to (DR-DE-06). The version counts applied changes:
 /// creation lands at 1 and every later legal change bumps it, so a
 /// stored version is all a caller needs for optimistic checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1229,14 +1252,15 @@ pub struct Ticket {
     state: TicketState,
     body: TicketBody,
     profile: Option<ProfileName>,
+    pin: Option<u64>,
     version: u64,
 }
 
 impl Ticket {
     /// A fresh Ticket: created into draft, at version 1, carrying its
-    /// kind's schema and no assignment. The body's own constructors
-    /// hold the kind-specific rules; a body rehydrated from storage
-    /// passes through unchanged.
+    /// kind's schema, no assignment, and no pin. The body's own
+    /// constructors hold the kind-specific rules; a body rehydrated
+    /// from storage passes through unchanged.
     pub fn new(
         id: TicketId,
         project: ProjectId,
@@ -1252,6 +1276,7 @@ impl Ticket {
             state: TicketState::Draft,
             body,
             profile: None,
+            pin: None,
             version: 1,
         }
     }
@@ -1266,6 +1291,7 @@ impl Ticket {
         state: TicketState,
         body: TicketBody,
         profile: Option<ProfileName>,
+        pin: Option<u64>,
         version: u64,
     ) -> Self {
         Self {
@@ -1276,6 +1302,7 @@ impl Ticket {
             state,
             body,
             profile,
+            pin,
             version,
         }
     }
@@ -1438,6 +1465,67 @@ impl Ticket {
             return Err(TicketError::Terminal);
         }
         self.profile = Some(name);
+        self.version += 1;
+        Ok(())
+    }
+
+    /// The Spec content version an approved Ticket graph pinned this
+    /// Ticket to, if one did (DR-DE-06).
+    pub fn pinned_version(&self) -> Option<u64> {
+        self.pin
+    }
+
+    /// Pin this Ticket to the Spec content version `version` its
+    /// approved graph named (DR-DE-06). A Ticket pins once — a second
+    /// graph approval names no Ticket of an already-pinned graph —
+    /// and a terminal Ticket accepts no further changes. The applied
+    /// change bumps the version.
+    pub fn pin_to(&mut self, version: u64) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        if self.pin.is_some() {
+            return Err(TicketError::AlreadyPinned);
+        }
+        self.pin = Some(version);
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Move this Ticket's Spec attachment to `spec`, the Spec whose
+    /// minted number is `number` (DR-DE-05). Only a draft, unpinned
+    /// Ticket moves: a pinned Ticket stays with the version it was
+    /// approved against, and execution past draft pins the Ticket
+    /// where it stands. An Implementation keeps claiming the stories
+    /// of the Spec it delivers, so a move is refused while any
+    /// criterion names the story of another Spec. A refusal changes
+    /// nothing.
+    pub fn move_to_spec(&mut self, spec: SpecId, number: SpecNumber) -> Result<(), TicketError> {
+        if self.state.is_terminal() {
+            return Err(TicketError::Terminal);
+        }
+        if self.pin.is_some() {
+            return Err(TicketError::Pinned);
+        }
+        if self.state != TicketState::Draft {
+            return Err(TicketError::MoveRequiresDraft);
+        }
+        match &mut self.body {
+            TicketBody::Implementation(implementation) => {
+                if let Some(foreign) = implementation
+                    .criteria
+                    .iter()
+                    .flat_map(|criterion| criterion.stories())
+                    .copied()
+                    .find(|story| story.spec() != number)
+                {
+                    return Err(TicketError::ForeignStory { story: foreign });
+                }
+                implementation.spec = spec;
+            }
+            TicketBody::Bug(bug) => bug.spec = Some(spec),
+            TicketBody::Task(task) => task.spec = Some(spec),
+        }
         self.version += 1;
         Ok(())
     }
@@ -1800,6 +1888,7 @@ mod ticket_kinds {
             )
             .expect("the fixture body validates"),
             Some(crate::profile::ProfileName::new("standard").expect("the name validates")),
+            None,
             7,
         );
 
@@ -1996,6 +2085,203 @@ mod ticket_kinds {
             slice.redescribe("\t"),
             Err(TicketError::Blank("slice description"))
         );
+    }
+}
+
+#[cfg(test)]
+mod ticket_pinning {
+    use super::{Priority, Ticket, TicketBody, TicketError, TicketId, TicketState};
+    use crate::coverage::{AcceptanceCriterion, UserStoryRef};
+    use crate::plan::SpecNumber;
+    use crate::project::ProjectId;
+    use crate::spec::SpecId;
+
+    fn number(value: u64) -> super::TicketNumber {
+        super::TicketNumber::new(value).expect("the fixture number is positive")
+    }
+
+    fn spec(value: u64) -> SpecNumber {
+        SpecNumber::new(value).expect("the fixture number is positive")
+    }
+
+    fn story(spec_number: u64, ordinal: u64) -> UserStoryRef {
+        UserStoryRef::new(spec(spec_number), ordinal).expect("the fixture ordinal is positive")
+    }
+
+    /// A quick-captured Bug attached to Spec 1, in the state a test
+    /// chooses.
+    fn bug(state: TicketState, spec: Option<SpecId>) -> Ticket {
+        let mut ticket = Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::bug(
+                "Landing drops the integration branch",
+                spec,
+                "The integration branch is dropped on landing.",
+                "The landing log shows the drop.",
+            )
+            .expect("the fixture body validates"),
+        );
+        ticket.state = state;
+        ticket
+    }
+
+    /// An Implementation delivering Spec 1's behaviour.
+    fn implementation() -> Ticket {
+        Ticket::new(
+            TicketId::new(1),
+            ProjectId::new(1),
+            number(4),
+            Priority::Normal,
+            TicketBody::implementation(
+                Some(SpecId::new(1)),
+                spec(1),
+                "Specs mint unique numbers end to end",
+                vec![
+                    AcceptanceCriterion::new("Specs mint unique numbers.", vec![story(1, 1)])
+                        .expect("the fixture criterion links"),
+                ],
+            )
+            .expect("the fixture body validates"),
+        )
+    }
+
+    #[test]
+    fn graph_approval_pins_the_ticket_to_its_spec_version() {
+        let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
+
+        ticket.pin_to(2).expect("the approval pins its Tickets");
+
+        assert_eq!(ticket.pinned_version(), Some(2));
+        assert_eq!(ticket.version(), 2, "the pin is one applied change");
+    }
+
+    #[test]
+    fn a_ticket_pins_once() {
+        let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
+        ticket.pin_to(2).expect("the first approval pins");
+
+        assert_eq!(
+            ticket.pin_to(3).unwrap_err(),
+            TicketError::AlreadyPinned,
+            "a second graph approval names no Ticket of an approved graph"
+        );
+        assert_eq!(
+            ticket.pinned_version(),
+            Some(2),
+            "the refusal changed nothing"
+        );
+        assert_eq!(ticket.version(), 2, "the refusal changed nothing");
+        assert_eq!(
+            TicketError::AlreadyPinned.to_string(),
+            "a Ticket pins once, to the version its approved graph named"
+        );
+    }
+
+    #[test]
+    fn a_terminal_ticket_accepts_no_pin() {
+        let mut ticket = bug(TicketState::Superseded, Some(SpecId::new(1)));
+
+        assert_eq!(ticket.pin_to(2), Err(TicketError::Terminal));
+        assert_eq!(ticket.pinned_version(), None, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn a_draft_ticket_moves_between_specs_before_approval() {
+        let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
+
+        ticket
+            .move_to_spec(SpecId::new(4), spec(4))
+            .expect("a draft, unpinned Ticket moves inside its Project");
+
+        assert_eq!(ticket.spec(), Some(SpecId::new(4)));
+        assert_eq!(ticket.version(), 2, "the move is one applied change");
+
+        // An unattached Bug or Task attaches on the move the same way.
+        let mut standing = bug(TicketState::Draft, None);
+        standing
+            .move_to_spec(SpecId::new(4), spec(4))
+            .expect("a standing Ticket attaches by the same move");
+        assert_eq!(standing.spec(), Some(SpecId::new(4)));
+    }
+
+    #[test]
+    fn a_pinned_ticket_stays_with_its_spec_and_version() {
+        let mut ticket = bug(TicketState::Draft, Some(SpecId::new(1)));
+        ticket.pin_to(2).expect("the approval pins");
+
+        assert_eq!(
+            ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err(),
+            TicketError::Pinned,
+            "approved Tickets stay pinned (DR-DE-06)"
+        );
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+        assert_eq!(ticket.pinned_version(), Some(2));
+        assert_eq!(ticket.version(), 2, "the refusal changed nothing");
+        assert_eq!(
+            TicketError::Pinned.to_string(),
+            "a pinned Ticket stays with the Spec version it was approved against"
+        );
+    }
+
+    #[test]
+    fn an_executed_ticket_never_moves() {
+        for executed in [
+            TicketState::Parked,
+            TicketState::Blocked,
+            TicketState::Scheduled,
+            TicketState::Ready,
+            TicketState::Active,
+            TicketState::InReview,
+            TicketState::Approved,
+            TicketState::Landing,
+            TicketState::Done,
+            TicketState::Cancelled,
+            TicketState::Superseded,
+        ] {
+            let mut ticket = bug(executed, Some(SpecId::new(1)));
+
+            assert_eq!(
+                ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err(),
+                if executed.is_terminal() {
+                    TicketError::Terminal
+                } else {
+                    TicketError::MoveRequiresDraft
+                },
+                "`{}` is past the draft move (DR-DE-05)",
+                executed.wire_name()
+            );
+            assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+            assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+        }
+        assert_eq!(
+            TicketError::MoveRequiresDraft.to_string(),
+            "only a draft Ticket moves between Specs"
+        );
+    }
+
+    #[test]
+    fn an_implementation_keeps_claiming_the_spec_it_delivers() {
+        let mut ticket = implementation();
+
+        let refused = ticket.move_to_spec(SpecId::new(4), spec(4)).unwrap_err();
+
+        assert_eq!(
+            refused,
+            TicketError::ForeignStory { story: story(1, 1) },
+            "the slice's criteria claim Spec 1's stories, not Spec 4's (DR-TK-04)"
+        );
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
+        assert_eq!(ticket.version(), 1, "the refusal changed nothing");
+
+        // Naming the Spec the claims already deliver is the one
+        // implementation move that holds its claims true.
+        ticket
+            .move_to_spec(SpecId::new(1), spec(1))
+            .expect("the claims still name the destination's stories");
+        assert_eq!(ticket.spec(), Some(SpecId::new(1)));
     }
 }
 
@@ -2760,6 +3046,7 @@ mod task_rules {
                 TaskTiming::new(Some("2026-10-01T00:00:00Z".to_owned()), None)
                     .expect("the fixture timing validates"),
             )),
+            None,
             None,
             4,
         );

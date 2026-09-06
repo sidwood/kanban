@@ -192,6 +192,7 @@ fn moved(waiting: &Ticket) -> Ticket {
         waiting.state(),
         waiting.body().clone(),
         waiting.profile().cloned(),
+        waiting.pinned_version(),
         waiting.version() + 1,
     )
 }
@@ -379,6 +380,7 @@ mod tests {
             ticket.state(),
             ticket.body().clone(),
             ticket.profile().cloned(),
+            ticket.pinned_version(),
             ticket.version() + 1,
         )
     }

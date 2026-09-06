@@ -33,7 +33,7 @@ use crate::timeline::insert_event;
 const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
                               slice, criteria, actual_behaviour, reporter_evidence, \
                               bug_qualification, bug_facts, subtype, mode, completion, \
-                              scheduled_for, due, profile, version";
+                              scheduled_for, due, profile, pinned_version, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -145,8 +145,8 @@ impl TicketStore for SqliteTicketStore {
                  SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
                      criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
                      bug_qualification = ?10, bug_facts = ?11, profile = ?12,
-                     version = ?13
-                 WHERE id = ?1 AND version = ?14",
+                     pinned_version = ?13, version = ?14
+                 WHERE id = ?1 AND version = ?15",
                 params![
                     ticket.id().value() as i64,
                     stored.priority,
@@ -160,6 +160,7 @@ impl TicketStore for SqliteTicketStore {
                     stored.bug_qualification,
                     stored.bug_facts,
                     ticket.profile().map(|name| name.as_str()),
+                    ticket.pinned_version().map(|version| version as i64),
                     ticket.version() as i64,
                     preceding_version as i64,
                 ],
@@ -228,6 +229,7 @@ struct LoadedTicket {
     scheduled_for: Option<String>,
     due: Option<String>,
     profile: Option<String>,
+    pinned_version: Option<u64>,
     version: u64,
 }
 
@@ -254,7 +256,10 @@ fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
         scheduled_for: row.get::<_, Option<String>>(17)?,
         due: row.get::<_, Option<String>>(18)?,
         profile: row.get::<_, Option<String>>(19)?,
-        version: row.get::<_, i64>(20)?.unsigned_abs(),
+        pinned_version: row
+            .get::<_, Option<i64>>(20)?
+            .map(|version| version.unsigned_abs()),
+        version: row.get::<_, i64>(21)?.unsigned_abs(),
     })
 }
 
@@ -318,6 +323,7 @@ impl LoadedTicket {
                 .map(kanban_domain::ProfileName::new)
                 .transpose()
                 .map_err(|_| corrupt())?,
+            self.pinned_version,
             self.version,
         ))
     }
@@ -1361,6 +1367,39 @@ mod tests {
                 .is_empty(),
             "another Project's Tickets stay out"
         );
+    }
+
+    #[test]
+    fn saving_lands_a_pin_with_its_timeline_append() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        let created = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &bug_body().expect("the fixture body validates"),
+        );
+
+        let mut pinned = created.clone();
+        pinned.pin_to(3).expect("the approval pins its Tickets");
+        store
+            .save(
+                &pinned,
+                transition(pinned.id(), "pinned", json!({ "version": 3 })),
+            )
+            .expect("the pin saves");
+
+        let found = store
+            .find(pinned.id())
+            .expect("the find serves")
+            .expect("the Ticket exists");
+        assert_eq!(found, pinned);
+        assert_eq!(
+            found.pinned_version(),
+            Some(3),
+            "the pin persists (DR-DE-06)"
+        );
+        assert_eq!(found.version(), 2);
     }
 
     #[test]

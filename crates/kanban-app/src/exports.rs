@@ -675,6 +675,7 @@ mod testing {
                 TicketState::Parked,
                 task,
                 None,
+                None,
                 3,
             ),
             Ticket::restore(
@@ -685,6 +686,7 @@ mod testing {
                 TicketState::Draft,
                 bug,
                 None,
+                None,
                 1,
             ),
             Ticket::restore(
@@ -694,6 +696,7 @@ mod testing {
                 Priority::Normal,
                 TicketState::Active,
                 implementation,
+                None,
                 None,
                 5,
             ),

@@ -113,8 +113,8 @@ pub use ticket::{
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
     TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
-    TicketSpecMoveRequest, TicketState,
-    TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
+    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketUnparkRequest,
+    TicketVerificationStep,
 };
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,

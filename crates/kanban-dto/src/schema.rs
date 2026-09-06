@@ -86,8 +86,8 @@ use crate::ticket::{
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
     TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
-    TicketSpecMoveRequest, TicketState,
-    TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
+    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketUnparkRequest,
+    TicketVerificationStep,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,

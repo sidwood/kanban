@@ -80,9 +80,21 @@ function boardTickets(): TicketRecord[] {
 }
 
 function harness(tickets: TicketRecord[]) {
-  const query = vi.fn((name: string) => {
+  const query = vi.fn((name: string, request: unknown) => {
     if (name === 'project.list') {
       return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
+    }
+    if (name === 'lane.list') {
+      return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
+    }
+    if (name === 'ticket.readiness') {
+      const { ticket_id } = request as { ticket_id: number }
+      return Promise.resolve({
+        blocked_by: [],
+        ready: true,
+        state: 'ready',
+        ticket_id,
+      })
     }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   })

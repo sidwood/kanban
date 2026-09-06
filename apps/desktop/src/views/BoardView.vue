@@ -4,10 +4,11 @@
 // axes, responsive layout, the Board/Register switch, the Done table
 // option, the detail drawer, and the drag interaction language —
 // speaking the Kanban domain (KAN-T24-AC1, KAN-T24-AC2). Every card
-// is a real Ticket from the generated client, and a drag is one
-// ticket.transition the core judges; a refusal — an agent-owned drag
-// above all — surfaces as the core's own explanation
-// (KAN-T24-AC3).
+// is a real Ticket from the generated client wearing the chip
+// vocabulary the application schema pins (KAN-T26-AC1 to
+// KAN-T26-AC3), and a drag is one ticket.transition the core judges;
+// a refusal — an agent-owned drag above all — surfaces as the core's
+// own explanation (KAN-T24-AC3).
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { TicketRecord, TicketState } from '@kanban/contracts'
@@ -53,6 +54,9 @@ import {
   statusSurfaceClass,
 } from './board-card'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
+import { chipSurfaceClass, chipsFor, laneFor } from './board-chips'
+import type { CardChip } from './board-chips'
+import { useLanesStore } from '../stores/lanes'
 import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
 import type { BoardChoices } from './board-layout.storage'
 import { orderCards } from './board-ordering'
@@ -85,6 +89,7 @@ const transport = inject(kanbanTransportKey)
 const route = useRoute()
 const projects = useProjectRegisterStore()
 const board = useBoardStore()
+const lanes = useLanesStore()
 
 const projectId = computed(() => Number(route.params.projectId))
 
@@ -129,7 +134,12 @@ async function load(): Promise<void> {
   if (!transport) return
   await projects.refresh(transport)
   if (project.value) {
-    await board.refresh(transport, projectId.value)
+    // The Lanes arrive beside the Tickets: the Lane chip a card wears
+    // comes from the KAN-T32 contract, never from board state.
+    await Promise.all([
+      board.refresh(transport, projectId.value),
+      lanes.load(transport, projectId.value),
+    ])
   }
 }
 
@@ -321,6 +331,20 @@ function cardChrome(ticket: TicketRecord, column: BoardColumnId): string {
     : 'border-line'
 }
 
+// The chips one card wears, resolved from the vocabulary against the
+// Ticket and the facts the board holds. Reviewer and effective-profile
+// values arrive with KAN-S9's dispatch and run data; until then the
+// planned profile the assignment names is the profile a card shows.
+function cardChips(ticket: TicketRecord): readonly CardChip[] {
+  return chipsFor(ticket, {
+    projectCode: projectCode.value,
+    lane: laneFor(lanes.lanes, ticket.id),
+    blockers: board.blockersFor(ticket.id),
+    reviewers: [],
+    execution: null,
+  })
+}
+
 // The detail drawer.
 const openTicketId = ref<number | null>(null)
 
@@ -491,10 +515,10 @@ const drawerFacts = computed(() => {
     </p>
 
     <InlineAlert
-      v-if="board.error"
+      v-if="board.error || lanes.error"
       data-testid="board-error"
     >
-      {{ board.error }}
+      {{ board.error ?? lanes.error }}
     </InlineAlert>
 
     <div
@@ -638,6 +662,20 @@ const drawerFacts = computed(() => {
                     @dragstart="onDragStart(ticket, $event)"
                     @dragend="onDragEnd"
                   >
+                    <div class="flex items-baseline justify-between gap-2">
+                      <span
+                        class="font-mono text-[0.6875rem] text-ink-subtle tabular-nums"
+                        :data-testid="`card-number-${ticket.id}`"
+                      >
+                        {{ boardCardNumber(ticket, projectCode) }}
+                      </span>
+                      <span
+                        class="text-[0.625rem] font-semibold tracking-[0.06em] text-ink-subtle uppercase"
+                        :data-testid="`card-kind-${ticket.id}`"
+                      >
+                        {{ KIND_LABELS[ticket.kind] }}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       class="self-start text-left text-sm font-medium text-ink underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -646,11 +684,35 @@ const drawerFacts = computed(() => {
                     >
                       {{ boardCardTitle(ticket) }}
                     </button>
-                    <span
-                      class="text-[0.625rem] font-semibold tracking-[0.06em] text-ink-subtle uppercase"
+                    <ul
+                      class="flex flex-wrap gap-1"
+                      :data-testid="`card-chips-${ticket.id}`"
+                      :aria-label="`Chips for ${boardCardNumber(ticket, projectCode)}`"
                     >
-                      {{ KIND_LABELS[ticket.kind] }}
-                    </span>
+                      <li
+                        v-for="chip in cardChips(ticket)"
+                        :key="chip.kind"
+                        class="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] leading-[1.3]"
+                        :class="chipSurfaceClass(chip.tone)"
+                        :data-tone="chip.tone ?? 'neutral'"
+                        :data-testid="`card-chip-${chip.kind}-${ticket.id}`"
+                        :title="chip.detail"
+                      >
+                        <span class="font-semibold tracking-[0.04em] uppercase">
+                          {{ chip.label }}
+                        </span>
+                        <span class="truncate">{{ chip.value }}</span>
+                        <!-- The fallback indicator an effective profile
+                             wears (DR-BP-13). -->
+                        <span
+                          v-if="chip.fallback"
+                          aria-label="fallback profile"
+                          :data-testid="`card-fallback-${ticket.id}`"
+                        >
+                          ↺
+                        </span>
+                      </li>
+                    </ul>
                     <StatusBadge
                       v-if="showsCardStatus(column.id)"
                       :tone="STATUS_TONES[ticket.state]"
@@ -658,12 +720,6 @@ const drawerFacts = computed(() => {
                     >
                       {{ STATUS_LABELS[ticket.state] }}
                     </StatusBadge>
-                    <span
-                      class="font-mono text-[0.6875rem] text-ink-subtle tabular-nums"
-                      :data-testid="`card-number-${ticket.id}`"
-                    >
-                      {{ boardCardNumber(ticket, projectCode) }}
-                    </span>
                   </article>
                 </li>
               </ul>

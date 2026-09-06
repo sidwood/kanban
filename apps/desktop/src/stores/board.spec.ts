@@ -1,6 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
-import type { TicketListResponse, TicketRecord } from '@kanban/contracts'
+import type {
+  TicketListResponse,
+  TicketReadinessBlocker,
+  TicketReadinessResponse,
+  TicketRecord,
+} from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
 import { useBoardStore } from './board'
 
@@ -26,6 +31,16 @@ const task = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
   ...overrides,
 })
 
+const readiness = (
+  ticket_id: number,
+  blocked_by: TicketReadinessResponse['blocked_by'] = [],
+): TicketReadinessResponse => ({
+  blocked_by,
+  ready: blocked_by.length === 0,
+  state: 'ready',
+  ticket_id,
+})
+
 // A recording transport: every operation is captured, and the query
 // and command answers are steerable from the test.
 function harness() {
@@ -46,12 +61,24 @@ function harness() {
   return { transport, operations, query, command }
 }
 
+// Answers the queries a board load spends: the Ticket list plus the
+// readiness projection of every Ticket in it.
+function serving(tickets: TicketRecord[], blockers: Record<number, TicketReadinessResponse['blocked_by']> = {}) {
+  return (name: string, request: unknown) => {
+    if (name === 'ticket.readiness') {
+      const { ticket_id } = request as { ticket_id: number }
+      return Promise.resolve(readiness(ticket_id, blockers[ticket_id] ?? []))
+    }
+    return Promise.resolve({ tickets } satisfies TicketListResponse)
+  }
+}
+
 describe('board store', () => {
   it('loads the Project\'s Tickets through the generated client', async () => {
     setActivePinia(createPinia())
     const { transport, query } = harness()
     const tickets = [task(), task({ id: 8, state: 'cancelled' })]
-    query.mockResolvedValue({ tickets } satisfies TicketListResponse)
+    query.mockImplementation(serving(tickets))
     const board = useBoardStore()
 
     await board.refresh(transport, 1)
@@ -60,6 +87,30 @@ describe('board store', () => {
     expect(board.tickets).toEqual(tickets)
     expect(board.loaded).toBe(true)
     expect(board.error).toBeNull()
+  })
+
+  it('collects the readiness projection beside the Tickets it loads', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    const waiting: TicketReadinessBlocker = {
+      Ticket: {
+        from_number: 3,
+        from_project_id: 1,
+        from_state: 'active',
+        from_ticket_id: 3,
+      },
+    }
+    query.mockImplementation(serving([task(), task({ id: 8 })], { 7: [waiting] }))
+    const board = useBoardStore()
+
+    await board.refresh(transport, 1)
+
+    expect(query).toHaveBeenCalledWith('ticket.readiness', { ticket_id: 7 })
+    expect(query).toHaveBeenCalledWith('ticket.readiness', { ticket_id: 8 })
+    expect(board.blockersFor(7)).toEqual([waiting])
+    expect(board.blockersFor(8)).toEqual([])
+    // A Ticket the board never loaded holds nothing back.
+    expect(board.blockersFor(99)).toEqual([])
   })
 
   it('reports a failed load without pretending to be loaded', async () => {
@@ -78,7 +129,7 @@ describe('board store', () => {
   it('moves a Ticket against its current version and keeps the record the core returns', async () => {
     setActivePinia(createPinia())
     const { transport, operations, query, command } = harness()
-    query.mockResolvedValue({ tickets: [task()] } satisfies TicketListResponse)
+    query.mockImplementation(serving([task()]))
     const board = useBoardStore()
     await board.refresh(transport, 1)
     command.mockResolvedValue(task({ state: 'active', version: 4 }))
@@ -100,11 +151,25 @@ describe('board store', () => {
     expect(board.error).toBeNull()
   })
 
+  it('refreshes the readiness of the Ticket a move landed', async () => {
+    setActivePinia(createPinia())
+    const { transport, query, command } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+    query.mockClear()
+    command.mockResolvedValue(task({ state: 'active', version: 4 }))
+
+    await board.move(transport, 7, 'active')
+
+    expect(query).toHaveBeenCalledWith('ticket.readiness', { ticket_id: 7 })
+  })
+
   it('reports a drag the core refuses and keeps the Ticket as it stands', async () => {
     setActivePinia(createPinia())
     const { transport, query, command } = harness()
     const refused = task({ kind: 'bug', state: 'ready' })
-    query.mockResolvedValue({ tickets: [refused] } satisfies TicketListResponse)
+    query.mockImplementation(serving([refused]))
     const board = useBoardStore()
     await board.refresh(transport, 1)
     command.mockRejectedValue({
@@ -124,7 +189,7 @@ describe('board store', () => {
   it('refuses to move a Ticket it does not hold', async () => {
     setActivePinia(createPinia())
     const { transport, query, command } = harness()
-    query.mockResolvedValue({ tickets: [] } satisfies TicketListResponse)
+    query.mockImplementation(serving([]))
     const board = useBoardStore()
     await board.refresh(transport, 1)
 

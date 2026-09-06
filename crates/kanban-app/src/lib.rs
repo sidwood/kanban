@@ -52,6 +52,7 @@ pub use event_catalog::{EventDescriptor, exposed_events};
 pub use events::{EventSink, NoopEventSink, emit_catalogued};
 pub use evidence::{EvidenceFilter, EvidenceStore};
 pub use exports::{ExportArtifact, ExportFiles, render_project_export};
+pub use graph_proposal::GraphProposalStore;
 pub use herdr::{
     HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, NoopHerdrProjectObserver,
 };

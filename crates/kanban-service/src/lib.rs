@@ -25,9 +25,10 @@ use kanban_storage::paths::database_file_name;
 use kanban_storage::{
     BackupStore, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
     SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteEvidenceStore,
-    SqliteHerdrSettingsStore, SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore,
-    SqlitePlanStore, SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteSpecStore,
-    SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
+    SqliteGraphProposalStore, SqliteHerdrSettingsStore, SqliteIdempotencyStore,
+    SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore, SqliteProfileStore,
+    SqliteProjectStore, SqliteRulingStore, SqliteSpecStore, SqliteTicketStore,
+    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -137,6 +138,7 @@ fn assemble_core(
     let spec_store = Arc::new(SqliteSpecStore::new(&database));
     let ticket_store = Arc::new(SqliteTicketStore::new(&database));
     let dependency_store = Arc::new(SqliteDependencyStore::new(&database));
+    let graph_proposal_store = Arc::new(SqliteGraphProposalStore::new(&database));
     let profile_store = Arc::new(SqliteProfileStore::new(&database));
     let capacity_store = Arc::new(SqliteCapacityStore::new(&database));
     let comment_store = Arc::new(SqliteCommentStore::new(&database));
@@ -195,6 +197,12 @@ fn assemble_core(
         projects.clone(),
     )?;
     core.register_lifecycle(ticket_store.clone(), dependency_store, projects.clone())?;
+    core.register_graph_proposals(
+        graph_proposal_store,
+        ticket_store.clone(),
+        spec_store.clone(),
+        projects.clone(),
+    )?;
     core.register_profiles(profile_store, ticket_store.clone(), projects.clone())?;
     core.register_capacity(capacity_store, projects.clone())?;
     core.register_exports(

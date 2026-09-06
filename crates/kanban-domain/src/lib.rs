@@ -1,6 +1,7 @@
 //! Pure domain rules: entities, closed state vocabularies, transition
 //! rules, and invariants. No I/O, no async, no DTO types, no clock.
 
+pub mod board;
 pub mod capacity;
 pub mod clone;
 pub mod comment;
@@ -26,6 +27,7 @@ pub mod timeline;
 pub mod timeline_time;
 pub mod workspace;
 
+pub use board::{BoardGroup, board_group_for};
 pub use capacity::{
     ActiveRun, CapacityError, CapacityInputs, CapacityRefusal, GlobalCapacity, ProjectCapacity,
     evaluate_capacity,

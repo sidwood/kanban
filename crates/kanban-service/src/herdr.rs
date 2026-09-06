@@ -1428,6 +1428,76 @@ mod tests {
         );
     }
 
+    /// KAN-T130-AC1: the loop's settled-live rule, driven at the same
+    /// level. Two flapping cycles climb the count to two; the third
+    /// connection settles and then drops, and its park falls back to
+    /// the base delay — the ended session is the first failure of a
+    /// new accumulation, never a continuation of the old one — while
+    /// the settled cycle still lands exactly its own snapshot.
+    #[test]
+    fn a_settled_cycle_resets_the_loops_backoff_accounting() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let socket_root = dir.path().join("sessions");
+        let _fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default().with_connection_scripts(vec![
+                SessionScript::default().with_flapping_subscriptions(),
+                SessionScript::default().with_flapping_subscriptions(),
+                // Held far past the settle window, then closed: the
+                // cycle settles before its scripted drop.
+                SessionScript::default().close_after_hold_every(Duration::from_millis(150)),
+            ]),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, driven_observation());
+        let (handle, stop) =
+            observer.test_driven_loop(&project(Some("kanban-main"), "/workspaces/kanban.seed"));
+        let parked: Arc<Mutex<Vec<(Duration, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = parked.clone();
+
+        handle.run_parking(|delay| {
+            let mut seen = recorded.lock().unwrap();
+            seen.push((delay, observer.consecutive_failures(1)));
+            if seen.len() >= 3 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        });
+
+        assert_eq!(
+            parked.lock().unwrap().as_slice(),
+            &[
+                (Duration::from_millis(10), 1),
+                (Duration::from_millis(20), 2),
+                (Duration::from_millis(10), 1),
+            ],
+            "the settled cycle parks the base delay again, not the doubling the count had reached"
+        );
+        let state = binding_diagnostics(&observer);
+        assert!(
+            !state.connected,
+            "the settled cycle's scripted drop leaves no connection claimed"
+        );
+        assert_eq!(
+            state.last_error,
+            Some("disconnected".to_owned()),
+            "the drop after the settle window is the reported failure"
+        );
+        let details = telemetry_details(&database);
+        assert_eq!(
+            details.len(),
+            1,
+            "the one settled cycle lands exactly its own snapshot"
+        );
+        assert_eq!(
+            details[0]["event"],
+            serde_json::json!("snapshot"),
+            "the settled capture is the run's single telemetry row"
+        );
+    }
+
     /// KAN-T94-AC2: stopping one Project's observation is
     /// synchronous — it joins the thread — and leaves the diagnostics
     /// back at the unobserved defaults rather than a stale connected

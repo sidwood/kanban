@@ -9035,7 +9035,7 @@
     }
   },
   {
-    "description": "Move a draft, unpinned Ticket to another Spec of its Project; a pinned or executed Ticket stays.",
+    "description": "Move a draft, unpinned Ticket to another Spec of its Project, an Implementation with replacement criteria; a pinned or executed Ticket stays.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -9058,10 +9058,42 @@
             "optimistic_version"
           ],
           "type": "object"
+        },
+        "TicketCriterion": {
+          "additionalProperties": false,
+          "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+          "properties": {
+            "outcome": {
+              "description": "The observable outcome the criterion states.",
+              "type": "string"
+            },
+            "stories": {
+              "description": "The User Stories the criterion claims.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "outcome",
+            "stories"
+          ],
+          "type": "object"
         }
       },
-      "description": "Request payload for the `ticket.spec.move` command: a draft, unpinned Ticket moves its Spec attachment to another Spec of its own Project (DR-DE-05). A pinned or executed Ticket stays where it stands (DR-DE-06).",
+      "description": "Request payload for the `ticket.spec.move` command: a draft, unpinned Ticket moves its Spec attachment to another Spec of its own Project (DR-DE-05), one atomic change. An Implementation moves with the replacement criteria the destination Spec's stories claim, sent whole and validated against that Spec; absent criteria keep the claims that stand, which must already name the destination. A pinned or executed Ticket stays where it stands (DR-DE-06).",
       "properties": {
+        "criteria": {
+          "description": "The replacement story-linked criteria an Implementation claims for the Spec it moves to. Only an Implementation carries story-linked criteria (DR-TK-04); the field stays absent for every other kind.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "mutation": {
           "$ref": "#/definitions/MutationContext"
         },

@@ -938,6 +938,7 @@ export type TicketScheduleRequest = {
 };
 export type TicketSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type TicketSpecMoveRequest = {
+  criteria?: TicketCriterion[] | null;
   mutation: MutationContext;
   spec_id: number;
   ticket_id: number;

@@ -111,8 +111,9 @@ pub use ticket::{
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketGraphState, TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
-    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketReviewDecision,
-    TicketReviewRequest, TicketScheduleRequest, TicketSeverity, TicketSpecMoveRequest, TicketState,
+    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
+    TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
+    TicketSpecMoveRequest, TicketState,
     TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
 };
 pub use timeline::{
@@ -309,6 +310,7 @@ mod tests {
                 "TicketReadinessBlocker",
                 "TicketReadinessQuery",
                 "TicketReadinessResponse",
+                "TicketReassignRequest",
                 "TicketRecord",
                 "TicketReviewDecision",
                 "TicketReviewRequest",

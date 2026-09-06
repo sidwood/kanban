@@ -765,6 +765,67 @@ pub struct TicketGraphListResponse {
     pub proposals: Vec<TicketGraphRecord>,
 }
 
+/// Request payload for the `ticket.reassign` command (DR-DE-07):
+/// reassignment creates a replacement Ticket under its kind's schema
+/// and supersedes the named original. The replacement carries the
+/// full creation shape — each kind sends exactly its own fields, as
+/// `ticket.create` does — because a reassignment states its changed
+/// plan whole, never a silent copy of the original. The replacement
+/// references its predecessor in the record the command returns, and
+/// the superseded original keeps its history and its number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketReassignRequest {
+    pub mutation: super::MutationContext,
+    /// The Ticket being replaced. It moves to the terminal superseded
+    /// state from any open state; a terminal or landed original is
+    /// refused.
+    pub ticket_id: u64,
+    /// The kind whose schema the replacement carries.
+    pub kind: TicketKind,
+    /// The replacement's priority (DR-LC-12).
+    pub priority: TicketPriority,
+    /// The Spec the replacement attaches to. An Implementation must
+    /// name exactly one (DR-TK-02); a Bug or Task may name one or
+    /// none (DR-TK-03).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_id: Option<u64>,
+    /// The Bug or Task title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The Bug's actual behaviour (DR-TK-08); required for a Bug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_behaviour: Option<String>,
+    /// The Bug's reporter evidence (DR-TK-08); required for a Bug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reporter_evidence: Option<String>,
+    /// The Implementation slice description, naming the behaviour
+    /// delivered end to end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<String>,
+    /// The Implementation's story-linked criteria. A Task never
+    /// carries these (DR-TK-07); it sends `completion` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<Vec<TicketCriterion>>,
+    /// The Task's subtype; a Task names exactly one (DR-TK-06).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<TaskSubtype>,
+    /// The Task's human-or-agent mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TaskMode>,
+    /// The Task's completion criteria: observable outcomes that bound
+    /// the work, with no story links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<Vec<String>>,
+    /// The Task's one-time activation instant, RFC 3339; stored for
+    /// KAN-S11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_for: Option<String>,
+    /// The Task's due date, RFC 3339.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+}
+
 /// The Ticket record as every client sees it: the Project it belongs
 /// to, the number that Project minted, the kind whose schema it
 /// carries, the kind-specific fields — a title for Bugs and Tasks, a
@@ -819,6 +880,11 @@ pub struct TicketRecord {
     /// Ticket to, if one did (DR-DE-06); a pinned Ticket stays with
     /// its Spec and version.
     pub pinned_spec_version: Option<u64>,
+    /// The Ticket this one replaced, when reassignment created it as a
+    /// replacement (DR-DE-07); an ordinary Ticket references none and
+    /// the field stays absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_id: Option<u64>,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
 }
@@ -1021,9 +1087,10 @@ mod tests {
         TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest,
         TicketGraphRecord, TicketGraphState, TicketKind, TicketListQuery, TicketListResponse,
         TicketOccurrenceSnapshot, TicketParkRequest, TicketPrioritiseRequest, TicketPriority,
-        TicketReadinessBlocker, TicketReadinessResponse, TicketRecord, TicketReviewDecision,
-        TicketReviewRequest, TicketScheduleRequest, TicketSeverity, TicketSpecMoveRequest,
-        TicketState, TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
+        TicketReadinessBlocker, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
+        TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
+        TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketUnparkRequest,
+        TicketVerificationStep,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -1095,6 +1162,7 @@ mod tests {
             due: None,
             profile: None,
             pinned_spec_version: None,
+            predecessor_id: None,
             version: 1,
         }
     }
@@ -1273,10 +1341,13 @@ mod tests {
                 "version": 1,
             })
         );
+        assert!(
+            encoded.get("predecessor_id").is_none(),
+            "an ordinary Ticket references no predecessor"
+        );
         let decoded: TicketRecord =
             serde_json::from_value(encoded).expect("the record deserialises");
         assert_eq!(decoded, record());
-
         let assigned = TicketRecord {
             profile: Some("standard".to_owned()),
             ..record()
@@ -1329,6 +1400,20 @@ mod tests {
             encoded.get("qualification").is_none(),
             "an absent qualification carries no field at all"
         );
+
+        // A replacement references its predecessor (DR-DE-07); the
+        // field arrives only when one exists.
+        let replacement = TicketRecord {
+            id: 9,
+            number: 18,
+            predecessor_id: Some(6),
+            ..record()
+        };
+        let encoded = serde_json::to_value(&replacement).expect("the record serialises");
+        assert_eq!(encoded["predecessor_id"], json!(6));
+        let decoded: TicketRecord =
+            serde_json::from_value(encoded).expect("the record deserialises");
+        assert_eq!(decoded, replacement);
     }
 
     #[test]
@@ -1469,6 +1554,18 @@ mod tests {
             "to": "ready",
             "who": "Sid Wood",
             "why": "Recovery after the core crashed mid move",
+        }));
+        // A reassignment names its original and states the
+        // replacement whole, exactly as a creation would (DR-DE-07).
+        round_trips::<TicketReassignRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "kind": "task",
+            "priority": "high",
+            "title": "Replan the register archive",
+            "subtype": "migration",
+            "mode": "agent",
+            "completion": ["The register moves and restores."],
         }));
 
         let list: TicketListQuery =
@@ -1756,6 +1853,7 @@ mod tests {
             "TicketReadinessBlocker",
             "TicketReadinessQuery",
             "TicketReadinessResponse",
+            "TicketReassignRequest",
             "TicketRecord",
             "TicketReviewDecision",
             "TicketReviewRequest",

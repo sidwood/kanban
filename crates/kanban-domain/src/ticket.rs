@@ -1239,7 +1239,6 @@ impl TicketBody {
 
 /// One Ticket aggregate: the Project it belongs to, the number that
 /// Project minted for it, its priority, its lifecycle state, the
-<<<<<<< HEAD
 /// kind-specific body, the Execution Profile its assignment names by
 /// reference (DR-EP-03), the Spec content version an approved graph
 /// pinned it to (DR-DE-06), and, when reassignment created it as a

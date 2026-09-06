@@ -84,8 +84,9 @@ use crate::ticket::{
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketGraphState, TicketKind, TicketListQuery, TicketListResponse, TicketOccurrenceSnapshot,
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
-    TicketReadinessQuery, TicketReadinessResponse, TicketRecord, TicketReviewDecision,
-    TicketReviewRequest, TicketScheduleRequest, TicketSeverity, TicketSpecMoveRequest, TicketState,
+    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
+    TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
+    TicketSpecMoveRequest, TicketState,
     TicketTransitionRequest, TicketUnparkRequest, TicketVerificationStep,
 };
 use crate::timeline::{
@@ -365,6 +366,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "TicketReadinessResponse",
             schema_for!(TicketReadinessResponse),
         ),
+        ("TicketReassignRequest", schema_for!(TicketReassignRequest)),
         ("TicketRecord", schema_for!(TicketRecord)),
         ("TicketReviewDecision", schema_for!(TicketReviewDecision)),
         ("TicketReviewRequest", schema_for!(TicketReviewRequest)),

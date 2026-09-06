@@ -1,6 +1,10 @@
 use schemars::schema::RootSchema;
 use schemars::schema_for;
 
+use crate::board::{
+    AttentionState, BoardFilter, BoardFilterOption, BoardFilterOptions, BoardGlobalCard,
+    BoardGlobalQuery, BoardGlobalResponse, BoardGroup,
+};
 use crate::capacity::{
     CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
@@ -511,6 +515,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("CloneRemoveRequest", schema_for!(CloneRemoveRequest)),
         ("CloneCreatedRecord", schema_for!(CloneCreatedRecord)),
         ("CloneRemovedRecord", schema_for!(CloneRemovedRecord)),
+        ("AttentionState", schema_for!(AttentionState)),
+        ("BoardFilter", schema_for!(BoardFilter)),
+        ("BoardFilterOption", schema_for!(BoardFilterOption)),
+        ("BoardFilterOptions", schema_for!(BoardFilterOptions)),
+        ("BoardGlobalCard", schema_for!(BoardGlobalCard)),
+        ("BoardGlobalQuery", schema_for!(BoardGlobalQuery)),
+        ("BoardGlobalResponse", schema_for!(BoardGlobalResponse)),
+        ("BoardGroup", schema_for!(BoardGroup)),
         ("ProfileSnapshotRecord", schema_for!(ProfileSnapshotRecord)),
         ("RunStatus", schema_for!(RunStatus)),
         ("RunRecord", schema_for!(RunRecord)),

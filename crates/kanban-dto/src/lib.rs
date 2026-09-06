@@ -1,6 +1,7 @@
 //! Authoritative command, query, event, and error payload definitions
 //! with schema derivation. Depends on nothing internal.
 
+pub mod board;
 pub mod capacity;
 pub mod chip;
 pub mod clone;
@@ -30,6 +31,10 @@ pub mod timeline;
 
 pub mod workspace;
 
+pub use board::{
+    AttentionState, BoardFilter, BoardFilterOption, BoardFilterOptions, BoardGlobalCard,
+    BoardGlobalQuery, BoardGlobalResponse, BoardGroup,
+};
 pub use capacity::{
     CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
@@ -398,6 +403,14 @@ mod tests {
                 "CloneRemoveRequest",
                 "CloneCreatedRecord",
                 "CloneRemovedRecord",
+                "AttentionState",
+                "BoardFilter",
+                "BoardFilterOption",
+                "BoardFilterOptions",
+                "BoardGlobalCard",
+                "BoardGlobalQuery",
+                "BoardGlobalResponse",
+                "BoardGroup",
                 "ProfileSnapshotRecord",
                 "RunStatus",
                 "RunRecord",

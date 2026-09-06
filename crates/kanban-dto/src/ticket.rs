@@ -639,8 +639,12 @@ pub struct TicketEmergencyOverrideRequest {
 
 /// Request payload for the `ticket.spec.move` command: a draft,
 /// unpinned Ticket moves its Spec attachment to another Spec of its
-/// own Project (DR-DE-05). A pinned or executed Ticket stays where it
-/// stands (DR-DE-06).
+/// own Project (DR-DE-05), one atomic change. An Implementation moves
+/// with the replacement criteria the destination Spec's stories
+/// claim, sent whole and validated against that Spec; absent criteria
+/// keep the claims that stand, which must already name the
+/// destination. A pinned or executed Ticket stays where it stands
+/// (DR-DE-06).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TicketSpecMoveRequest {
@@ -649,6 +653,12 @@ pub struct TicketSpecMoveRequest {
     pub ticket_id: u64,
     /// The Spec of the same Project the Ticket moves to.
     pub spec_id: u64,
+    /// The replacement story-linked criteria an Implementation claims
+    /// for the Spec it moves to. Only an Implementation carries
+    /// story-linked criteria (DR-TK-04); the field stays absent for
+    /// every other kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<Vec<TicketCriterion>>,
 }
 
 /// The closed Ticket graph proposal lifecycle on the wire (DR-PS-16,
@@ -1494,6 +1504,14 @@ mod tests {
             "mutation": context(),
             "ticket_id": 6,
             "spec_id": 4,
+        }));
+        // A move that replaces an Implementation's criteria sends them
+        // whole; absent keeps the claims that stand.
+        round_trips::<TicketSpecMoveRequest>(json!({
+            "mutation": context(),
+            "ticket_id": 6,
+            "spec_id": 4,
+            "criteria": [criterion()],
         }));
         round_trips::<TicketGraphProposeRequest>(json!({
             "mutation": context(),

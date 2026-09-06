@@ -4,7 +4,10 @@
 // projection, and a drag becomes one `ticket.transition` carrying the
 // Ticket's optimistic version and a fresh idempotency key. The core
 // judges the move — a drag refused as agent-owned arrives here as
-// that explanation, never swallowed (KAN-T24-AC3).
+// that explanation, never swallowed (KAN-T24-AC3). The board holds
+// one Project at a time: leaving a Project takes its cards away
+// before the next load settles, and a response that arrives for a
+// Project the board has left is never rendered (KAN-T125).
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type { TicketReadinessBlocker, TicketRecord, TicketState } from '@kanban/contracts'
@@ -40,12 +43,18 @@ function keptBlockers(
 
 export const useBoardStore = defineStore('board', {
   state: () => ({
+    /** The Project whose Tickets the board holds; null when the board
+     * holds none. */
+    projectId: null as number | null,
     tickets: [] as TicketRecord[],
     /** The core's readiness projection per Ticket id, loaded beside
      * the Tickets it speaks for. */
     blockers: {} as Record<number, TicketReadinessBlocker[]>,
     loaded: false,
     error: null as string | null,
+    // The loads issued so far, so only the latest one — the Project
+    // actually on display — ever writes state.
+    issued: 0,
   }),
   getters: {
     /** What holds one Ticket back, as the core computes it. */
@@ -53,24 +62,50 @@ export const useBoardStore = defineStore('board', {
       state.blockers[ticketId] ?? [],
   },
   actions: {
+    // Forget the board of the Project the operator has left: no card,
+    // count, or blocker of one Project outlives the navigation it
+    // belonged to, and any load still on the wire for it is
+    // superseded and writes nothing.
+    clear(): void {
+      this.issued += 1
+      this.projectId = null
+      this.tickets = []
+      this.blockers = {}
+      this.loaded = false
+      this.error = null
+    },
     // Load the Project's Tickets, every state included; the board
     // projection decides which of them reach the columns, and the
     // blockers arrive beside the cards that can still be held back —
     // history never joins the query set, so it growing never grows
     // the traffic the refresh spends on the shared channel.
     async refresh(transport: ShellTransport, projectId: number): Promise<void> {
+      // Entering a Project takes the previous one's board away before
+      // any response settles, so nothing of one Project renders under
+      // another's heading (KAN-T125-AC1).
+      this.clear()
+      const attempt = this.issued
+      this.projectId = projectId
       try {
         const response = await new KanbanClient(transport).queryTicketList({
           project_id: projectId,
         })
+        // Only the load for the Project on display writes state: a
+        // slower answer for a Project the board has left never
+        // renders (KAN-T125-AC2).
+        if (attempt !== this.issued) return
         this.tickets = response.tickets
         const asking = response.tickets
           .filter((ticket) => canBeHeldBack(ticket.state))
           .map((ticket) => ticket.id)
         await this.refreshReadiness(transport, asking)
+        if (attempt !== this.issued) return
         this.loaded = true
         this.error = null
       } catch (failure) {
+        // A failure for a Project the board has left belongs to that
+        // Project, not to the one on display (KAN-T125-AC2).
+        if (attempt !== this.issued) return
         this.error = asApiError(failure).message
       }
     },

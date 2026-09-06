@@ -82,6 +82,18 @@ function readinessRequests(
     .map((entry) => entry.request)
 }
 
+// A ticket.list answer the test settles by hand: the load that is
+// still on the wire when another Project takes the board.
+function deferredList() {
+  let settle!: (tickets: TicketRecord[]) => void
+  let fail!: (reason: unknown) => void
+  const promise = new Promise<TicketListResponse>((resolve, reject) => {
+    settle = (tickets) => resolve({ tickets })
+    fail = reject
+  })
+  return { promise, settle, fail }
+}
+
 describe('board store', () => {
   it('loads the Project\'s Tickets through the generated client', async () => {
     setActivePinia(createPinia())
@@ -298,5 +310,103 @@ describe('board store', () => {
     expect(landed).toBe(false)
     expect(command).not.toHaveBeenCalled()
     expect(board.error).toBe('the board does not hold Ticket 99')
+  })
+
+  it('empties the board the moment another Project\'s load begins', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+    expect(board.tickets).toHaveLength(1)
+
+    const second = deferredList()
+    query.mockImplementation(() => second.promise)
+    void board.refresh(transport, 2)
+
+    // The previous Project's cards never wait for the next load to
+    // settle before leaving (KAN-T125-AC1).
+    expect(board.projectId).toBe(2)
+    expect(board.tickets).toEqual([])
+    expect(board.blockers).toEqual({})
+    expect(board.loaded).toBe(false)
+    second.settle([])
+  })
+
+  it('keeps no other Project\'s cards when a load fails', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+
+    query.mockRejectedValue({ code: 'unavailable', message: 'the core is offline' })
+    await board.refresh(transport, 2)
+
+    expect(board.error).toBe('the core is offline')
+    expect(board.tickets).toEqual([])
+    expect(board.blockers).toEqual({})
+    expect(board.loaded).toBe(false)
+  })
+
+  it('rejects a slower response for the Project the board has left', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    const slow = deferredList()
+    query.mockImplementation((name: string, request: unknown) => {
+      const { project_id } = request as { project_id: number }
+      if (name === 'ticket.list' && project_id === 1) return slow.promise
+      return serving([task({ id: 21, project_id: 2, number: 13 })])(name, request)
+    })
+    const board = useBoardStore()
+    const loadingOne = board.refresh(transport, 1)
+
+    await board.refresh(transport, 2)
+    slow.settle([task()])
+    await loadingOne
+
+    expect(board.projectId).toBe(2)
+    expect(board.tickets.map((ticket) => ticket.project_id)).toEqual([2])
+  })
+
+  it('rejects a slower failure for the Project the board has left', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    const slow = deferredList()
+    query.mockImplementation((name: string, request: unknown) => {
+      const { project_id } = request as { project_id: number }
+      if (name === 'ticket.list' && project_id === 1) return slow.promise
+      return serving([task({ id: 21, project_id: 2, number: 13 })])(name, request)
+    })
+    const board = useBoardStore()
+    const loadingOne = board.refresh(transport, 1)
+
+    await board.refresh(transport, 2)
+    slow.fail({ code: 'unavailable', message: 'the core is offline' })
+    await loadingOne
+
+    expect(board.error).toBeNull()
+    expect(board.tickets.map((ticket) => ticket.project_id)).toEqual([2])
+  })
+
+  it('forgets the board, and a load superseded by that writes nothing', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    query.mockImplementation(serving([task()]))
+    const board = useBoardStore()
+    await board.refresh(transport, 1)
+
+    const slow = deferredList()
+    query.mockImplementation(() => slow.promise)
+    const loading = board.refresh(transport, 2)
+    board.clear()
+    slow.settle([task({ id: 30, project_id: 3 })])
+    await loading
+
+    expect(board.projectId).toBeNull()
+    expect(board.tickets).toEqual([])
+    expect(board.blockers).toEqual({})
+    expect(board.loaded).toBe(false)
+    expect(board.error).toBeNull()
   })
 })

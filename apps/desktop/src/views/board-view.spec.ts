@@ -626,6 +626,9 @@ describe('BoardView', () => {
       if (name === 'lane.list') {
         return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
       }
+      if (name === 'spec.list') {
+        return Promise.resolve({ specs: [] } satisfies SpecListResponse)
+      }
       if (name === 'ticket.readiness') {
         const { ticket_id } = request as { ticket_id: number }
         return Promise.resolve({

@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "DispatchRequestRecord": {
+      "additionalProperties": false,
+      "description": "One Dispatch Request as every client sees it.",
+      "properties": {
+        "created_at": {
+          "description": "When the request entered the queue, as unix seconds.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "harness": {
+          "description": "The snapshotted harness family.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "model": {
+          "description": "The snapshotted model family.",
+          "type": "string"
+        },
+        "priority": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketPriority"
+            }
+          ],
+          "description": "The priority snapshotted at enqueue."
+        },
+        "project_id": {
+          "description": "The Project the request belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ready": {
+          "description": "Whether the Ticket was ready at enqueue.",
+          "type": "boolean"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DispatchStatus"
+            }
+          ],
+          "description": "Queued or claimed."
+        },
+        "ticket_id": {
+          "description": "The Ticket the request dispatches.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "usage_pool": {
+          "description": "The snapshotted usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "created_at",
+        "harness",
+        "id",
+        "model",
+        "priority",
+        "project_id",
+        "ready",
+        "status",
+        "ticket_id",
+        "usage_pool",
+        "version"
+      ],
+      "type": "object"
+    },
+    "DispatchStatus": {
+      "description": "The closed Dispatch Request status on the wire.",
+      "oneOf": [
+        {
+          "description": "Waiting for a claimant, or waiting because capacity is exhausted.",
+          "enum": [
+            "queued"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Held by the one claimant that won.",
+          "enum": [
+            "claimed"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketPriority": {
+      "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+      "oneOf": [
+        {
+          "description": "Ahead of everything else.",
+          "enum": [
+            "urgent"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ahead of normal work.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The everyday order.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Behind normal work.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `dispatch.queue` query: queued requests in deterministic priority, readiness, age order.",
+  "properties": {
+    "project_id": {
+      "description": "The Project whose queue this is.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "requests": {
+      "description": "Queued requests, urgent and ready and older first.",
+      "items": {
+        "$ref": "#/definitions/DispatchRequestRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "requests"
+  ],
+  "title": "DispatchQueueResponse",
+  "type": "object"
+}

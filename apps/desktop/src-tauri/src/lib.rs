@@ -14,14 +14,17 @@ use std::time::Duration;
 use kanban_dto::{
     ApiError, CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
-    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest, CommentCreateRequest,
+    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest, CloneCreateRequest,
+    CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord, CommentCreateRequest,
     CommentEditRequest, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
     DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
     DeferralSupersedeRequest, DiagnosticsExportQuery, DiagnosticsExportResponse,
-    EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
-    ExportDriftQuery, ExportDriftResponse, ExportRenderRequest, ExportRenderResponse, HealthQuery,
-    HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest,
-    HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
+    DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery, DispatchQueueResponse,
+    DispatchRequestCreateRequest, DispatchRequestRecord, EvidenceAttachRequest, EvidenceListQuery,
+    EvidenceListResponse, EvidenceRecord, ExportDriftQuery, ExportDriftResponse,
+    ExportRenderRequest, ExportRenderResponse, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
+    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
+    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -1313,6 +1316,50 @@ async fn capacity_settings_update(
 }
 
 #[tauri::command]
+async fn dispatch_request(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<DispatchRequestRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DispatchRequestCreateRequest>(request)?;
+    run_blocking(shell, "dispatch request", |shell| {
+        forward_command(
+            shell,
+            "dispatch.request",
+            "created Dispatch Request",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn dispatch_claim(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<DispatchClaimResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DispatchClaimRequest>(request)?;
+    run_blocking(shell, "dispatch claim", |shell| {
+        forward_command(shell, "dispatch.claim", "claimed Dispatch Request", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn dispatch_queue(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<DispatchQueueResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<DispatchQueueQuery>(request)?;
+    run_blocking(shell, "dispatch queue", move |shell| {
+        forward_query(shell, "dispatch.queue", "dispatch queue", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn workspace_retire(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1431,6 +1478,30 @@ async fn lane_list(
 }
 
 #[tauri::command]
+async fn clone_create(
+    shell: State<'_, Arc<Shell>>,
+    request: CloneCreateRequest,
+) -> Result<CloneCreatedRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "clone create", |shell| {
+        forward_command(shell, "clone.create", "created clone", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn clone_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: CloneRemoveRequest,
+) -> Result<CloneRemovedRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "clone remove", |shell| {
+        forward_command(shell, "clone.remove", "removed clone", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn export_render(
     shell: State<'_, Arc<Shell>>,
     request: ExportRenderRequest,
@@ -1540,6 +1611,9 @@ shell_handlers::shell_handler_catalogue! {
     capacity_defaults_update,
     capacity_settings_get,
     capacity_settings_update,
+    dispatch_request,
+    dispatch_claim,
+    dispatch_queue,
     workspace_register,
     workspace_observe,
     workspace_retire,
@@ -1550,6 +1624,8 @@ shell_handlers::shell_handler_catalogue! {
     lane_ticket_assign,
     lane_ticket_release,
     lane_list,
+    clone_create,
+    clone_remove,
     export_render,
     export_drift,
 }

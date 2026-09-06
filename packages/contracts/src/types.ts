@@ -141,6 +141,40 @@ export type DiagnosticsExportQuery = Record<string, never>;
 export type DiagnosticsExportResponse = {
   bundle_dir: string;
 };
+export type DispatchClaimRequest = {
+  dispatch_request_id: number;
+  mutation: MutationContext;
+};
+export type DispatchClaimResponse = {
+  capacity_refusal?: string | null;
+  claimed: boolean;
+  request: DispatchRequestRecord;
+};
+export type DispatchQueueQuery = {
+  project_id: number;
+};
+export type DispatchQueueResponse = {
+  project_id: number;
+  requests: DispatchRequestRecord[];
+};
+export type DispatchRequestCreateRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type DispatchRequestRecord = {
+  created_at: number;
+  harness: string;
+  id: number;
+  model: string;
+  priority: TicketPriority;
+  project_id: number;
+  ready: boolean;
+  status: DispatchStatus;
+  ticket_id: number;
+  usage_pool: string;
+  version: number;
+};
+export type DispatchStatus = 'queued' | 'claimed';
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;
@@ -317,7 +351,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed';
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;

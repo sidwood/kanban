@@ -20103,6 +20103,590 @@
     }
   },
   {
+    "description": "Create a durable Dispatch Request for a Ticket, queue it, and wake the Project Coordinator. Kanban never launches implementation agents directly.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `dispatch.request` command.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "description": "The Ticket to put on the dispatch queue.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "ticket_id"
+      ],
+      "title": "DispatchRequestCreateRequest",
+      "type": "object"
+    },
+    "name": "dispatch_request",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DispatchStatus": {
+          "description": "The closed Dispatch Request status on the wire.",
+          "oneOf": [
+            {
+              "description": "Waiting for a claimant, or waiting because capacity is exhausted.",
+              "enum": [
+                "queued"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Held by the one claimant that won.",
+              "enum": [
+                "claimed"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "One Dispatch Request as every client sees it.",
+      "properties": {
+        "created_at": {
+          "description": "When the request entered the queue, as unix seconds.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "harness": {
+          "description": "The snapshotted harness family.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "model": {
+          "description": "The snapshotted model family.",
+          "type": "string"
+        },
+        "priority": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketPriority"
+            }
+          ],
+          "description": "The priority snapshotted at enqueue."
+        },
+        "project_id": {
+          "description": "The Project the request belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ready": {
+          "description": "Whether the Ticket was ready at enqueue.",
+          "type": "boolean"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DispatchStatus"
+            }
+          ],
+          "description": "Queued or claimed."
+        },
+        "ticket_id": {
+          "description": "The Ticket the request dispatches.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "usage_pool": {
+          "description": "The snapshotted usage pool.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "created_at",
+        "harness",
+        "id",
+        "model",
+        "priority",
+        "project_id",
+        "ready",
+        "status",
+        "ticket_id",
+        "usage_pool",
+        "version"
+      ],
+      "title": "DispatchRequestRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Claim one Dispatch Request atomically. Exactly one concurrent claimant wins; without capacity the request stays queued.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `dispatch.claim` command.",
+      "properties": {
+        "dispatch_request_id": {
+          "description": "The Dispatch Request to claim.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "dispatch_request_id",
+        "mutation"
+      ],
+      "title": "DispatchClaimRequest",
+      "type": "object"
+    },
+    "name": "dispatch_claim",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DispatchRequestRecord": {
+          "additionalProperties": false,
+          "description": "One Dispatch Request as every client sees it.",
+          "properties": {
+            "created_at": {
+              "description": "When the request entered the queue, as unix seconds.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "id": {
+              "description": "The storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "priority": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketPriority"
+                }
+              ],
+              "description": "The priority snapshotted at enqueue."
+            },
+            "project_id": {
+              "description": "The Project the request belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ready": {
+              "description": "Whether the Ticket was ready at enqueue.",
+              "type": "boolean"
+            },
+            "status": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/DispatchStatus"
+                }
+              ],
+              "description": "Queued or claimed."
+            },
+            "ticket_id": {
+              "description": "The Ticket the request dispatches.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "created_at",
+            "harness",
+            "id",
+            "model",
+            "priority",
+            "project_id",
+            "ready",
+            "status",
+            "ticket_id",
+            "usage_pool",
+            "version"
+          ],
+          "type": "object"
+        },
+        "DispatchStatus": {
+          "description": "The closed Dispatch Request status on the wire.",
+          "oneOf": [
+            {
+              "description": "Waiting for a claimant, or waiting because capacity is exhausted.",
+              "enum": [
+                "queued"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Held by the one claimant that won.",
+              "enum": [
+                "claimed"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "Response payload for the `dispatch.claim` command: the request as it stands after the attempt, whether this claimant won, and the capacity refusal that kept it queued when this claimant lost.",
+      "properties": {
+        "capacity_refusal": {
+          "description": "Why the request stayed queued, when it did.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimed": {
+          "description": "Whether this claimant won.",
+          "type": "boolean"
+        },
+        "request": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DispatchRequestRecord"
+            }
+          ],
+          "description": "The request after the claim attempt."
+        }
+      },
+      "required": [
+        "claimed",
+        "request"
+      ],
+      "title": "DispatchClaimResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List a Project's queued Dispatch Requests in deterministic priority, readiness, age order.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `dispatch.queue` query.",
+      "properties": {
+        "project_id": {
+          "description": "The Project whose queued requests are listed.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "DispatchQueueQuery",
+      "type": "object"
+    },
+    "name": "dispatch_queue",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DispatchRequestRecord": {
+          "additionalProperties": false,
+          "description": "One Dispatch Request as every client sees it.",
+          "properties": {
+            "created_at": {
+              "description": "When the request entered the queue, as unix seconds.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "id": {
+              "description": "The storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "priority": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketPriority"
+                }
+              ],
+              "description": "The priority snapshotted at enqueue."
+            },
+            "project_id": {
+              "description": "The Project the request belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ready": {
+              "description": "Whether the Ticket was ready at enqueue.",
+              "type": "boolean"
+            },
+            "status": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/DispatchStatus"
+                }
+              ],
+              "description": "Queued or claimed."
+            },
+            "ticket_id": {
+              "description": "The Ticket the request dispatches.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "created_at",
+            "harness",
+            "id",
+            "model",
+            "priority",
+            "project_id",
+            "ready",
+            "status",
+            "ticket_id",
+            "usage_pool",
+            "version"
+          ],
+          "type": "object"
+        },
+        "DispatchStatus": {
+          "description": "The closed Dispatch Request status on the wire.",
+          "oneOf": [
+            {
+              "description": "Waiting for a claimant, or waiting because capacity is exhausted.",
+              "enum": [
+                "queued"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Held by the one claimant that won.",
+              "enum": [
+                "claimed"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "Response payload for the `dispatch.queue` query: queued requests in deterministic priority, readiness, age order.",
+      "properties": {
+        "project_id": {
+          "description": "The Project whose queue this is.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "requests": {
+          "description": "Queued requests, urgent and ready and older first.",
+          "items": {
+            "$ref": "#/definitions/DispatchRequestRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "project_id",
+        "requests"
+      ],
+      "title": "DispatchQueueResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Query the per-Project append-only activity timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

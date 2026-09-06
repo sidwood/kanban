@@ -83,6 +83,9 @@ describe('generated client', () => {
       'capacity.defaults.update': 'capacity_defaults_update',
       'capacity.settings.get': 'capacity_settings_get',
       'capacity.settings.update': 'capacity_settings_update',
+      'dispatch.request': 'dispatch_request',
+      'dispatch.claim': 'dispatch_claim',
+      'dispatch.queue': 'dispatch_queue',
       'timeline.query': 'timeline_query',
       'comment.create': 'comment_create',
       'comment.edit': 'comment_edit',
@@ -187,6 +190,9 @@ describe('generated client', () => {
       'capacity.defaults.update',
       'capacity.settings.get',
       'capacity.settings.update',
+      'dispatch.request',
+      'dispatch.claim',
+      'dispatch.queue',
       'timeline.query',
       'comment.create',
       'comment.edit',
@@ -263,6 +269,8 @@ describe('generated client', () => {
       'lane.ticket.released',
       'clone.created',
       'clone.removed',
+      'dispatch.requested',
+      'dispatch.claimed',
     ])
   })
 

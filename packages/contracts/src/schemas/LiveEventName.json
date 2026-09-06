@@ -42,7 +42,9 @@
     "lane.ticket.assigned",
     "lane.ticket.released",
     "clone.created",
-    "clone.removed"
+    "clone.removed",
+    "dispatch.requested",
+    "dispatch.claimed"
   ],
   "title": "LiveEventName",
   "type": "string"

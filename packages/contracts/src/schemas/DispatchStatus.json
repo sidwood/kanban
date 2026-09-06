@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed Dispatch Request status on the wire.",
+  "oneOf": [
+    {
+      "description": "Waiting for a claimant, or waiting because capacity is exhausted.",
+      "enum": [
+        "queued"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Held by the one claimant that won.",
+      "enum": [
+        "claimed"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "DispatchStatus"
+}

@@ -15,22 +15,22 @@ use kanban_dto::{
     CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest, CapacitySettingsGetQuery,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneRemoveRequest, CommentCreateRequest,
     CommentEditRequest, CommentRevisionsQuery, DeferralListQuery, DeferralRecordRequest,
-    DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest, EvidenceListQuery,
-    ExportDriftQuery, ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery,
-    HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery, HerdrSettingsUpdateRequest,
-    InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeRenameRequest, LaneCreateRequest, LaneListQuery, LaneTicketAssignRequest,
-    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
-    MutationContext, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
-    PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery, PlanEdgeAddRequest,
-    PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest, PlanSpecAddRequest,
-    PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest, ProfileGetQuery,
-    ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest,
-    ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest, SpecCoverageCheckQuery,
-    SpecCoverageMatrixQuery, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
-    SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, DispatchClaimRequest, DispatchQueueQuery,
+    DispatchRequestCreateRequest, EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery,
+    ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
+    HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, LaneCreateRequest,
+    LaneListQuery, LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
+    LaneWorkspaceReleaseRequest, MutationContext, PlanActivateRequest, PlanArchiveRequest,
+    PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery,
+    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
+    ProfileGetQuery, ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest,
+    ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest, RulingListQuery,
+    RulingRecordRequest, RulingSupersedeRequest, SpecContent, SpecContentUpdateRequest,
+    SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest, SpecExecutionMoveRequest,
+    SpecGetQuery, SpecListQuery, SpecPlanJoinRequest, SpecVersionApproveRequest,
+    SpecVersionGetQuery, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
     TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependencyAddRequest,
     TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
@@ -441,6 +441,15 @@ fn sample_request(schema: &str) -> Value {
             "project_id": 1,
             "max_active_lanes": 2,
         }),
+        "DispatchRequestCreateRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+        }),
+        "DispatchClaimRequest" => json!({
+            "mutation": mutation,
+            "dispatch_request_id": 1,
+        }),
+        "DispatchQueueQuery" => json!({ "project_id": 1 }),
         "WorkspaceRegisterRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -623,6 +632,11 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "CapacitySettingsUpdateRequest" => {
             decode_invoke_args::<CapacitySettingsUpdateRequest>(request).is_err()
         }
+        "DispatchRequestCreateRequest" => {
+            decode_invoke_args::<DispatchRequestCreateRequest>(request).is_err()
+        }
+        "DispatchClaimRequest" => decode_invoke_args::<DispatchClaimRequest>(request).is_err(),
+        "DispatchQueueQuery" => decode_invoke_args::<DispatchQueueQuery>(request).is_err(),
         "SpecCreateRequest" => decode_invoke_args::<SpecCreateRequest>(request).is_err(),
         "SpecContentUpdateRequest" => {
             decode_invoke_args::<SpecContentUpdateRequest>(request).is_err()

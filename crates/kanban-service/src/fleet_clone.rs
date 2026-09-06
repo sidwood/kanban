@@ -114,6 +114,22 @@ impl LocalFleetCloneTool {
         }
     }
 
+    /// A tool that runs `program` under `deadline`, carrying no
+    /// managed configuration to scrub against. The seam exists for
+    /// tests, which cannot invoke the Operator's dotfiles skill from
+    /// a clean checkout; production constructs only through `new`.
+    #[cfg(test)]
+    pub(crate) fn with_program_and_deadline(
+        program: impl Into<String>,
+        deadline: Duration,
+    ) -> Self {
+        Self {
+            data_dir: PathBuf::new(),
+            program: program.into(),
+            deadline,
+        }
+    }
+
     /// `git bc-add <source> <branch> <target>`: the target is always
     /// explicit, so the guarded path is the path that lands.
     fn add_arguments(source: &str, branch: &str, target: &str) -> Vec<String> {
@@ -590,10 +606,12 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
 
     use kanban_dto::{ApiError, ErrorCode};
+    use serde_json::json;
     use tempfile::TempDir;
 
     use super::{LocalFleetCloneTool, run_to_deadline};
@@ -781,5 +799,97 @@ mod tests {
 
         assert_eq!(tool.program, "git");
         assert_eq!(tool.deadline, super::SKILL_DEADLINE);
+    }
+
+    /// KAN-T120-AC2: the overdue attempt records a safe failure — the
+    /// command is refused with the overrun named and a refusal row
+    /// lands on the Project timeline — and the Core command gate the
+    /// skill held is released, so a later unrelated Core command
+    /// succeeds over the same socket.
+    #[test]
+    fn an_overdue_attempt_records_a_safe_failure_and_the_core_stays_writable() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let stalled = stalled_skill(dir.path());
+        let tool = Arc::new(LocalFleetCloneTool::with_program_and_deadline(
+            stalled,
+            Duration::from_millis(300),
+        ));
+        let core =
+            crate::serve_with_fleet_clone_tool(dir.path(), dir.path().join("herdr-sessions"), tool)
+                .expect("the core boots with the fixture skill");
+        let mut client = crate::test_client::Client::connect(core.socket_path());
+        let repository = dir.path().join("repository");
+        fs::create_dir_all(repository.join(".git")).expect("the scratch repository is created");
+        client.command(
+            "project.register",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "register-core" },
+                "code": "CORE",
+                "name": "Control plane",
+                "repository": repository.to_str().expect("the path is UTF-8"),
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "main",
+                "herdr_session": "kanban-main",
+                "herdr_workspace": "kanban.seed",
+            }),
+        );
+
+        let started = Instant::now();
+        let refusal = client.command_error(
+            "clone.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "hang-1" },
+                "project_id": 1,
+                "path": "/workspaces/kanban.fleet-t120",
+                "branch": "fleet/kan-t120",
+            }),
+        );
+
+        assert_eq!(refusal["code"], json!("internal"));
+        let message = refusal["message"].as_str().expect("the message is text");
+        assert!(
+            message.contains("overran"),
+            "the refusal names the overrun: {message}"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the refused command answers in bounded time, took {elapsed:?}"
+        );
+
+        let timeline = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
+        let row = timeline["events"]
+            .as_array()
+            .expect("the timeline answers with events")
+            .iter()
+            .find(|event| event["detail"]["action"] == json!("clone_create_refused"))
+            .expect("the overdue attempt records a safe failure")
+            .clone();
+        // The application layer's landed vocabulary counts an overrun
+        // as a tool failure — the caller refused nothing — while the
+        // row itself still lands with the overrun named.
+        assert_eq!(row["detail"]["reason"], json!("fleet_tool_failed"));
+        assert!(
+            row["detail"]["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("overran"),
+            "the durable row carries the overrun: {row}"
+        );
+
+        let created = client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "after-overrun" },
+                "name": "Still writable",
+            }),
+        );
+        assert_eq!(
+            created["name"],
+            json!("Still writable"),
+            "a later unrelated Core command succeeds through the released gate"
+        );
+
+        core.shutdown();
     }
 }

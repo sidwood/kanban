@@ -22,8 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kanban_app::{
-    ActivationPass, Core, EventSink, GitObservation, ProjectStore, StoredProfileCatalogue,
-    TimelineQueryHandler,
+    ActivationPass, Core, EventSink, FleetCloneTool, GitObservation, ProjectStore,
+    StoredProfileCatalogue, TimelineQueryHandler,
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
@@ -126,15 +126,16 @@ fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
     Ok(database)
 }
 
-/// Wire the production application core around a prepared database
-/// and the event sink owned by its transport. Observation follows
-/// `observation`.
+/// Wire the production application core around a prepared database,
+/// the event sink owned by its transport, and `fleet_tool` serving
+/// the guarded clone commands. Observation follows `observation`.
 fn assemble_core(
     data_dir: &Path,
     database: Database,
     events: Arc<dyn EventSink>,
     herdr_socket_root: PathBuf,
     observation: ObservationTuning,
+    fleet_tool: Arc<dyn FleetCloneTool>,
 ) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
@@ -196,7 +197,7 @@ fn assemble_core(
         ticket_store.clone(),
     )?;
     core.register_clones(
-        Arc::new(LocalFleetCloneTool::new(data_dir.to_path_buf())),
+        fleet_tool,
         projects.clone(),
         workspace_store.clone(),
         clone_guard_store,
@@ -285,6 +286,23 @@ fn assemble_core(
 /// its schema up to date, and serve the application core on
 /// `core.sock` inside the same directory.
 pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
+    serve_configured(
+        data_dir,
+        production_socket_root(),
+        ObservationTuning::PRODUCTION,
+        Arc::new(LocalFleetCloneTool::new(data_dir.to_path_buf())),
+    )
+}
+
+/// Open the database, bind the socket, and serve a core wired for
+/// `herdr_socket_root`, `observation`, and `fleet_tool` until
+/// shutdown.
+fn serve_configured(
+    data_dir: &Path,
+    herdr_socket_root: PathBuf,
+    observation: ObservationTuning,
+    fleet_tool: Arc<dyn FleetCloneTool>,
+) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
@@ -292,8 +310,9 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
         data_dir,
         database,
         broker.clone(),
-        production_socket_root(),
-        ObservationTuning::PRODUCTION,
+        herdr_socket_root,
+        observation,
+        fleet_tool,
     )?;
     let logs =
         Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
@@ -324,39 +343,34 @@ pub(crate) fn serve_with_herdr_sessions(
     data_dir: &Path,
     herdr_socket_root: PathBuf,
 ) -> Result<CoreProcess, ServiceError> {
-    let database = prepare_database(data_dir)?;
-    let server = SocketServer::bind(data_dir)?;
-    let broker = server.broker();
-    // Observation tuned fast, so core-level tests settle and redial
-    // within their own budgets.
-    let (database, core, herdr, activation_pass) = assemble_core(
+    serve_configured(
         data_dir,
-        database,
-        broker.clone(),
         herdr_socket_root,
-        ObservationTuning {
-            backoff: herdr::BackoffPolicy::new(
-                std::time::Duration::from_millis(10),
-                std::time::Duration::from_millis(40),
-            ),
-            settle: std::time::Duration::from_millis(50),
-            io_timeout: std::time::Duration::from_millis(100),
-        },
-    )?;
-    let logs =
-        Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
-    let backup_scheduler =
-        BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
-    let activation_scheduler = ActivationScheduler::spawn(activation_pass, broker, logs.clone());
-    let server = server.serve(Arc::new(core))?;
-    Ok(CoreProcess {
-        database,
-        server,
-        herdr,
-        logs,
-        _backup_scheduler: backup_scheduler,
-        _activation_scheduler: activation_scheduler,
-    })
+        fast_observation(),
+        Arc::new(LocalFleetCloneTool::default()),
+    )
+}
+
+/// Serve a test core whose guarded clone commands run through
+/// `fleet_tool`, over an isolated Herdr socket root (KAN-T120).
+#[cfg(test)]
+pub(crate) fn serve_with_fleet_clone_tool(
+    data_dir: &Path,
+    herdr_socket_root: PathBuf,
+    fleet_tool: Arc<dyn FleetCloneTool>,
+) -> Result<CoreProcess, ServiceError> {
+    serve_configured(data_dir, herdr_socket_root, fast_observation(), fleet_tool)
+}
+
+/// Observation tuned fast, so core-level tests settle and redial
+/// within their own budgets.
+#[cfg(test)]
+fn fast_observation() -> ObservationTuning {
+    ObservationTuning {
+        backoff: herdr::BackoffPolicy::new(Duration::from_millis(10), Duration::from_millis(40)),
+        settle: Duration::from_millis(50),
+        io_timeout: Duration::from_millis(100),
+    }
 }
 
 /// Why the core process could not start.
@@ -500,6 +514,7 @@ mod tests {
             Arc::new(NoopEventSink),
             dir.path().join("herdr-sessions"),
             ObservationTuning::PRODUCTION,
+            Arc::new(crate::LocalFleetCloneTool::default()),
         )
         .expect("the production core wires");
 
@@ -1868,6 +1883,7 @@ mod tests {
                 Arc::new(NoopEventSink),
                 production_socket_root(),
                 ObservationTuning::PRODUCTION,
+                Arc::new(crate::LocalFleetCloneTool::default()),
             ) {
                 Err(error) => error,
                 Ok(_) => panic!("corrupt data refuses assembly"),
@@ -1920,6 +1936,7 @@ mod tests {
                 Arc::new(NoopEventSink),
                 production_socket_root(),
                 ObservationTuning::PRODUCTION,
+                Arc::new(crate::LocalFleetCloneTool::default()),
             ) {
                 Err(error) => error,
                 Ok(_) => panic!("assembly fails before the socket is bound"),
@@ -1952,6 +1969,7 @@ mod tests {
                 Arc::new(NoopEventSink),
                 production_socket_root(),
                 ObservationTuning::PRODUCTION,
+                Arc::new(crate::LocalFleetCloneTool::default()),
             ) {
                 Err(error) => error,
                 Ok(_) => panic!("corrupt data refuses assembly"),

@@ -1741,4 +1741,66 @@ mod clone_conflicts {
             "payload validation is not a guard conflict and records no row"
         );
     }
+
+    #[test]
+    fn relative_targets_are_refused_before_invocation() {
+        let harness = clone_harness();
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("a relative path is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("absolute"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "a relative target never reaches the skill, which would clone it against its own working directory"
+        );
+        assert!(
+            harness.timeline.rows().is_empty(),
+            "payload validation records no row"
+        );
+    }
+
+    #[test]
+    fn option_shaped_targets_and_branches_are_refused_before_invocation() {
+        let harness = clone_harness();
+
+        let dash_path = harness
+            .core
+            .command("clone.create", &create("--bare", "fleet/kan-t34", "key-1"))
+            .expect_err("an option-shaped path is refused");
+        let dash_branch = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "--offline", "key-2"),
+            )
+            .expect_err("an option-shaped branch is refused");
+
+        assert_eq!(dash_path.code, ErrorCode::InvalidRequest);
+        assert_eq!(dash_branch.code, ErrorCode::InvalidRequest);
+        assert!(
+            dash_path.message.contains("dash") && dash_branch.message.contains("dash"),
+            "the refusals name the rule: {} / {}",
+            dash_path.message,
+            dash_branch.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "an option-shaped value never reaches the skill's inner git arguments"
+        );
+        assert!(
+            harness.timeline.rows().is_empty(),
+            "payload validation records no row"
+        );
+    }
 }

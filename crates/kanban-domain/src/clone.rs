@@ -135,6 +135,15 @@ pub enum CloneTargetError {
     BlankPath,
     /// The branch holds nothing but whitespace.
     BlankBranch,
+    /// The path is not absolute, so the clone would land wherever the
+    /// invoking process happens to sit.
+    RelativePath,
+    /// The path begins with a dash, so the fleet skill's inner
+    /// `git clone` would read it as an option rather than the target.
+    OptionShapedPath,
+    /// The branch begins with a dash, so the fleet skill's inner
+    /// `git checkout` would read it as an option rather than a name.
+    OptionShapedBranch,
 }
 
 impl fmt::Display for CloneTargetError {
@@ -142,6 +151,9 @@ impl fmt::Display for CloneTargetError {
         match self {
             Self::BlankPath => write!(f, "a clone path cannot be blank"),
             Self::BlankBranch => write!(f, "a clone branch cannot be blank"),
+            Self::RelativePath => write!(f, "a clone path must be absolute"),
+            Self::OptionShapedPath => write!(f, "a clone path cannot begin with a dash"),
+            Self::OptionShapedBranch => write!(f, "a clone branch cannot begin with a dash"),
         }
     }
 }
@@ -149,7 +161,12 @@ impl fmt::Display for CloneTargetError {
 impl std::error::Error for CloneTargetError {}
 
 /// Validate a guarded create's target. Surrounding whitespace is not
-/// part of either value.
+/// part of either value. The path must then be absolute — the fleet
+/// skill resolves its target against the invoking process's working
+/// directory, so a relative spelling names no stable directory — and
+/// neither value may begin with a dash, because the installed skill
+/// passes both through unexamined to its inner git calls, where a
+/// dash-prefixed argument lands in option position.
 pub fn validate_clone_target(
     path: &str,
     branch: &str,
@@ -161,6 +178,15 @@ pub fn validate_clone_target(
     let trimmed_branch = branch.trim();
     if trimmed_branch.is_empty() {
         return Err(CloneTargetError::BlankBranch);
+    }
+    if trimmed_path.starts_with('-') {
+        return Err(CloneTargetError::OptionShapedPath);
+    }
+    if trimmed_branch.starts_with('-') {
+        return Err(CloneTargetError::OptionShapedBranch);
+    }
+    if !trimmed_path.starts_with('/') {
+        return Err(CloneTargetError::RelativePath);
     }
     Ok((trimmed_path.to_owned(), trimmed_branch.to_owned()))
 }
@@ -792,5 +818,43 @@ mod clone_guard_rules {
 
         assert_eq!(path, "/workspaces/kanban.fleet-t34");
         assert_eq!(branch, "fleet/kan-t34");
+    }
+
+    #[test]
+    fn relative_targets_are_refused() {
+        for path in [
+            "workspaces/kanban.fleet-t34",
+            "./workspaces/kanban.fleet-t34",
+            "../elsewhere/kanban.fleet-t34",
+            "~/kanban/clone",
+        ] {
+            assert_eq!(
+                validate_clone_target(path, "fleet/kan-t34"),
+                Err(CloneTargetError::RelativePath),
+                "`{path}` lands wherever the invoking process happens to sit"
+            );
+        }
+    }
+
+    #[test]
+    fn option_shaped_targets_are_refused_as_such() {
+        for path in ["-b", "--bare", " --offline"] {
+            assert_eq!(
+                validate_clone_target(path, "fleet/kan-t34"),
+                Err(CloneTargetError::OptionShapedPath),
+                "`{path}` would reach the fleet skill's inner git clone in option position"
+            );
+        }
+    }
+
+    #[test]
+    fn option_shaped_branches_are_refused() {
+        for branch in ["-foo", "--offline", " -b"] {
+            assert_eq!(
+                validate_clone_target("/workspaces/kanban.fleet-t34", branch),
+                Err(CloneTargetError::OptionShapedBranch),
+                "`{branch}` would reach the fleet skill's inner git checkout in option position"
+            );
+        }
     }
 }

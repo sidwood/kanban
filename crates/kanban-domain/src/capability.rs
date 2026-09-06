@@ -336,18 +336,22 @@ pub struct Capability {
     scope: CapabilityScope,
     operations: McpOperations,
     status: CapabilityStatus,
+    minted_at: u64,
+    settled_at: Option<u64>,
 }
 
 impl Capability {
-    /// Mint a live capability bound to `dispatch`'s run. The
-    /// operations must already sit inside the agent surface
-    /// ([`enforce_within_surface`]); nothing here can widen
-    /// authority past what the caller allows.
+    /// Mint a live capability bound to `dispatch`'s run at
+    /// `minted_at`, as unix seconds. The operations must already sit
+    /// inside the agent surface ([`enforce_within_surface`]);
+    /// nothing here can widen authority past what the caller allows.
+    #[allow(clippy::too_many_arguments)]
     pub fn mint(
         id: CapabilityId,
         dispatch: DispatchRequestId,
         scope: CapabilityScope,
         operations: McpOperations,
+        minted_at: u64,
     ) -> Result<Self, CapabilityError> {
         if operations.is_empty() {
             return Err(CapabilityError::NoOperations);
@@ -358,16 +362,21 @@ impl Capability {
             scope,
             operations,
             status: CapabilityStatus::Active,
+            minted_at,
+            settled_at: None,
         })
     }
 
     /// Rehydrate a stored capability exactly as it was recorded.
+    #[allow(clippy::too_many_arguments)]
     pub fn restore(
         id: CapabilityId,
         dispatch: DispatchRequestId,
         scope: CapabilityScope,
         operations: McpOperations,
         status: CapabilityStatus,
+        minted_at: u64,
+        settled_at: Option<u64>,
     ) -> Self {
         Self {
             id,
@@ -375,6 +384,8 @@ impl Capability {
             scope,
             operations,
             status,
+            minted_at,
+            settled_at,
         }
     }
 
@@ -403,6 +414,17 @@ impl Capability {
         self.status
     }
 
+    /// When the capability was minted, as unix seconds.
+    pub fn minted_at(&self) -> u64 {
+        self.minted_at
+    }
+
+    /// When run settlement expired it, as unix seconds. The first
+    /// settlement's moment is the one that stands.
+    pub fn settled_at(&self) -> Option<u64> {
+        self.settled_at
+    }
+
     /// Whether `operation` is permitted: the capability must still be
     /// live and the operation inside the minted set. A settled
     /// capability refuses everything (DR-SS-14).
@@ -420,10 +442,14 @@ impl Capability {
         Ok(())
     }
 
-    /// Expire with run settlement. One-way and idempotent: settling
-    /// twice changes nothing, and no path exists back to active —
-    /// renewal is refused by there being nothing to renew.
-    pub fn settle(&mut self) {
+    /// Expire with run settlement at `settled_at`, as unix seconds.
+    /// One-way and idempotent: settling twice changes nothing — the
+    /// first settlement's moment stands — and no path exists back to
+    /// active; renewal is refused by there being nothing to renew.
+    pub fn settle(&mut self, settled_at: u64) {
+        if self.settled_at.is_none() {
+            self.settled_at = Some(settled_at);
+        }
         self.status = CapabilityStatus::Settled;
     }
 }
@@ -478,6 +504,7 @@ mod capability_scope {
             implementer_scope(),
             McpOperations::new(["timeline.query", "ticket.get", "spec.get", "ticket.get"])
                 .expect("the grant validates"),
+            100,
         )
         .expect("the capability mints")
     }
@@ -496,6 +523,7 @@ mod capability_scope {
             DispatchRequestId::new(6),
             scope.clone(),
             McpOperations::new(["ticket.get"]).expect("the grant validates"),
+            100,
         )
         .expect("the capability mints");
 
@@ -507,6 +535,8 @@ mod capability_scope {
         assert_eq!(scope.reviewer_slot(), Some(ReviewerSlotId::new(5)));
         assert_eq!(capability.scope(), &scope);
         assert_eq!(capability.status(), CapabilityStatus::Active);
+        assert_eq!(capability.minted_at(), 100);
+        assert_eq!(capability.settled_at(), None);
     }
 
     #[test]
@@ -547,6 +577,7 @@ mod capability_scope {
                 DispatchRequestId::new(1),
                 implementer_scope(),
                 McpOperations::restore(Vec::new()),
+                100,
             ),
             Err(CapabilityError::NoOperations)
         );
@@ -626,7 +657,7 @@ mod capability_scope {
     #[test]
     fn settlement_expires_every_operation() {
         let mut capability = minted();
-        capability.settle();
+        capability.settle(200);
 
         assert_eq!(capability.status(), CapabilityStatus::Settled);
         assert!(!capability.status().is_live());
@@ -644,12 +675,17 @@ mod capability_scope {
     #[test]
     fn settlement_is_one_way_and_never_renews() {
         let mut expired = minted();
-        expired.settle();
-        expired.settle();
+        expired.settle(200);
+        expired.settle(300);
         assert_eq!(
             expired.status(),
             CapabilityStatus::Settled,
             "settling twice is the same settlement"
+        );
+        assert_eq!(
+            expired.settled_at(),
+            Some(200),
+            "the first settlement's moment is the one that stands"
         );
         assert!(expired.permits("ticket.get").is_err());
 
@@ -660,6 +696,7 @@ mod capability_scope {
             DispatchRequestId::new(5),
             implementer_scope(),
             McpOperations::new(["ticket.get"]).expect("the grant validates"),
+            400,
         )
         .expect("a new run mints its own capability");
         assert_eq!(successor.status(), CapabilityStatus::Active);

@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CapabilityRole": {
+      "description": "The run role a capability grants, on the wire.",
+      "oneOf": [
+        {
+          "description": "Executing an Implementation or Bug Ticket in a Lane.",
+          "enum": [
+            "implementer"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reviewing one Review Slot.",
+          "enum": [
+            "reviewer"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CapabilityStatus": {
+      "description": "The closed capability status on the wire: live until run settlement expires it. Settled is terminal; nothing renews.",
+      "oneOf": [
+        {
+          "description": "Live from the mint until the run settles.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Expired with run settlement. Terminal.",
+          "enum": [
+            "settled"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "One minted, run-scoped capability as every client sees it.",
+  "properties": {
+    "dispatch_request_id": {
+      "description": "The Dispatch Request whose won claim minted this capability.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "id": {
+      "description": "The storage-assigned identity.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "lane_id": {
+      "description": "The Lane the run executes in.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "minted_at": {
+      "description": "When the capability was minted, as unix seconds.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "operations": {
+      "description": "The permitted MCP operations, canonical and ordered.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reviewer_slot_id": {
+      "description": "The Review Slot occupied, for a reviewer.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "role": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CapabilityRole"
+        }
+      ],
+      "description": "The run role granted."
+    },
+    "settled_at": {
+      "description": "When run settlement expired it, as unix seconds.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CapabilityStatus"
+        }
+      ],
+      "description": "Live or settled."
+    },
+    "ticket_id": {
+      "description": "The Ticket the run executes.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "dispatch_request_id",
+    "id",
+    "lane_id",
+    "minted_at",
+    "operations",
+    "role",
+    "status",
+    "ticket_id"
+  ],
+  "title": "CapabilityRecord",
+  "type": "object"
+}

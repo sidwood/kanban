@@ -5,6 +5,7 @@ use crate::board::{
     AttentionState, BoardFilter, BoardFilterOption, BoardFilterOptions, BoardGlobalCard,
     BoardGlobalQuery, BoardGlobalResponse, BoardGroup,
 };
+use crate::capability::{CapabilityRecord, CapabilityRole, CapabilityStatus};
 use crate::capacity::{
     CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
@@ -116,6 +117,9 @@ use crate::workspace::{
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
         ("ApiError", schema_for!(ApiError)),
+        ("CapabilityRecord", schema_for!(CapabilityRecord)),
+        ("CapabilityRole", schema_for!(CapabilityRole)),
+        ("CapabilityStatus", schema_for!(CapabilityStatus)),
         (
             "CapacityDefaultsGetQuery",
             schema_for!(CapacityDefaultsGetQuery),

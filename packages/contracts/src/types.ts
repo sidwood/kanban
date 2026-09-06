@@ -54,6 +54,20 @@ export type BoardGlobalResponse = {
   options: BoardFilterOptions;
 };
 export type BoardGroup = 'draft' | 'backlog' | 'current' | 'review' | 'staged' | 'done';
+export type CapabilityRecord = {
+  dispatch_request_id: number;
+  id: number;
+  lane_id: number;
+  minted_at: number;
+  operations: string[];
+  reviewer_slot_id?: number | null;
+  role: CapabilityRole;
+  settled_at?: number | null;
+  status: CapabilityStatus;
+  ticket_id: number;
+};
+export type CapabilityRole = 'implementer' | 'reviewer';
+export type CapabilityStatus = 'active' | 'settled';
 export type CapacityDefaultsGetQuery = Record<string, never>;
 export type CapacityDefaultsGetResponse = {
   defaults: CapacityGlobalDefaults;

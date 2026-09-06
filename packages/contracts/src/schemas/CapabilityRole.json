@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The run role a capability grants, on the wire.",
+  "oneOf": [
+    {
+      "description": "Executing an Implementation or Bug Ticket in a Lane.",
+      "enum": [
+        "implementer"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Reviewing one Review Slot.",
+      "enum": [
+        "reviewer"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "CapabilityRole"
+}

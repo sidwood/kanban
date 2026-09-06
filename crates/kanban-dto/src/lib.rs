@@ -2,6 +2,7 @@
 //! with schema derivation. Depends on nothing internal.
 
 pub mod board;
+pub mod capability;
 pub mod capacity;
 pub mod chip;
 pub mod clone;
@@ -35,6 +36,7 @@ pub use board::{
     AttentionState, BoardFilter, BoardFilterOption, BoardFilterOptions, BoardGlobalCard,
     BoardGlobalQuery, BoardGlobalResponse, BoardGroup,
 };
+pub use capability::{CapabilityRecord, CapabilityRole, CapabilityStatus};
 pub use capacity::{
     CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
     CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
@@ -190,6 +192,9 @@ mod tests {
             names,
             vec![
                 "ApiError",
+                "CapabilityRecord",
+                "CapabilityRole",
+                "CapabilityStatus",
                 "CapacityDefaultsGetQuery",
                 "CapacityDefaultsGetResponse",
                 "CapacityDefaultsUpdateRequest",

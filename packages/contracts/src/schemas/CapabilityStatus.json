@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The closed capability status on the wire: live until run settlement expires it. Settled is terminal; nothing renews.",
+  "oneOf": [
+    {
+      "description": "Live from the mint until the run settles.",
+      "enum": [
+        "active"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Expired with run settlement. Terminal.",
+      "enum": [
+        "settled"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "CapabilityStatus"
+}

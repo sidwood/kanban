@@ -8,8 +8,9 @@
 //! invoked, with the conflict named (DR-LW-10). Paths are judged by
 //! the filesystem identity they resolve to, so a case or symlink
 //! alias of the Seed Workspace or a registered Workspace is refused
-//! as itself, and a destination that does not exist yet is resolved
-//! through its parent with the leaf's case folded (KAN-T122). Every
+//! as itself, a destination that does not exist yet is resolved
+//! through its parent with the leaf's case folded, and a symlink
+//! whose target is gone is followed to that target (KAN-T122). Every
 //! invocation and every refusal appends a timeline row, so the audit
 //! trail outlives both outcomes. Removal never deletes the Workspace
 //! record (DR-LW-11); a successful removal records the checkout gone
@@ -154,6 +155,10 @@ fn encode(record: &impl serde::Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(record).map_err(|error| ApiError::internal(&error.to_string()))
 }
 
+/// How many symlinks one identity resolution will follow on its own:
+/// more than any alias chain and fewer than a cycle needs to spin.
+const ALIAS_SYMLINK_LIMIT: usize = 8;
+
 /// Resolve one clone-guard path to the filesystem identity it names
 /// (KAN-T122): the directory a symlink or a case-insensitive spelling
 /// reaches and, for a destination that does not exist yet, the
@@ -161,13 +166,36 @@ fn encode(record: &impl serde::Serialize) -> Result<Value, ApiError> {
 /// of the conflict check is resolved this way, so a differently
 /// spelled Seed Workspace or registered Workspace cannot clone onto
 /// protected identity. A leaf the filesystem holds no case for is
-/// folded, so two spellings of one missing leaf are one identity;
-/// what nothing can resolve — a parent chain that names nothing, a
-/// symlink whose target is gone — keeps its spelling as the
-/// documented residual.
+/// folded, so two spellings of one missing leaf are one identity, and
+/// a symlink whose target is gone is followed to that target — a
+/// dangling alias names where the clone would land, not the link's
+/// own spelling. What nothing can resolve — a parent chain that names
+/// nothing, a symlink cycle past the follow bound — keeps its
+/// spelling as the documented residual.
 fn resolved_filesystem_identity(path: &str) -> String {
+    resolved_filesystem_identity_within(path, 0)
+}
+
+/// The resolution above, carrying how many symlinks it has already
+/// followed so a cycle cannot turn it into a spin.
+fn resolved_filesystem_identity_within(path: &str, followed: usize) -> String {
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().into_owned();
+    }
+    if followed < ALIAS_SYMLINK_LIMIT {
+        if let Ok(target) = std::fs::read_link(path) {
+            let resolution = match target.is_absolute() {
+                true => target,
+                false => Path::new(path)
+                    .parent()
+                    .map(|parent| parent.join(&target))
+                    .unwrap_or(target),
+            };
+            return resolved_filesystem_identity_within(
+                &resolution.to_string_lossy(),
+                followed + 1,
+            );
+        }
     }
     let destination = Path::new(path);
     if let (Some(parent), Some(leaf)) = (destination.parent(), destination.file_name()) {
@@ -2172,5 +2200,104 @@ mod clone_filesystem_identity {
             json!(request),
             "the row records the spelling that was asked for"
         );
+    }
+
+    /// KAN-T122-AC1: a symlink whose target is gone still names its
+    /// target, so a dangling alias of a registered Workspace is
+    /// refused before anything is invoked.
+    #[test]
+    fn creating_refuses_a_dangling_symlink_alias_of_a_registered_workspace() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspaces = existing_directory(&dir, "workspaces");
+        let registered = missing_child(&workspaces, "kanban.gone");
+        let alias = alias_symlink(&dir, &registered, "dangling-link");
+        let harness = clone_harness();
+        register_workspace(&harness, &registered, "key-1");
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-2"))
+            .expect_err("a dangling alias still names the registered path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!(alias),
+            "the row records the spelling that was asked for"
+        );
+    }
+
+    /// KAN-T122-AC1: a dangling alias of the declared Seed Workspace
+    /// is refused too. The link carries a relative target, so the
+    /// resolution must join it against the link's own parent.
+    #[test]
+    fn creating_refuses_a_dangling_relative_symlink_alias_of_the_seed_path() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let workspaces = existing_directory(&dir, "workspaces");
+        let seed = missing_child(&workspaces, "kanban.seed");
+        let alias = alias_symlink(&dir, "workspaces/kanban.seed", "seed-dangling-link");
+        let harness = clone_harness();
+        project_with_seed(&harness, &seed);
+
+        let error = harness
+            .core
+            .command("clone.create", &create(&alias, "key-1"))
+            .expect_err("a dangling alias still names the Seed path");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("Seed"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refusal is recorded");
+        assert_eq!(rows[0].detail()["reason"], json!("seed_path"));
+    }
+
+    /// A symlink cycle names nothing, and the resolution must not
+    /// chase it forever: the follow bound leaves the identity at the
+    /// last spelling's parent-resolved form, and a path nothing
+    /// registered holds still proceeds.
+    #[test]
+    fn a_symlink_cycle_resolves_to_a_bound_identity_and_proceeds() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        symlink("cycle-b", dir.path().join("cycle-a")).expect("the first cycle link is created");
+        symlink("cycle-a", dir.path().join("cycle-b")).expect("the second cycle link is created");
+        let request = dir
+            .path()
+            .join("cycle-a")
+            .to_str()
+            .expect("the path is UTF-8")
+            .to_owned();
+        let harness = clone_harness();
+
+        let response = harness
+            .core
+            .command("clone.create", &create(&request, "key-1"))
+            .expect("a cycle is a spelling, not a hang");
+
+        assert_eq!(
+            response["path"],
+            json!(request),
+            "the skill is handed the spelling that was asked for"
+        );
+        assert_eq!(harness.tool.calls().len(), 1);
     }
 }

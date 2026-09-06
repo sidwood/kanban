@@ -232,13 +232,14 @@ fn normalised_path_form(path: &str) -> String {
 /// Every path arrives as the filesystem identity the application
 /// layer resolved (KAN-T122): a case or symlink alias of the Seed
 /// Workspace or a registered Workspace shares one identity with the
-/// path it aliases, and a destination that does not exist yet arrives
-/// resolved through its parent with its leaf case-folded. Identities
-/// are still judged by their normal form on both sides, so an
-/// equivalent spelling of a refused identity is refused too. What the
-/// filesystem cannot name — a symlink whose target is gone — keeps
-/// its spelling: that residual is documented, not caught. The first
-/// conflict wins and names itself.
+/// path it aliases, a destination that does not exist yet arrives
+/// resolved through its parent with its leaf case-folded, and a
+/// symlink whose target is gone arrives followed to that target.
+/// Identities are still judged by their normal form on both sides, so
+/// an equivalent spelling of a refused identity is refused too. Only
+/// a parent chain that names nothing keeps its spelling: that
+/// residual is documented, not caught. The first conflict wins and
+/// names itself.
 pub fn clone_create_conflict(
     path: &str,
     branch: &str,

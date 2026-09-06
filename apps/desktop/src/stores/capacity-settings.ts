@@ -3,7 +3,8 @@
 // model family, and usage pool, and the stricter caps plus maximum
 // active Lane count one Project may impose (KAN-S7-US3, DR-EP-06,
 // DR-EP-07). An empty draft field means no cap on that dimension,
-// and refusals are reported, never swallowed.
+// every other value is sent for the Core to judge, and refusals are
+// reported, never swallowed.
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type {
@@ -18,16 +19,32 @@ function mutationFor(optimisticVersion: number) {
   return { optimistic_version: optimisticVersion, idempotency_key: crypto.randomUUID() }
 }
 
-// The cap one draft field carries: an empty field imposes nothing,
-// and any whole positive number is a cap. A number input hands Vue's
-// number cast a number, so both shapes arrive here.
-function capOf(draft: string | number): number | undefined {
+// What one draft field asks of the Core. An empty field clears the
+// cap; any parseable number — zero, negative, or fractional included
+// — is the Operator's typed input, sent for the Core's typed
+// validation to refuse; the UI invents no clamp of its own. Only
+// text no JSON payload can carry is refused here, because JSON would
+// encode it as null and silently clear the cap instead. A number
+// input hands Vue's number cast a number, so both shapes arrive
+// here.
+type CapDraft =
+  | { kind: 'omit' }
+  | { kind: 'send'; value: number }
+  | { kind: 'refuse'; reason: string }
+
+function capOf(draft: string | number, field: string): CapDraft {
   const text = `${draft}`.trim()
   if (text.length === 0) {
-    return undefined
+    return { kind: 'omit' }
   }
   const parsed = Number(text)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+  if (Number.isFinite(parsed)) {
+    return { kind: 'send', value: parsed }
+  }
+  return {
+    kind: 'refuse',
+    reason: `the ${field} cap must be a number; leave the field empty to clear it`,
+  }
 }
 
 // The draft text for one stored cap: absence is an empty field.
@@ -113,24 +130,32 @@ export const useCapacityStore = defineStore('capacity-settings', {
     },
     // Replace the selected Project's caps wholesale: a field left
     // empty clears its cap, so the global default stands on that
-    // dimension again (DR-EP-07).
+    // dimension again (DR-EP-07), and every other value reaches the
+    // Core for judgement.
     async saveProjectCaps(transport: ShellTransport): Promise<void> {
       if (this.selectedProjectId === null || this.caps === null) {
         return
       }
       const caps = this.caps
-      const harness = capOf(this.harness)
-      const model = capOf(this.model)
-      const pool = capOf(this.usagePool)
-      const lanes = capOf(this.lanes)
+      const harness = capOf(this.harness, 'harness family')
+      const model = capOf(this.model, 'model family')
+      const pool = capOf(this.usagePool, 'usage pool')
+      const lanes = capOf(this.lanes, 'active Lane')
+      const refusal = [harness, model, pool, lanes].find(
+        (draft): draft is { kind: 'refuse'; reason: string } => draft.kind === 'refuse',
+      )
+      if (refusal) {
+        this.error = refusal.reason
+        return
+      }
       try {
         const updated = await new KanbanClient(transport).commandCapacitySettingsUpdate({
           mutation: mutationFor(caps.version),
           project_id: this.selectedProjectId,
-          ...(harness !== undefined ? { max_active_per_harness: harness } : {}),
-          ...(model !== undefined ? { max_active_per_model: model } : {}),
-          ...(pool !== undefined ? { max_active_per_usage_pool: pool } : {}),
-          ...(lanes !== undefined ? { max_active_lanes: lanes } : {}),
+          ...(harness.kind === 'send' ? { max_active_per_harness: harness.value } : {}),
+          ...(model.kind === 'send' ? { max_active_per_model: model.value } : {}),
+          ...(pool.kind === 'send' ? { max_active_per_usage_pool: pool.value } : {}),
+          ...(lanes.kind === 'send' ? { max_active_lanes: lanes.value } : {}),
         })
         this.adoptCaps(updated)
         this.error = null

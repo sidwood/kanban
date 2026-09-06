@@ -175,7 +175,7 @@ describe('capacity-settings', () => {
       }),
     )
     const sent = command.mock.calls[0]?.[1] as Record<string, unknown>
-    expect(sent.max_active_model).toBeUndefined()
+    expect(sent.max_active_per_model).toBeUndefined()
     expect(sent.max_active_per_usage_pool).toBeUndefined()
   })
 
@@ -211,6 +211,97 @@ describe('capacity-settings', () => {
     expect(command).toHaveBeenCalledWith(
       'capacity.settings.update',
       expect.objectContaining({ mutation: expect.objectContaining({ optimistic_version: 2 }) }),
+    )
+  })
+
+  it('sends a zero cap for the Core to refuse, never omission', async () => {
+    const { wrapper, command } = await mounted()
+
+    await wrapper.find('[data-testid="caps-model"]').setValue('0')
+    await wrapper.find('[data-testid="save-project-caps"]').trigger('click')
+    await flushPromises()
+
+    const sent = command.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(sent.max_active_per_model).toBe(0)
+  })
+
+  it('sends a negative cap for the Core to refuse, never omission', async () => {
+    const { wrapper, command } = await mounted()
+
+    await wrapper.find('[data-testid="caps-harness"]').setValue('-2')
+    await wrapper.find('[data-testid="save-project-caps"]').trigger('click')
+    await flushPromises()
+
+    const sent = command.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(sent.max_active_per_harness).toBe(-2)
+  })
+
+  it('sends a fractional cap for the Core to refuse, never omission', async () => {
+    const { wrapper, command } = await mounted()
+
+    await wrapper.find('[data-testid="caps-lanes"]').setValue('1.5')
+    await wrapper.find('[data-testid="save-project-caps"]').trigger('click')
+    await flushPromises()
+
+    const sent = command.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(sent.max_active_lanes).toBe(1.5)
+  })
+
+  it('keeps the stored caps when the Core refuses the typed input', async () => {
+    setActivePinia(createPinia())
+    const stored = unsetCaps()
+    stored.max_active_per_model = 1
+    stored.version = 2
+    const refusing = {
+      query: async (name: string) => {
+        if (name === 'project.list') {
+          return { projects: [project()] }
+        }
+        if (name === 'capacity.defaults.get') {
+          return defaults
+        }
+        return { project_id: 1, caps: stored }
+      },
+      command: vi.fn(async () => {
+        throw Object.assign(
+          new Error('a model family capacity limit must be greater than zero'),
+          { code: 'invalid_request' },
+        )
+      }),
+      subscribe: () => () => undefined,
+      onConnectionChange: () => () => undefined,
+    } as unknown as ShellTransport
+    const store = useCapacityStore()
+    await store.refresh(refusing)
+    const before = { ...stored }
+
+    store.model = 0
+    await store.saveProjectCaps(refusing)
+
+    expect(refusing.command).toHaveBeenCalledWith(
+      'capacity.settings.update',
+      expect.objectContaining({ max_active_per_model: 0 }),
+    )
+    expect(store.error).toBe('a model family capacity limit must be greater than zero')
+    expect(store.caps).toEqual(before)
+    expect(store.model).toBe(0)
+  })
+
+  // Number inputs blank text they cannot parse before it reaches the
+  // store, so the guard against a draft JSON would mangle is proven
+  // here at the store, which any consumer may write directly.
+  it('refuses a draft no payload can carry without sending', async () => {
+    const { transport, command, store } = await mounted()
+
+    store.usagePool = 'lots'
+    await store.saveProjectCaps(transport)
+
+    store.usagePool = Number.POSITIVE_INFINITY
+    await store.saveProjectCaps(transport)
+
+    expect(command).not.toHaveBeenCalled()
+    expect(store.error).toBe(
+      'the usage pool cap must be a number; leave the field empty to clear it',
     )
   })
 

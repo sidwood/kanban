@@ -149,6 +149,9 @@ async function saveProjectCaps() {
         </select>
       </label>
 
+      <!-- Text inputs, not number inputs: the DOM blanks text it
+        cannot parse, and blank means a deliberate clear of the cap.
+        Bad text must reach the store's refusal intact. -->
       <div
         v-if="capacity.caps"
         class="mt-4 grid gap-3 sm:grid-cols-2"
@@ -158,7 +161,8 @@ async function saveProjectCaps() {
           <input
             v-model="capacity.harness"
             data-testid="caps-harness"
-            type="number"
+            type="text"
+            inputmode="numeric"
             min="1"
             class="rounded border border-slate-300 px-2 py-1"
           >
@@ -168,7 +172,8 @@ async function saveProjectCaps() {
           <input
             v-model="capacity.model"
             data-testid="caps-model"
-            type="number"
+            type="text"
+            inputmode="numeric"
             min="1"
             class="rounded border border-slate-300 px-2 py-1"
           >
@@ -178,7 +183,8 @@ async function saveProjectCaps() {
           <input
             v-model="capacity.usagePool"
             data-testid="caps-usage-pool"
-            type="number"
+            type="text"
+            inputmode="numeric"
             min="1"
             class="rounded border border-slate-300 px-2 py-1"
           >
@@ -188,7 +194,8 @@ async function saveProjectCaps() {
           <input
             v-model="capacity.lanes"
             data-testid="caps-lanes"
-            type="number"
+            type="text"
+            inputmode="numeric"
             min="1"
             class="rounded border border-slate-300 px-2 py-1"
           >

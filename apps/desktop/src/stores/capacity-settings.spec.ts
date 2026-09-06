@@ -247,6 +247,28 @@ describe('capacity-settings', () => {
     expect(sent.max_active_lanes).toBe(1.5)
   })
 
+  // Number inputs report '' for text like 1e that they cannot parse,
+  // which would read as a deliberate clear of a stored cap; the caps
+  // fields must carry their text to the store's refusal intact.
+  it('refuses invalid text instead of silently clearing a stored cap', async () => {
+    const stored = unsetCaps()
+    stored.max_active_per_model = 2
+    stored.version = 2
+    const { wrapper, command, readCaps, store } = await mounted(stored)
+
+    await wrapper.find('[data-testid="caps-model"]').setValue('1e')
+    await wrapper.find('[data-testid="save-project-caps"]').trigger('click')
+    await flushPromises()
+
+    expect(command).not.toHaveBeenCalled()
+    expect(store.error).toBe(
+      'the model family cap must be a number; leave the field empty to clear it',
+    )
+    expect(readCaps().max_active_per_model).toBe(2)
+    expect(store.caps?.max_active_per_model).toBe(2)
+    expect(store.model).toBe('1e')
+  })
+
   it('keeps the stored caps when the Core refuses the typed input', async () => {
     setActivePinia(createPinia())
     const stored = unsetCaps()
@@ -287,9 +309,9 @@ describe('capacity-settings', () => {
     expect(store.model).toBe(0)
   })
 
-  // Number inputs blank text they cannot parse before it reaches the
-  // store, so the guard against a draft JSON would mangle is proven
-  // here at the store, which any consumer may write directly.
+  // The view carries its text intact, but any consumer may write the
+  // draft directly, so the guard against a draft JSON would mangle is
+  // proven here at the store.
   it('refuses a draft no payload can carry without sending', async () => {
     const { transport, command, store } = await mounted()
 

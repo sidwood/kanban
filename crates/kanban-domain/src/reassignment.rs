@@ -13,7 +13,7 @@
 
 use std::fmt;
 
-use crate::ticket::{Ticket, TicketState};
+use crate::ticket::{Ticket, TicketId, TicketState};
 
 /// Why a reassignment was refused. Every refusal leaves both Tickets
 /// exactly as they stood.
@@ -48,15 +48,16 @@ impl fmt::Display for ReassignmentError {
 
 impl std::error::Error for ReassignmentError {}
 
-/// Apply one reassignment (DR-DE-07): `replacement` — created through
-/// [`Ticket::replacement`] naming `original` as its predecessor —
-/// supersedes `original`, moving it to the terminal superseded state
-/// from any open state. The replacement itself is the caller's to
-/// land beside the superseded original in one write; this rule owns
-/// the pairing and the supersession alone.
+/// Apply one reassignment (DR-DE-07): the replacement being minted
+/// names `predecessor` — the identity a `Ticket::replacement` lands
+/// referencing — and `original`, the Ticket that predecessor must be,
+/// moves to the terminal superseded state from any open state. The
+/// replacement's own identity is storage's to assign; this rule owns
+/// the pairing and the supersession alone, and the caller lands the
+/// replacement beside the superseded original in one write.
 pub fn apply_reassignment(
     original: &mut Ticket,
-    replacement: &Ticket,
+    predecessor: TicketId,
 ) -> Result<(), ReassignmentError> {
     if original.state().is_terminal() {
         return Err(ReassignmentError::Terminal);
@@ -64,7 +65,7 @@ pub fn apply_reassignment(
     if original.state() == TicketState::Done {
         return Err(ReassignmentError::Complete);
     }
-    if replacement.predecessor() != Some(original.id()) {
+    if predecessor != original.id() {
         return Err(ReassignmentError::Detached);
     }
     original.transition_state(TicketState::Superseded);
@@ -176,9 +177,8 @@ mod reassignment_rules {
             TicketState::Landing,
         ] {
             let mut original = ticket(1, from);
-            let replacement = replacement_for(&original, 9);
 
-            apply_reassignment(&mut original, &replacement)
+            apply_reassignment(&mut original, TicketId::new(1))
                 .unwrap_or_else(|error| panic!("reassignment serves {from:?}: {error}"));
 
             assert_eq!(original.state(), TicketState::Superseded, "{from:?}");
@@ -190,7 +190,6 @@ mod reassignment_rules {
             // The superseded Ticket keeps every recorded fact: the
             // number, the body, and the identity all stand.
             assert_eq!(original.number().value(), 4);
-            assert_eq!(original.kind(), replacement.kind());
         }
     }
 
@@ -198,9 +197,8 @@ mod reassignment_rules {
     fn terminal_and_landed_originals_are_never_reassigned() {
         for state in [TicketState::Cancelled, TicketState::Superseded] {
             let mut original = ticket(1, state);
-            let replacement = replacement_for(&original, 9);
             assert_eq!(
-                apply_reassignment(&mut original, &replacement),
+                apply_reassignment(&mut original, TicketId::new(1)),
                 Err(ReassignmentError::Terminal),
                 "{state:?} is terminal"
             );
@@ -213,9 +211,8 @@ mod reassignment_rules {
         );
 
         let mut landed = ticket(1, TicketState::Done);
-        let replacement = replacement_for(&landed, 9);
         assert_eq!(
-            apply_reassignment(&mut landed, &replacement),
+            apply_reassignment(&mut landed, TicketId::new(1)),
             Err(ReassignmentError::Complete),
             "done is final; landed work is not reassigned"
         );
@@ -230,10 +227,9 @@ mod reassignment_rules {
     fn a_replacement_that_names_another_predecessor_is_refused() {
         let mut original = ticket(1, TicketState::Active);
         let elsewhere = ticket(2, TicketState::Draft);
-        let replacement = replacement_for(&elsewhere, 9);
 
         assert_eq!(
-            apply_reassignment(&mut original, &replacement),
+            apply_reassignment(&mut original, elsewhere.id()),
             Err(ReassignmentError::Detached),
             "a replacement references the Ticket it replaces"
         );
@@ -260,8 +256,8 @@ mod reassignment_rules {
         // Every open state can still be superseded by reassignment,
         // which is the one act that reaches the state.
         let mut original = ticket(1, TicketState::Ready);
-        let replacement = replacement_for(&original, 9);
-        apply_reassignment(&mut original, &replacement).expect("reassignment reaches superseded");
+        apply_reassignment(&mut original, TicketId::new(1))
+            .expect("reassignment reaches superseded");
         assert_eq!(original.state(), TicketState::Superseded);
         let _ = HumanCommand::Park;
     }

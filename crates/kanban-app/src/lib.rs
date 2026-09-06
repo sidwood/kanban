@@ -25,6 +25,7 @@ pub mod mutation;
 pub mod plan;
 pub mod profile;
 pub mod project;
+pub mod reassignment;
 pub mod rulings;
 pub mod spec;
 pub mod telemetry;

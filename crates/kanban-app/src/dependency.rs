@@ -661,6 +661,20 @@ pub(crate) mod testing {
             ))
         }
 
+        fn reassign(
+            &self,
+            _project: &kanban_domain::Project,
+            _original: &kanban_domain::Ticket,
+            _number: TicketNumber,
+            _priority: Priority,
+            _body: &TicketBody,
+            _envelopes: &dyn Fn(kanban_domain::TicketId) -> (TimelineEnvelope, TimelineEnvelope),
+        ) -> Result<kanban_domain::Ticket, ApiError> {
+            Err(ApiError::internal(
+                "the dependency fixtures seed Tickets directly",
+            ))
+        }
+
         fn save(
             &self,
             _ticket: &kanban_domain::Ticket,

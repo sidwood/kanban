@@ -61,6 +61,25 @@ pub trait TicketStore: Send + Sync {
     ) -> Result<Ticket, ApiError>;
     /// Load one Ticket, if it exists.
     fn find(&self, id: TicketId) -> Result<Option<Ticket>, ApiError>;
+    /// Replace one Ticket by reassignment (DR-DE-07): the already
+    /// superseded `original` — moved by the domain rule — lands beside
+    /// the replacement this write creates, with the minted counter
+    /// move and both timeline envelopes, all in one transaction, so a
+    /// reassignment can never split across a crash boundary. The
+    /// replacement is created into draft referencing `original` as its
+    /// predecessor; storage assigns its identity and asks `envelopes`
+    /// for the timeline rows that identity belongs in — the
+    /// replacement's creation row first, then the original's
+    /// supersession row.
+    fn reassign(
+        &self,
+        project: &Project,
+        original: &Ticket,
+        number: TicketNumber,
+        priority: DomainPriority,
+        body: &TicketBody,
+        envelopes: &dyn Fn(TicketId) -> (TimelineEnvelope, TimelineEnvelope),
+    ) -> Result<Ticket, ApiError>;
     /// Persist the applied Ticket — its lifecycle state, priority,
     /// kind-specific body, and Execution Profile assignment — with the
     /// timeline envelope, all in one write, guarded by the version the
@@ -74,7 +93,7 @@ pub trait TicketStore: Send + Sync {
 /// The timeline row for one Ticket change: on the Project's own
 /// timeline, about the Ticket, with `action` naming the change inside
 /// the closed `transition` kind.
-fn transition(
+pub(crate) fn transition(
     project: ProjectId,
     ticket: TicketId,
     action: &str,
@@ -490,7 +509,7 @@ fn refuse_cross_kind_fields(request: &TicketCreateRequest) -> Result<(), ApiErro
 
 /// Decode one request's kind-specific fields into the domain's
 /// validated body, resolving the Spec attachment through `specs`.
-fn body_of(
+pub(crate) fn body_of(
     request: &TicketCreateRequest,
     project: &Project,
     specs: &dyn SpecStore,
@@ -576,7 +595,7 @@ fn criteria_of(
 }
 
 /// The domain form of one wire priority.
-fn priority_of(priority: TicketPriority) -> DomainPriority {
+pub(crate) fn priority_of(priority: TicketPriority) -> DomainPriority {
     match priority {
         TicketPriority::Urgent => DomainPriority::Urgent,
         TicketPriority::High => DomainPriority::High,
@@ -948,6 +967,63 @@ pub(crate) mod testing {
                 )),
                 None => Err(ApiError::not_found(&format!("ticket {}", ticket.id()))),
             }
+        }
+
+        fn reassign(
+            &self,
+            project: &kanban_domain::Project,
+            original: &Ticket,
+            number: TicketNumber,
+            priority: kanban_domain::Priority,
+            body: &TicketBody,
+            envelopes: &dyn Fn(TicketId) -> (TimelineEnvelope, TimelineEnvelope),
+        ) -> Result<Ticket, ApiError> {
+            let mut state = self.state.lock().expect("the memory ticket lock is sound");
+            let preceding = original.version() - 1;
+            let index = state
+                .tickets
+                .iter()
+                .position(|row| row.id() == original.id());
+            let index = match index {
+                Some(index) if state.tickets[index].version() == preceding => index,
+                Some(index) => {
+                    return Err(ApiError::stale_version(
+                        preceding,
+                        state.tickets[index].version(),
+                    ));
+                }
+                None => return Err(ApiError::not_found(&format!("ticket {}", original.id()))),
+            };
+            // The minted counter lands on the Project row in the same
+            // write as both Ticket rows.
+            let projects = &self.projects;
+            let mut project_state = projects
+                .state
+                .lock()
+                .expect("the memory project lock is sound");
+            if let Some(row) = project_state
+                .projects
+                .iter_mut()
+                .find(|row| row.id() == project.id())
+            {
+                *row = project.clone();
+            }
+            state.tickets[index] = original.clone();
+            state.next_id += 1;
+            let id = TicketId::new(state.next_id);
+            let replacement = Ticket::replacement(
+                id,
+                original.project(),
+                number,
+                priority,
+                original.id(),
+                body.clone(),
+            );
+            state.tickets.push(replacement.clone());
+            let (created, superseded) = envelopes(id);
+            state.timeline.push(created);
+            state.timeline.push(superseded);
+            Ok(replacement)
         }
 
         fn list(&self, project: ProjectId) -> Result<Vec<Ticket>, ApiError> {

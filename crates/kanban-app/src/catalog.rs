@@ -463,6 +463,13 @@ define_exposed_catalogue! {
         mcp: "ticket_emergency_override",
         description: "Recovery moves a Ticket past the lifecycle rules through one audited override recording who, what, and why. No unrestricted drag exists.",
     },
+    "ticket.reassign" => {
+        kind: Command,
+        request: "TicketReassignRequest",
+        response: "TicketRecord",
+        mcp: "ticket_reassign",
+        description: "Replace a Ticket by reassignment: a replacement Ticket is created under its kind's schema referencing its predecessor, and the original is superseded, keeping its history and number.",
+    },
     "profile.define" => {
         kind: Command,
         request: "ProfileDefineRequest",

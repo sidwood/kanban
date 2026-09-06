@@ -33,7 +33,7 @@ use crate::timeline::insert_event;
 const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
                               slice, criteria, actual_behaviour, reporter_evidence, \
                               bug_qualification, bug_facts, subtype, mode, completion, \
-                              scheduled_for, due, profile, pinned_version, version";
+                              scheduled_for, due, profile, pinned_version, predecessor_id, version";
 
 /// The Ticket port over the authoritative database.
 pub struct SqliteTicketStore {
@@ -55,6 +55,116 @@ impl SqliteTicketStore {
 }
 
 impl TicketStore for SqliteTicketStore {
+    /// Replace one Ticket by reassignment (DR-DE-07) in one
+    /// transaction: the Project counter the replacement's number
+    /// minted, the superseded original's row move under its version
+    /// guard, the replacement's row referencing its predecessor, and
+    /// both timeline envelopes — the creation row, then the
+    /// supersession row — land together or not at all.
+    fn reassign(
+        &self,
+        project: &Project,
+        original: &Ticket,
+        number: TicketNumber,
+        priority: Priority,
+        body: &TicketBody,
+        envelopes: &dyn Fn(TicketId) -> (TimelineEnvelope, TimelineEnvelope),
+    ) -> Result<Ticket, ApiError> {
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        // The minted number and the Project row move together: a
+        // stale writer can never rewind a minted counter.
+        let project_preceding = project.version() - 1;
+        let changed = span
+            .execute(
+                "UPDATE projects
+                 SET ticket_counter = ?2,
+                     version = ?3
+                 WHERE id = ?1 AND version = ?4",
+                params![
+                    project.id().value() as i64,
+                    number.value() as i64,
+                    project.version() as i64,
+                    project_preceding as i64,
+                ],
+            )
+            .map_err(internal)?;
+        if changed != 1 {
+            return Err(project_write_refused(
+                &span,
+                project.id(),
+                project_preceding,
+            ));
+        }
+        // The supersession moves the original's state and version
+        // alone: every other recorded fact stands.
+        let preceding = original.version() - 1;
+        let changed = span
+            .execute(
+                "UPDATE tickets
+                 SET state = ?2, version = ?3
+                 WHERE id = ?1 AND version = ?4",
+                params![
+                    original.id().value() as i64,
+                    original.state().wire_name(),
+                    original.version() as i64,
+                    preceding as i64,
+                ],
+            )
+            .map_err(internal)?;
+        if changed != 1 {
+            return Err(ticket_write_refused(&span, original.id(), preceding));
+        }
+        let stored = StoredTicket::of(priority, body);
+        span.execute(
+            "INSERT INTO tickets
+                 (project_id, number, kind, priority, state, spec_id, title, slice,
+                  criteria, actual_behaviour, reporter_evidence, bug_qualification,
+                  bug_facts, subtype, mode, completion, scheduled_for, due,
+                  predecessor_id, version)
+             VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                     ?14, ?15, ?16, ?17, ?18, 1)",
+            params![
+                project.id().value() as i64,
+                number.value() as i64,
+                stored.kind,
+                stored.priority,
+                stored.spec_id,
+                stored.title,
+                stored.slice,
+                stored.criteria,
+                stored.actual_behaviour,
+                stored.reporter_evidence,
+                stored.bug_qualification,
+                stored.bug_facts,
+                stored.subtype,
+                stored.mode,
+                stored.completion,
+                stored.scheduled_for,
+                stored.due,
+                original.id().value() as i64,
+            ],
+        )
+        .map_err(internal)?;
+        let id = TicketId::new(
+            span.last_insert_rowid()
+                .try_into()
+                .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
+        );
+        let (created, superseded) = envelopes(id);
+        append_timeline(&span, &created)?;
+        append_timeline(&span, &superseded)?;
+        span.commit().map_err(internal)?;
+        Ok(Ticket::replacement(
+            id,
+            original.project(),
+            number,
+            priority,
+            original.id(),
+            body.clone(),
+        ))
+    }
+
     fn create(
         &self,
         project: &Project,
@@ -230,6 +340,7 @@ struct LoadedTicket {
     due: Option<String>,
     profile: Option<String>,
     pinned_version: Option<u64>,
+    predecessor_id: Option<i64>,
     version: u64,
 }
 
@@ -259,7 +370,8 @@ fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
         pinned_version: row
             .get::<_, Option<i64>>(20)?
             .map(|version| version.unsigned_abs()),
-        version: row.get::<_, i64>(21)?.unsigned_abs(),
+        predecessor_id: row.get::<_, Option<i64>>(21)?,
+        version: row.get::<_, i64>(22)?.unsigned_abs(),
     })
 }
 
@@ -318,9 +430,8 @@ impl LoadedTicket {
             Priority::parse(&self.priority).ok_or_else(corrupt)?,
             TicketState::parse(&self.state).ok_or_else(corrupt)?,
             body,
-            // The predecessor column arrives with the reassignment
-            // storage slice; no stored row names one until then.
-            None,
+            self.predecessor_id
+                .map(|id| TicketId::new(id.unsigned_abs())),
             self.profile
                 .as_deref()
                 .map(kanban_domain::ProfileName::new)
@@ -1236,7 +1347,7 @@ mod tests {
         let report = database
             .migrate(&AllowAllMigrations)
             .expect("the upgrade applies");
-        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27, 28, 29]);
+        assert_eq!(report.applied, vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
 
         let store = SqliteTicketStore::new(&database);
         let found = store
@@ -1468,6 +1579,191 @@ mod tests {
             .save(&assigned, transition(assigned.id(), "assigned", json!({})))
             .expect_err("the spent version is refused");
         assert_eq!(error.code, ErrorCode::StaleVersion);
+    }
+
+    #[test]
+    fn reassignment_lands_both_rows_the_counter_and_both_timeline_rows_in_one_write() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        let original = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &bug_body().expect("the fixture body validates"),
+        );
+        // The pattern the application layer drives: the domain rule
+        // supersedes the aggregate, the mint lands both rows.
+        let mut superseded = original.clone();
+        kanban_domain::apply_reassignment(&mut superseded, original.id())
+            .expect("the fixture original supersedes");
+        let mut project = SqliteProjectStore::new(&database)
+            .find(ProjectId::new(1))
+            .expect("the reload serves")
+            .expect("the Project exists");
+        let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
+            .expect("a minted number is positive");
+        let replacement_body = task_body(None);
+        let predecessor = superseded.id();
+
+        let replacement = store
+            .reassign(
+                &project,
+                &superseded,
+                number,
+                Priority::High,
+                &replacement_body,
+                &|id| {
+                    (
+                        transition(
+                            id,
+                            "created",
+                            json!({ "project_id": 1, "number": number.value(), "predecessor": predecessor.value() }),
+                        ),
+                        transition(predecessor, "superseded", json!({ "replacement": id.value() })),
+                    )
+                },
+            )
+            .expect("the reassignment lands");
+
+        assert_eq!(replacement.state(), kanban_domain::TicketState::Draft);
+        assert_eq!(
+            replacement.predecessor(),
+            Some(predecessor),
+            "the replacement references its predecessor (DR-DE-07)"
+        );
+        assert_eq!(replacement.number().value(), 2);
+        let _ = project;
+
+        let found_original = store
+            .find(predecessor)
+            .expect("the find serves")
+            .expect("the original stands");
+        assert_eq!(
+            found_original.state(),
+            kanban_domain::TicketState::Superseded
+        );
+        assert_eq!(found_original.version(), 2);
+        assert_eq!(found_original.number().value(), 1, "the number stands");
+        assert_eq!(
+            found_original.predecessor(),
+            None,
+            "the original references nothing"
+        );
+        let found_replacement = store
+            .find(replacement.id())
+            .expect("the find serves")
+            .expect("the replacement stands");
+        assert_eq!(
+            found_replacement, replacement,
+            "the replacement round trips"
+        );
+
+        let counter: i64 = database
+            .connection()
+            .query_row(
+                "SELECT ticket_counter FROM projects WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the counter is readable");
+        assert_eq!(counter, 2, "the replacement consumed the next number");
+        assert_eq!(
+            ticket_timeline(&database),
+            vec![
+                json!({
+                    "action": "created",
+                    "id": 1,
+                    "project_id": 1,
+                    "number": 1,
+                    "kind": "bug",
+                }),
+                json!({
+                    "action": "created",
+                    "id": 2,
+                    "project_id": 1,
+                    "number": 2,
+                    "predecessor": 1,
+                }),
+                json!({ "action": "superseded", "id": 1, "replacement": 2 }),
+            ],
+            "the creation row lands first, then the supersession row"
+        );
+    }
+
+    #[test]
+    fn a_stale_reassignment_is_refused_without_a_row_move_or_a_timeline_append() {
+        let (_dir, database, store) = store();
+        let (_project, _spec) = seeded_project_and_spec(&database);
+        let original = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &bug_body().expect("the fixture body validates"),
+        );
+        let mut superseded = original.clone();
+        kanban_domain::apply_reassignment(&mut superseded, original.id())
+            .expect("the fixture original supersedes");
+        let mut project = SqliteProjectStore::new(&database)
+            .find(ProjectId::new(1))
+            .expect("the reload serves")
+            .expect("the Project exists");
+        let number = TicketNumber::new(project.mint(NumberKind::Ticket).expect("active mints"))
+            .expect("a minted number is positive");
+        let timeline_before = ticket_timeline(&database).len();
+
+        // A second Ticket moved the Project row past the aggregate the
+        // stale reassignment guards on.
+        let _ = created(
+            &store,
+            &database,
+            Priority::Normal,
+            &bug_body().expect("the fixture body validates"),
+        );
+        let error = store
+            .reassign(
+                &project,
+                &superseded,
+                number,
+                Priority::High,
+                &task_body(None),
+                &|id| {
+                    (
+                        transition(id, "created", json!({})),
+                        transition(superseded.id(), "superseded", json!({})),
+                    )
+                },
+            )
+            .expect_err("the stale reassignment is refused");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        let rows: (i64, i64) = database
+            .connection()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM tickets),
+                        (SELECT ticket_counter FROM projects WHERE id = 1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the rows are readable");
+        assert_eq!(
+            rows,
+            (2, 2),
+            "the refused reassignment landed no row and rewound no counter"
+        );
+        assert_eq!(
+            ticket_timeline(&database).len(),
+            timeline_before + 1,
+            "only the intervening creation appended a row"
+        );
+        let stood = store
+            .find(original.id())
+            .expect("the find serves")
+            .expect("the original stands");
+        assert_eq!(
+            stood.state(),
+            kanban_domain::TicketState::Draft,
+            "the refused write left the stored original as it stood"
+        );
     }
 
     #[test]

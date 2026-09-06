@@ -784,6 +784,64 @@ pub(crate) mod testing {
             }
         }
 
+        fn reassign(
+            &self,
+            project: &kanban_domain::Project,
+            original: &kanban_domain::Ticket,
+            number: TicketNumber,
+            priority: Priority,
+            body: &TicketBody,
+            envelopes: &dyn Fn(kanban_domain::TicketId) -> (TimelineEnvelope, TimelineEnvelope),
+        ) -> Result<kanban_domain::Ticket, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory lifecycle lock is sound");
+            let preceding = original.version() - 1;
+            let index = state
+                .tickets
+                .iter()
+                .position(|row| row.id() == original.id());
+            let index = match index {
+                Some(index) if state.tickets[index].version() == preceding => index,
+                Some(index) => {
+                    return Err(ApiError::stale_version(
+                        preceding,
+                        state.tickets[index].version(),
+                    ));
+                }
+                None => return Err(ApiError::not_found(&format!("ticket {}", original.id()))),
+            };
+            let projects = &self.projects;
+            let mut project_state = projects
+                .state
+                .lock()
+                .expect("the memory project lock is sound");
+            if let Some(row) = project_state
+                .projects
+                .iter_mut()
+                .find(|row| row.id() == project.id())
+            {
+                *row = project.clone();
+            }
+            state.tickets[index] = original.clone();
+            state.next_id += 1;
+            let id = kanban_domain::TicketId::new(state.next_id);
+            let replacement = kanban_domain::Ticket::replacement(
+                id,
+                original.project(),
+                number,
+                priority,
+                original.id(),
+                body.clone(),
+            );
+            state.tickets.push(replacement.clone());
+            let (created, superseded) = envelopes(id);
+            state.timeline.push(created);
+            state.timeline.push(superseded);
+            Ok(replacement)
+        }
+
         fn list(&self, project: ProjectId) -> Result<Vec<kanban_domain::Ticket>, ApiError> {
             let state = self
                 .state
@@ -873,6 +931,7 @@ pub(crate) mod testing {
     pub(crate) struct LifecycleHarness {
         pub(crate) rows: Arc<LifecycleRows>,
         pub(crate) projects: Arc<MemoryProjects>,
+        pub(crate) specs: Arc<MemorySpecs>,
         pub(crate) core: Core,
     }
 
@@ -914,6 +973,7 @@ pub(crate) mod testing {
         LifecycleHarness {
             rows,
             projects,
+            specs,
             core,
         }
     }

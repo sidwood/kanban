@@ -4587,6 +4587,123 @@
     }
   },
   {
+    "description": "Render one Spec version's story-to-criterion-to-Ticket coverage matrix; an empty claim list is the row's gap.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `spec.coverage.matrix` query: the story-to-criterion-to-Ticket coverage matrix of one Spec version (DR-PS-18). A null `version` reads the version the Spec's Tickets answer to — the approved one when operative, otherwise the working content.",
+      "properties": {
+        "spec_id": {
+          "description": "The Spec whose coverage matrix is rendered.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "default": null,
+          "description": "The content version the matrix reports; null reads the approved version when one is operative, else the current one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "spec_id"
+      ],
+      "title": "SpecCoverageMatrixQuery",
+      "type": "object"
+    },
+    "name": "spec_coverage_matrix",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "SpecCoverageClaim": {
+          "additionalProperties": false,
+          "description": "One claim inside the coverage matrix: a criterion of one Ticket claiming the story of the row it sits in.",
+          "properties": {
+            "outcome": {
+              "description": "The criterion's observable outcome.",
+              "type": "string"
+            },
+            "ticket_id": {
+              "description": "The Ticket whose criterion claims the story.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_number": {
+              "description": "The number the Ticket's Project minted for it; rendered with the Project's code, for example `CORE-T17`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "outcome",
+            "ticket_id",
+            "ticket_number"
+          ],
+          "type": "object"
+        },
+        "SpecCoverageMatrixRow": {
+          "additionalProperties": false,
+          "description": "One row of the coverage matrix: a User Story of the reported version and every claim a Ticket's criterion makes on it, in claim order. An empty claim list is the row's coverage gap.",
+          "properties": {
+            "claims": {
+              "description": "The claims Tickets' criteria make on this story, in claim order; empty while the story stays uncovered (DR-PS-14).",
+              "items": {
+                "$ref": "#/definitions/SpecCoverageClaim"
+              },
+              "type": "array"
+            },
+            "story": {
+              "description": "The story, as its full identity `CORE-S3-US6`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "claims",
+            "story"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `spec.coverage.matrix` query: the coverage matrix of one Spec version, one row per User Story in scope order, completing the planning diagnostics (DR-PS-18).",
+      "properties": {
+        "spec_id": {
+          "description": "The Spec the matrix reports.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stories": {
+          "description": "One row per User Story the version claims, in scope order.",
+          "items": {
+            "$ref": "#/definitions/SpecCoverageMatrixRow"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "The content version the matrix reports.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "spec_id",
+        "stories",
+        "version"
+      ],
+      "title": "SpecCoverageMatrixResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Create a Ticket under its kind's schema, minting its number from the Project counter.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -7740,6 +7857,1191 @@
       "type": "object"
     },
     "name": "ticket_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketBugQualification": {
+          "additionalProperties": false,
+          "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
+          "properties": {
+            "affected_scope": {
+              "description": "What the defect affects.",
+              "type": "string"
+            },
+            "criteria": {
+              "description": "The story-linked Acceptance Criteria, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketCriterion"
+              },
+              "type": "array"
+            },
+            "environment": {
+              "description": "Where the defect occurs.",
+              "type": "string"
+            },
+            "expected_behaviour": {
+              "description": "The behaviour that should have happened.",
+              "type": "string"
+            },
+            "frequency": {
+              "description": "How often the defect occurs.",
+              "type": "string"
+            },
+            "reproduction": {
+              "description": "The reproduction steps or the failing test demonstrating the defect.",
+              "type": "string"
+            },
+            "risk": {
+              "description": "What the defect puts at risk.",
+              "type": "string"
+            },
+            "severity": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketSeverity"
+                }
+              ],
+              "description": "The severity qualification assigned (DR-LC-13)."
+            },
+            "verification_steps": {
+              "description": "The Verification Steps, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketVerificationStep"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "affected_scope",
+            "criteria",
+            "environment",
+            "expected_behaviour",
+            "frequency",
+            "reproduction",
+            "risk",
+            "severity",
+            "verification_steps"
+          ],
+          "type": "object"
+        },
+        "TicketBugRecord": {
+          "additionalProperties": false,
+          "description": "The Bug-specific body of a Ticket record: the quick-capture facts, the qualification once one exists, and the vendor-neutral collections the Bug carries (DR-TK-08 to DR-TK-10).",
+          "properties": {
+            "actual_behaviour": {
+              "description": "What the Bug records happening, as the reporter stated it.",
+              "type": "string"
+            },
+            "evidence_ids": {
+              "description": "The identities of the Evidence Items this Bug carries (DR-TK-10).",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "external_references": {
+              "description": "The External References, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketExternalReference"
+              },
+              "type": "array"
+            },
+            "occurrence_snapshots": {
+              "description": "The Occurrence Snapshots, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketOccurrenceSnapshot"
+              },
+              "type": "array"
+            },
+            "qualification": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TicketBugQualification"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The complete qualification, once one exists (DR-TK-09)."
+            },
+            "reporter_evidence": {
+              "description": "The evidence the reporter holds, as the reporter stated it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "actual_behaviour",
+            "evidence_ids",
+            "external_references",
+            "occurrence_snapshots",
+            "reporter_evidence"
+          ],
+          "type": "object"
+        },
+        "TicketCriterion": {
+          "additionalProperties": false,
+          "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+          "properties": {
+            "outcome": {
+              "description": "The observable outcome the criterion states.",
+              "type": "string"
+            },
+            "stories": {
+              "description": "The User Stories the criterion claims.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "outcome",
+            "stories"
+          ],
+          "type": "object"
+        },
+        "TicketExternalReference": {
+          "additionalProperties": false,
+          "description": "One vendor-neutral External Reference a Bug carries (DR-TK-10): a URI naming an outside link, with an optional label.",
+          "properties": {
+            "label": {
+              "description": "The reference's label, when it carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri": {
+              "description": "The referenced URI.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "uri"
+          ],
+          "type": "object"
+        },
+        "TicketKind": {
+          "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+          "oneOf": [
+            {
+              "description": "A small vertical product slice of exactly one Spec.",
+              "enum": [
+                "implementation"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A record of incorrect behaviour, with qualification evidence.",
+              "enum": [
+                "bug"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bounded operational, investigative, or administrative work.",
+              "enum": [
+                "task"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketOccurrenceSnapshot": {
+          "additionalProperties": false,
+          "description": "One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339 moment one occurrence was observed and what was seen then.",
+          "properties": {
+            "observation": {
+              "description": "What was observed at that moment.",
+              "type": "string"
+            },
+            "observed_at": {
+              "description": "The observed moment, RFC 3339.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "observation",
+            "observed_at"
+          ],
+          "type": "object"
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketSeverity": {
+          "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+          "oneOf": [
+            {
+              "description": "Data loss, secret exposure, or unauthorised execution.",
+              "enum": [
+                "critical"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A failed approved criterion or workflow invariant.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Usable behaviour, wrongly shaped.",
+              "enum": [
+                "medium"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Cosmetic or local clarity.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketState": {
+          "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+          "oneOf": [
+            {
+              "description": "Newly created; not yet qualified or planned.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Deliberately set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Waiting on something outside the Ticket.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Qualified but unavailable until activation.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Free to execute when capacity allows.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Executing.",
+              "enum": [
+                "active"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Under review.",
+              "enum": [
+                "in_review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Review approved, waiting to land.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landing through the Seed Workspace.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landed in full.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: will not execute.",
+              "enum": [
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: replaced by a reassignment Ticket.",
+              "enum": [
+                "superseded"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketVerificationStep": {
+          "additionalProperties": false,
+          "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+          "properties": {
+            "command": {
+              "description": "The command as it runs.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
+      "properties": {
+        "bug": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TicketBugRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Bug body, if this Ticket carries one."
+        },
+        "completion": {
+          "description": "The Task's completion criteria; empty for every other kind.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "criteria": {
+          "description": "The Implementation's story-linked criteria; empty for every other kind.",
+          "items": {
+            "$ref": "#/definitions/TicketCriterion"
+          },
+          "type": "array"
+        },
+        "due": {
+          "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketKind"
+            }
+          ],
+          "description": "The kind whose schema this Ticket carries."
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's human-or-agent mode, if this Ticket carries one."
+        },
+        "number": {
+          "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "pinned_spec_version": {
+          "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "priority": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketPriority"
+            }
+          ],
+          "description": "The Ticket's priority (DR-LC-12)."
+        },
+        "profile": {
+          "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "The Project this Ticket belongs to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "scheduled_for": {
+          "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slice": {
+          "description": "The Implementation slice description, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec_id": {
+          "description": "The Spec this Ticket attaches to, if it attaches to one.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketState"
+            }
+          ],
+          "description": "The lifecycle state (DR-LC-01)."
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskSubtype"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Task's subtype, if this Ticket carries one."
+        },
+        "title": {
+          "description": "The Bug or Task title, if this Ticket carries one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "completion",
+        "criteria",
+        "id",
+        "kind",
+        "number",
+        "priority",
+        "project_id",
+        "state",
+        "version"
+      ],
+      "title": "TicketRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Record one agent-proposed complete Ticket graph against an approved Spec version.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "TicketGraphEdgeProposal": {
+          "additionalProperties": false,
+          "description": "One proposed dependency edge inside a Ticket graph: the blocking Ticket must land before the waiting Ticket may begin (DR-DE-02).",
+          "properties": {
+            "from_ticket": {
+              "description": "The Ticket that must land first.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_ticket": {
+              "description": "The Ticket that waits on `from_ticket`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_ticket",
+            "to_ticket"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ticket.graph.propose` command: one complete Ticket graph proposed against an approved Spec version (DR-PS-16). Every named Ticket must be attached to the Spec; the completeness of the set is the approval gate's to judge.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges between the Tickets the graph holds.",
+          "items": {
+            "$ref": "#/definitions/TicketGraphEdgeProposal"
+          },
+          "type": "array"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec the graph proposes for.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_version": {
+          "description": "The approved Spec content version the graph is proposed against.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tickets": {
+          "description": "Every Ticket the graph holds.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "edges",
+        "mutation",
+        "spec_id",
+        "spec_version",
+        "tickets"
+      ],
+      "title": "TicketGraphProposeRequest",
+      "type": "object"
+    },
+    "name": "ticket_graph_propose",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TicketGraphEdgeRecord": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a recorded Ticket graph, as every client sees it.",
+          "properties": {
+            "from_ticket": {
+              "description": "The Ticket that must land first (DR-DE-02).",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_ticket": {
+              "description": "The Ticket that waits on `from_ticket`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_ticket",
+            "to_ticket"
+          ],
+          "type": "object"
+        },
+        "TicketGraphState": {
+          "description": "The closed Ticket graph proposal lifecycle on the wire (DR-PS-16, DR-PS-17).",
+          "oneOf": [
+            {
+              "description": "Recorded against an approved Spec version, awaiting the human approval gate.",
+              "enum": [
+                "proposed"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Approved; every Ticket in the graph is pinned to the Spec content version the proposal named.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "One Ticket graph proposal as every client sees it: the Spec version it is proposed against, the Tickets and edges it holds, and its lifecycle state.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges between the Tickets the graph holds, in proposal order.",
+          "items": {
+            "$ref": "#/definitions/TicketGraphEdgeRecord"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "description": "The Spec the graph proposes for.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_version": {
+          "description": "The Spec content version the graph is proposed against.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketGraphState"
+            }
+          ],
+          "description": "The proposal's lifecycle state."
+        },
+        "tickets": {
+          "description": "Every Ticket the graph holds, in proposal order.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "spec_id",
+        "spec_version",
+        "state",
+        "tickets",
+        "version"
+      ],
+      "title": "TicketGraphRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Approve one proposed Ticket graph; every Ticket in it pins to the Spec content version it named.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ticket.graph.approve` command: the human gate's decision on one proposed graph (DR-PS-17). Approval pins every Ticket in the graph to the Spec version it named.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "proposal_id": {
+          "description": "The proposal being approved.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "proposal_id"
+      ],
+      "title": "TicketGraphApproveRequest",
+      "type": "object"
+    },
+    "name": "ticket_graph_approve",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TicketGraphEdgeRecord": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a recorded Ticket graph, as every client sees it.",
+          "properties": {
+            "from_ticket": {
+              "description": "The Ticket that must land first (DR-DE-02).",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_ticket": {
+              "description": "The Ticket that waits on `from_ticket`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_ticket",
+            "to_ticket"
+          ],
+          "type": "object"
+        },
+        "TicketGraphState": {
+          "description": "The closed Ticket graph proposal lifecycle on the wire (DR-PS-16, DR-PS-17).",
+          "oneOf": [
+            {
+              "description": "Recorded against an approved Spec version, awaiting the human approval gate.",
+              "enum": [
+                "proposed"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Approved; every Ticket in the graph is pinned to the Spec content version the proposal named.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "One Ticket graph proposal as every client sees it: the Spec version it is proposed against, the Tickets and edges it holds, and its lifecycle state.",
+      "properties": {
+        "edges": {
+          "description": "The dependency edges between the Tickets the graph holds, in proposal order.",
+          "items": {
+            "$ref": "#/definitions/TicketGraphEdgeRecord"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "description": "The Spec the graph proposes for.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_version": {
+          "description": "The Spec content version the graph is proposed against.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketGraphState"
+            }
+          ],
+          "description": "The proposal's lifecycle state."
+        },
+        "tickets": {
+          "description": "Every Ticket the graph holds, in proposal order.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "version": {
+          "description": "The aggregate version, for optimistic mutation checks.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "edges",
+        "id",
+        "spec_id",
+        "spec_version",
+        "state",
+        "tickets",
+        "version"
+      ],
+      "title": "TicketGraphRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List every Ticket graph proposal recorded against a Spec, approved ones included.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `ticket.graph.list` query.",
+      "properties": {
+        "spec_id": {
+          "description": "The Spec whose proposed graphs are listed, every state included.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "spec_id"
+      ],
+      "title": "TicketGraphListQuery",
+      "type": "object"
+    },
+    "name": "ticket_graph_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TicketGraphEdgeRecord": {
+          "additionalProperties": false,
+          "description": "One dependency edge of a recorded Ticket graph, as every client sees it.",
+          "properties": {
+            "from_ticket": {
+              "description": "The Ticket that must land first (DR-DE-02).",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "to_ticket": {
+              "description": "The Ticket that waits on `from_ticket`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from_ticket",
+            "to_ticket"
+          ],
+          "type": "object"
+        },
+        "TicketGraphRecord": {
+          "additionalProperties": false,
+          "description": "One Ticket graph proposal as every client sees it: the Spec version it is proposed against, the Tickets and edges it holds, and its lifecycle state.",
+          "properties": {
+            "edges": {
+              "description": "The dependency edges between the Tickets the graph holds, in proposal order.",
+              "items": {
+                "$ref": "#/definitions/TicketGraphEdgeRecord"
+              },
+              "type": "array"
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec_id": {
+              "description": "The Spec the graph proposes for.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "spec_version": {
+              "description": "The Spec content version the graph is proposed against.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "state": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketGraphState"
+                }
+              ],
+              "description": "The proposal's lifecycle state."
+            },
+            "tickets": {
+              "description": "Every Ticket the graph holds, in proposal order.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "edges",
+            "id",
+            "spec_id",
+            "spec_version",
+            "state",
+            "tickets",
+            "version"
+          ],
+          "type": "object"
+        },
+        "TicketGraphState": {
+          "description": "The closed Ticket graph proposal lifecycle on the wire (DR-PS-16, DR-PS-17).",
+          "oneOf": [
+            {
+              "description": "Recorded against an approved Spec version, awaiting the human approval gate.",
+              "enum": [
+                "proposed"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Approved; every Ticket in the graph is pinned to the Spec content version the proposal named.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "Response payload for the `ticket.graph.list` query.",
+      "properties": {
+        "proposals": {
+          "description": "Every proposal recorded against the Spec, oldest first.",
+          "items": {
+            "$ref": "#/definitions/TicketGraphRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposals"
+      ],
+      "title": "TicketGraphListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Move a draft, unpinned Ticket to another Spec of its Project; a pinned or executed Ticket stays.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `ticket.spec.move` command: a draft, unpinned Ticket moves its Spec attachment to another Spec of its own Project (DR-DE-05). A pinned or executed Ticket stays where it stands (DR-DE-06).",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "description": "The Spec of the same Project the Ticket moves to.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "description": "The Ticket whose Spec attachment moves.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "spec_id",
+        "ticket_id"
+      ],
+      "title": "TicketSpecMoveRequest",
+      "type": "object"
+    },
+    "name": "ticket_spec_move",
     "outputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,

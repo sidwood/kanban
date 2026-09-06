@@ -281,6 +281,13 @@ define_exposed_catalogue! {
         mcp: "spec_coverage_check",
         description: "Check one Spec version's story coverage against proposed criteria; the executable gate refuses uncovered stories.",
     },
+    "spec.coverage.matrix" => {
+        kind: Query,
+        request: "SpecCoverageMatrixQuery",
+        response: "SpecCoverageMatrixResponse",
+        mcp: "spec_coverage_matrix",
+        description: "Render one Spec version's story-to-criterion-to-Ticket coverage matrix; an empty claim list is the row's gap.",
+    },
     "ticket.create" => {
         kind: Command,
         request: "TicketCreateRequest",
@@ -315,6 +322,34 @@ define_exposed_catalogue! {
         response: "TicketRecord",
         mcp: "ticket_get",
         description: "Read one Ticket with the record of its kind's schema.",
+    },
+    "ticket.graph.propose" => {
+        kind: Command,
+        request: "TicketGraphProposeRequest",
+        response: "TicketGraphRecord",
+        mcp: "ticket_graph_propose",
+        description: "Record one agent-proposed complete Ticket graph against an approved Spec version.",
+    },
+    "ticket.graph.approve" => {
+        kind: Command,
+        request: "TicketGraphApproveRequest",
+        response: "TicketGraphRecord",
+        mcp: "ticket_graph_approve",
+        description: "Approve one proposed Ticket graph; every Ticket in it pins to the Spec content version it named.",
+    },
+    "ticket.graph.list" => {
+        kind: Query,
+        request: "TicketGraphListQuery",
+        response: "TicketGraphListResponse",
+        mcp: "ticket_graph_list",
+        description: "List every Ticket graph proposal recorded against a Spec, approved ones included.",
+    },
+    "ticket.spec.move" => {
+        kind: Command,
+        request: "TicketSpecMoveRequest",
+        response: "TicketRecord",
+        mcp: "ticket_spec_move",
+        description: "Move a draft, unpinned Ticket to another Spec of its Project; a pinned or executed Ticket stays.",
     },
     "ticket.dependency.add" => {
         kind: Command,

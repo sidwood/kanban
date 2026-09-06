@@ -8,9 +8,11 @@
 //! read Tickets back per Project (KAN-S4-US1 through KAN-S4-US4).
 //! Creation mints the Project's next Ticket number, lands the row
 //! with the counter move and the timeline append in one write, and
-//! announces live; no delete exists. Lifecycle transitions and
-//! dependencies arrive with their own tickets; readiness stays a
-//! computed projection, so qualifying a Bug never moves its state.
+//! announces live; no delete exists. A draft, unpinned Ticket moves
+//! its Spec attachment to another Spec of its own Project
+//! (DR-DE-05). Lifecycle transitions and dependencies arrive with
+//! their own tickets; readiness stays a computed projection, so
+//! qualifying a Bug never moves its state.
 
 use std::sync::Arc;
 
@@ -26,8 +28,8 @@ use kanban_dto::{
     ApiError, LiveEventName, TaskMode, TaskSubtype, TicketBugFactsRequest, TicketBugQualification,
     TicketBugQualifyRequest, TicketBugRecord, TicketCreateRequest, TicketCriterion,
     TicketExternalReference, TicketGetQuery, TicketKind, TicketListQuery, TicketListResponse,
-    TicketOccurrenceSnapshot, TicketPriority, TicketRecord, TicketSeverity, TicketState,
-    TicketVerificationStep, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    TicketOccurrenceSnapshot, TicketPriority, TicketRecord, TicketSeverity, TicketSpecMoveRequest,
+    TicketState, TicketVerificationStep, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
@@ -147,6 +149,10 @@ impl Core {
             evidence,
         };
         self.register_command("ticket.create", Arc::new(CreateTicket(context.clone())))?;
+        self.register_command(
+            "ticket.spec.move",
+            Arc::new(MoveTicketSpec(context.clone())),
+        )?;
         self.register_command("ticket.bug.qualify", Arc::new(QualifyBug(context.clone())))?;
         self.register_command(
             "ticket.bug.facts",
@@ -165,6 +171,11 @@ impl Core {
                 tickets: context.tickets.clone(),
                 projects: context.projects.clone(),
             }),
+        )?;
+        self.register_coverage_matrix(
+            context.tickets.clone(),
+            context.specs.clone(),
+            context.projects.clone(),
         )?;
         Ok(())
     }
@@ -227,6 +238,56 @@ impl CommandHandler for CreateTicket {
             &ticket,
             project.code(),
         );
+        encode_record(&ticket, project.code())
+    }
+}
+
+/// Serves `ticket.spec.move`.
+struct MoveTicketSpec(TicketContext);
+
+impl CommandHandler for MoveTicketSpec {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<TicketSpecMoveRequest>(payload)?;
+        ParsedCommand::lift("ticket", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: TicketSpecMoveRequest = parse_payload(&command.payload)?;
+        Ok(self.0.open(request.ticket_id)?.1.version())
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: TicketSpecMoveRequest = parse_payload(&command.payload)?;
+        let (project, mut ticket) = self.0.open(request.ticket_id)?;
+        let spec = self
+            .0
+            .specs
+            .find(SpecId::new(request.spec_id))?
+            .ok_or_else(|| ApiError::not_found(&format!("spec {}", request.spec_id)))?;
+        if spec.project() != project.id() {
+            return Err(ApiError::invalid_request(
+                "the Spec belongs to another Project",
+            ));
+        }
+        ticket
+            .move_to_spec(spec.id(), spec.number())
+            .map_err(refuse)?;
+        self.0.tickets.save(
+            &ticket,
+            transition(
+                project.id(),
+                ticket.id(),
+                "spec_moved",
+                json!({
+                    "spec_id": spec.id().value(),
+                    "version": ticket.version(),
+                }),
+            ),
+        )?;
         encode_record(&ticket, project.code())
     }
 }
@@ -812,6 +873,25 @@ pub(crate) mod testing {
             let state = self.state.lock().expect("the memory ticket lock is sound");
             (state.tickets.clone(), state.timeline.clone())
         }
+
+        /// Replace one stored Ticket row under the same guard the
+        /// durable store holds: the row must stand one version behind
+        /// the replacement.
+        pub(crate) fn replace_pinned(&self, ticket: Ticket) -> Result<(), ApiError> {
+            let mut state = self.state.lock().expect("the memory ticket lock is sound");
+            let preceding = ticket.version() - 1;
+            match state.tickets.iter().position(|row| row.id() == ticket.id()) {
+                Some(index) if state.tickets[index].version() == preceding => {
+                    state.tickets[index] = ticket;
+                    Ok(())
+                }
+                Some(index) => Err(ApiError::stale_version(
+                    preceding,
+                    state.tickets[index].version(),
+                )),
+                None => Err(ApiError::not_found(&format!("ticket {}", ticket.id()))),
+            }
+        }
     }
 
     impl TicketStore for MemoryTickets {
@@ -1024,6 +1104,7 @@ pub(crate) mod testing {
     pub(crate) struct TicketHarness {
         pub(crate) tickets: Arc<MemoryTickets>,
         pub(crate) projects: Arc<MemoryProjects>,
+        pub(crate) specs: Arc<MemorySpecs>,
         pub(crate) evidence: Arc<MemoryTicketEvidence>,
         pub(crate) core: Core,
     }
@@ -1059,6 +1140,7 @@ pub(crate) mod testing {
         TicketHarness {
             tickets,
             projects,
+            specs,
             evidence,
             core,
         }
@@ -1290,6 +1372,7 @@ mod ticket_create {
                 "scheduled_for": null,
                 "due": null,
                 "profile": null,
+                "pinned_spec_version": null,
                 "version": 1,
             })
         );
@@ -1397,6 +1480,7 @@ mod ticket_create {
                 "scheduled_for": "2026-10-01T00:00:00.000Z",
                 "due": "2026-09-30T17:00:00.000Z",
                 "profile": null,
+                "pinned_spec_version": null,
                 "version": 1,
             })
         );

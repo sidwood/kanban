@@ -16,6 +16,7 @@ pub mod event_catalog;
 pub mod events;
 pub mod evidence;
 pub mod exports;
+pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
 pub mod lane;

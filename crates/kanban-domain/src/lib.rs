@@ -20,6 +20,7 @@ pub mod profile;
 pub mod project;
 pub mod reassignment;
 pub mod ruling;
+pub mod run;
 pub mod schedule;
 pub mod spec;
 pub mod ticket;

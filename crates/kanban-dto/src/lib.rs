@@ -1,6 +1,7 @@
 //! Authoritative command, query, event, and error payload definitions
 //! with schema derivation. Depends on nothing internal.
 
+pub mod capacity;
 pub mod clone;
 pub mod comment;
 pub mod coverage;
@@ -26,6 +27,11 @@ pub mod timeline;
 
 pub mod workspace;
 
+pub use capacity::{
+    CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
+    CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
+    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest,
+};
 pub use clone::{CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord};
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
@@ -163,6 +169,14 @@ mod tests {
             names,
             vec![
                 "ApiError",
+                "CapacityDefaultsGetQuery",
+                "CapacityDefaultsGetResponse",
+                "CapacityDefaultsUpdateRequest",
+                "CapacityGlobalDefaults",
+                "CapacityProjectCaps",
+                "CapacitySettingsGetQuery",
+                "CapacitySettingsGetResponse",
+                "CapacitySettingsUpdateRequest",
                 "CommentCreateRequest",
                 "CommentEditRequest",
                 "CommentRecord",

@@ -1,6 +1,11 @@
 use schemars::schema::RootSchema;
 use schemars::schema_for;
 
+use crate::capacity::{
+    CapacityDefaultsGetQuery, CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest,
+    CapacityGlobalDefaults, CapacityProjectCaps, CapacitySettingsGetQuery,
+    CapacitySettingsGetResponse, CapacitySettingsUpdateRequest,
+};
 use crate::clone::{
     CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
@@ -94,6 +99,35 @@ use crate::workspace::{
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
         ("ApiError", schema_for!(ApiError)),
+        (
+            "CapacityDefaultsGetQuery",
+            schema_for!(CapacityDefaultsGetQuery),
+        ),
+        (
+            "CapacityDefaultsGetResponse",
+            schema_for!(CapacityDefaultsGetResponse),
+        ),
+        (
+            "CapacityDefaultsUpdateRequest",
+            schema_for!(CapacityDefaultsUpdateRequest),
+        ),
+        (
+            "CapacityGlobalDefaults",
+            schema_for!(CapacityGlobalDefaults),
+        ),
+        ("CapacityProjectCaps", schema_for!(CapacityProjectCaps)),
+        (
+            "CapacitySettingsGetQuery",
+            schema_for!(CapacitySettingsGetQuery),
+        ),
+        (
+            "CapacitySettingsGetResponse",
+            schema_for!(CapacitySettingsGetResponse),
+        ),
+        (
+            "CapacitySettingsUpdateRequest",
+            schema_for!(CapacitySettingsUpdateRequest),
+        ),
         ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),

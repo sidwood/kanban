@@ -26,6 +26,7 @@
     "clippy",
     "codegen",
     "conn",
+    "deserialise",
     "deserialises",
     "dialog",
     "fcndl",

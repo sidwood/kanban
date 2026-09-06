@@ -90,3 +90,24 @@ fn open_leaves_the_snapshot_handshake_to_the_caller() {
         .expect("the mapping verifies");
     assert_eq!(snapshot.session, "kanban-main");
 }
+
+#[test]
+fn snapshots_report_the_scripted_capture_time() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let _fixture = ScriptedSession::bind(
+        dir.path(),
+        "kanban-main",
+        "/workspaces/kanban.seed",
+        SessionScript::default().with_captured_at("2026-09-05T05:00:00Z"),
+    );
+    let mapping = named_mapping("kanban-main", "/workspaces/kanban.seed");
+    let mut client = SessionClient::connect(mapping, dir.path())
+        .expect("the session connects through its socket");
+
+    let snapshot = client.snapshot().expect("a snapshot captures full state");
+
+    assert_eq!(
+        snapshot.captured_at, "2026-09-05T05:00:00Z",
+        "a scripted capture time distinguishes one capture from the next"
+    );
+}

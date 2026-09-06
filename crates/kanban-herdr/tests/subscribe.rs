@@ -173,6 +173,38 @@ fn closing_after_events_ends_the_first_connection_only() {
         .expect("a later subscription still starts");
 }
 
+#[test]
+fn a_hold_before_close_ends_every_connection() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let _fixture = ScriptedSession::bind(
+        dir.path(),
+        "kanban-main",
+        "/workspaces/kanban.seed",
+        SessionScript::default().close_after_hold_every(Duration::from_millis(100)),
+    );
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
+    let mut first =
+        SessionClient::connect(mapping.clone(), dir.path()).expect("the first connection opens");
+    first.subscribe().expect("the first subscription starts");
+    assert_eq!(
+        first.read_event_within(Duration::from_secs(2)).err(),
+        Some(HerdrError::Disconnected),
+        "the fixture closes the first connection after its hold"
+    );
+
+    let mut second = SessionClient::connect(mapping, dir.path()).expect("a later connection opens");
+    second.subscribe().expect("a later subscription starts");
+    assert_eq!(
+        second.read_event_within(Duration::from_secs(2)).err(),
+        Some(HerdrError::Disconnected),
+        "the hold closes every later connection too, so a test can script reconnect after reconnect"
+    );
+}
+
 /// A stream that drops inside a bounded read must surface the drop:
 /// restoring the request deadline afterwards touches a socket the
 /// drop already killed, and that control failure must not stand in

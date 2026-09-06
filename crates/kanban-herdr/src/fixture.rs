@@ -153,6 +153,7 @@ impl Drop for ScriptedSession {
 pub struct SessionScript {
     events: Vec<Value>,
     snapshot_states: Vec<Value>,
+    captured_at: Option<String>,
     delay_before_events: Option<Duration>,
     wait_met: bool,
     wait_detail: Value,
@@ -160,6 +161,7 @@ pub struct SessionScript {
     subscribe_error: Option<String>,
     close_after_events: bool,
     hold_before_close: Option<Duration>,
+    close_every_after_hold: Option<Duration>,
     flap: bool,
     silent: bool,
     reconnect_script: Option<Arc<SessionScript>>,
@@ -178,6 +180,13 @@ impl SessionScript {
     /// test can script what reconciliation finds between captures.
     pub fn with_snapshot_states(mut self, states: Vec<Value>) -> Self {
         self.snapshot_states = states;
+        self
+    }
+
+    /// The capture time snapshots report, so a test can tell one
+    /// capture from the next across a reconnect.
+    pub fn with_captured_at(mut self, captured_at: &str) -> Self {
+        self.captured_at = Some(captured_at.to_owned());
         self
     }
 
@@ -222,6 +231,15 @@ impl SessionScript {
     /// later connections stay open like a healthy session.
     pub fn close_after_hold(mut self, hold: Duration) -> Self {
         self.hold_before_close = Some(hold);
+        self
+    }
+
+    /// Hold every connection this script serves open for `hold`
+    /// after subscribing, then close it, so a test can script a
+    /// session that keeps settling and dropping across reconnect
+    /// after reconnect.
+    pub fn close_after_hold_every(mut self, hold: Duration) -> Self {
+        self.close_every_after_hold = Some(hold);
         self
     }
 
@@ -301,6 +319,7 @@ fn serve_connection(
                     session_name,
                     product_workspace,
                     herdr_workspace.as_deref(),
+                    script.captured_at.as_deref(),
                     state,
                 ))
             }
@@ -366,14 +385,22 @@ fn serve_connection(
                 thread::sleep(hold);
                 return;
             }
+            if let Some(hold) = script.close_every_after_hold {
+                thread::sleep(hold);
+                return;
+            }
         }
     }
 }
+
+/// The capture time snapshots report unless a script overrides it.
+const DEFAULT_CAPTURED_AT: &str = "2026-09-05T04:46:00Z";
 
 fn snapshot_with_state(
     session_name: &str,
     product_workspace: &str,
     herdr_workspace: Option<&str>,
+    captured_at: Option<&str>,
     state: Value,
 ) -> Snapshot {
     Snapshot {
@@ -387,7 +414,7 @@ fn snapshot_with_state(
                 .to_owned()
         }),
         state,
-        captured_at: "2026-09-05T04:46:00Z".to_owned(),
+        captured_at: captured_at.unwrap_or(DEFAULT_CAPTURED_AT).to_owned(),
     }
 }
 

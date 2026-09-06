@@ -200,3 +200,141 @@ fn capability_mint_grants_only_operations_under_operator_authority() {
         "minting operator authority past the agent surface is refused"
     );
 }
+
+/// Mint one capability for a fresh seated Ticket and answer the
+/// claim response that minted it.
+fn minted_claim(harness: &common::DispatchHarness, number: u64) -> Value {
+    let ticket = insert_ticket(&harness.database_path, number, "normal");
+    assign_lane(&harness.database_path, ticket);
+    claim(
+        &harness.core,
+        enqueue(&harness.core, ticket, &format!("key-create-{number}")),
+        &format!("key-claim-{number}"),
+    )
+}
+
+/// The identity of the capability one claim response minted.
+fn capability_id(response: &Value) -> kanban_domain::CapabilityId {
+    kanban_domain::CapabilityId::new(
+        response["capability"]["id"]
+            .as_u64()
+            .expect("the minted capability carries an identity"),
+    )
+}
+
+#[test]
+fn enforce_permits_operations_inside_the_minted_set() {
+    let harness = harness();
+    let won = minted_claim(&harness, 1);
+    assert_eq!(won["claimed"], json!(true));
+
+    let store = SqliteCapabilityStore::new(
+        &kanban_storage::Database::open(&harness.database_path).expect("the database reopens"),
+    );
+
+    for operation in AGENT_MCP_OPERATIONS {
+        assert_eq!(
+            kanban_app::enforce_capability(&store, capability_id(&won), operation),
+            Ok(()),
+            "the minted set permits `{operation}`"
+        );
+    }
+}
+
+#[test]
+fn enforce_rejects_operations_outside_the_minted_set() {
+    let harness = harness();
+    let won = minted_claim(&harness, 1);
+
+    let store = SqliteCapabilityStore::new(
+        &kanban_storage::Database::open(&harness.database_path).expect("the database reopens"),
+    );
+
+    for operation in [
+        "ticket.create",
+        "ticket.transition",
+        "dispatch.claim",
+        "capacity.defaults.update",
+        "profile.define",
+        "export.render",
+    ] {
+        let refusal = kanban_app::enforce_capability(&store, capability_id(&won), operation)
+            .expect_err("an operation outside the minted set is rejected");
+        assert_eq!(
+            refusal.message(),
+            format!("the operation `{operation}` is outside the minted set"),
+            "the refusal names the refused operation"
+        );
+    }
+}
+
+#[test]
+fn enforce_rejects_every_operation_once_settled() {
+    let harness = harness();
+    let won = minted_claim(&harness, 1);
+    let id = capability_id(&won);
+
+    let database =
+        kanban_storage::Database::open(&harness.database_path).expect("the database reopens");
+    let store = SqliteCapabilityStore::new(&database);
+    let settled = store
+        .settle(id, 200, settled_envelope(id))
+        .expect("run settlement expires the capability");
+    assert_eq!(settled.settled_at(), Some(200));
+
+    for operation in AGENT_MCP_OPERATIONS {
+        let refusal = kanban_app::enforce_capability(&store, id, operation)
+            .expect_err("a settled capability permits nothing, not even its own set");
+        assert!(
+            refusal.message().contains("settlement"),
+            "the refusal names the settlement: {}",
+            refusal.message()
+        );
+    }
+
+    // The expiry is durable: a fresh reader of the same database
+    // refuses the same operations.
+    drop(database);
+    let reopened =
+        kanban_storage::Database::open(&harness.database_path).expect("the database reopens");
+    let reopened_store = SqliteCapabilityStore::new(&reopened);
+    assert!(
+        kanban_app::enforce_capability(&reopened_store, id, "ticket.get").is_err(),
+        "settlement outlives the reader that recorded it"
+    );
+}
+
+#[test]
+fn enforce_rejects_an_unknown_capability() {
+    let harness = harness();
+    minted_claim(&harness, 1);
+
+    let store = SqliteCapabilityStore::new(
+        &kanban_storage::Database::open(&harness.database_path).expect("the database reopens"),
+    );
+    let unknown = kanban_domain::CapabilityId::new(99);
+
+    let refusal = kanban_app::enforce_capability(&store, unknown, "ticket.get")
+        .expect_err("no capability with that identity exists");
+    assert_eq!(
+        refusal.message(),
+        "capability 99 was not found",
+        "the refusal names the unknown capability"
+    );
+}
+
+/// The timeline row one settlement lands.
+fn settled_envelope(capability: kanban_domain::CapabilityId) -> kanban_app::TimelineEnvelope {
+    kanban_app::TimelineEnvelope::project(
+        1,
+        kanban_dto::TimelineEventKind::Transition,
+        Some(kanban_dto::TimelineEntityRef {
+            kind: kanban_dto::TimelineEntityKind::Ticket,
+            id: "1".to_owned(),
+        }),
+        serde_json::json!({
+            "action": "capability_settled",
+            "capability_id": capability.value(),
+        }),
+    )
+}

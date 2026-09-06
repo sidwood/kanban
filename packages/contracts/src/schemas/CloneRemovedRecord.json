@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The record a guarded remove answers with. The Workspace record itself is preserved; the next observation reports the clone missing.",
+  "properties": {
+    "branch": {
+      "description": "The branch the Workspace last observed, when any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "description": "The directory the branch clone was removed from.",
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "workspace_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "path",
+    "project_id",
+    "workspace_id"
+  ],
+  "title": "CloneRemovedRecord",
+  "type": "object"
+}

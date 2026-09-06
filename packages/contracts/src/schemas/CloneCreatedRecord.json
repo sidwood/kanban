@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The record a guarded create answers with.",
+  "properties": {
+    "branch": {
+      "description": "The branch the clone checked out.",
+      "type": "string"
+    },
+    "path": {
+      "description": "The directory the branch clone landed in.",
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "branch",
+    "path",
+    "project_id"
+  ],
+  "title": "CloneCreatedRecord",
+  "type": "object"
+}

@@ -90,6 +90,8 @@ describe('generated client', () => {
       'lane.ticket.assign': 'lane_ticket_assign',
       'lane.ticket.release': 'lane_ticket_release',
       'lane.list': 'lane_list',
+      'clone.create': 'clone_create',
+      'clone.remove': 'clone_remove',
       'export.render': 'export_render',
       'export.drift': 'export_drift',
     })
@@ -173,6 +175,8 @@ describe('generated client', () => {
       'lane.ticket.assign',
       'lane.ticket.release',
       'lane.list',
+      'clone.create',
+      'clone.remove',
       'export.render',
       'export.drift',
     ])
@@ -217,6 +221,8 @@ describe('generated client', () => {
       'lane.workspace.released',
       'lane.ticket.assigned',
       'lane.ticket.released',
+      'clone.created',
+      'clone.removed',
     ])
   })
 

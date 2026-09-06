@@ -14571,6 +14571,170 @@
     }
   },
   {
+    "description": "Create a branch clone through the guarded fleet skill. Conflicting paths, branches, and Lane assignments are refused before anything runs.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `clone.create` command. The source is not client-supplied: Kanban resolves the Project's registered repository and refuses conflicting paths, branches, and Lane assignments before invoking anything (DR-LW-09, DR-LW-10).",
+      "properties": {
+        "branch": {
+          "description": "The branch the clone checks out.",
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "path": {
+          "description": "The directory the branch clone lands in.",
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "branch",
+        "mutation",
+        "path",
+        "project_id"
+      ],
+      "title": "CloneCreateRequest",
+      "type": "object"
+    },
+    "name": "clone_create",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The record a guarded create answers with.",
+      "properties": {
+        "branch": {
+          "description": "The branch the clone checked out.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The directory the branch clone landed in.",
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "branch",
+        "path",
+        "project_id"
+      ],
+      "title": "CloneCreatedRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Remove a branch clone through the guarded fleet skill. The Seed and Lane-assigned Workspaces are refused; the Workspace record is preserved, never deleted.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `clone.remove` command. The Workspace record is preserved, never deleted (DR-LW-11); only the clone on disk goes, and only through the guarded fleet skill.",
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "workspace_id"
+      ],
+      "title": "CloneRemoveRequest",
+      "type": "object"
+    },
+    "name": "clone_remove",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "The record a guarded remove answers with. The Workspace record itself is preserved; the next observation reports the clone missing.",
+      "properties": {
+        "branch": {
+          "description": "The branch the Workspace last observed, when any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The directory the branch clone was removed from.",
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "project_id",
+        "workspace_id"
+      ],
+      "title": "CloneRemovedRecord",
+      "type": "object"
+    }
+  },
+  {
     "description": "Render Plans, Specs, and Tickets as deterministic Markdown into a directory within the Seed. Files replace atomically; nothing is committed, pushed, or staged.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

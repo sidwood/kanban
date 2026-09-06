@@ -38,7 +38,9 @@
     "lane.workspace.assigned",
     "lane.workspace.released",
     "lane.ticket.assigned",
-    "lane.ticket.released"
+    "lane.ticket.released",
+    "clone.created",
+    "clone.removed"
   ],
   "title": "LiveEventName",
   "type": "string"

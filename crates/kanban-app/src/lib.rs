@@ -18,6 +18,7 @@ pub mod exports;
 pub mod herdr;
 pub mod initiative;
 pub mod lane;
+pub mod lifecycle;
 pub mod mutation;
 pub mod plan;
 pub mod profile;

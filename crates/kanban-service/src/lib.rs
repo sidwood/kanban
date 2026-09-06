@@ -188,7 +188,12 @@ fn assemble_core(
         workspace_store.clone(),
         clone_guard_store,
     )?;
-    core.register_dependencies(dependency_store, ticket_store.clone(), projects.clone())?;
+    core.register_dependencies(
+        dependency_store.clone(),
+        ticket_store.clone(),
+        projects.clone(),
+    )?;
+    core.register_lifecycle(ticket_store.clone(), dependency_store, projects.clone())?;
     core.register_profiles(profile_store, ticket_store.clone(), projects.clone())?;
     core.register_exports(
         plan_store,

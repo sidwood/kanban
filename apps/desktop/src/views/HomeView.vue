@@ -166,6 +166,13 @@ const eventStream = computed(() =>
       </section>
 
       <template v-else-if="timelineScope">
+        <RouterLink
+          :to="`/projects/${selectedProjectId}/board`"
+          data-testid="home-open-board"
+          class="w-fit text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+        >
+          Open the {{ projects.projects.find((entry) => entry.id === selectedProjectId)?.code }} board
+        </RouterLink>
         <TimelineSurface :scope="timelineScope" />
         <RulingsSurface :project-id="selectedProjectId" />
       </template>

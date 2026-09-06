@@ -126,7 +126,11 @@ impl SessionClient {
     pub fn read_event_within(&mut self, window: Duration) -> Result<Value, HerdrError> {
         apply_io_deadline(&self.stream, window)?;
         let response = self.read_event();
-        apply_io_deadline(&self.stream, self.io_timeout)?;
+        // Restoring the request deadline is hygiene, not outcome: a
+        // stream that dropped during the window fails this control
+        // call too, and the caller needs the read's disconnection,
+        // not the restore's socket error standing in for it.
+        let _ = apply_io_deadline(&self.stream, self.io_timeout);
         response
     }
 

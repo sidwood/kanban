@@ -624,8 +624,9 @@ pub(crate) mod testing {
 
     /// The in-memory rows the lifecycle tests run against: Tickets
     /// created through the commands, dependency edges and blockers
-    /// seeded straight onto them, and the timeline envelopes the
-    /// writes were asked to land.
+    /// seeded straight onto them, the Schedules the scheduling
+    /// command lands, and the timeline envelopes the writes were
+    /// asked to land.
     #[derive(Default)]
     pub(crate) struct LifecycleRows {
         state: Mutex<LifecycleRowState>,
@@ -639,6 +640,8 @@ pub(crate) mod testing {
         edges: Vec<TicketDependency>,
         blockers: Vec<ExternalBlocker>,
         next_blocker_id: u64,
+        schedules: Vec<kanban_domain::Schedule>,
+        next_schedule_id: u64,
         timeline: Vec<TimelineEnvelope>,
     }
 
@@ -711,6 +714,15 @@ pub(crate) mod testing {
                 .lock()
                 .expect("the memory lifecycle lock is sound");
             (state.tickets.clone(), state.timeline.clone())
+        }
+
+        /// The stored Schedules, for assertions.
+        pub(crate) fn schedules(&self) -> Vec<kanban_domain::Schedule> {
+            self.state
+                .lock()
+                .expect("the memory lifecycle lock is sound")
+                .schedules
+                .clone()
         }
     }
 
@@ -923,6 +935,114 @@ pub(crate) mod testing {
                 .filter(|blocker| blocker.ticket() == ticket)
                 .cloned()
                 .collect())
+        }
+    }
+
+    impl crate::schedule::ScheduleStore for LifecycleRows {
+        fn attach(
+            &self,
+            ticket: &kanban_domain::Ticket,
+            schedule: &kanban_domain::Schedule,
+            envelope: &dyn Fn(kanban_domain::ScheduleId) -> TimelineEnvelope,
+        ) -> Result<kanban_domain::Schedule, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory lifecycle lock is sound");
+            let preceding = ticket.version() - 1;
+            let Some(row) = state.tickets.iter_mut().find(|row| row.id() == ticket.id()) else {
+                return Err(ApiError::not_found(&format!("ticket {}", ticket.id())));
+            };
+            if row.version() != preceding {
+                return Err(ApiError::stale_version(preceding, row.version()));
+            }
+            *row = ticket.clone();
+            state.next_schedule_id += 1;
+            let id = kanban_domain::ScheduleId::new(state.next_schedule_id);
+            let landed = kanban_domain::Schedule::restore(
+                id,
+                schedule.ticket(),
+                schedule.trigger().clone(),
+                schedule.timezone().clone(),
+                schedule.profile().clone(),
+                schedule.next_activation().to_owned(),
+                schedule.state(),
+            );
+            state.schedules.push(landed.clone());
+            state.timeline.push(envelope(id));
+            Ok(landed)
+        }
+
+        fn due(&self, now: &str) -> Result<Vec<crate::schedule::DueActivation>, ApiError> {
+            let state = self
+                .state
+                .lock()
+                .expect("the memory lifecycle lock is sound");
+            let mut due = Vec::new();
+            for schedule in state
+                .schedules
+                .iter()
+                .filter(|schedule| schedule.is_due(now))
+            {
+                let Some(ticket) = state
+                    .tickets
+                    .iter()
+                    .find(|row| row.id() == schedule.ticket())
+                    .cloned()
+                else {
+                    return Err(ApiError::internal(
+                        "a stored Schedule names no stored Ticket",
+                    ));
+                };
+                let Some(project) =
+                    crate::project::ProjectStore::find(&*self.projects, ticket.project())?
+                else {
+                    return Err(ApiError::internal(
+                        "a stored Schedule names no stored Project",
+                    ));
+                };
+                due.push(crate::schedule::DueActivation {
+                    schedule: schedule.clone(),
+                    ticket,
+                    project,
+                });
+            }
+            Ok(due)
+        }
+
+        fn fire(
+            &self,
+            due: &crate::schedule::DueActivation,
+            moved: Option<&kanban_domain::Ticket>,
+            _fired_at: &str,
+            envelope: TimelineEnvelope,
+        ) -> Result<bool, ApiError> {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory lifecycle lock is sound");
+            let Some(schedule) = state
+                .schedules
+                .iter_mut()
+                .find(|row| row.id() == due.schedule.id())
+            else {
+                return Ok(false);
+            };
+            if schedule.state() != kanban_domain::ScheduleState::Waiting {
+                return Ok(false);
+            }
+            *schedule = schedule.fired();
+            if let Some(ticket) = moved {
+                let Some(row) = state.tickets.iter_mut().find(|row| row.id() == ticket.id()) else {
+                    return Err(ApiError::not_found(&format!("ticket {}", ticket.id())));
+                };
+                if row.version() != ticket.version() - 1 {
+                    return Err(ApiError::stale_version(ticket.version() - 1, row.version()));
+                }
+                *row = ticket.clone();
+            }
+            state.timeline.push(envelope);
+            Ok(true)
         }
     }
 

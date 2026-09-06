@@ -30,7 +30,7 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 /// Every stored column of one Ticket row, in select order.
-const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
+pub(crate) const TICKET_COLUMNS: &str = "id, project_id, number, kind, priority, state, spec_id, title, \
                               slice, criteria, actual_behaviour, reporter_evidence, \
                               bug_qualification, bug_facts, subtype, mode, completion, \
                               scheduled_for, due, profile, pinned_version, predecessor_id, version";
@@ -247,38 +247,7 @@ impl TicketStore for SqliteTicketStore {
     fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
-        let stored = StoredTicket::of(ticket.priority(), ticket.body());
-        let preceding_version = ticket.version() - 1;
-        let changed = span
-            .execute(
-                "UPDATE tickets
-                 SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
-                     criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
-                     bug_qualification = ?10, bug_facts = ?11, profile = ?12,
-                     pinned_version = ?13, version = ?14
-                 WHERE id = ?1 AND version = ?15",
-                params![
-                    ticket.id().value() as i64,
-                    stored.priority,
-                    ticket.state().wire_name(),
-                    stored.spec_id,
-                    stored.title,
-                    stored.slice,
-                    stored.criteria,
-                    stored.actual_behaviour,
-                    stored.reporter_evidence,
-                    stored.bug_qualification,
-                    stored.bug_facts,
-                    ticket.profile().map(|name| name.as_str()),
-                    ticket.pinned_version().map(|version| version as i64),
-                    ticket.version() as i64,
-                    preceding_version as i64,
-                ],
-            )
-            .map_err(internal)?;
-        if changed != 1 {
-            return Err(ticket_write_refused(&span, ticket.id(), preceding_version));
-        }
+        move_row(&span, ticket)?;
         append_timeline(&span, &envelope)?;
         span.commit().map_err(internal)?;
         Ok(())
@@ -317,8 +286,49 @@ impl TicketStore for SqliteTicketStore {
     }
 }
 
+/// Move the Ticket row under the version the aggregate moved from,
+/// inside the caller's write span. Every stored column the aggregate
+/// owns lands together, so a moved row never splits from the version
+/// that moved it; a row that no longer holds the preceding version
+/// refuses the move.
+pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiError> {
+    let stored = StoredTicket::of(ticket.priority(), ticket.body());
+    let preceding_version = ticket.version() - 1;
+    let changed = span
+        .execute(
+            "UPDATE tickets
+             SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
+                 criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
+                 bug_qualification = ?10, bug_facts = ?11, profile = ?12,
+                 pinned_version = ?13, version = ?14
+             WHERE id = ?1 AND version = ?15",
+            params![
+                ticket.id().value() as i64,
+                stored.priority,
+                ticket.state().wire_name(),
+                stored.spec_id,
+                stored.title,
+                stored.slice,
+                stored.criteria,
+                stored.actual_behaviour,
+                stored.reporter_evidence,
+                stored.bug_qualification,
+                stored.bug_facts,
+                ticket.profile().map(|name| name.as_str()),
+                ticket.pinned_version().map(|version| version as i64),
+                ticket.version() as i64,
+                preceding_version as i64,
+            ],
+        )
+        .map_err(internal)?;
+    if changed != 1 {
+        return Err(ticket_write_refused(span, ticket.id(), preceding_version));
+    }
+    Ok(())
+}
+
 /// One decoded `tickets` row before its body is assembled.
-struct LoadedTicket {
+pub(crate) struct LoadedTicket {
     id: u64,
     project: u64,
     number: u64,
@@ -345,7 +355,7 @@ struct LoadedTicket {
 }
 
 /// Decode one `tickets` row.
-fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
+pub(crate) fn load_ticket_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoadedTicket> {
     Ok(LoadedTicket {
         id: row.get::<_, i64>(0)?.unsigned_abs(),
         project: row.get::<_, i64>(1)?.unsigned_abs(),
@@ -381,7 +391,7 @@ impl LoadedTicket {
     /// hear about, not silently accept. A Bug row the 0020 schema
     /// wrote names no capture facts; it rehydrates with empty ones
     /// until an edit records them.
-    fn rehydrate(&self) -> Result<Ticket, rusqlite::Error> {
+    pub(crate) fn rehydrate(&self) -> Result<Ticket, rusqlite::Error> {
         let body = match self.kind.as_str() {
             "implementation" => TicketBody::Implementation(ImplementationTicket::restore(
                 SpecId::new(self.spec_id.ok_or_else(corrupt)?.unsigned_abs()),
@@ -1349,7 +1359,7 @@ mod tests {
             .expect("the upgrade applies");
         assert_eq!(
             report.applied,
-            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         );
 
         let store = SqliteTicketStore::new(&database);

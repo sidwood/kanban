@@ -15,9 +15,10 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
 /// Every stored column of one Project row, in select order.
-const PROJECT_COLUMNS: &str = "id, code, name, repository, seed_workspace, default_branch, \
-                               herdr_session, herdr_workspace, initiative_id, archived, \
-                               plan_counter, spec_counter, ticket_counter, version";
+pub(crate) const PROJECT_COLUMNS: &str = "id, code, name, repository, seed_workspace, \
+                                         default_branch, herdr_session, herdr_workspace, \
+                                         initiative_id, archived, plan_counter, spec_counter, \
+                                         ticket_counter, version";
 
 /// The Project port over the authoritative database.
 pub struct SqliteProjectStore {
@@ -175,24 +176,30 @@ fn holder_of(conn: &rusqlite::Connection, sql: &str, value: &str) -> Result<Opti
 /// value passed validation on the way in, so a failure here is
 /// corruption the caller must hear about, not silently accept.
 fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
-    let id = row.get::<_, i64>(0)?.unsigned_abs();
-    let code: String = row.get(1)?;
-    let name: String = row.get(2)?;
-    let repository: String = row.get(3)?;
-    let seed_workspace: String = row.get(4)?;
-    let default_branch: String = row.get(5)?;
-    let herdr_session: Option<String> = row.get(6)?;
-    let herdr_workspace: String = row.get(7)?;
+    decode_row_at(row, 0)
+}
+
+/// Decode one Project row whose columns begin at `offset`, for the
+/// joined reads that carry a Project beside other rows.
+pub(crate) fn decode_row_at(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Project> {
+    let id = row.get::<_, i64>(offset)?.unsigned_abs();
+    let code: String = row.get(offset + 1)?;
+    let name: String = row.get(offset + 2)?;
+    let repository: String = row.get(offset + 3)?;
+    let seed_workspace: String = row.get(offset + 4)?;
+    let default_branch: String = row.get(offset + 5)?;
+    let herdr_session: Option<String> = row.get(offset + 6)?;
+    let herdr_workspace: String = row.get(offset + 7)?;
     let initiative_id = row
-        .get::<_, Option<i64>>(8)?
+        .get::<_, Option<i64>>(offset + 8)?
         .map(|value| value.unsigned_abs());
-    let archived: i64 = row.get(9)?;
+    let archived: i64 = row.get(offset + 9)?;
     let counters = ProjectCounters::restore(
-        row.get::<_, i64>(10)?.unsigned_abs(),
-        row.get::<_, i64>(11)?.unsigned_abs(),
-        row.get::<_, i64>(12)?.unsigned_abs(),
+        row.get::<_, i64>(offset + 10)?.unsigned_abs(),
+        row.get::<_, i64>(offset + 11)?.unsigned_abs(),
+        row.get::<_, i64>(offset + 12)?.unsigned_abs(),
     );
-    let version = row.get::<_, i64>(13)?.unsigned_abs();
+    let version = row.get::<_, i64>(offset + 13)?.unsigned_abs();
     let registration = ProjectRegistration::new(
         &code,
         &name,

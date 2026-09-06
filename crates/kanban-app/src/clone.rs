@@ -9,14 +9,14 @@
 //! the filesystem identity they resolve to, so a case or symlink
 //! alias of the Seed Workspace or a registered Workspace is refused
 //! as itself, and a destination that does not exist yet is resolved
-//! through its parent (KAN-T122). Every invocation and every refusal
-//! appends a timeline row, so the audit trail outlives both
-//! outcomes. Removal never deletes the Workspace record (DR-LW-11);
-//! a successful removal records the checkout gone itself — health
-//! missing, stale git facts cleared, optimistic version bumped —
-//! inside the command's span, so no guard mistakes a deleted
-//! directory for a live checkout before the next observation runs
-//! (KAN-T133).
+//! through its parent with the leaf's case folded (KAN-T122). Every
+//! invocation and every refusal appends a timeline row, so the audit
+//! trail outlives both outcomes. Removal never deletes the Workspace
+//! record (DR-LW-11); a successful removal records the checkout gone
+//! itself — health missing, stale git facts cleared, optimistic
+//! version bumped — inside the command's span, so no guard mistakes
+//! a deleted directory for a live checkout before the next
+//! observation runs (KAN-T133).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -160,9 +160,11 @@ fn encode(record: &impl serde::Serialize) -> Result<Value, ApiError> {
 /// identity its parent resolves to with the leaf appended. Every side
 /// of the conflict check is resolved this way, so a differently
 /// spelled Seed Workspace or registered Workspace cannot clone onto
-/// protected identity. What the filesystem cannot name keeps its
-/// spelling: the case of a segment that does not exist and a symlink
-/// whose target is gone are the documented residual.
+/// protected identity. A leaf the filesystem holds no case for is
+/// folded, so two spellings of one missing leaf are one identity;
+/// what nothing can resolve — a parent chain that names nothing, a
+/// symlink whose target is gone — keeps its spelling as the
+/// documented residual.
 fn resolved_filesystem_identity(path: &str) -> String {
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().into_owned();
@@ -170,7 +172,10 @@ fn resolved_filesystem_identity(path: &str) -> String {
     let destination = Path::new(path);
     if let (Some(parent), Some(leaf)) = (destination.parent(), destination.file_name()) {
         if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-            return canonical_parent.join(leaf).to_string_lossy().into_owned();
+            return canonical_parent
+                .join(leaf.to_string_lossy().to_lowercase())
+                .to_string_lossy()
+                .into_owned();
         }
     }
     path.to_owned()
@@ -2130,12 +2135,13 @@ mod clone_filesystem_identity {
         assert_eq!(harness.tool.calls().len(), 1);
     }
 
-    /// The documented residual (KAN-T122): the case of a segment that
-    /// does not exist is nothing the filesystem can name, so two
-    /// spellings of one missing leaf are two identities, and the
-    /// difference is the operator's to keep straight.
+    /// KAN-T122-AC1: a leaf that does not exist yet keeps no case of
+    /// its own, so a differently cased alias of a registered Workspace
+    /// whose clone is gone from disk is refused. Both spellings resolve
+    /// through the parent the same way, so the refusal needs no
+    /// case-insensitive volume to hold.
     #[test]
-    fn a_case_alias_of_a_missing_leaf_is_the_documented_residual() {
+    fn creating_refuses_a_case_alias_of_a_missing_registered_workspace() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let workspaces = existing_directory(&dir, "workspaces");
         let registered = missing_child(&workspaces, "kanban.gone");
@@ -2143,15 +2149,28 @@ mod clone_filesystem_identity {
         register_workspace(&harness, &registered, "key-1");
 
         let request = missing_child(&workspaces, "KANBAN.GONE");
-        harness
+        let error = harness
             .core
             .command("clone.create", &create(&request, "key-2"))
-            .expect("no filesystem entry can name the alias, so the guard cannot either");
+            .expect_err("a case alias of a registered identity is refused, leaf or no leaf");
 
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the alias is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
         assert_eq!(
-            harness.tool.calls().len(),
-            1,
-            "the residual proceeds; it is documented, not silently refused or caught"
+            rows[0].detail()["path"],
+            json!(request),
+            "the row records the spelling that was asked for"
         );
     }
 }

@@ -1155,6 +1155,81 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_implementation_lands_its_spec_and_replaced_criteria_together() {
+        let (_dir, database, store) = store();
+        let (mut project, spec) = seeded_project_and_spec(&database);
+
+        // A second Spec of the same Project to move to.
+        let specs = SqliteSpecStore::new(&database);
+        let number = SpecNumber::new(project.mint(NumberKind::Spec).expect("active mints"))
+            .expect("a minted number is positive");
+        let destination = specs
+            .create(&project, number, &spec_content(), &|id| {
+                TimelineEnvelope::project(
+                    1,
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Spec,
+                        id: id.value().to_string(),
+                    }),
+                    json!({ "action": "created", "id": id.value(), "number": number.value() }),
+                )
+            })
+            .expect("the destination Spec lands");
+
+        let mut ticket = created(&store, &database, Priority::High, &implementation(spec));
+        let replacement = vec![
+            kanban_domain::AcceptanceCriterion::new(
+                "Tickets claim the Spec they move to.",
+                vec![story(2, 1)],
+            )
+            .expect("the fixture criterion links"),
+        ];
+        ticket
+            .move_to_spec(destination.id(), number, Some(replacement.clone()))
+            .expect("the move replaces the criteria");
+        store
+            .save(
+                &ticket,
+                transition(
+                    ticket.id(),
+                    "spec_moved",
+                    json!({
+                        "spec_id": destination.id().value(),
+                        "criteria": 1,
+                        "version": ticket.version(),
+                    }),
+                ),
+            )
+            .expect("the move saves");
+
+        let found = store
+            .find(ticket.id())
+            .expect("the find serves")
+            .expect("the Ticket exists");
+        assert_eq!(found.spec(), Some(destination.id()));
+        assert_eq!(found.criteria(), replacement.as_slice());
+        assert_eq!(found.version(), 2);
+
+        // One write moved both columns: the row holds the destination
+        // and the replaced claims side by side, never one without the
+        // other.
+        let stored: (i64, String) = database
+            .connection()
+            .query_row(
+                "SELECT spec_id, criteria FROM tickets WHERE id = ?1",
+                rusqlite::params![ticket.id().value() as i64],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the row is readable");
+        assert_eq!(stored.0, destination.id().value() as i64);
+        assert!(
+            stored.1.contains("Tickets claim the Spec they move to."),
+            "the replaced criteria persist beside the moved spec_id"
+        );
+    }
+
+    #[test]
     fn bug_and_task_bodies_round_trip_with_their_attachments() {
         let (_dir, database, store) = store();
         let (_project, spec) = seeded_project_and_spec(&database);

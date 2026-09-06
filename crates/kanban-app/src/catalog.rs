@@ -349,7 +349,7 @@ define_exposed_catalogue! {
         request: "TicketSpecMoveRequest",
         response: "TicketRecord",
         mcp: "ticket_spec_move",
-        description: "Move a draft, unpinned Ticket to another Spec of its Project; a pinned or executed Ticket stays.",
+        description: "Move a draft, unpinned Ticket to another Spec of its Project, an Implementation with replacement criteria; a pinned or executed Ticket stays.",
     },
     "ticket.dependency.add" => {
         kind: Command,

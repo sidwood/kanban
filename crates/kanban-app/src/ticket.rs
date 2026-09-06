@@ -9,7 +9,9 @@
 //! Creation mints the Project's next Ticket number, lands the row
 //! with the counter move and the timeline append in one write, and
 //! announces live; no delete exists. A draft, unpinned Ticket moves
-//! its Spec attachment to another Spec of its own Project
+//! its Spec attachment to another Spec of its own Project, and one
+//! such move carries the replacement criteria an Implementation
+//! claims for the Spec it arrives at, validated against that Spec
 //! (DR-DE-05). Lifecycle transitions and dependencies arrive with
 //! their own tickets; readiness stays a computed projection, so
 //! qualifying a Bug never moves its state.
@@ -292,20 +294,27 @@ impl CommandHandler for MoveTicketSpec {
                 "the Spec belongs to another Project",
             ));
         }
+        // The replacement decodes and validates before the move, so a
+        // refused claim writes neither the spec_id nor the criteria.
+        let replacement = request
+            .criteria
+            .as_deref()
+            .map(|proposed| criteria_of(proposed, &project))
+            .transpose()?;
+        let replaced = replacement.as_ref().map(Vec::len);
         ticket
-            .move_to_spec(spec.id(), spec.number(), None)
+            .move_to_spec(spec.id(), spec.number(), replacement)
             .map_err(refuse)?;
+        let mut facts = json!({
+            "spec_id": spec.id().value(),
+            "version": ticket.version(),
+        });
+        if let Some(replaced) = replaced {
+            facts["criteria"] = json!(replaced);
+        }
         self.0.tickets.save(
             &ticket,
-            transition(
-                project.id(),
-                ticket.id(),
-                "spec_moved",
-                json!({
-                    "spec_id": spec.id().value(),
-                    "version": ticket.version(),
-                }),
-            ),
+            transition(project.id(), ticket.id(), "spec_moved", facts),
         )?;
         encode_record(&ticket, project.code())
     }
@@ -2215,6 +2224,371 @@ mod ticket_queries {
             .query("ticket.get", &json!({ "ticket_id": 9 }))
             .expect_err("an unknown Ticket is refused");
         assert_eq!(error.code, kanban_dto::ErrorCode::NotFound);
+    }
+}
+
+#[cfg(test)]
+mod spec_move {
+    use kanban_dto::ErrorCode;
+    use serde_json::{Value, json};
+
+    use super::testing::ticket_harness;
+    use crate::ticket::TicketStore;
+
+    /// One `ticket.spec.move` request for `ticket` at `version`,
+    /// optionally carrying replacement criteria.
+    fn moved(ticket: u64, spec: u64, version: u64, criteria: Option<Value>, key: &str) -> Value {
+        let mut request = json!({
+            "mutation": { "optimistic_version": version, "idempotency_key": key },
+            "ticket_id": ticket,
+            "spec_id": spec,
+        });
+        if let Some(criteria) = criteria {
+            request["criteria"] = criteria;
+        }
+        request
+    }
+
+    /// The criteria that claim the moved-to Spec's first story.
+    fn replacement(outcome: &str) -> Value {
+        json!([{ "outcome": outcome, "stories": ["CORE-S2-US1"] }])
+    }
+
+    /// A draft Implementation delivering the first Spec's behaviour,
+    /// claiming its first story. Returns the destination Spec of the
+    /// same Project beside it.
+    fn draft_implementation(core: &crate::dispatch::Core, key: &str) -> (u64, u64) {
+        let origin = super::testing::authored_spec(core, "key-author");
+        let authored = core
+            .command(
+                "spec.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-author-2" },
+                    "project_id": 1,
+                    "content": super::testing::wire_spec_content("Registration again"),
+                }),
+            )
+            .expect("the destination Spec authors");
+        let destination = authored["id"].as_u64().expect("the identity is a number");
+        let created = core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": key },
+                    "project_id": 1,
+                    "kind": "implementation",
+                    "priority": "high",
+                    "spec_id": origin,
+                    "slice": "Spec authoring creates content versions end to end",
+                    "criteria": [
+                        { "outcome": "Specs mint unique numbers.", "stories": ["CORE-S1-US1"] }
+                    ],
+                }),
+            )
+            .expect("the Implementation creates");
+        let ticket = created["id"].as_u64().expect("the identity is a number");
+        (ticket, destination)
+    }
+
+    /// The stored row of one Ticket, read back through `ticket.get`.
+    fn read_back(core: &crate::dispatch::Core, ticket: u64) -> Value {
+        core.query("ticket.get", &json!({ "ticket_id": ticket }))
+            .expect("the get serves")
+    }
+
+    #[test]
+    fn one_command_moves_a_draft_implementation_and_replaces_its_criteria() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+
+        let response = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(
+                    ticket,
+                    destination,
+                    1,
+                    Some(replacement("Tickets claim the Spec they move to.")),
+                    "key-move",
+                ),
+            )
+            .expect("the move replaces the claims the move invalidates");
+
+        assert_eq!(response["spec_id"], json!(destination));
+        assert_eq!(response["version"], json!(2), "the move is one change");
+        assert_eq!(
+            response["criteria"],
+            json!([{
+                "outcome": "Tickets claim the Spec they move to.",
+                "stories": ["CORE-S2-US1"],
+            }])
+        );
+        assert_eq!(
+            read_back(&harness.core, ticket)["criteria"],
+            response["criteria"],
+            "the replaced criteria persist"
+        );
+
+        let (_, timeline) = harness.tickets.snapshot();
+        assert_eq!(
+            timeline.last().expect("the move appended").detail(),
+            &json!({
+                "action": "spec_moved",
+                "id": ticket,
+                "spec_id": destination,
+                "criteria": 1,
+                "version": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn a_replacement_claiming_a_foreign_story_is_refused_without_a_partial_write() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let before = read_back(&harness.core, ticket);
+        let (_, timeline_before) = harness.tickets.snapshot();
+
+        let foreign = json!([
+            { "outcome": "Well linked, just not here.", "stories": ["CORE-S9-US1"] }
+        ]);
+        let error = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(ticket, destination, 1, Some(foreign), "key-move"),
+            )
+            .expect_err("the replacement must claim the destination's stories");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "an Implementation Ticket claims the stories of the Spec it delivers; \
+             S9-US1 names another Spec"
+        );
+        assert_eq!(
+            read_back(&harness.core, ticket),
+            before,
+            "neither the spec_id nor the criteria moved"
+        );
+        let (_, timeline) = harness.tickets.snapshot();
+        assert_eq!(
+            timeline.len(),
+            timeline_before.len(),
+            "the refusal appends no timeline row"
+        );
+    }
+
+    #[test]
+    fn a_malformed_or_empty_replacement_claim_is_refused() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+
+        let malformed = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(
+                    ticket,
+                    destination,
+                    1,
+                    Some(json!([{ "outcome": "Any outcome.", "stories": ["banana"] }])),
+                    "key-1",
+                ),
+            )
+            .expect_err("a story link names a User Story");
+        assert_eq!(malformed.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            malformed.message,
+            "a User Story is named like `CORE-S3-US6` or `S3-US6`"
+        );
+
+        let unclaimed = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(ticket, destination, 1, Some(json!([])), "key-2"),
+            )
+            .expect_err("a moved Implementation still claims stories");
+        assert_eq!(unclaimed.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            unclaimed.message,
+            "an Implementation Ticket carries story-linked criteria"
+        );
+
+        assert_eq!(
+            read_back(&harness.core, ticket)["version"],
+            json!(1),
+            "every refusal left the Ticket as it stood"
+        );
+    }
+
+    #[test]
+    fn a_pinned_or_non_draft_implementation_refuses_the_move_with_its_replacement() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let criteria = Some(replacement("Tickets claim the Spec they move to."));
+
+        // Graph approval pinned the Ticket (DR-DE-06).
+        let standing = harness
+            .tickets
+            .find(kanban_domain::TicketId::new(ticket))
+            .expect("the find serves")
+            .expect("the Ticket stands");
+        let pinned = kanban_domain::Ticket::restore(
+            standing.id(),
+            standing.project(),
+            standing.number(),
+            standing.priority(),
+            standing.state(),
+            standing.body().clone(),
+            standing.predecessor(),
+            standing.profile().cloned(),
+            Some(1),
+            standing.version() + 1,
+        );
+        harness
+            .tickets
+            .replace_pinned(pinned)
+            .expect("the row pins");
+
+        let pinned_refusal = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(ticket, destination, 2, criteria.clone(), "key-pinned"),
+            )
+            .expect_err("a pinned Ticket stays with its Spec");
+        assert_eq!(pinned_refusal.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            pinned_refusal.message,
+            "a pinned Ticket stays with the Spec version it was approved against"
+        );
+
+        // Execution past draft pins the Ticket where it stands. The
+        // pin already moved the row to version 2, so the executing
+        // row lands one version further on.
+        let executing = kanban_domain::Ticket::restore(
+            standing.id(),
+            standing.project(),
+            standing.number(),
+            standing.priority(),
+            kanban_domain::TicketState::Active,
+            standing.body().clone(),
+            standing.predecessor(),
+            standing.profile().cloned(),
+            standing.pinned_version(),
+            standing.version() + 2,
+        );
+        harness
+            .tickets
+            .replace_pinned(executing)
+            .expect("the row moves");
+        let executed_refusal = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(ticket, destination, 3, criteria, "key-executed"),
+            )
+            .expect_err("an executed Ticket never moves");
+        assert_eq!(executed_refusal.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            executed_refusal.message,
+            "only a draft Ticket moves between Specs"
+        );
+    }
+
+    #[test]
+    fn a_stale_move_is_refused_by_the_optimistic_version() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+
+        let error = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(
+                    ticket,
+                    destination,
+                    0,
+                    Some(replacement("Tickets claim the Spec they move to.")),
+                    "key-stale",
+                ),
+            )
+            .expect_err("the version guard refuses the stale command");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        assert_eq!(
+            read_back(&harness.core, ticket)["version"],
+            json!(1),
+            "a stale move writes nothing"
+        );
+        let (_, timeline) = harness.tickets.snapshot();
+        assert_eq!(timeline.len(), 1, "only the creation row stands");
+    }
+
+    #[test]
+    fn a_bug_or_task_move_carries_no_replacement_criteria() {
+        let harness = ticket_harness();
+        let destination = super::testing::authored_spec(&harness.core, "key-author");
+        let bug = super::testing::captured_bug(&harness.core, "key-capture");
+
+        let error = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(
+                    bug,
+                    destination,
+                    1,
+                    Some(replacement("A claim no Bug carries.")),
+                    "key-move",
+                ),
+            )
+            .expect_err("only an Implementation carries story-linked criteria");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "only an Implementation Ticket carries story-linked criteria"
+        );
+        assert_eq!(
+            read_back(&harness.core, bug)["spec_id"],
+            json!(null),
+            "the refusal attached nothing"
+        );
+    }
+
+    #[test]
+    fn a_move_retry_replays_without_reapplying() {
+        let harness = ticket_harness();
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let request = moved(
+            ticket,
+            destination,
+            1,
+            Some(replacement("Tickets claim the Spec they move to.")),
+            "key-once",
+        );
+
+        let first = harness
+            .core
+            .command("ticket.spec.move", &request)
+            .expect("the move applies");
+        let replay = harness
+            .core
+            .command("ticket.spec.move", &request)
+            .expect("the retry replays");
+
+        assert_eq!(first, replay);
+        assert_eq!(
+            replay["version"],
+            json!(2),
+            "the retry must not reapply the move"
+        );
+        let (tickets, _) = harness.tickets.snapshot();
+        assert_eq!(tickets.len(), 1, "no duplicate row exists");
     }
 }
 

@@ -98,16 +98,18 @@ impl ScriptedSession {
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let index = accept_connections.fetch_add(1, Ordering::Relaxed);
-                    let script = if let Some(per_connection) = script.connection_scripts.get(index)
-                    {
-                        Arc::new(per_connection.clone())
-                    } else if index == 0 {
-                        script.clone()
+                    let script = if script.connection_scripts.is_empty() {
+                        if index == 0 {
+                            script.clone()
+                        } else {
+                            script
+                                .reconnect_script
+                                .clone()
+                                .unwrap_or_else(|| script.clone())
+                        }
                     } else {
-                        script
-                            .reconnect_script
-                            .clone()
-                            .unwrap_or_else(|| script.clone())
+                        let last = script.connection_scripts.len() - 1;
+                        Arc::new(script.connection_scripts[index.min(last)].clone())
                     };
                     serve_connection(
                         stream,

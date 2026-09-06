@@ -653,6 +653,117 @@ mod tests {
         rebooted.shutdown();
     }
 
+    /// KAN-T135-AC4: a pre-scheme row seeded in the durable store —
+    /// aggregate and body, no operation — fails closed after a real
+    /// core restart, on the real SQLite file, while the modern row
+    /// recorded beside it still replays (AC3) and the ambiguous row
+    /// survives every refusal for audit (AC1).
+    #[test]
+    fn a_legacy_outcome_fails_closed_across_a_durable_restart() {
+        use rusqlite::params;
+
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let modern_request = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": "modern-restart-1" },
+            "name": "Modern",
+        });
+        let legacy_request = json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": "legacy-restart-1" },
+            "name": "Legacy",
+        });
+
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+        let created = client.command("initiative.create", modern_request.clone());
+        core.shutdown();
+
+        // Seed the row exactly as the pre-scheme core recorded it: the
+        // aggregate and the body with no operation, and the outcome
+        // that used to replay for any operation sharing the shape.
+        let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+            .expect("the database reopens for seeding");
+        conn.execute(
+            "INSERT INTO idempotency_outcomes (idempotency_key, fingerprint, response)
+             VALUES (?1, ?2, ?3)",
+            params![
+                "legacy-restart-1",
+                "initiative:{\"name\":\"Legacy\"}",
+                "{\"id\":7,\"name\":\"Legacy\",\"archived\":false,\"version\":1}",
+            ],
+        )
+        .expect("the pre-scheme row inserts");
+        drop(conn);
+
+        let rebooted = boot(&dir);
+        let mut client = Client::connect(rebooted.socket_path());
+
+        // The retried create cannot prove it is the operation that
+        // spent the key, so the durable row must not replay for it;
+        // the guard refuses the reuse and demands a fresh key.
+        let refused = client.command_error("initiative.create", legacy_request.clone());
+        assert_eq!(
+            refused["code"],
+            json!("ambiguous_idempotency_key"),
+            "a durable legacy row fails closed after a restart: {refused}"
+        );
+        assert!(
+            refused["message"]
+                .as_str()
+                .expect("the refusal carries a message")
+                .contains("fresh idempotency key"),
+            "the refusal should require a fresh key: {refused}"
+        );
+
+        // The refusal applied nothing: the request lands under a fresh
+        // key, and the modern row replays unchanged across the same
+        // restart, so the closed door is the legacy row's alone.
+        let landed = client.command(
+            "initiative.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "legacy-restart-2" },
+                "name": "Legacy",
+            }),
+        );
+        assert_eq!(landed["name"], json!("Legacy"));
+        let replayed = client.command("initiative.create", modern_request.clone());
+        assert_eq!(
+            replayed, created,
+            "an operation-aware retry still replays across the restart"
+        );
+        assert_eq!(
+            client.query("initiative.list"),
+            json!({
+                "initiatives": [
+                    { "id": 1, "name": "Modern", "archived": false, "version": 1 },
+                    { "id": 2, "name": "Legacy", "archived": false, "version": 1 },
+                ]
+            }),
+            "exactly one create per request landed"
+        );
+        rebooted.shutdown();
+
+        // The ambiguous row survives every refusal exactly as recorded:
+        // preserved for audit, never rewritten and never replayed.
+        let conn = rusqlite::Connection::open(dir.path().join("kanban.sqlite"))
+            .expect("the database reopens for audit");
+        let (fingerprint, response): (String, String) = conn
+            .query_row(
+                "SELECT fingerprint, response FROM idempotency_outcomes
+                 WHERE idempotency_key = ?1",
+                ["legacy-restart-1"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the seeded row is still recorded");
+        assert_eq!(
+            fingerprint, "initiative:{\"name\":\"Legacy\"}",
+            "the ambiguous row keeps its operation-blind fingerprint for audit"
+        );
+        assert_eq!(
+            response, "{\"id\":7,\"name\":\"Legacy\",\"archived\":false,\"version\":1}",
+            "the ambiguous row keeps its recorded outcome for audit"
+        );
+    }
+
     #[test]
     fn restart_replay_survives_a_burst_above_the_count_bound() {
         use rusqlite::params;

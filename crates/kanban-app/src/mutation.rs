@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recorded_outcome_replays_its_own_fingerprint_and_legacy_twins_only() {
+    fn a_recorded_outcome_replays_only_its_own_fingerprint() {
         let aware = RecordedOutcome {
             fingerprint: "v2:counter.bump:counter:{\"step\":1}".to_owned(),
             response: json!({ "value": 1 }),
@@ -472,12 +472,23 @@ mod tests {
             fingerprint: "counter:{\"step\":1}".to_owned(),
             response: json!({ "value": 1 }),
         };
+        // A pre-scheme row names no operation, so it cannot prove
+        // which operation spent the key: it replays nothing, not even
+        // the operation that may have spent it. Inferring the missing
+        // operation is exactly what the guard must not do.
         assert!(
-            legacy.replays(
+            !legacy.replays(
                 "v2:counter.bump:counter:{\"step\":1}",
                 "counter:{\"step\":1}"
             ),
-            "a pre-scheme outcome replays the request shape it recorded"
+            "a pre-scheme outcome never replays, even for the operation that may have spent the key"
+        );
+        assert!(
+            !legacy.replays(
+                "v2:counter.reset:counter:{\"step\":1}",
+                "counter:{\"step\":1}"
+            ),
+            "a pre-scheme outcome never replays for another operation"
         );
         assert!(
             !legacy.replays(

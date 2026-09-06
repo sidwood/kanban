@@ -930,6 +930,15 @@ pub(crate) mod testing {
     /// The harness the dependency tests run against, seeded with the
     /// two Projects and their Tickets.
     pub(crate) fn dependency_harness() -> DependencyHarness {
+        dependency_harness_over(Arc::new(MemoryIdempotencyStore::new()))
+    }
+
+    /// The same harness over a caller-owned idempotency store, so a
+    /// test can seed how a spent key was recorded before exercising
+    /// the retry.
+    pub(crate) fn dependency_harness_over(
+        idempotency: Arc<MemoryIdempotencyStore>,
+    ) -> DependencyHarness {
         let projects = Arc::new(MemoryProjects::default());
         projects.seed(active_project(
             1,
@@ -946,11 +955,7 @@ pub(crate) mod testing {
         rows.seed(ticket(2, 2, 1, TicketState::Draft));
         rows.seed(ticket(3, 2, 2, TicketState::Draft));
         rows.seed(ticket(5, 1, 2, TicketState::Superseded));
-        let mut core = Core::new(
-            exposed_operations(),
-            Arc::new(MemoryIdempotencyStore::new()),
-            Arc::new(NoopEventSink),
-        );
+        let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
         core.register_dependencies(rows.clone(), rows.clone(), projects.clone())
             .expect("the dependency operations register");
         DependencyHarness {
@@ -978,10 +983,15 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod cross_project_deps {
+    use std::sync::Arc;
+
     use kanban_dto::ErrorCode;
     use serde_json::json;
 
-    use super::testing::{command, dependency_harness};
+    use super::testing::{command, dependency_harness, dependency_harness_over};
+    use crate::mutation::{
+        IdempotencyStore, MemoryIdempotencyStore, ParsedCommand, RecordedOutcome,
+    };
 
     /// Register that Ticket 1 of CORE blocks Ticket 2 of EDGE, at the
     /// waiting Ticket's current version.
@@ -1477,6 +1487,150 @@ mod cross_project_deps {
             )
             .expect("the add's own retry still replays");
         assert_eq!(replay, added, "the recorded outcome is the add's alone");
+    }
+
+    /// The shared body of the dependency add and remove over Tickets 1
+    /// and 2: the shape both operations lift over the `ticket`
+    /// aggregate.
+    fn edge_body() -> serde_json::Value {
+        json!({ "from_ticket": 1, "to_ticket": 2 })
+    }
+
+    /// Seed one pre-scheme outcome row: `key` spent on the
+    /// operation-blind projection of the dependency body, exactly how
+    /// rows recorded before operation awareness look, with the
+    /// outcome that used to replay for any operation sharing the
+    /// shape.
+    fn seed_legacy_outcome(store: &MemoryIdempotencyStore, key: &str, response: serde_json::Value) {
+        let seed = ParsedCommand::lift("ticket", &command(edge_body(), 1, key))
+            .expect("the seed command lifts");
+        store
+            .begin()
+            .expect("the span opens")
+            .commit(
+                key,
+                RecordedOutcome {
+                    fingerprint: seed.legacy_fingerprint(),
+                    response,
+                },
+            )
+            .expect("the pre-scheme outcome records");
+    }
+
+    #[test]
+    fn a_legacy_row_never_lends_an_add_outcome_to_the_remove() {
+        let store = Arc::new(MemoryIdempotencyStore::new());
+        let harness = dependency_harness_over(store.clone());
+        let add_shaped = json!({
+            "ticket_id": 2,
+            "version": 2,
+            "dependencies": [{ "from_ticket_id": 1, "from_project_id": 1 }],
+        });
+        seed_legacy_outcome(&store, "key-legacy", add_shaped.clone());
+
+        // The remove shares the aggregate and body the pre-scheme row
+        // recorded; only its operation differs. The row cannot prove
+        // which operation spent the key, so replaying the add-shaped
+        // outcome here would guess — and could answer a remove with an
+        // add's result.
+        let error = harness
+            .core
+            .command(
+                "ticket.dependency.remove",
+                &command(edge_body(), 1, "key-legacy"),
+            )
+            .expect_err("a pre-scheme row cannot answer the remove");
+
+        assert_eq!(error.code, ErrorCode::AmbiguousIdempotencyKey);
+        assert!(
+            error.message.contains("key-legacy"),
+            "the message should name the refused key: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("fresh idempotency key"),
+            "the message should require a fresh key: {}",
+            error.message
+        );
+
+        // The refusal applied nothing, the row survives for audit, and
+        // the edge still lands under a fresh key at the version the
+        // aggregate is actually at.
+        let (_, edges, _) = harness.rows.snapshot();
+        assert_eq!(
+            edges.len(),
+            0,
+            "the remove must not borrow the add's outcome"
+        );
+        assert_eq!(
+            store
+                .recorded("key-legacy")
+                .expect("the lookup serves")
+                .map(|outcome| outcome.response),
+            Some(add_shaped),
+            "the ambiguous row keeps its recorded outcome for audit"
+        );
+        let added = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(edge_body(), 1, "key-fresh"),
+            )
+            .expect("a fresh key still lands the mutation");
+        assert_eq!(added["version"], json!(2));
+    }
+
+    #[test]
+    fn a_legacy_row_never_lends_a_remove_outcome_to_the_add() {
+        let store = Arc::new(MemoryIdempotencyStore::new());
+        let harness = dependency_harness_over(store.clone());
+        let remove_shaped = json!({ "ticket_id": 2, "version": 2, "dependencies": [] });
+        seed_legacy_outcome(&store, "key-legacy", remove_shaped.clone());
+
+        // The inverse direction of the clash: the row may have been
+        // spent by the remove, and the add retrying under that key
+        // must not borrow the remove-shaped outcome.
+        let error = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(edge_body(), 1, "key-legacy"),
+            )
+            .expect_err("a pre-scheme row cannot answer the add");
+
+        assert_eq!(error.code, ErrorCode::AmbiguousIdempotencyKey);
+        assert!(
+            error.message.contains("fresh idempotency key"),
+            "the message should require a fresh key: {}",
+            error.message
+        );
+
+        let (_, edges, _) = harness.rows.snapshot();
+        assert_eq!(
+            edges.len(),
+            0,
+            "the add must not borrow the remove's outcome"
+        );
+        assert_eq!(
+            store
+                .recorded("key-legacy")
+                .expect("the lookup serves")
+                .map(|outcome| outcome.response),
+            Some(remove_shaped),
+            "the ambiguous row keeps its recorded outcome for audit"
+        );
+
+        // The add still lands under its own fresh key.
+        let added = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(edge_body(), 1, "key-fresh"),
+            )
+            .expect("the add applies under a fresh key");
+        assert_eq!(added["version"], json!(2));
+        let (_, edges, _) = harness.rows.snapshot();
+        assert_eq!(edges.len(), 1, "exactly the fresh-key add applied");
     }
 
     #[test]

@@ -770,8 +770,10 @@ mod tests {
 
     /// A core whose store already holds `key-legacy`, spent before the
     /// fingerprint named its operation: the row carries the
-    /// operation-blind projection those outcomes recorded.
-    fn legacy_core() -> Core {
+    /// operation-blind projection those outcomes recorded. The store
+    /// returns with the core so a test can prove the row survives
+    /// every refusal exactly as recorded, preserved for audit.
+    fn legacy_core() -> (Core, Arc<MemoryIdempotencyStore>) {
         let store = Arc::new(MemoryIdempotencyStore::new());
         store
             .begin()
@@ -784,39 +786,88 @@ mod tests {
                 },
             )
             .expect("the pre-scheme outcome records");
-        let mut core = Core::new(TEST_CATALOG, store, Arc::new(NoopEventSink));
+        let mut core = Core::new(TEST_CATALOG, store.clone(), Arc::new(NoopEventSink));
         register_counter_commands(&mut core);
-        core
+        (core, store)
+    }
+
+    /// The seeded pre-scheme row, unchanged.
+    fn seeded_legacy_outcome() -> RecordedOutcome {
+        RecordedOutcome {
+            fingerprint: "counter:{\"step\":1}".to_owned(),
+            response: json!({ "value": 1, "version": 1 }),
+        }
     }
 
     #[test]
-    fn an_outcome_recorded_before_operation_awareness_still_replays() {
-        let core = legacy_core();
+    fn an_outcome_recorded_before_operation_awareness_fails_closed_for_its_own_operation() {
+        let (core, store) = legacy_core();
 
         // The retry carries a corrected version and the operation-aware
-        // fingerprint of a new record; the pre-scheme row must still
-        // answer it, exactly as it answered before the scheme.
-        let replay = core
+        // fingerprint of a new record, but the pre-scheme row names no
+        // operation: replaying it here would guess that the row was
+        // spent by a bump, and the guard never guesses which operation
+        // spent an ambiguous key.
+        let error = core
             .command("counter.bump", &bump(1, "key-legacy", 7))
-            .expect("the pre-scheme outcome replays the retry");
+            .expect_err("a pre-scheme row cannot prove which operation spent the key");
 
-        assert_eq!(replay, json!({ "value": 1, "version": 1 }));
+        assert_eq!(error.code, ErrorCode::AmbiguousIdempotencyKey);
+        assert!(
+            error.message.contains("key-legacy"),
+            "the message should name the refused key: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("fresh idempotency key"),
+            "the message should require a fresh key: {}",
+            error.message
+        );
+
+        // The refusal is the row's, not the aggregate's: the row
+        // survives exactly as recorded, preserved for audit, and a
+        // fresh key applies against the untouched aggregate.
+        assert_eq!(
+            store.recorded("key-legacy").expect("the lookup serves"),
+            Some(seeded_legacy_outcome()),
+            "the ambiguous row stays recorded for audit"
+        );
+        let applied = core
+            .command("counter.bump", &bump(1, "key-fresh", 0))
+            .expect("a fresh key applies against the live aggregate");
+        assert_eq!(applied, json!({ "value": 1, "version": 1 }));
     }
 
     #[test]
-    fn an_outcome_recorded_before_operation_awareness_answers_across_operations() {
-        let core = legacy_core();
+    fn an_outcome_recorded_before_operation_awareness_fails_closed_across_operations() {
+        let (core, store) = legacy_core();
 
-        // A pre-scheme row names no operation, so the guard cannot
-        // prove which operation spent the key: it honours the replay
-        // for every operation carrying the recorded aggregate and
-        // body. Retention bounds how long such a row can answer;
-        // every outcome recorded after the scheme is separated.
-        let replay = core
+        // The reset shares the aggregate and body shape the pre-scheme
+        // row recorded. Replaying the row would answer a reset with
+        // whichever operation spent the key — possibly a bump — the
+        // wrong-operation replay KAN-T135 closes.
+        let error = core
             .command("counter.reset", &bump(1, "key-legacy", 0))
-            .expect("the pre-scheme outcome still answers");
+            .expect_err("a pre-scheme row cannot answer another operation");
 
-        assert_eq!(replay, json!({ "value": 1, "version": 1 }));
+        assert_eq!(error.code, ErrorCode::AmbiguousIdempotencyKey);
+        assert!(
+            error.message.contains("fresh idempotency key"),
+            "the message should require a fresh key: {}",
+            error.message
+        );
+
+        // Nothing applied and the row is preserved; the reset still
+        // lands under its own fresh key.
+        assert_eq!(
+            store.recorded("key-legacy").expect("the lookup serves"),
+            Some(seeded_legacy_outcome()),
+            "the ambiguous row stays recorded for audit"
+        );
+        let reset = core
+            .command("counter.reset", &bump(1, "key-reset", 0))
+            .expect("the reset applies under a fresh key");
+        assert_eq!(reset, json!({ "value": 0, "version": 1 }));
     }
 
     /// An idempotency store whose span cannot commit, standing in

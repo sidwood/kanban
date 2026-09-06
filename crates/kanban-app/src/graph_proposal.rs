@@ -1403,6 +1403,126 @@ mod executable_graph {
             "the outside edge still holds the first Ticket back"
         );
     }
+
+    #[test]
+    fn later_edits_inside_the_installed_graph_are_refused() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        let standing = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-standing" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour": "The integration branch is dropped after a review lands.",
+                    "reporter_evidence": "The landing log names the drop immediately after the merge.",
+                }),
+            )
+            .expect("the standing Bug quick captures");
+        let standing = standing["id"].as_u64().expect("the identity is a number");
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the human gate approves");
+        let (edges_before, timeline_before) = proposals.dependencies().snapshot();
+
+        // A direct add between two Tickets the installed graph holds
+        // would desynchronise the executable graph; only a new
+        // approval replaces it (AC4, Sid ruling 3).
+        let added = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": 2,
+                        "idempotency_key": "key-later-add",
+                    },
+                    "from_ticket": second,
+                    "to_ticket": first,
+                }),
+            )
+            .expect_err("an edge inside the installed graph is refused");
+        assert_eq!(added.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            added.message,
+            "an approved Ticket graph holds both Tickets; its edges change only through a new \
+             approval"
+        );
+
+        let removed = harness
+            .core
+            .command(
+                "ticket.dependency.remove",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": 2,
+                        "idempotency_key": "key-later-remove",
+                    },
+                    "from_ticket": first,
+                    "to_ticket": second,
+                }),
+            )
+            .expect_err("removing an installed edge directly is refused");
+        assert_eq!(removed.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            removed.message,
+            "an approved Ticket graph holds both Tickets; its edges change only through a new \
+             approval"
+        );
+        let (edges, timeline) = proposals.dependencies().snapshot();
+        assert_eq!(edges, edges_before, "the refusals changed no edge");
+        assert_eq!(timeline.len(), timeline_before.len(), "nothing appended");
+
+        // An edge reaching the graph from outside it stays the
+        // operator's to manage: the standing Ticket is no member.
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": 2,
+                        "idempotency_key": "key-outside-add",
+                    },
+                    "from_ticket": standing,
+                    "to_ticket": first,
+                }),
+            )
+            .expect("an outside edge still lands against the member");
+        let ready = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": first }))
+            .expect("the readiness serves");
+        assert_eq!(
+            ready["blocked_by"],
+            json!([{ "Ticket": {
+                "from_ticket_id": standing,
+                "from_project_id": 1,
+                "from_number": standing,
+                "from_state": "draft",
+            }}]),
+            "the installed edge 1 → 2 still stands untouched beside the outside one"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -3,10 +3,15 @@
 //! with cycles refused — record the explicit external blockers that
 //! carry unregistered waiting work, and compute readiness as a
 //! projection of exactly those facts (KAN-S4-US5, DR-DE-02,
-//! DR-DE-03, DR-DE-04). Readiness never mutates state; dispatch
-//! (KAN-T42) consumes it. Every change appends a timeline row on the
-//! waiting Ticket's Project timeline inside the same write as the
-//! row change, and guards on the waiting Ticket's aggregate version.
+//! DR-DE-03, DR-DE-04). Direct edits of an edge an approved Ticket
+//! graph holds are refused: the graph approval installs the
+//! executable graph for its Spec version (Sid ruling 3), and only a
+//! new approval may replace it. Edges crossing out of an installed
+//! graph stay the operator's to manage. Readiness never mutates
+//! state; dispatch (KAN-T42) consumes it. Every change appends a
+//! timeline row on the waiting Ticket's Project timeline inside the
+//! same write as the row change, and guards on the waiting Ticket's
+//! aggregate version.
 
 use std::sync::Arc;
 
@@ -124,6 +129,32 @@ fn state_of(state: DomainState) -> TicketState {
         DomainState::Cancelled => TicketState::Cancelled,
         DomainState::Superseded => TicketState::Superseded,
     }
+}
+
+/// Whether one approved Ticket graph holds both endpoints of an edge
+/// (DR-PS-17, Sid ruling 3): both Tickets attach to the same Spec and
+/// carry the same pinned Spec content version. The pin is exactly
+/// graph approval's mark (DR-DE-06) and one approved graph exists per
+/// Spec version, so the two are members of one installed executable
+/// graph, and its edges change only through a new approval.
+fn inside_installed_graph(waiting: &Ticket, blocking: &Ticket) -> bool {
+    match (waiting.spec(), blocking.spec()) {
+        (Some(waiting_spec), Some(blocking_spec)) => {
+            waiting_spec == blocking_spec
+                && waiting.pinned_version().is_some()
+                && waiting.pinned_version() == blocking.pinned_version()
+        }
+        _ => false,
+    }
+}
+
+/// Refuse a direct edit of an edge an approved Ticket graph holds
+/// (KAN-S4-US8, Sid ruling 3): the installed executable graph would
+/// desynchronise from the approval that authorised it.
+fn refuse_installed_graph_edit() -> ApiError {
+    ApiError::invalid_request(
+        "an approved Ticket graph holds both Tickets; its edges change only through a new approval",
+    )
 }
 
 /// The stores every dependency operation reads and writes through.
@@ -289,6 +320,9 @@ impl CommandHandler for AddDependency {
         let request: TicketDependencyAddRequest = parse_payload(&command.payload)?;
         let (project, waiting) = self.0.open(request.to_ticket)?;
         let blocking = self.0.registered(request.from_ticket)?;
+        if inside_installed_graph(&waiting, &blocking) {
+            return Err(refuse_installed_graph_edit());
+        }
         let edge = TicketDependency::new(blocking.id(), waiting.id());
         self.0
             .graph()?
@@ -331,6 +365,10 @@ impl CommandHandler for RemoveDependency {
     ) -> Result<Value, ApiError> {
         let request: TicketDependencyRemoveRequest = parse_payload(&command.payload)?;
         let (project, waiting) = self.0.open(request.to_ticket)?;
+        let blocking = self.0.registered(request.from_ticket)?;
+        if inside_installed_graph(&waiting, &blocking) {
+            return Err(refuse_installed_graph_edit());
+        }
         let edge = TicketDependency::new(TicketId::new(request.from_ticket), waiting.id());
         self.0
             .graph()?
@@ -978,6 +1016,137 @@ pub(crate) mod testing {
             request_object.insert(field.clone(), value.clone());
         }
         request
+    }
+}
+
+#[cfg(test)]
+mod installed_graph_edges {
+    use kanban_dto::ErrorCode;
+    use serde_json::json;
+
+    use super::testing::{command, dependency_harness};
+
+    /// One stored Ticket of Project CORE attached to `spec`, pinned
+    /// to `pinned_version` the way graph approval pins a member of an
+    /// approved Ticket graph (DR-DE-06).
+    fn attached(id: u64, spec: Option<u64>, pinned_version: Option<u64>) -> kanban_domain::Ticket {
+        kanban_domain::Ticket::restore(
+            kanban_domain::TicketId::new(id),
+            kanban_domain::ProjectId::new(1),
+            kanban_domain::TicketNumber::new(id).expect("the fixture number is positive"),
+            kanban_domain::Priority::Normal,
+            kanban_domain::TicketState::Draft,
+            kanban_domain::TicketBody::bug(
+                "Landing drops the integration branch",
+                spec.map(kanban_domain::SpecId::new),
+                "The integration branch is dropped after a review lands.",
+                "The landing log names the drop immediately after the merge.",
+            )
+            .expect("the fixture body validates"),
+            None,
+            None,
+            pinned_version,
+            1,
+        )
+    }
+
+    #[test]
+    fn installed_edges_accept_no_direct_add_or_remove() {
+        let harness = dependency_harness();
+        // Tickets 6 and 7 are members of one approved Ticket graph:
+        // both attached to Spec 1, both pinned to its version one.
+        harness.rows.seed(attached(6, Some(1), Some(1)));
+        harness.rows.seed(attached(7, Some(1), Some(1)));
+
+        let added = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(json!({ "from_ticket": 6, "to_ticket": 7 }), 1, "key-add"),
+            )
+            .expect_err("an edge inside the installed graph is refused");
+        assert_eq!(added.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            added.message,
+            "an approved Ticket graph holds both Tickets; its edges change only through a new \
+             approval"
+        );
+
+        let removed = harness
+            .core
+            .command(
+                "ticket.dependency.remove",
+                &command(json!({ "from_ticket": 6, "to_ticket": 7 }), 1, "key-remove"),
+            )
+            .expect_err("removing an installed edge directly is refused");
+        assert_eq!(removed.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            removed.message,
+            "an approved Ticket graph holds both Tickets; its edges change only through a new \
+             approval"
+        );
+
+        let (tickets, edges, timeline) = harness.rows.snapshot();
+        assert!(edges.is_empty(), "the refusals changed no edge");
+        assert!(timeline.is_empty(), "the refusals appended nothing");
+        assert_eq!(
+            tickets
+                .iter()
+                .find(|ticket| ticket.id().value() == 7)
+                .expect("the waiting Ticket stands")
+                .version(),
+            1,
+            "the refusals moved no Ticket"
+        );
+    }
+
+    #[test]
+    fn edges_land_when_no_one_graph_holds_both_tickets() {
+        // One pinned and one unpinned Ticket of the same Spec: only
+        // the pinned one is a member of an approved graph.
+        let harness = dependency_harness();
+        harness.rows.seed(attached(6, Some(1), Some(1)));
+        harness.rows.seed(attached(7, Some(1), None));
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(json!({ "from_ticket": 6, "to_ticket": 7 }), 1, "key-half"),
+            )
+            .expect("an edge onto a non-member lands");
+
+        // Both pinned, but to different Spec versions: they sit in
+        // different approved graphs, and the edge crosses both.
+        let harness = dependency_harness();
+        harness.rows.seed(attached(6, Some(1), Some(1)));
+        harness.rows.seed(attached(7, Some(1), Some(2)));
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(
+                    json!({ "from_ticket": 6, "to_ticket": 7 }),
+                    1,
+                    "key-versions",
+                ),
+            )
+            .expect("an edge across two graph versions lands");
+
+        // Both pinned to the same version, but of different Specs:
+        // different graphs again.
+        let harness = dependency_harness();
+        harness.rows.seed(attached(6, Some(1), Some(1)));
+        harness.rows.seed(attached(7, Some(2), Some(1)));
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(json!({ "from_ticket": 6, "to_ticket": 7 }), 1, "key-specs"),
+            )
+            .expect("an edge across two Specs' graphs lands");
+
+        let (_, edges, _) = harness.rows.snapshot();
+        assert_eq!(edges.len(), 1, "the last arrangement lands one edge");
     }
 }
 

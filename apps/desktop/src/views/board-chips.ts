@@ -248,3 +248,23 @@ export function laneFor(
 ): LaneRecord | undefined {
   return lanes.find((lane) => lane.ticket_id === ticketId)
 }
+
+/**
+ * The surface a chip wears where it shares a card with the others.
+ * Tone is the vocabulary, as with the status surface: a board
+ * spelling its own chip colours would drift from the badges.
+ */
+export function chipSurfaceClass(tone: StatusTone = 'neutral'): string {
+  switch (tone) {
+    case 'critical':
+      return 'border-critical/50 bg-critical/8 text-critical'
+    case 'caution':
+      return 'border-caution/50 bg-caution/8 text-caution'
+    case 'positive':
+      return 'border-accent/50 bg-accent/8 text-accent'
+    case 'progress':
+      return 'border-info/50 bg-info/8 text-info'
+    default:
+      return 'border-line bg-surface text-ink-muted'
+  }
+}

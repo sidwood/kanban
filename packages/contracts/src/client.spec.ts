@@ -118,6 +118,7 @@ describe('generated client', () => {
       'clone.remove': 'clone_remove',
       'export.render': 'export_render',
       'export.drift': 'export_drift',
+      'board.global': 'board_global',
     })
   })
 
@@ -227,6 +228,7 @@ describe('generated client', () => {
       'clone.remove',
       'export.render',
       'export.drift',
+      'board.global',
     ])
   })
 

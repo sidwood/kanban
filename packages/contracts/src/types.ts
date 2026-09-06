@@ -13,6 +13,47 @@ export type ApiError = {
   current_version?: number | null;
   message: string;
 };
+export type AttentionState = 'blocker' | 'missing_result' | 'human_decision' | 'review_request' | 'failed_schedule' | 'invalid_approval' | 'disconnected_session' | 'stale_run';
+export type BoardFilter = {
+  attention?: AttentionState[];
+  initiatives?: number[];
+  kinds?: TicketKind[];
+  lanes?: number[];
+  plans?: number[];
+  priorities?: TicketPriority[];
+  profiles?: string[];
+  projects?: number[];
+  specs?: number[];
+  states?: TicketState[];
+};
+export type BoardFilterOption = {
+  id: number;
+  label: string;
+};
+export type BoardFilterOptions = {
+  attention: AttentionState[];
+  initiatives: BoardFilterOption[];
+  lanes: BoardFilterOption[];
+  plans: BoardFilterOption[];
+  profiles: string[];
+  projects: BoardFilterOption[];
+  specs: BoardFilterOption[];
+};
+export type BoardGlobalCard = {
+  group: BoardGroup;
+  lane_id?: number | null;
+  project_code: string;
+  spec_number?: number | null;
+  ticket: TicketRecord;
+};
+export type BoardGlobalQuery = {
+  filter?: BoardFilter;
+};
+export type BoardGlobalResponse = {
+  cards: BoardGlobalCard[];
+  options: BoardFilterOptions;
+};
+export type BoardGroup = 'draft' | 'backlog' | 'current' | 'review' | 'staged' | 'done';
 export type CapacityDefaultsGetQuery = Record<string, never>;
 export type CapacityDefaultsGetResponse = {
   defaults: CapacityGlobalDefaults;

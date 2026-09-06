@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AttentionState": {
+      "description": "Why one Ticket demands operator attention: the closed Attention Item classes from CONTEXT.md. The per-Ticket projection that raises them lands with the attention inbox (KAN-S11); the vocabulary is fixed here so the filter surface is complete first.",
+      "oneOf": [
+        {
+          "description": "A registered dependency or external blocker holds the work.",
+          "enum": [
+            "blocker"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A settled run finished without its required submission.",
+          "enum": [
+            "missing_result"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The work waits on a human decision.",
+          "enum": [
+            "human_decision"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A review asks the operator in.",
+          "enum": [
+            "review_request"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A schedule failed to activate or mint its occurrence.",
+          "enum": [
+            "failed_schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An approval no longer validates.",
+          "enum": [
+            "invalid_approval"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The session observing the work disconnected.",
+          "enum": [
+            "disconnected_session"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A run passed its stall deadline.",
+          "enum": [
+            "stale_run"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "BoardFilterOption": {
+      "additionalProperties": false,
+      "description": "One selectable value of a reference axis: its identity and the label the operator knows it by.",
+      "properties": {
+        "id": {
+          "description": "The value the filter carries when selected.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "The identity the operator reads.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "The values each reference axis currently offers, as the query reads them: every Initiative, Project, Plan, Spec, Lane, and Execution Profile that exists, and the closed attention vocabulary. A client renders its filter surface from this alone.",
+  "properties": {
+    "attention": {
+      "description": "The closed attention vocabulary, whole.",
+      "items": {
+        "$ref": "#/definitions/AttentionState"
+      },
+      "type": "array"
+    },
+    "initiatives": {
+      "description": "Every Initiative, by name.",
+      "items": {
+        "$ref": "#/definitions/BoardFilterOption"
+      },
+      "type": "array"
+    },
+    "lanes": {
+      "description": "Every Lane, by its Project and identity.",
+      "items": {
+        "$ref": "#/definitions/BoardFilterOption"
+      },
+      "type": "array"
+    },
+    "plans": {
+      "description": "Every Plan, by rendered number.",
+      "items": {
+        "$ref": "#/definitions/BoardFilterOption"
+      },
+      "type": "array"
+    },
+    "profiles": {
+      "description": "Every Execution Profile, by name: a profile's identity is its name, so the name is the whole option.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "projects": {
+      "description": "Every Project, by code and name.",
+      "items": {
+        "$ref": "#/definitions/BoardFilterOption"
+      },
+      "type": "array"
+    },
+    "specs": {
+      "description": "Every Spec, by rendered number and name.",
+      "items": {
+        "$ref": "#/definitions/BoardFilterOption"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "attention",
+    "initiatives",
+    "lanes",
+    "plans",
+    "profiles",
+    "projects",
+    "specs"
+  ],
+  "title": "BoardFilterOptions",
+  "type": "object"
+}

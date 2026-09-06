@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The fixed Board Groups as the wire carries them (DR-LC-03): the group a card's lifecycle state projects onto, never a state itself. The terminal states reach no group and appear on no board.",
+  "oneOf": [
+    {
+      "description": "Captured work that has not qualified or circulated.",
+      "enum": [
+        "draft"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Parked, blocked, scheduled, and ready work (DR-LC-04).",
+      "enum": [
+        "backlog"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Work executing in a Lane.",
+      "enum": [
+        "current"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Work under review.",
+      "enum": [
+        "review"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Approved and landing work (DR-LC-05).",
+      "enum": [
+        "staged"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Landed work.",
+      "enum": [
+        "done"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "BoardGroup"
+}

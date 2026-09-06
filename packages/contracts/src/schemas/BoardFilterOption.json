@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One selectable value of a reference axis: its identity and the label the operator knows it by.",
+  "properties": {
+    "id": {
+      "description": "The value the filter carries when selected.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "label": {
+      "description": "The identity the operator reads.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "label"
+  ],
+  "title": "BoardFilterOption",
+  "type": "object"
+}

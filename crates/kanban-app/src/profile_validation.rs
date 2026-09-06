@@ -202,8 +202,9 @@ fn retire(core: &Core, name: &str, version: u64, key: &str) {
     .expect("the entry retires");
 }
 
-/// A draft Plan holding the Specs given, returning its identity.
-fn plan_over(core: &Core, specs: &[u64], key: &str) -> u64 {
+/// A draft Plan holding the Specs given, returning its identity and
+/// aggregate version.
+fn plan_over(core: &Core, specs: &[u64], key: &str) -> (u64, u64) {
     let created = core
         .command(
             "plan.create",
@@ -235,7 +236,7 @@ fn plan_over(core: &Core, specs: &[u64], key: &str) -> u64 {
             .as_u64()
             .expect("the version is a number");
     }
-    id
+    (id, version)
 }
 
 /// The diagnostics of one Plan's working shape.
@@ -245,6 +246,15 @@ fn diagnose(core: &Core, plan: u64) -> Value {
         &json!({ "plan_id": plan, "version": null }),
     )
     .expect("the diagnostics serve")
+}
+
+/// The diagnostics of one Plan's frozen version `number`.
+fn diagnose_version(core: &Core, plan: u64, number: u64) -> Value {
+    core.query(
+        "plan.diagnostics",
+        &json!({ "plan_id": plan, "version": number }),
+    )
+    .expect("the frozen diagnostics serve")
 }
 
 /// Move one stored Ticket's assignment to the profile `name`
@@ -284,7 +294,7 @@ mod invalid_profile_diagnostics {
         let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
         define(&harness.core, "standard", "key-profile");
         assign(&harness.core, ticket, "standard", 1, "key-assign");
-        let plan = plan_over(&harness.core, &[number], "key-plan");
+        let (plan, _) = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan),
@@ -315,7 +325,7 @@ mod invalid_profile_diagnostics {
         // Retirement never rewrites the assignment (DR-EP-05); the
         // reference now names an entry out of the assignable catalogue.
         retire(&harness.core, "standard", 1, "key-retire");
-        let plan = plan_over(&harness.core, &[number], "key-plan");
+        let (plan, _) = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan),
@@ -342,7 +352,7 @@ mod invalid_profile_diagnostics {
         let (spec, number) = spec_with_stories(&harness.core, STORIES, "key-spec");
         let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
         plant_reference(&harness.tickets, ticket, "ghost");
-        let plan = plan_over(&harness.core, &[number], "key-plan");
+        let (plan, _) = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan)["invalid_profiles"],
@@ -365,12 +375,134 @@ mod invalid_profile_diagnostics {
         define(&harness.core, "standard", "key-profile");
         assign(&harness.core, ticket, "standard", 1, "key-assign");
         retire(&harness.core, "standard", 1, "key-retire");
-        let plan = plan_over(&harness.core, &[inside], "key-plan");
+        let (plan, _) = plan_over(&harness.core, &[inside], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan)["invalid_profiles"],
             json!([]),
             "the Plan's graph carries only its member Specs' Tickets"
+        );
+    }
+
+    #[test]
+    fn divergent_membership_reports_its_own_references() {
+        let harness = harness();
+        let (_, kept) = spec_with_stories(&harness.core, STORIES, "key-spec-kept");
+        let (frozen_only, frozen_member) = spec_with_stories(
+            &harness.core,
+            "- CORE-S2-US1: As an operator, I want linked criteria.\n",
+            "key-spec-frozen",
+        );
+        let (working_only, working_member) = spec_with_stories(
+            &harness.core,
+            "- CORE-S3-US1: As an operator, I want linked criteria.\n",
+            "key-spec-working",
+        );
+        let frozen_ticket = implementation(
+            &harness.core,
+            frozen_only,
+            "CORE-S2-US1",
+            "key-ticket-frozen",
+        );
+        let working_ticket = implementation(
+            &harness.core,
+            working_only,
+            "CORE-S3-US1",
+            "key-ticket-working",
+        );
+        let (plan, mut version) = plan_over(&harness.core, &[kept, frozen_member], "key-plan");
+        let activated = harness
+            .core
+            .command(
+                "plan.activate",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": "key-activate",
+                    },
+                    "plan_id": plan,
+                }),
+            )
+            .expect("the membership freezes");
+        version = activated["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let replanned = harness
+            .core
+            .command(
+                "plan.replan",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": "key-replan",
+                    },
+                    "plan_id": plan,
+                }),
+            )
+            .expect("the draft reopens");
+        version = replanned["version"]
+            .as_u64()
+            .expect("the version is a number");
+        let removed = harness
+            .core
+            .command(
+                "plan.spec.remove",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": "key-remove",
+                    },
+                    "plan_id": plan,
+                    "spec_number": frozen_member,
+                }),
+            )
+            .expect("the frozen-only member leaves the working shape");
+        version = removed["version"]
+            .as_u64()
+            .expect("the version is a number");
+        harness
+            .core
+            .command(
+                "plan.spec.add",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": version,
+                        "idempotency_key": "key-add",
+                    },
+                    "plan_id": plan,
+                    "spec_number": working_member,
+                }),
+            )
+            .expect("the working-only member joins");
+        // References land after the freeze, as restored or foreign
+        // rows would: each shape must judge the members it holds.
+        plant_reference(&harness.tickets, frozen_ticket, "frozen-only");
+        plant_reference(&harness.tickets, working_ticket, "working-only");
+
+        let working = diagnose(&harness.core, plan);
+        assert_eq!(
+            working["invalid_profiles"],
+            json!([{ "reference": "working-only" }]),
+            "the working shape carries the replanned members alone, so \
+             the frozen-only reference stays out"
+        );
+        assert_eq!(
+            working["blocking"],
+            json!(true),
+            "the working reference blocks"
+        );
+
+        let frozen = diagnose_version(&harness.core, plan, 1);
+        assert_eq!(
+            frozen["invalid_profiles"],
+            json!([{ "reference": "frozen-only" }]),
+            "the frozen version carries the members it froze, so the \
+             working-only reference stays out"
+        );
+        assert_eq!(
+            frozen["blocking"],
+            json!(true),
+            "the frozen-only reference blocks"
         );
     }
 }

@@ -4,11 +4,14 @@
 //! Spec version (DR-PS-16), with the closed proposed/approved
 //! lifecycle. Recording lands the row and its timeline envelope in
 //! one write; approval lands the proposal's move, every pinned
-//! Ticket's `pinned_version` and version bump, and the approval's
-//! timeline envelopes in one transaction, so a graph approval never
-//! splits across a crash boundary. The partial UNIQUE index keeps one
-//! approved graph per Spec version; the gate itself lives in the
-//! domain.
+//! Ticket's `pinned_version` and version bump, the install of the
+//! proposal's edges into `ticket_dependencies` as the executable
+//! graph for the Spec version — replacing every registered edge
+//! between the graph's own Tickets, while edges crossing out of the
+//! graph stand — and the approval's timeline envelopes in one
+//! transaction, so a graph approval never splits across a crash
+//! boundary. The partial UNIQUE index keeps one approved graph per
+//! Spec version; the gate itself lives in the domain.
 
 use kanban_app::{GraphProposalStore, TimelineEnvelope};
 use kanban_domain::{
@@ -168,6 +171,26 @@ impl GraphProposalStore for SqliteGraphProposalStore {
             if changed != 1 {
                 return Err(ticket_write_refused(&span, ticket.id(), ticket_preceding));
             }
+        }
+        // The install: the proposal's edges become the executable
+        // graph for the Spec version, replacing every registered edge
+        // between the graph's own Tickets; edges crossing out of the
+        // graph stand. The same write carries it, so an edge set never
+        // splits from the approval that installed it.
+        let members = encode_tickets(proposal.tickets());
+        span.execute(
+            "DELETE FROM ticket_dependencies
+             WHERE from_ticket IN (SELECT value FROM json_each(?1))
+               AND to_ticket IN (SELECT value FROM json_each(?1))",
+            params![members],
+        )
+        .map_err(internal)?;
+        for edge in proposal.edges() {
+            span.execute(
+                "INSERT INTO ticket_dependencies (from_ticket, to_ticket) VALUES (?1, ?2)",
+                params![edge.from().value() as i64, edge.to().value() as i64,],
+            )
+            .map_err(internal)?;
         }
         for envelope in envelopes {
             append_timeline(&span, envelope)?;
@@ -354,7 +377,7 @@ mod tests {
         ProjectRegistration, ProjectState, SpecContent, SpecId, SpecNumber, Ticket, TicketBody,
         TicketDependency, TicketGraphProposal, TicketId, TicketNumber,
     };
-    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use kanban_dto::{ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
     use serde_json::json;
 
     use super::SqliteGraphProposalStore;
@@ -364,7 +387,7 @@ mod tests {
     use crate::spec::SqliteSpecStore;
     use crate::test_support::scratch_database;
     use crate::tickets::SqliteTicketStore;
-    use kanban_app::{GraphProposalStore, ProjectStore, SpecStore, TicketStore};
+    use kanban_app::{DependencyStore, GraphProposalStore, ProjectStore, SpecStore, TicketStore};
 
     fn story(spec: u64, ordinal: u64) -> kanban_domain::UserStoryRef {
         kanban_domain::UserStoryRef::new(
@@ -518,6 +541,201 @@ mod tests {
             }),
             json!({ "action": action }),
         )
+    }
+
+    /// One registered dependency edge, as the dependency store leaves
+    /// it, with the timeline row the waiting Ticket's change carries.
+    fn registered_edge(database: &Database, waiting: &Ticket, edge: TicketDependency) -> Ticket {
+        crate::dependencies::SqliteDependencyStore::new(database)
+            .add_dependency(waiting, edge, &|| {
+                TimelineEnvelope::project(
+                    1,
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Ticket,
+                        id: waiting.id().value().to_string(),
+                    }),
+                    json!({
+                        "action": "dependency_added",
+                        "id": waiting.id().value(),
+                    }),
+                )
+            })
+            .expect("the fixture edge registers")
+    }
+
+    /// One standing Ticket of the seeded Project, attached to no
+    /// Spec, standing outside every graph.
+    fn standing_ticket(database: &Database) -> Ticket {
+        let tickets = SqliteTicketStore::new(database);
+        let projects = crate::projects::SqliteProjectStore::new(database);
+        let mut project = projects
+            .find(kanban_domain::ProjectId::new(1))
+            .expect("the reload serves")
+            .expect("the fixture Project stands");
+        let number = TicketNumber::new(
+            project
+                .mint(kanban_domain::NumberKind::Ticket)
+                .expect("active mints"),
+        )
+        .expect("a minted number is positive");
+        tickets
+            .create(
+                &project,
+                number,
+                Priority::Normal,
+                &TicketBody::bug(
+                    "Landing drops the integration branch",
+                    None,
+                    "The integration branch is dropped after a review lands.",
+                    "The landing log names the drop immediately after the merge.",
+                )
+                .expect("the fixture body validates"),
+                &|id| {
+                    TimelineEnvelope::project(
+                        1,
+                        TimelineEventKind::Transition,
+                        Some(TimelineEntityRef {
+                            kind: TimelineEntityKind::Ticket,
+                            id: id.value().to_string(),
+                        }),
+                        json!({ "action": "created", "id": id.value() }),
+                    )
+                },
+            )
+            .expect("the fixture Ticket lands")
+    }
+
+    /// Every registered dependency edge, in row order.
+    fn registered_edges(database: &Database) -> Vec<(u64, u64)> {
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare("SELECT from_ticket, to_ticket FROM ticket_dependencies ORDER BY id")
+            .expect("the rows are readable");
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?.unsigned_abs(),
+                    row.get::<_, i64>(1)?.unsigned_abs(),
+                ))
+            })
+            .expect("the query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the rows decode")
+    }
+
+    /// Land one approval of `proposal` over the Ticket aggregates the
+    /// application captured when the gate decided, the way the command
+    /// does.
+    fn approved_over(
+        store: &SqliteGraphProposalStore,
+        captured: &[Ticket],
+        proposal: &TicketGraphProposal,
+    ) -> Result<(), ApiError> {
+        let mut moved = proposal.clone();
+        moved.approve().expect("the gate approves");
+        let mut pinned = Vec::new();
+        for row in captured {
+            let mut row = row.clone();
+            row.pin_to(moved.spec_version()).expect("the approval pins");
+            pinned.push(row);
+        }
+        store.apply_approval(&moved, &pinned, &[envelope("graph_approved")])
+    }
+
+    #[test]
+    fn approval_installs_the_executable_graph() {
+        let (_dir, database, store, tickets, spec) = seeded();
+        let proposal = store
+            .create(
+                spec,
+                1,
+                vec![TicketId::new(1), TicketId::new(2)],
+                vec![TicketDependency::new(TicketId::new(1), TicketId::new(2))],
+                &|id| envelope(&format!("graph_proposed_{id}")),
+            )
+            .expect("the graph records");
+
+        let captured = [ticket(&tickets, 1), ticket(&tickets, 2)];
+        approved_over(&store, &captured, &proposal).expect("the approval lands");
+
+        assert_eq!(
+            registered_edges(&database),
+            vec![(1, 2)],
+            "the proposal's edges land as the executable graph (AC2)"
+        );
+    }
+
+    #[test]
+    fn approval_replaces_inside_edges_and_keeps_outside_ones() {
+        let (_dir, database, store, tickets, spec) = seeded();
+        // The operator separately registered 2 → 1 between the
+        // graph's own Tickets, and 3 → 1 reaching in from outside it.
+        let waiting = registered_edge(
+            &database,
+            &ticket(&tickets, 1),
+            TicketDependency::new(TicketId::new(2), TicketId::new(1)),
+        );
+        let outside = standing_ticket(&database);
+        let waiting = registered_edge(
+            &database,
+            &waiting,
+            TicketDependency::new(outside.id(), TicketId::new(1)),
+        );
+        let proposal = store
+            .create(
+                spec,
+                1,
+                vec![TicketId::new(1), TicketId::new(2)],
+                Vec::new(),
+                &|id| envelope(&format!("graph_proposed_{id}")),
+            )
+            .expect("the graph records");
+
+        let captured = [waiting, ticket(&tickets, 2)];
+        approved_over(&store, &captured, &proposal).expect("the approval lands");
+
+        assert_eq!(
+            registered_edges(&database),
+            vec![(outside.id().value(), 1)],
+            "the inside edge is replaced by the approved graph; the outside edge stands (AC3)"
+        );
+    }
+
+    #[test]
+    fn a_stale_approval_rolls_the_install_back() {
+        let (_dir, database, store, tickets, spec) = seeded();
+        let waiting = registered_edge(
+            &database,
+            &ticket(&tickets, 1),
+            TicketDependency::new(TicketId::new(2), TicketId::new(1)),
+        );
+        let proposal = store
+            .create(
+                spec,
+                1,
+                vec![TicketId::new(1), TicketId::new(2)],
+                Vec::new(),
+                &|id| envelope(&format!("graph_proposed_{id}")),
+            )
+            .expect("the graph records");
+        // The gate captured its Ticket aggregates; Ticket 2 then moved
+        // on its own, past the version the approval pins from.
+        let captured = [waiting, ticket(&tickets, 2)];
+        database
+            .connection()
+            .execute("UPDATE tickets SET version = 2 WHERE id = 2", [])
+            .expect("the row moves on its own");
+
+        let error = approved_over(&store, &captured, &proposal)
+            .expect_err("the stale Ticket pin refuses the whole approval");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::StaleVersion);
+        assert_eq!(
+            registered_edges(&database),
+            vec![(2, 1)],
+            "the rolled-back approval replaced no edge"
+        );
     }
 
     /// One draft Ticket of the seeded world, by its identity.

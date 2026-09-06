@@ -6,15 +6,19 @@
 //! DR-PS-17, DR-DE-06). A proposal joins the dependencies the store
 //! already holds — inside its Tickets or crossing out of them across
 //! Specs and Projects — so recording and the gate both refuse edges
-//! that would close a cycle with them (DR-DE-02). Recording mutates
-//! no Ticket and names only executable members — a Ticket pinned to
-//! an earlier version or a terminal one stays history, never a
-//! member of a new graph; approval's proposal move, Ticket pins, and
-//! timeline rows land in one storage write, so a graph approval
-//! never splits across a crash boundary. The gate also refuses a
-//! graph whose Tickets carry assignments referencing profiles the
-//! catalogue no longer offers (KAN-S7-US4, T38), so approval never
-//! pins a Ticket nothing can dispatch.
+//! that would close a cycle with them (DR-DE-02). Approval installs
+//! the proposal's edges as the executable graph for the Spec version
+//! in the DependencyStore, replacing every separately registered edge
+//! between the graph's own Tickets, so readiness and dispatch run the
+//! approved graph and no other (Sid ruling 3). Recording mutates no
+//! Ticket and names only executable members — a Ticket pinned to an
+//! earlier version or a terminal one stays history, never a member
+//! of a new graph; approval's proposal move, Ticket pins, edge
+//! install, and timeline rows land in one storage write, so a graph
+//! approval never splits across a crash boundary. The gate also
+//! refuses a graph whose Tickets carry assignments referencing
+//! profiles the catalogue no longer offers (KAN-S7-US4, T38), so
+//! approval never pins a Ticket nothing can dispatch.
 
 use std::sync::Arc;
 
@@ -59,9 +63,12 @@ pub trait GraphProposalStore: Send + Sync {
     fn find(&self, id: GraphProposalId) -> Result<Option<TicketGraphProposal>, ApiError>;
     /// Every proposal recorded against one Spec, oldest first.
     fn list(&self, spec: SpecId) -> Result<Vec<TicketGraphProposal>, ApiError>;
-    /// Land one approval: the proposal row moves to approved and every
-    /// pinned Ticket row moves with it, all in one write guarded by
-    /// the versions the aggregates moved from.
+    /// Land one approval: the proposal row moves to approved, every
+    /// pinned Ticket row moves with it, and the proposal's edges are
+    /// installed as the executable graph for the Spec version —
+    /// replacing every registered dependency edge between the graph's
+    /// own Tickets, while edges crossing out of the graph stand — all
+    /// in one write guarded by the versions the aggregates moved from.
     fn apply_approval(
         &self,
         proposal: &TicketGraphProposal,
@@ -160,6 +167,20 @@ fn record_of(proposal: &TicketGraphProposal) -> TicketGraphRecord {
 fn encode_record(proposal: &TicketGraphProposal) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(proposal))
         .map_err(|error| ApiError::internal(&error.to_string()))
+}
+
+/// The timeline facts for a set of edges: blocking Ticket first, the
+/// Ticket that waits second.
+fn edges_facts(edges: &[TicketDependency]) -> Vec<Value> {
+    edges
+        .iter()
+        .map(|edge| {
+            json!({
+                "from_ticket": edge.from().value(),
+                "to_ticket": edge.to().value(),
+            })
+        })
+        .collect()
 }
 
 /// The stores every graph proposal operation reads and writes through.
@@ -427,6 +448,19 @@ impl CommandHandler for ApproveGraph {
         // dispatch (KAN-S7-US4).
         let catalogue = crate::profile::catalogue_of(self.0.profiles.as_ref())?;
         enforce_assignable(&catalogue, &attached).map_err(refuse)?;
+        // The approval installs the proposal's edges as the executable
+        // graph for the Spec version, replacing every registered edge
+        // between the graph's own Tickets; edges crossing out of the
+        // graph stand (Sid ruling 3). The timeline row records both
+        // halves of the replacement.
+        let replaced: Vec<TicketDependency> = registered
+            .edges()
+            .iter()
+            .copied()
+            .filter(|held| {
+                proposal.tickets().contains(&held.from()) && proposal.tickets().contains(&held.to())
+            })
+            .collect();
         // Pin every Ticket the graph holds — each one exactly the
         // version the proposal named — and record the decision.
         let mut pinned = Vec::with_capacity(proposal.tickets().len());
@@ -443,6 +477,8 @@ impl CommandHandler for ApproveGraph {
                     .iter()
                     .map(|ticket| ticket.value())
                     .collect::<Vec<_>>(),
+                "installed_edges": edges_facts(proposal.edges()),
+                "replaced_edges": edges_facts(&replaced),
             }),
         )];
         for id in proposal.tickets() {
@@ -552,6 +588,20 @@ pub(crate) mod testing {
                 .lock()
                 .expect("the memory dependency lock is sound");
             (state.edges.clone(), state.timeline.clone())
+        }
+
+        /// Replace every registered edge between `members` with
+        /// `installed`: the approval's install, landed the way the
+        /// durable store lands it inside its own write.
+        pub(crate) fn install(&self, members: &[TicketId], installed: &[TicketDependency]) {
+            let mut state = self
+                .state
+                .lock()
+                .expect("the memory dependency lock is sound");
+            state
+                .edges
+                .retain(|held| !(members.contains(&held.from()) && members.contains(&held.to())));
+            state.edges.extend(installed.iter().copied());
         }
 
         /// The waiting Ticket as one applied change leaves it:
@@ -816,11 +866,17 @@ pub(crate) mod testing {
                     .replace_pinned(ticket.clone())
                     .expect("the staged guard proved the row ready");
             }
-            self.state
+            // The install lands with the approval: the proposal's
+            // edges replace every registered edge between the graph's
+            // Tickets, the way the durable store lands them in one
+            // write.
+            self.dependencies
+                .install(proposal.tickets(), proposal.edges());
+            let mut state = self
+                .state
                 .lock()
-                .expect("the memory proposal lock is sound")
-                .timeline
-                .extend(envelopes.iter().cloned());
+                .expect("the memory proposal lock is sound");
+            state.timeline.extend(envelopes.iter().cloned());
             Ok(())
         }
     }
@@ -1093,6 +1149,259 @@ mod registered_cycles {
             kanban_domain::TicketId::new(from),
             kanban_domain::TicketId::new(to),
         )
+    }
+}
+
+#[cfg(test)]
+mod executable_graph {
+    use serde_json::{Value, json};
+
+    use super::graph_approval::{approve, approved_spec};
+    use super::registered_cycles::covered_pair;
+    use super::testing::graph_harness;
+
+    /// One proposal request over `tickets` and `edges`.
+    fn propose(spec: u64, tickets: Value, edges: Value, key: &str) -> Value {
+        json!({
+            "mutation": { "optimistic_version": 0, "idempotency_key": key },
+            "spec_id": spec,
+            "spec_version": 1,
+            "tickets": tickets,
+            "edges": edges,
+        })
+    }
+
+    /// One dependency edge between two Ticket identities.
+    fn edge(from: u64, to: u64) -> kanban_domain::TicketDependency {
+        kanban_domain::TicketDependency::new(
+            kanban_domain::TicketId::new(from),
+            kanban_domain::TicketId::new(to),
+        )
+    }
+
+    /// The `graph_approved` timeline row's detail.
+    fn approval_facts(proposals: &super::testing::MemoryGraphProposals) -> serde_json::Value {
+        let (_, timeline) = proposals.snapshot();
+        timeline
+            .iter()
+            .find(|row| {
+                row.detail().get("action").and_then(|a| a.as_str()) == Some("graph_approved")
+            })
+            .expect("the approval lands on the timeline")
+            .detail()
+            .clone()
+    }
+
+    #[test]
+    fn approval_installs_the_proposal_edges_as_the_executable_graph() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the human gate approves");
+
+        let (edges, _) = proposals.dependencies().snapshot();
+        assert_eq!(
+            edges,
+            vec![edge(first, second)],
+            "approval installs the proposal edges (DR-PS-17, Sid ruling 3)"
+        );
+        let waiting = harness
+            .core
+            .query("ticket.dependencies", &json!({ "ticket_id": second }))
+            .expect("the dependencies serve");
+        assert_eq!(
+            waiting["dependencies"],
+            json!([{
+                "from_ticket_id": first,
+                "from_project_id": 1,
+                "from_number": first,
+                "from_state": "draft",
+            }]),
+            "the registered graph now holds the approved edge"
+        );
+        let blocked = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": second }))
+            .expect("the readiness serves");
+        assert_eq!(blocked["ready"], json!(false));
+        assert_eq!(
+            blocked["blocked_by"],
+            json!([{ "Ticket": {
+                "from_ticket_id": first,
+                "from_project_id": 1,
+                "from_number": first,
+                "from_state": "draft",
+            }}]),
+            "readiness runs on the installed graph (KAN-S4-US8)"
+        );
+        let ready = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": first }))
+            .expect("the readiness serves");
+        assert_eq!(ready["ready"], json!(true));
+        assert_eq!(
+            approval_facts(&proposals),
+            json!({
+                "action": "graph_approved",
+                "proposal_id": proposal,
+                "spec_id": spec,
+                "spec_version": 1,
+                "tickets": [first, second],
+                "installed_edges": [{ "from_ticket": first, "to_ticket": second }],
+                "replaced_edges": [],
+            }),
+            "the timeline records exactly what the approval installed"
+        );
+    }
+
+    #[test]
+    fn approval_replaces_a_separately_registered_inside_graph() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        // The operator separately registered second → first before the
+        // graph was proposed: a leftover the approval must not leave
+        // behind as a second source of truth.
+        proposals.dependencies().seed_edge(edge(second, first));
+        let blocked_before = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": first }))
+            .expect("the readiness serves");
+        assert_eq!(
+            blocked_before["ready"],
+            json!(false),
+            "the leftover edge held the first Ticket back before approval"
+        );
+
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(spec, json!([first, second]), json!([]), "key-propose"),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the human gate approves");
+
+        let (edges, _) = proposals.dependencies().snapshot();
+        assert!(
+            edges.is_empty(),
+            "the separately registered inside edge cannot remain (Sid ruling 3)"
+        );
+        let ready = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": first }))
+            .expect("the readiness serves");
+        assert_eq!(
+            ready["ready"],
+            json!(true),
+            "readiness consults the installed graph, not the leftover (AC3)"
+        );
+        assert_eq!(
+            ready["blocked_by"],
+            json!([]),
+            "no conflicting graph survives the install"
+        );
+        assert_eq!(
+            approval_facts(&proposals),
+            json!({
+                "action": "graph_approved",
+                "proposal_id": proposal,
+                "spec_id": spec,
+                "spec_version": 1,
+                "tickets": [first, second],
+                "installed_edges": [],
+                "replaced_edges": [{ "from_ticket": second, "to_ticket": first }],
+            }),
+            "the timeline records the replacement"
+        );
+    }
+
+    #[test]
+    fn edges_crossing_out_of_the_graph_survive_the_install() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        let standing = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-standing" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour": "The integration branch is dropped after a review lands.",
+                    "reporter_evidence": "The landing log names the drop immediately after the merge.",
+                }),
+            )
+            .expect("the standing Bug quick captures");
+        let standing = standing["id"].as_u64().expect("the identity is a number");
+        // The standing Ticket's edge reaches into the graph from
+        // outside it; the approval's authority covers the graph's own
+        // Tickets only.
+        proposals.dependencies().seed_edge(edge(standing, first));
+
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the human gate approves");
+
+        let (edges, _) = proposals.dependencies().snapshot();
+        assert_eq!(
+            edges,
+            vec![edge(standing, first), edge(first, second)],
+            "the outside edge stands beside the installed ones"
+        );
+        let blocked = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": first }))
+            .expect("the readiness serves");
+        assert_eq!(blocked["ready"], json!(false));
+        assert_eq!(
+            blocked["blocked_by"],
+            json!([{ "Ticket": {
+                "from_ticket_id": standing,
+                "from_project_id": 1,
+                "from_number": standing,
+                "from_state": "draft",
+            }}]),
+            "the outside edge still holds the first Ticket back"
+        );
     }
 }
 

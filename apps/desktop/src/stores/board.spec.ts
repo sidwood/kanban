@@ -1,6 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  SpecListResponse,
+  SpecRecord,
   TicketListResponse,
   TicketReadinessBlocker,
   TicketReadinessResponse,
@@ -61,13 +63,20 @@ function harness() {
   return { transport, operations, query, command }
 }
 
-// Answers the queries a board load spends: the Ticket list plus the
-// readiness projection of every Ticket in it.
-function serving(tickets: TicketRecord[], blockers: Record<number, TicketReadinessResponse['blocked_by']> = {}) {
+// Answers the queries a board load spends: the Ticket list, the Specs
+// its cards name, and the readiness projection of every Ticket in it.
+function serving(
+  tickets: TicketRecord[],
+  blockers: Record<number, TicketReadinessResponse['blocked_by']> = {},
+  specs: SpecListResponse['specs'] = [],
+) {
   return (name: string, request: unknown) => {
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }
       return Promise.resolve(readiness(ticket_id, blockers[ticket_id] ?? []))
+    }
+    if (name === 'spec.list') {
+      return Promise.resolve({ specs } satisfies SpecListResponse)
     }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   }
@@ -108,6 +117,31 @@ describe('board store', () => {
     expect(board.tickets).toEqual(tickets)
     expect(board.loaded).toBe(true)
     expect(board.error).toBeNull()
+  })
+
+  it('carries the Project\'s Specs beside its Tickets', async () => {
+    setActivePinia(createPinia())
+    const { transport, query } = harness()
+    // Row id and minted number differ: the canonical identity the
+    // cards render is the number the record carries, never the id.
+    const specs: SpecRecord[] = [
+      {
+        execution: 'planned',
+        id: 4,
+        name: 'Serve the lifecycle command surface',
+        number: 9,
+        plan_id: null,
+        project_id: 1,
+        version: 2,
+      },
+    ]
+    query.mockImplementation(serving([task()], {}, specs))
+    const board = useBoardStore()
+
+    await board.refresh(transport, 1)
+
+    expect(query).toHaveBeenCalledWith('spec.list', { project_id: 1 })
+    expect(board.specs).toEqual(specs)
   })
 
   it('collects the readiness projection beside the Tickets it loads', async () => {

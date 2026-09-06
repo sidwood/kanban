@@ -2,7 +2,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import type { DOMWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectListResponse, TicketListResponse, TicketRecord } from '@kanban/contracts'
+import type {
+  ProjectListResponse,
+  SpecListResponse,
+  TicketListResponse,
+  TicketRecord,
+} from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -103,6 +108,12 @@ function harness(tickets: TicketRecord[], pendingProjects: readonly number[] = [
     }
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
+    }
+    // The board loads the Project's Specs beside its Tickets
+    // (KAN-T126); the numbers its cards render arrive with the tests
+    // that assert them.
+    if (name === 'spec.list') {
+      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
     }
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }

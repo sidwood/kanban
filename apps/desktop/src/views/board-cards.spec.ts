@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   LaneListResponse,
   ProjectListResponse,
+  SpecListResponse,
   TicketListResponse,
   TicketReadinessResponse,
   TicketRecord,
@@ -143,6 +144,12 @@ async function mounted(
     }
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: laneList } satisfies LaneListResponse)
+    }
+    // The board loads the Project's Specs beside its Tickets
+    // (KAN-T126); the numbers its cards render arrive with the tests
+    // that assert them.
+    if (name === 'spec.list') {
+      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
     }
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }

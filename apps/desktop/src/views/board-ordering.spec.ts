@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   LaneListResponse,
   ProjectListResponse,
+  SpecListResponse,
   TicketListResponse,
   TicketReadinessResponse,
   TicketRecord,
@@ -170,9 +171,14 @@ function harness(ticketsForLoad: () => TicketRecord[]) {
     }
     // BoardView loads Lanes beside Tickets (KAN-T26); an unanswered
     // lane.list leaves the store's list undefined and card render
-    // throws before the ordered columns can appear.
+    // throws before the ordered columns can appear. The Specs answer
+    // the same way (KAN-T126): the board carries them for the Spec
+    // identities its cards render.
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies LaneListResponse)
+    }
+    if (name === 'spec.list') {
+      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
     }
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }

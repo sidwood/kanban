@@ -1404,6 +1404,54 @@ mod cross_project_deps {
     }
 
     #[test]
+    fn a_key_spent_on_add_cannot_replay_for_remove() {
+        let harness = dependency_harness();
+        let added = core_blocks_edge(&harness, "key-clash");
+
+        // The same key, aggregate, and body shape spent on the
+        // opposite operation must not borrow the add's outcome.
+        let error = harness
+            .core
+            .command(
+                "ticket.dependency.remove",
+                &command(json!({ "from_ticket": 1, "to_ticket": 2 }), 2, "key-clash"),
+            )
+            .expect_err("a key spent on add cannot serve remove");
+
+        assert_eq!(error.code, ErrorCode::DuplicateIdempotencyKey);
+        assert!(
+            error.message.contains("key-clash"),
+            "the message should name the reused key: {}",
+            error.message
+        );
+
+        // The refusal applied nothing: the edge stands and the waiting
+        // Ticket has not moved, so the remove lands under a fresh key
+        // at the version the add left behind.
+        let removed = harness
+            .core
+            .command(
+                "ticket.dependency.remove",
+                &command(json!({ "from_ticket": 1, "to_ticket": 2 }), 2, "key-remove"),
+            )
+            .expect("the remove applies under its own key");
+        assert_eq!(removed["dependencies"], json!([]));
+        assert_eq!(removed["version"], json!(3));
+        let (_, edges, _) = harness.rows.snapshot();
+        assert_eq!(edges.len(), 0, "exactly the one remove applied");
+
+        // The operation that spent the key still owns its replay.
+        let replay = harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &command(json!({ "from_ticket": 1, "to_ticket": 2 }), 1, "key-clash"),
+            )
+            .expect("the add's own retry still replays");
+        assert_eq!(replay, added, "the recorded outcome is the add's alone");
+    }
+
+    #[test]
     fn a_retry_replays_without_reapplying() {
         let harness = dependency_harness();
         let request = command(json!({ "from_ticket": 1, "to_ticket": 2 }), 1, "key-once");

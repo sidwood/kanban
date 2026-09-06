@@ -391,7 +391,10 @@ function closeDrawer(): void {
 }
 
 // The facts the drawer shows for the open Ticket; full history and
-// the embedded timeline arrive with the drawer's own ticket.
+// the embedded timeline arrive with the drawer's own ticket. The Spec
+// identity is the number its record minted — a Spec the board did not
+// load states no identity at all rather than one built from the row
+// id the Ticket carries.
 const drawerFacts = computed(() => {
   const ticket = selectedTicket.value
   if (!ticket) return []
@@ -401,8 +404,9 @@ const drawerFacts = computed(() => {
     { label: 'Priority', value: ticket.priority },
     { label: 'Project', value: `${projectCode.value} — ${project.value?.name ?? ''}` },
   ]
-  if (ticket.spec_id) {
-    facts.push({ label: 'Spec', value: `${projectCode.value}-S${ticket.spec_id}` })
+  const spec = specFor(board.specs, ticket.spec_id)
+  if (spec) {
+    facts.push({ label: 'Spec', value: `${projectCode.value}-S${spec.number}` })
   }
   if (ticket.subtype) facts.push({ label: 'Subtype', value: ticket.subtype })
   if (ticket.mode) facts.push({ label: 'Mode', value: ticket.mode })
@@ -790,6 +794,13 @@ const drawerFacts = computed(() => {
             <StatusBadge :tone="STATUS_TONES[selectedTicket.state]">
               {{ fact.value }}
             </StatusBadge>
+          </dd>
+          <dd
+            v-else-if="fact.label === 'Spec'"
+            data-testid="drawer-spec"
+            class="text-sm text-ink"
+          >
+            {{ fact.value }}
           </dd>
           <dd
             v-else

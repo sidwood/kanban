@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   ProjectListResponse,
   SpecListResponse,
+  SpecRecord,
   TicketListResponse,
   TicketRecord,
 } from '@kanban/contracts'
@@ -96,10 +97,15 @@ function deferred<T>() {
   return { promise, settle }
 }
 
-// Answers the queries a board load spends. ticket.list for a Project
-// named in pendingProjects stays on the wire for good: the board it
-// asked for never settles while the test is watching.
-function harness(tickets: TicketRecord[], pendingProjects: readonly number[] = []) {
+// Answers the queries a board load spends, spec.list among them.
+// ticket.list for a Project named in pendingProjects stays on the
+// wire for good: the board it asked for never settles while the test
+// is watching.
+function harness(
+  tickets: TicketRecord[],
+  specList: SpecRecord[] = [],
+  pendingProjects: readonly number[] = [],
+) {
   const query = vi.fn((name: string, request: unknown) => {
     if (name === 'project.list') {
       return Promise.resolve({
@@ -109,11 +115,8 @@ function harness(tickets: TicketRecord[], pendingProjects: readonly number[] = [
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: [] } satisfies { lanes: [] })
     }
-    // The board loads the Project's Specs beside its Tickets
-    // (KAN-T126); the numbers its cards render arrive with the tests
-    // that assert them.
     if (name === 'spec.list') {
-      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
+      return Promise.resolve({ specs: specList } satisfies SpecListResponse)
     }
     if (name === 'ticket.readiness') {
       const { ticket_id } = request as { ticket_id: number }
@@ -161,8 +164,12 @@ async function mountBoard(
   return wrapper
 }
 
-async function mounted(tickets: TicketRecord[], pendingProjects: readonly number[] = []) {
-  const { transport, query, command } = harness(tickets, pendingProjects)
+async function mounted(
+  tickets: TicketRecord[],
+  specList: SpecRecord[] = [],
+  pendingProjects: readonly number[] = [],
+) {
+  const { transport, query, command } = harness(tickets, specList, pendingProjects)
   const wrapper = await mountBoard(transport, 1)
   return { wrapper, transport, query, command }
 }
@@ -379,6 +386,74 @@ describe('BoardView', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('shows the drawer the Spec\'s minted number, never its row id', async () => {
+    // Spec 4 is this Project's ninth, and Spec 6 its second: the ids
+    // below belong to other Projects, so the id is never the number.
+    const specList: SpecRecord[] = [
+      {
+        execution: 'planned',
+        id: 4,
+        name: 'Serve the lifecycle command surface',
+        number: 9,
+        plan_id: null,
+        project_id: 1,
+        version: 2,
+      },
+      {
+        execution: 'ready',
+        id: 6,
+        name: 'Carry the work through review',
+        number: 2,
+        plan_id: null,
+        project_id: 1,
+        version: 3,
+      },
+    ]
+    const second = ticket({
+      id: 14,
+      number: 19,
+      kind: 'implementation',
+      state: 'active',
+      title: null,
+      slice: 'Carry the work through review',
+      spec_id: 6,
+      subtype: null,
+      mode: null,
+      completion: [],
+      version: 4,
+    })
+    const { wrapper } = await mounted([...boardTickets(), second], specList)
+
+    await wrapper.find('[data-testid="open-ticket-8"]').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="drawer-spec"]')?.textContent).toBe(
+      'KAN-S9',
+    )
+
+    await wrapper.find('[data-testid="open-ticket-14"]').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="drawer-spec"]')?.textContent).toBe(
+      'KAN-S2',
+    )
+
+    ;(document.querySelector('[aria-label="Close panel"]') as HTMLElement).click()
+    await flushPromises()
+  })
+
+  it('invents no Spec identity the drawer fails to resolve', async () => {
+    // The Ticket names a Spec the board did not load; the drawer
+    // states no identity at all rather than one built from the id
+    // (KAN-T126-AC2). The Ticket's own KAN-T number is no S-number.
+    const { wrapper } = await mounted(boardTickets(), [])
+
+    await wrapper.find('[data-testid="open-ticket-8"]').trigger('click')
+    await flushPromises()
+
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog?.textContent).not.toMatch(/KAN-S\d/)
+    expect(document.querySelector('[data-testid="drawer-spec"]')).toBeNull()
+  })
+
   it('swaps the class-based theme from the board header', async () => {
     const { wrapper } = await mounted(boardTickets())
 
@@ -479,7 +554,7 @@ describe('BoardView', () => {
   })
 
   it('takes the drawer with it when the Project changes', async () => {
-    const { wrapper } = await mounted(boardTickets(), [2])
+    const { wrapper } = await mounted(boardTickets(), [], [2])
 
     await wrapper.find('[data-testid="open-ticket-7"]').trigger('click')
     await flushPromises()

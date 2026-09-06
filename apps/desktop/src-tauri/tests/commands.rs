@@ -13,10 +13,10 @@ use kanban_desktop_lib::commands::{
 };
 use kanban_dto::{
     CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest, CapacitySettingsGetQuery,
-    CapacitySettingsUpdateRequest, CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery,
-    DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
-    EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery, ExportRenderRequest, HealthQuery,
-    HerdrDefaultsGetQuery,
+    CapacitySettingsUpdateRequest, CloneCreateRequest, CloneRemoveRequest, CommentCreateRequest,
+    CommentEditRequest, CommentRevisionsQuery, DeferralListQuery, DeferralRecordRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, EvidenceAttachRequest, EvidenceListQuery,
+    ExportDriftQuery, ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery,
     HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery, HerdrSettingsUpdateRequest,
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
     InitiativeRenameRequest, LaneCreateRequest, LaneListQuery, LaneTicketAssignRequest,
@@ -397,6 +397,19 @@ fn sample_request(schema: &str) -> Value {
             "stall_deadline_secs": 3600,
             "missing_result_deadline_secs": 7200,
         }),
+        "CapacityDefaultsGetQuery" => json!({}),
+        "CapacityDefaultsUpdateRequest" => json!({
+            "mutation": mutation,
+            "max_active_per_harness": 2,
+            "max_active_per_model": 2,
+            "max_active_per_usage_pool": 4,
+        }),
+        "CapacitySettingsGetQuery" => json!({ "project_id": 1 }),
+        "CapacitySettingsUpdateRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "max_active_lanes": 2,
+        }),
         "WorkspaceRegisterRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -421,6 +434,13 @@ fn sample_request(schema: &str) -> Value {
         }
         "LaneTicketReleaseRequest" => json!({ "mutation": mutation, "lane_id": 1 }),
         "LaneListQuery" => json!({ "project_id": 1 }),
+        "CloneCreateRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "path": "/workspaces/kanban.fleet-kan-t37",
+            "branch": "fleet/kan-t37",
+        }),
+        "CloneRemoveRequest" => json!({ "mutation": mutation, "workspace_id": 1 }),
         "ExportRenderRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -560,6 +580,18 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "HerdrDefaultsUpdateRequest" => {
             decode_invoke_args::<HerdrDefaultsUpdateRequest>(request).is_err()
         }
+        "CapacityDefaultsGetQuery" => {
+            decode_invoke_args::<CapacityDefaultsGetQuery>(request).is_err()
+        }
+        "CapacityDefaultsUpdateRequest" => {
+            decode_invoke_args::<CapacityDefaultsUpdateRequest>(request).is_err()
+        }
+        "CapacitySettingsGetQuery" => {
+            decode_invoke_args::<CapacitySettingsGetQuery>(request).is_err()
+        }
+        "CapacitySettingsUpdateRequest" => {
+            decode_invoke_args::<CapacitySettingsUpdateRequest>(request).is_err()
+        }
         "SpecCreateRequest" => decode_invoke_args::<SpecCreateRequest>(request).is_err(),
         "SpecContentUpdateRequest" => {
             decode_invoke_args::<SpecContentUpdateRequest>(request).is_err()
@@ -643,6 +675,8 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<LaneTicketReleaseRequest>(request).is_err()
         }
         "LaneListQuery" => decode_invoke_args::<LaneListQuery>(request).is_err(),
+        "CloneCreateRequest" => decode_invoke_args::<CloneCreateRequest>(request).is_err(),
+        "CloneRemoveRequest" => decode_invoke_args::<CloneRemoveRequest>(request).is_err(),
         "ExportRenderRequest" => decode_invoke_args::<ExportRenderRequest>(request).is_err(),
         "ExportDriftQuery" => decode_invoke_args::<ExportDriftQuery>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),

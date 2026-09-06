@@ -24,6 +24,7 @@ verify-contracts: need-rust
       packages/contracts/src/client.ts
       packages/contracts/src/types.ts
       packages/contracts/src/mcp-tools.json
+      packages/contracts/src/vocabulary.ts
       packages/contracts/src/schemas
     )
     git diff --check -- "${generated[@]}"

@@ -570,29 +570,50 @@ pub(crate) mod testing {
             pinned: &[kanban_domain::Ticket],
             envelopes: &[TimelineEnvelope],
         ) -> Result<(), ApiError> {
+            // Stage every guarded write against the stored rows first
+            // and commit only when each guard holds, the way the
+            // durable store's one transaction does: a mid-write
+            // refusal moves no row at all.
             let mut state = self
                 .state
                 .lock()
                 .expect("the memory proposal lock is sound");
+            let preceding = proposal.version() - 1;
             let held = state
                 .proposals
-                .iter_mut()
+                .iter()
                 .find(|row| row.id() == proposal.id())
                 .expect("the approval names a stored proposal");
-            let preceding = proposal.version() - 1;
             if held.version() != preceding {
                 return Err(ApiError::stale_version(preceding, held.version()));
             }
-            *held = proposal.clone();
+            let (rows, _) = self.tickets.snapshot();
+            for ticket in pinned {
+                let stored = rows
+                    .iter()
+                    .find(|row| row.id() == ticket.id())
+                    .ok_or_else(|| ApiError::not_found(&format!("ticket {}", ticket.id())))?;
+                let ticket_preceding = ticket.version() - 1;
+                if stored.version() != ticket_preceding {
+                    return Err(ApiError::stale_version(ticket_preceding, stored.version()));
+                }
+            }
+            *state
+                .proposals
+                .iter_mut()
+                .find(|row| row.id() == proposal.id())
+                .expect("the approval names a stored proposal") = proposal.clone();
             drop(state);
             for ticket in pinned {
-                self.tickets.replace_pinned(ticket.clone())?;
+                self.tickets
+                    .replace_pinned(ticket.clone())
+                    .expect("the staged guard proved the row ready");
             }
-            let mut state = self
-                .state
+            self.state
                 .lock()
-                .expect("the memory proposal lock is sound");
-            state.timeline.extend(envelopes.iter().cloned());
+                .expect("the memory proposal lock is sound")
+                .timeline
+                .extend(envelopes.iter().cloned());
             Ok(())
         }
     }
@@ -1353,9 +1374,10 @@ mod graph_approval {
 
 #[cfg(test)]
 mod later_versions {
-    use kanban_domain::{Ticket, TicketId, TicketState};
+    use kanban_domain::{GraphProposalId, Ticket, TicketId, TicketState};
     use serde_json::{Value, json};
 
+    use super::GraphProposalStore;
     use super::graph_approval::{approve, covered_graph, graph_content, implementation};
     use super::testing::graph_harness;
     use crate::ticket::TicketStore;
@@ -1800,6 +1822,67 @@ mod later_versions {
             json!(spec),
             "the cancelled attachment stays visible as history"
         );
+    }
+
+    #[test]
+    fn a_mid_write_refusal_rolls_the_whole_approval_back() {
+        let (harness, proposals) = graph_harness();
+        let (_spec, first, earlier) = covered_graph(&harness.core);
+        let proposed = proposals
+            .find(GraphProposalId::new(first))
+            .expect("the find serves")
+            .expect("the proposal stands");
+        let mut approved = proposed.clone();
+        approved.approve().expect("the gate approves");
+        let mut pinned = Vec::new();
+        for (index, id) in earlier.iter().enumerate() {
+            let row = stored_ticket(&harness, *id).expect("the Ticket stands");
+            let mut member = if index == 0 {
+                row.clone()
+            } else {
+                // The second aggregate stands one version behind the
+                // stored row, so its guarded pin is refused mid-write.
+                Ticket::restore(
+                    row.id(),
+                    row.project(),
+                    row.number(),
+                    row.priority(),
+                    row.state(),
+                    row.body().clone(),
+                    row.predecessor(),
+                    row.profile().cloned(),
+                    None,
+                    row.version() - 1,
+                )
+            };
+            member.pin_to(1).expect("the approval pins");
+            pinned.push(member);
+        }
+        let (_, timeline_before) = proposals.snapshot();
+
+        let error = proposals
+            .apply_approval(&approved, &pinned, &[])
+            .expect_err("the mid-write refusal stops the whole approval");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::StaleVersion);
+        let (rows, timeline) = proposals.snapshot();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.id() == approved.id())
+                .expect("the proposal stands")
+                .state()
+                .wire_name(),
+            "proposed",
+            "no proposal row remains moved"
+        );
+        assert_eq!(
+            stored_ticket(&harness, earlier[0])
+                .expect("the Ticket stands")
+                .pinned_version(),
+            None,
+            "no Ticket pin remains written"
+        );
+        assert_eq!(timeline.len(), timeline_before.len());
     }
 }
 

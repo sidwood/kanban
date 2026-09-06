@@ -921,8 +921,11 @@ export type TicketReviewRequest = {
   ticket_id: number;
 };
 export type TicketScheduleRequest = {
+  activation?: string | null;
   mutation: MutationContext;
+  profile?: string | null;
   ticket_id: number;
+  timezone?: string | null;
 };
 export type TicketSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type TicketSpecMoveRequest = {

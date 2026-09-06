@@ -13990,7 +13990,7 @@
     }
   },
   {
-    "description": "Schedule a Ticket, holding qualified work until its activation. Activation behaviour is KAN-S11's.",
+    "description": "Schedule a Ticket, holding qualified work until its activation. Optional facts — activation instant, timezone, eligible profile — land the one-time Schedule that makes the Ticket ready when its moment arrives.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -14015,16 +14015,37 @@
           "type": "object"
         }
       },
-      "description": "Request payload for the `ticket.schedule` command: hold qualified work until its activation (DR-LC-09); activation itself is KAN-S11.",
+      "description": "Request payload for the `ticket.schedule` command: hold qualified work until its activation (DR-LC-09). The optional Schedule facts — activation instant, timezone, and eligible profile — arrive together or not at all, and land the one-time Schedule that makes the Ticket ready when its moment arrives (DR-SA-01, DR-SA-03).",
       "properties": {
+        "activation": {
+          "description": "The one-time activation instant, RFC 3339.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mutation": {
           "$ref": "#/definitions/MutationContext"
+        },
+        "profile": {
+          "description": "The Execution Profile eligible once the activation fires.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ticket_id": {
           "description": "The Ticket being scheduled.",
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "timezone": {
+          "description": "The IANA timezone the Schedule lives in.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

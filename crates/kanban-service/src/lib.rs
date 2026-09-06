@@ -22,8 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kanban_app::{
-    ActivationPass, Core, EventSink, FleetCloneTool, GitObservation, ProjectStore,
-    StoredProfileCatalogue, TimelineQueryHandler,
+    ActivationPass, CloneTargetProbe, Core, EventSink, FleetCloneTool, GitObservation,
+    ProjectStore, StoredProfileCatalogue, TimelineQueryHandler,
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
@@ -69,6 +69,20 @@ pub struct LocalRepositories;
 impl GitObservation for LocalRepositories {
     fn is_repository(&self, repository: &str) -> bool {
         Path::new(repository).join(".git").exists()
+    }
+}
+
+/// The service's clone-target probe: a create target is occupied when
+/// anything at all already exists at its path. An unregistered clone
+/// above all — the shape `git bc-add` treats as success while it
+/// syncs extras into it — must be refused before the skill runs, or
+/// Kanban records a creation it did not perform (KAN-T118).
+#[derive(Debug, Default)]
+pub struct LocalCloneTargetProbe;
+
+impl CloneTargetProbe for LocalCloneTargetProbe {
+    fn exists(&self, path: &str) -> bool {
+        Path::new(path).exists()
     }
 }
 
@@ -201,6 +215,7 @@ fn assemble_core(
         projects.clone(),
         workspace_store.clone(),
         clone_guard_store,
+        Arc::new(LocalCloneTargetProbe),
     )?;
     core.register_dependencies(
         dependency_store.clone(),
@@ -440,8 +455,9 @@ mod tests {
     use kanban_app::{GitObservation, NoopEventSink, assert_registered_matches_exposed_catalogue};
 
     use super::{
-        LocalRepositories, ObservationTuning, RETAINED_OUTCOMES, ServiceError, assemble_core,
-        prepare_database, serve, serve_with_herdr_sessions,
+        CloneTargetProbe, LocalCloneTargetProbe, LocalRepositories, ObservationTuning,
+        RETAINED_OUTCOMES, ServiceError, assemble_core, prepare_database, serve,
+        serve_with_herdr_sessions,
     };
     use crate::herdr::production_socket_root;
     use crate::test_client::{Client, boot};
@@ -1200,6 +1216,37 @@ mod tests {
                     .expect("the path is UTF-8")
             ),
             "a missing path is not a repository"
+        );
+    }
+
+    /// KAN-T118: occupancy is existence, whatever occupies the target —
+    /// a full clone, a plain directory, or a lone file — because any of
+    /// them means the creation Kanban would record is not the one that
+    /// lands.
+    #[test]
+    fn local_clone_target_probe_reports_only_what_exists() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let probe = LocalCloneTargetProbe;
+
+        let occupied = dir.path().join("kanban.fleet-t34");
+        std::fs::create_dir_all(&occupied).expect("the clone directory is created");
+        assert!(probe.exists(occupied.to_str().expect("the path is UTF-8")));
+
+        let file = dir.path().join("stray-file");
+        std::fs::write(&file, "stray\n").expect("the stray file is written");
+        assert!(
+            probe.exists(file.to_str().expect("the path is UTF-8")),
+            "a file occupying the target is occupancy too"
+        );
+
+        assert!(
+            !probe.exists(
+                dir.path()
+                    .join("missing")
+                    .to_str()
+                    .expect("the path is UTF-8")
+            ),
+            "a free target is free"
         );
     }
 

@@ -45,7 +45,9 @@ pub use catalog::{
     EXPOSED_MCP_TOOL_NAMES, OperationDescriptor, OperationKind,
     assert_registered_matches_exposed_catalogue, exposed_operations,
 };
-pub use clone::{CloneGuardStore, FLEET_TOOL_FAILED, FLEET_TOOL_REFUSED, FleetCloneTool};
+pub use clone::{
+    CloneGuardStore, CloneTargetProbe, FLEET_TOOL_FAILED, FLEET_TOOL_REFUSED, FleetCloneTool,
+};
 pub use comment::CommentStore;
 pub use deadlines::{
     DeadlineConfig, DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,

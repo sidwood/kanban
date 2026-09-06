@@ -2,10 +2,12 @@
 //! branch clones goes through the fleet's `git bc-add` family — the
 //! only sanctioned clone mechanism — so these commands wrap the fleet
 //! skill, never reimplement it (DR-LW-09). Every precondition is
-//! validated first: conflicting paths, branches, and Lane assignments
-//! are refused before anything is invoked, with the conflict named
-//! (DR-LW-10). Every invocation and every refusal appends a timeline
-//! row, so the audit trail outlives both outcomes. Removal never
+//! validated first: conflicting paths — a declared Seed, a registered
+//! Workspace, or a target that already exists on the filesystem —
+//! branches, and Lane assignments are refused before anything is
+//! invoked, with the conflict named (DR-LW-10). Every invocation and
+//! every refusal appends a timeline row, so the audit trail outlives
+//! both outcomes. Removal never
 //! deletes the Workspace record (DR-LW-11); a successful removal
 //! records the checkout gone itself — health missing, stale git
 //! facts cleared, optimistic version bumped — inside the command's
@@ -50,6 +52,17 @@ pub trait FleetCloneTool: Send + Sync {
 pub trait CloneGuardStore: Send + Sync {
     /// Append one timeline row.
     fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError>;
+}
+
+/// The filesystem probe the create guard reads before anything is
+/// invoked: whether anything already occupies the target path. The
+/// domain guard stays pure, so existence arrives here as a fact — and
+/// an occupied target is refused before the fleet skill runs, because
+/// `git bc-add` treats an existing clone as success and Kanban must
+/// never record a creation it did not perform (DR-LW-10).
+pub trait CloneTargetProbe: Send + Sync {
+    /// Whether `path` already exists on the filesystem.
+    fn exists(&self, path: &str) -> bool;
 }
 
 /// The reason code recorded when the fleet skill itself refuses the
@@ -180,25 +193,28 @@ struct CloneContext {
     projects: Arc<dyn ProjectStore>,
     workspaces: Arc<dyn WorkspaceStore>,
     timeline: Arc<dyn CloneGuardStore>,
+    probe: Arc<dyn CloneTargetProbe>,
 }
 
 impl Core {
     /// Register the guarded clone operations against the fleet `tool`,
     /// resolving Projects through `projects`, Workspace conflicts
-    /// through `workspaces`, and appending timeline rows through
-    /// `timeline`.
+    /// through `workspaces`, appending timeline rows through
+    /// `timeline`, and reading target occupancy through `probe`.
     pub fn register_clones(
         &mut self,
         tool: Arc<dyn FleetCloneTool>,
         projects: Arc<dyn ProjectStore>,
         workspaces: Arc<dyn WorkspaceStore>,
         timeline: Arc<dyn CloneGuardStore>,
+        probe: Arc<dyn CloneTargetProbe>,
     ) -> Result<(), RegistrationError> {
         let context = CloneContext {
             tool,
             projects,
             workspaces,
             timeline,
+            probe,
         };
         self.register_command("clone.create", Arc::new(CreateClone(context.clone())))?;
         self.register_command("clone.remove", Arc::new(RemoveClone(context)))?;
@@ -257,11 +273,13 @@ impl CommandHandler for CreateClone {
             .iter()
             .map(WorkspaceCloneFacts::from_workspace)
             .collect();
+        let target_exists = self.0.probe.exists(&path);
         if let Some(conflict) = clone_create_conflict(
             &path,
             &branch,
             project.registration().seed_workspace(),
             &facts,
+            target_exists,
         ) {
             record_after_discard(
                 &self.0.timeline,
@@ -422,7 +440,7 @@ pub(crate) mod testing {
     use kanban_dto::ApiError;
     use serde_json::Value;
 
-    use super::{CloneGuardStore, FleetCloneTool};
+    use super::{CloneGuardStore, CloneTargetProbe, FleetCloneTool};
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
     use crate::events::EventSink;
@@ -537,6 +555,23 @@ pub(crate) mod testing {
         }
     }
 
+    /// The clone-target probe the tests steer: only the paths the test
+    /// has occupied exist.
+    #[derive(Default)]
+    pub(crate) struct ScriptedTargetProbe {
+        pub(crate) occupied: Mutex<Vec<String>>,
+    }
+
+    impl CloneTargetProbe for ScriptedTargetProbe {
+        fn exists(&self, path: &str) -> bool {
+            self.occupied
+                .lock()
+                .expect("the probe lock is sound")
+                .iter()
+                .any(|occupied| occupied == path)
+        }
+    }
+
     /// A core with the Workspace, Lane, and guarded clone operations
     /// wired to in-memory stores over one active Project, whose fleet
     /// tool and published events the test steers and reads. The Lane
@@ -547,6 +582,7 @@ pub(crate) mod testing {
         pub(crate) workspaces: Arc<MemoryWorkspaceStore>,
         pub(crate) tool: Arc<ScriptedCloneTool>,
         pub(crate) timeline: Arc<MemoryCloneGuardStore>,
+        pub(crate) probe: Arc<ScriptedTargetProbe>,
         pub(crate) sink: Arc<RecordingSink>,
         pub(crate) core: Core,
     }
@@ -567,6 +603,7 @@ pub(crate) mod testing {
         let lanes = Arc::new(MemoryLaneStore::sharing(workspaces.clone()));
         let tool = Arc::new(ScriptedCloneTool::default());
         let timeline = Arc::new(MemoryCloneGuardStore::default());
+        let probe = Arc::new(ScriptedTargetProbe::default());
         let sink = Arc::new(RecordingSink::default());
         let mut core = Core::new(
             exposed_operations(),
@@ -594,6 +631,7 @@ pub(crate) mod testing {
             projects.clone(),
             workspaces.clone(),
             timeline.clone(),
+            probe.clone(),
         )
         .expect("the clone operations register");
         CloneHarness {
@@ -601,6 +639,7 @@ pub(crate) mod testing {
             workspaces,
             tool,
             timeline,
+            probe,
             sink,
             core,
         }
@@ -1548,6 +1587,131 @@ mod clone_conflicts {
             Some(1),
             "the claim survives the refused removal"
         );
+    }
+
+    #[test]
+    fn creating_refuses_an_existing_unregistered_target_before_invocation() {
+        let harness = clone_harness();
+        harness
+            .probe
+            .occupied
+            .lock()
+            .expect("the probe lock is sound")
+            .push("/workspaces/kanban.fleet-t34".to_owned());
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("an occupied target is refused even when no Workspace records it");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("/workspaces/kanban.fleet-t34"),
+            "the refusal names the target: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("registered to no Workspace"),
+            "the refusal names the rule: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the occupied target is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the refusal is recorded");
+        assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("target_exists"));
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!("/workspaces/kanban.fleet-t34")
+        );
+    }
+
+    #[test]
+    fn a_refused_existing_target_records_no_creation_and_announces_nothing() {
+        let harness = clone_harness();
+        harness
+            .probe
+            .occupied
+            .lock()
+            .expect("the probe lock is sound")
+            .push("/workspaces/kanban.fleet-t34".to_owned());
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("the occupied target is refused");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        let rows = harness.timeline.rows();
+        assert!(
+            rows.iter()
+                .all(|row| row.detail()["action"] != json!("branch_clone_created")),
+            "no successful creation row lands for a refused target: {rows:?}"
+        );
+        let events = harness
+            .sink
+            .events
+            .lock()
+            .expect("the sink lock is sound")
+            .clone();
+        assert!(
+            events.iter().all(|(name, _)| name != "clone.created"),
+            "a refused target announces no clone.created live event: {events:?}"
+        );
+    }
+
+    #[test]
+    fn an_occupied_registered_path_still_names_its_holder() {
+        let harness = clone_harness();
+        harness
+            .core
+            .command(
+                "workspace.register",
+                &json!({
+                    "mutation": mutation(0, "key-1"),
+                    "project_id": 1,
+                    "path": "/workspaces/kanban.fleet-t31",
+                }),
+            )
+            .expect("the workspace registers");
+        harness
+            .probe
+            .occupied
+            .lock()
+            .expect("the probe lock is sound")
+            .push("/workspaces/kanban.fleet-t31".to_owned());
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t31", "fleet/kan-t34", "key-2"),
+            )
+            .expect_err("the taken path is refused by its holder first");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(
+            error.message.contains("already registered as Workspace 1"),
+            "the refusal names the holder, not the bare existence: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "the conflict is refused before anything is invoked"
+        );
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail()["reason"], json!("path_taken"));
+        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
     }
 
     #[test]

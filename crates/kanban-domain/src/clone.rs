@@ -3,8 +3,9 @@
 //! only sanctioned clone mechanism (DR-LW-09) — and Kanban refuses
 //! conflicting paths, branches, and Lane assignments before anything
 //! is invoked (DR-LW-10). The rules here are pure: they decide, from
-//! registered Workspace facts, whether a guarded command may proceed,
-//! and they name the conflict when it may not.
+//! registered Workspace facts and whatever filesystem facts a caller
+//! hands them as values, whether a guarded command may proceed, and
+//! they name the conflict when it may not.
 
 use std::fmt;
 
@@ -46,6 +47,10 @@ pub enum CloneConflict {
     SeedPath { path: String },
     /// The target path is already a registered Workspace.
     PathTaken { path: String, workspace_id: u64 },
+    /// The target path already exists on the filesystem and no
+    /// registered Workspace records it, so a create would record a
+    /// clone Kanban did not place there.
+    TargetExists { path: String },
     /// Another Workspace has the requested branch checked out.
     BranchCheckedOut {
         branch: String,
@@ -68,6 +73,7 @@ impl CloneConflict {
         match self {
             Self::SeedPath { .. } => "seed_path",
             Self::PathTaken { .. } => "path_taken",
+            Self::TargetExists { .. } => "target_exists",
             Self::BranchCheckedOut { .. } => "branch_checked_out",
             Self::LaneAssigned { .. } => "lane_assigned",
             Self::SeedWorkspace { .. } => "seed_workspace",
@@ -88,6 +94,12 @@ impl fmt::Display for CloneConflict {
                 write!(
                     f,
                     "the clone path `{path}` is already registered as Workspace {workspace_id}"
+                )
+            }
+            Self::TargetExists { path } => {
+                write!(
+                    f,
+                    "the clone target `{path}` already exists and is registered to no Workspace"
                 )
             }
             Self::BranchCheckedOut {
@@ -182,17 +194,22 @@ fn normalised_path_form(path: &str) -> String {
 
 /// Decide whether a guarded create may proceed (DR-LW-10). The path is
 /// judged first — against the Project's declared Seed path, then every
-/// registered Workspace — and the branch against every non-retired
-/// Workspace's observed checkout: a retired record keeps history, not
-/// a live execution slot, so it blocks no branch. Paths are judged by
-/// their normal form on both sides, so an equivalent spelling of a
-/// refused path is refused too. The first conflict wins and names
-/// itself.
+/// registered Workspace, then the filesystem itself: `target_exists`
+/// arrives as a fact because the guard is pure and reads no disk, and
+/// a target that already exists records a creation Kanban did not
+/// perform — the registered conflicts are still judged before it so a
+/// known holder keeps being named. The branch is judged last, against
+/// every non-retired Workspace's observed checkout: a retired record
+/// keeps history, not a live execution slot, so it blocks no branch.
+/// Paths are judged by their normal form on both sides, so an
+/// equivalent spelling of a refused path is refused too. The first
+/// conflict wins and names itself.
 pub fn clone_create_conflict(
     path: &str,
     branch: &str,
     seed_path: &str,
     workspaces: &[WorkspaceCloneFacts],
+    target_exists: bool,
 ) -> Option<CloneConflict> {
     let requested = normalised_path_form(path);
     if requested == normalised_path_form(seed_path)
@@ -211,6 +228,11 @@ pub fn clone_create_conflict(
         return Some(CloneConflict::PathTaken {
             path: path.to_owned(),
             workspace_id: holder.workspace_id,
+        });
+    }
+    if target_exists {
+        return Some(CloneConflict::TargetExists {
+            path: path.to_owned(),
         });
     }
     let holder = workspaces
@@ -317,6 +339,7 @@ mod clone_guard_rules {
                 "fleet/kan-t34",
                 SEED_PATH,
                 &registered,
+                false,
             ),
             None,
             "a fresh path on a fresh branch is free"
@@ -333,7 +356,7 @@ mod clone_guard_rules {
             "/workspaces/./kanban.fleet-t34",
         ] {
             assert_eq!(
-                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered),
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered, false),
                 None,
                 "`{path}` names no registered path, whatever its spelling"
             );
@@ -342,7 +365,7 @@ mod clone_guard_rules {
 
     #[test]
     fn the_declared_seed_path_is_refused_even_before_registration() {
-        let conflict = clone_create_conflict(SEED_PATH, "fleet/kan-t34", SEED_PATH, &[])
+        let conflict = clone_create_conflict(SEED_PATH, "fleet/kan-t34", SEED_PATH, &[], false)
             .expect("the Seed path never holds a branch clone");
 
         assert_eq!(
@@ -359,8 +382,9 @@ mod clone_guard_rules {
     fn a_registered_seed_workspace_path_is_the_seed_conflict() {
         let registered = vec![seed(1, SEED_PATH)];
 
-        let conflict = clone_create_conflict(SEED_PATH, "fleet/kan-t34", SEED_PATH, &registered)
-            .expect("the Seed is named as itself, not as a taken path");
+        let conflict =
+            clone_create_conflict(SEED_PATH, "fleet/kan-t34", SEED_PATH, &registered, false)
+                .expect("the Seed is named as itself, not as a taken path");
 
         assert_eq!(
             conflict,
@@ -374,7 +398,7 @@ mod clone_guard_rules {
     fn equivalent_spellings_of_the_declared_seed_path_are_refused() {
         for path in EQUIVALENT_SEED_FORMS {
             assert_eq!(
-                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &[]),
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &[], false),
                 Some(CloneConflict::SeedPath {
                     path: path.to_owned(),
                 }),
@@ -389,7 +413,13 @@ mod clone_guard_rules {
 
         for path in EQUIVALENT_SEED_FORMS {
             assert_eq!(
-                clone_create_conflict(path, "fleet/kan-t34", "/declared/kanban.seed", &registered),
+                clone_create_conflict(
+                    path,
+                    "fleet/kan-t34",
+                    "/declared/kanban.seed",
+                    &registered,
+                    false
+                ),
                 Some(CloneConflict::SeedPath {
                     path: path.to_owned(),
                 }),
@@ -407,6 +437,7 @@ mod clone_guard_rules {
             "fleet/kan-t35",
             SEED_PATH,
             &registered,
+            false,
         )
         .expect("a registered path is a conflict");
 
@@ -435,6 +466,7 @@ mod clone_guard_rules {
             "fleet/kan-t34",
             SEED_PATH,
             &registered,
+            false,
         )
         .expect("the preserved record still owns its path");
 
@@ -453,7 +485,7 @@ mod clone_guard_rules {
 
         for path in EQUIVALENT_CLONE_FORMS {
             assert_eq!(
-                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered),
+                clone_create_conflict(path, "fleet/kan-t34", SEED_PATH, &registered, false),
                 Some(CloneConflict::PathTaken {
                     path: path.to_owned(),
                     workspace_id: 5,
@@ -475,6 +507,7 @@ mod clone_guard_rules {
             "fleet/kan-t34",
             "/declared/kanban.seed",
             &registered,
+            false,
         )
         .expect("the registered Seed is judged by its normal form");
         assert_eq!(seed_conflict.reason(), "seed_path");
@@ -484,6 +517,7 @@ mod clone_guard_rules {
             "fleet/kan-t35",
             SEED_PATH,
             &registered,
+            false,
         )
         .expect("the registered path is judged by its normal form");
         assert_eq!(
@@ -507,6 +541,7 @@ mod clone_guard_rules {
             "fleet/kan-t31",
             SEED_PATH,
             &registered,
+            false,
         )
         .expect("a checked-out branch is a conflict");
 
@@ -541,6 +576,7 @@ mod clone_guard_rules {
                 "fleet/kan-t30",
                 SEED_PATH,
                 &registered,
+                false,
             ),
             None,
             "a retired record is history, not a live checkout"
@@ -557,10 +593,84 @@ mod clone_guard_rules {
                 "fleet/kan-t34",
                 SEED_PATH,
                 &registered,
+                false,
             ),
             None,
             "a Workspace with no observed checkout holds no branch"
         );
+    }
+
+    #[test]
+    fn an_existing_target_no_workspace_records_is_refused_and_named() {
+        let conflict = clone_create_conflict(
+            "/workspaces/kanban.fleet-t34",
+            "fleet/kan-t34",
+            SEED_PATH,
+            &[],
+            true,
+        )
+        .expect("an occupied target conflicts even when no Workspace records it");
+
+        assert_eq!(
+            conflict,
+            CloneConflict::TargetExists {
+                path: "/workspaces/kanban.fleet-t34".to_owned(),
+            }
+        );
+        assert_eq!(conflict.reason(), "target_exists");
+        assert!(
+            conflict
+                .to_string()
+                .contains("/workspaces/kanban.fleet-t34"),
+            "the refusal names the target: {conflict}"
+        );
+        assert!(
+            conflict.to_string().contains("registered to no Workspace"),
+            "the refusal names the rule: {conflict}"
+        );
+    }
+
+    #[test]
+    fn a_registered_holder_wins_over_a_bare_existing_target() {
+        let registered = vec![facts(2, "/workspaces/kanban.fleet-t34")];
+
+        let conflict = clone_create_conflict(
+            "/workspaces/kanban.fleet-t34",
+            "fleet/kan-t34",
+            SEED_PATH,
+            &registered,
+            true,
+        )
+        .expect("both conflict; the holder is named, not the bare existence");
+
+        assert_eq!(conflict.reason(), "path_taken");
+    }
+
+    #[test]
+    fn the_declared_seed_path_wins_over_an_existing_target() {
+        let conflict = clone_create_conflict(SEED_PATH, "fleet/kan-t34", SEED_PATH, &[], true)
+            .expect("the Seed rule is named, not the bare existence");
+
+        assert_eq!(conflict.reason(), "seed_path");
+    }
+
+    #[test]
+    fn an_existing_target_wins_over_a_branch_conflict() {
+        let registered = vec![
+            seed(1, SEED_PATH),
+            on_branch(facts(2, "/workspaces/kanban.fleet-t31"), "fleet/kan-t31"),
+        ];
+
+        let conflict = clone_create_conflict(
+            "/workspaces/kanban.fleet-t34",
+            "fleet/kan-t31",
+            SEED_PATH,
+            &registered,
+            true,
+        )
+        .expect("both conflict; the occupied path is judged first");
+
+        assert_eq!(conflict.reason(), "target_exists");
     }
 
     #[test]
@@ -575,6 +685,7 @@ mod clone_guard_rules {
             "fleet/kan-t31",
             SEED_PATH,
             &registered,
+            false,
         )
         .expect("both conflict; the path is judged first");
 

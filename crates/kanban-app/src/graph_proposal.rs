@@ -6,12 +6,15 @@
 //! DR-PS-17, DR-DE-06). Recording mutates no Ticket; approval's
 //! proposal move, Ticket pins, and timeline rows land in one storage
 //! write, so a graph approval never splits across a crash boundary.
+//! The gate also refuses a graph whose Tickets carry assignments
+//! referencing profiles the catalogue no longer offers (KAN-S7-US4,
+//! T38), so approval never pins a Ticket nothing can dispatch.
 
 use std::sync::Arc;
 
 use kanban_domain::{
     GraphProposalId, GraphProposalState, Project, SpecId, SpecNumber, StoryScope, TicketDependency,
-    TicketGraphProposal, TicketId, enforce_approvable,
+    TicketGraphProposal, TicketId, enforce_approvable, enforce_assignable,
 };
 use kanban_dto::{
     ApiError, TicketGraphApproveRequest, TicketGraphEdgeRecord, TicketGraphListQuery,
@@ -22,6 +25,7 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
+use crate::profile::ProfileStore;
 use crate::project::ProjectStore;
 use crate::spec::SpecStore;
 use crate::ticket::TicketStore;
@@ -156,6 +160,7 @@ struct GraphContext {
     tickets: Arc<dyn TicketStore>,
     specs: Arc<dyn SpecStore>,
     projects: Arc<dyn ProjectStore>,
+    profiles: Arc<dyn ProfileStore>,
 }
 
 impl GraphContext {
@@ -226,19 +231,22 @@ impl GraphContext {
 impl Core {
     /// Register the Ticket graph proposal operations against
     /// `proposals`, resolving Tickets through `tickets`, Specs through
-    /// `specs`, and Projects through `projects`.
+    /// `specs`, Projects through `projects`, and profile references
+    /// through `profiles`.
     pub fn register_graph_proposals(
         &mut self,
         proposals: Arc<dyn GraphProposalStore>,
         tickets: Arc<dyn TicketStore>,
         specs: Arc<dyn SpecStore>,
         projects: Arc<dyn ProjectStore>,
+        profiles: Arc<dyn ProfileStore>,
     ) -> Result<(), RegistrationError> {
         let context = GraphContext {
             proposals,
             tickets,
             specs,
             projects,
+            profiles,
         };
         self.register_command(
             "ticket.graph.propose",
@@ -380,6 +388,11 @@ impl CommandHandler for ApproveGraph {
             .0
             .scope(&project, spec.number(), version.content().user_stories())?;
         enforce_approvable(&proposal, &scope, &attached).map_err(refuse)?;
+        // The graph's shape holds; the assignments it would execute
+        // must resolve too, or approval pins Tickets nothing can
+        // dispatch (KAN-S7-US4).
+        let catalogue = crate::profile::catalogue_of(self.0.profiles.as_ref())?;
+        enforce_assignable(&catalogue, &attached).map_err(refuse)?;
         // Pin every Ticket the graph holds — each one exactly the
         // version the proposal named — and record the decision.
         let mut pinned = Vec::with_capacity(proposal.tickets().len());
@@ -591,6 +604,7 @@ pub(crate) mod testing {
     ) -> (TicketHarness, Arc<MemoryGraphProposals>) {
         let mut harness = ticket_harness_with_sink(events);
         let proposals = Arc::new(MemoryGraphProposals::sharing(harness.tickets.clone()));
+        let profiles = Arc::new(crate::profile::testing::MemoryProfiles::default());
         harness
             .core
             .register_graph_proposals(
@@ -598,6 +612,7 @@ pub(crate) mod testing {
                 harness.tickets.clone(),
                 harness.specs.clone(),
                 harness.projects.clone(),
+                profiles,
             )
             .expect("the graph operations register");
         (harness, proposals)

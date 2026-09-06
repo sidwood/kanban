@@ -224,6 +224,7 @@ fn assemble_core(
         ticket_store.clone(),
         spec_store.clone(),
         projects.clone(),
+        profile_store.clone(),
     )?;
     core.register_reassignment(ticket_store.clone(), projects.clone(), spec_store.clone())?;
     core.register_profiles(

@@ -15,6 +15,7 @@ use crate::catalog::exposed_operations;
 use crate::diagnostics::StoredProfileCatalogue;
 use crate::dispatch::Core;
 use crate::events::NoopEventSink;
+use crate::graph_proposal::testing::MemoryGraphProposals;
 use crate::mutation::MemoryIdempotencyStore;
 use crate::plan::testing::{MemoryPlans, MemoryProjects};
 use crate::profile::testing::MemoryProfiles;
@@ -69,6 +70,14 @@ fn harness() -> Harness {
         Arc::new(MemoryTicketEvidence::default()),
     )
     .expect("the ticket operations register");
+    core.register_graph_proposals(
+        Arc::new(MemoryGraphProposals::sharing(tickets.clone())),
+        tickets.clone(),
+        specs.clone(),
+        projects.clone(),
+        profiles.clone(),
+    )
+    .expect("the graph proposal operations register");
     core.register_profiles(profiles, tickets.clone(), projects)
         .expect("the profile operations register");
     Harness { core, tickets }
@@ -95,8 +104,8 @@ const STORIES: &str = "\
 ";
 
 /// Author one Spec on the seeded CORE Project with the story section
-/// given, returning its minted number.
-fn spec_with_stories(core: &Core, user_stories: &str, key: &str) -> u64 {
+/// given, returning its identity and minted number.
+fn spec_with_stories(core: &Core, user_stories: &str, key: &str) -> (u64, u64) {
     let created = core
         .command(
             "spec.create",
@@ -107,9 +116,27 @@ fn spec_with_stories(core: &Core, user_stories: &str, key: &str) -> u64 {
             }),
         )
         .expect("the Spec authors");
-    created["number"]
-        .as_u64()
-        .expect("the minted number is a number")
+    (
+        created["id"].as_u64().expect("the identity is a number"),
+        created["number"]
+            .as_u64()
+            .expect("the minted number is a number"),
+    )
+}
+
+/// Author one Spec claiming the fixture story and approve its version
+/// one, returning the identity a Ticket graph proposes against.
+fn approved_spec(core: &Core, key: &str) -> u64 {
+    let (id, _) = spec_with_stories(core, STORIES, key);
+    core.command(
+        "spec.version.approve",
+        &json!({
+            "mutation": { "optimistic_version": 1, "idempotency_key": format!("{key}-approve") },
+            "spec_id": id,
+        }),
+    )
+    .expect("the draft approves");
+    id
 }
 
 /// Create one Implementation Ticket attached to the Spec `spec` holds,
@@ -253,11 +280,11 @@ mod invalid_profile_diagnostics {
     #[test]
     fn a_reference_an_active_entry_answers_stays_clear() {
         let harness = harness();
-        let spec = spec_with_stories(&harness.core, STORIES, "key-spec");
+        let (spec, number) = spec_with_stories(&harness.core, STORIES, "key-spec");
         let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
         define(&harness.core, "standard", "key-profile");
         assign(&harness.core, ticket, "standard", 1, "key-assign");
-        let plan = plan_over(&harness.core, &[spec], "key-plan");
+        let plan = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan),
@@ -281,14 +308,14 @@ mod invalid_profile_diagnostics {
     #[test]
     fn a_retired_entry_leaves_the_reference_blocking() {
         let harness = harness();
-        let spec = spec_with_stories(&harness.core, STORIES, "key-spec");
+        let (spec, number) = spec_with_stories(&harness.core, STORIES, "key-spec");
         let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
         define(&harness.core, "standard", "key-profile");
         assign(&harness.core, ticket, "standard", 1, "key-assign");
         // Retirement never rewrites the assignment (DR-EP-05); the
         // reference now names an entry out of the assignable catalogue.
         retire(&harness.core, "standard", 1, "key-retire");
-        let plan = plan_over(&harness.core, &[spec], "key-plan");
+        let plan = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan),
@@ -312,10 +339,10 @@ mod invalid_profile_diagnostics {
     #[test]
     fn a_reference_no_entry_carries_blocks_on_its_own() {
         let harness = harness();
-        let spec = spec_with_stories(&harness.core, STORIES, "key-spec");
+        let (spec, number) = spec_with_stories(&harness.core, STORIES, "key-spec");
         let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
         plant_reference(&harness.tickets, ticket, "ghost");
-        let plan = plan_over(&harness.core, &[spec], "key-plan");
+        let plan = plan_over(&harness.core, &[number], "key-plan");
 
         assert_eq!(
             diagnose(&harness.core, plan)["invalid_profiles"],
@@ -328,8 +355,8 @@ mod invalid_profile_diagnostics {
     #[test]
     fn a_reference_outside_the_member_specs_stays_unreported() {
         let harness = harness();
-        let inside = spec_with_stories(&harness.core, STORIES, "key-spec-one");
-        let outside = spec_with_stories(
+        let (_, inside) = spec_with_stories(&harness.core, STORIES, "key-spec-one");
+        let (outside, _) = spec_with_stories(
             &harness.core,
             "- CORE-S2-US1: As an operator, I want linked criteria.\n",
             "key-spec-two",
@@ -345,5 +372,125 @@ mod invalid_profile_diagnostics {
             json!([]),
             "the Plan's graph carries only its member Specs' Tickets"
         );
+    }
+}
+
+/// One proposal request over `tickets` against the Spec's approved
+/// version one, returning the recorded proposal's identity.
+fn propose(core: &Core, spec: u64, tickets: Value, key: &str) -> u64 {
+    let recorded = core
+        .command(
+            "ticket.graph.propose",
+            &json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": key },
+                "spec_id": spec,
+                "spec_version": 1,
+                "tickets": tickets,
+                "edges": [],
+            }),
+        )
+        .expect("the graph records");
+    recorded["id"].as_u64().expect("the identity is a number")
+}
+
+/// One approval request for `proposal` at `version`.
+fn approve(
+    core: &Core,
+    proposal: u64,
+    version: u64,
+    key: &str,
+) -> Result<Value, kanban_dto::ApiError> {
+    core.command(
+        "ticket.graph.approve",
+        &json!({
+            "mutation": { "optimistic_version": version, "idempotency_key": key },
+            "proposal_id": proposal,
+        }),
+    )
+}
+
+#[cfg(test)]
+mod graph_approval_refusal {
+    use super::*;
+
+    #[test]
+    fn approval_refuses_a_retired_profile_reference() {
+        let harness = harness();
+        let spec = approved_spec(&harness.core, "key-spec");
+        let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
+        define(&harness.core, "standard", "key-profile");
+        assign(&harness.core, ticket, "standard", 1, "key-assign");
+        retire(&harness.core, "standard", 1, "key-retire");
+        let proposal = propose(&harness.core, spec, json!([ticket]), "key-propose");
+
+        let error = approve(&harness.core, proposal, 1, "key-gate")
+            .expect_err("a graph over a retired reference is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "the Ticket graph is not assignable; Ticket 1 references the profile `standard`, \
+             which is not in the catalogue"
+        );
+        let read = harness
+            .core
+            .query("ticket.get", &json!({ "ticket_id": ticket }))
+            .expect("the get serves");
+        assert_eq!(
+            read["pinned_spec_version"],
+            json!(null),
+            "the refusal pinned nothing"
+        );
+        let listed = harness
+            .core
+            .query("ticket.graph.list", &json!({ "spec_id": spec }))
+            .expect("the list serves");
+        assert_eq!(
+            listed["proposals"][0]["state"],
+            json!("proposed"),
+            "the proposal stands while the assignment is repaired"
+        );
+    }
+
+    #[test]
+    fn approval_refuses_a_reference_no_entry_carries() {
+        let harness = harness();
+        let spec = approved_spec(&harness.core, "key-spec");
+        let ticket = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket");
+        plant_reference(&harness.tickets, ticket, "ghost");
+        let proposal = propose(&harness.core, spec, json!([ticket]), "key-propose");
+
+        let error = approve(&harness.core, proposal, 1, "key-gate")
+            .expect_err("a graph over an unknown reference is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "the Ticket graph is not assignable; Ticket 1 references the profile `ghost`, \
+             which is not in the catalogue"
+        );
+    }
+
+    #[test]
+    fn approval_passes_over_assignable_and_absent_references() {
+        let harness = harness();
+        let spec = approved_spec(&harness.core, "key-spec");
+        let assigned = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket-1");
+        let bare = implementation(&harness.core, spec, "CORE-S1-US1", "key-ticket-2");
+        define(&harness.core, "standard", "key-profile");
+        assign(&harness.core, assigned, "standard", 1, "key-assign");
+        let proposal = propose(&harness.core, spec, json!([assigned, bare]), "key-propose");
+
+        let response = approve(&harness.core, proposal, 1, "key-gate")
+            .expect("an assignable reference, or none at all, holds");
+
+        assert_eq!(response["state"], json!("approved"));
+        for ticket in [assigned, bare] {
+            let read = harness
+                .core
+                .query("ticket.get", &json!({ "ticket_id": ticket }))
+                .expect("the get serves");
+            assert_eq!(read["pinned_spec_version"], json!(1));
+        }
     }
 }

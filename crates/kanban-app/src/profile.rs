@@ -69,7 +69,7 @@ fn transition(name: &ProfileName, action: &str, facts: Value) -> TimelineEnvelop
 
 /// The catalogue behind one command: the stored entries as the
 /// domain aggregate, so the collection rules decide the change.
-fn catalogue_of(store: &dyn ProfileStore) -> Result<ProfileCatalogue, ApiError> {
+pub(crate) fn catalogue_of(store: &dyn ProfileStore) -> Result<ProfileCatalogue, ApiError> {
     Ok(ProfileCatalogue::restore(store.list()?))
 }
 

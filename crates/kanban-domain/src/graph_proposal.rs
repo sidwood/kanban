@@ -452,17 +452,24 @@ impl fmt::Display for GraphApprovalRefusal {
 impl std::error::Error for GraphApprovalRefusal {}
 
 /// Refuse proposal edges that would close a cycle once joined with
-/// the dependencies the store already holds (DR-DE-02). Every
-/// registered edge — between the proposal's own Tickets or reaching
-/// out across Specs and Projects — stands when the proposal is
-/// recorded and again when it is approved, so the joined graph must
-/// stay acyclic at both gates. An edge the store already holds
-/// changes nothing and passes.
+/// the dependencies the store keeps past the install (DR-DE-02).
+/// `members` are the Tickets the proposing graph names: a registered
+/// edge between two of them is replaced when the graph is approved,
+/// so it joins nothing, while every edge crossing out of the
+/// membership — across Tickets, Specs, and Projects — stands at both
+/// the recording and the approval gate. An edge the store already
+/// holds changes nothing and passes.
 pub fn enforce_acyclic_with_registered(
     edges: &[TicketDependency],
+    members: &[TicketId],
     registered: &TicketDependencyGraph,
 ) -> Result<(), DependencyError> {
     let mut joined = registered.clone();
+    for replaced in registered.edges_within(members) {
+        joined
+            .remove(replaced.from(), replaced.to())
+            .expect("the cloned graph holds the edge it replaces");
+    }
     for edge in edges {
         match joined.add(edge.from(), edge.to()) {
             Ok(()) | Err(DependencyError::DuplicateEdge) => {}
@@ -491,11 +498,12 @@ pub fn enforce_acyclic_with_registered(
 ///   linked to stories can exist (DR-PS-13, DR-PS-15).
 /// - Story-covered: every User Story the version claims is covered by
 ///   a criterion of at least one Ticket in the graph (DR-PS-14).
-/// - Acyclic: the graph's edges, joined with every dependency the
-///   store already holds — including edges that cross out of the
-///   graph across Specs and Projects — close no cycle (DR-DE-02); an
-///   approved graph is installed as the executable graph, and a
-///   cyclic one never executes.
+/// - Acyclic: the graph's edges, joined with the dependencies the
+///   store keeps past the install — every registered edge crossing
+///   out of the graph across Specs and Projects, but none between
+///   the graph's own Tickets, which the install replaces — close no
+///   cycle (DR-DE-02); an approved graph is installed as the
+///   executable graph, and a cyclic one never executes.
 ///
 /// `attached` carries every Ticket attached to the Spec and
 /// `registered` the whole registered dependency graph, both as
@@ -531,7 +539,7 @@ pub fn enforce_approvable(
     if !outside.is_empty() {
         return Err(GraphApprovalRefusal::Incomplete { tickets: outside });
     }
-    enforce_acyclic_with_registered(proposal.edges(), registered)
+    enforce_acyclic_with_registered(proposal.edges(), proposal.tickets(), registered)
         .map_err(|reason| GraphApprovalRefusal::CyclicWithRegistered { reason })?;
     for ticket in &held {
         match ticket.body() {
@@ -1344,8 +1352,11 @@ mod graph_rules {
     #[test]
     fn recorded_edges_join_the_registered_graph_acyclically() {
         // The store already holds 2 → 1, registered separately before
-        // the graph was proposed. A proposal edge that reverses it is
-        // a two-edge cycle, refused before any human sees the graph.
+        // the graph was proposed. Between the graph's own Tickets the
+        // edge is replaced at approval, so it joins nothing and the
+        // reversal records; crossing out of the membership it stands,
+        // and the same reversal is a two-edge cycle, refused before
+        // any human sees the graph.
         let mut registered = TicketDependencyGraph::new();
         registered
             .add(ticket(2), ticket(1))
@@ -1354,27 +1365,42 @@ mod graph_rules {
         assert_eq!(
             enforce_acyclic_with_registered(
                 &[TicketDependency::new(ticket(1), ticket(2))],
+                &[ticket(1), ticket(2)],
+                &registered,
+            ),
+            Ok(()),
+            "a graph replaces the registered edges between its own Tickets"
+        );
+        assert_eq!(
+            enforce_acyclic_with_registered(
+                &[TicketDependency::new(ticket(1), ticket(2))],
+                &[ticket(1), ticket(3)],
                 &registered,
             ),
             Err(DependencyError::Cycle {
                 from: ticket(1),
                 to: ticket(2)
             }),
-            "a proposal never reverses a registered edge (DR-DE-02)"
+            "an edge crossing out of the membership stands and cycles (DR-DE-02)"
         );
         // An edge the store already holds changes nothing and passes,
         // as does a graph of no edges.
         assert_eq!(
             enforce_acyclic_with_registered(
                 &[TicketDependency::new(ticket(2), ticket(1))],
+                &[ticket(1), ticket(2)],
                 &registered,
             ),
             Ok(())
         );
-        assert_eq!(enforce_acyclic_with_registered(&[], &registered), Ok(()));
+        assert_eq!(
+            enforce_acyclic_with_registered(&[], &[ticket(1)], &registered),
+            Ok(())
+        );
         assert_eq!(
             enforce_acyclic_with_registered(
                 &[TicketDependency::new(ticket(1), ticket(2))],
+                &[ticket(1), ticket(2)],
                 &TicketDependencyGraph::new(),
             ),
             Ok(()),
@@ -1399,6 +1425,7 @@ mod graph_rules {
         assert_eq!(
             enforce_acyclic_with_registered(
                 &[TicketDependency::new(ticket(1), ticket(2))],
+                &[ticket(1), ticket(2)],
                 &registered,
             ),
             Err(DependencyError::Cycle {
@@ -1420,9 +1447,15 @@ mod graph_rules {
             vec![ticket(1), ticket(2), ticket(3)],
             vec![TicketDependency::new(ticket(1), ticket(2))],
         );
+        // Ticket 9 sits outside the graph, so its chain crosses out of
+        // the membership, survives the install, and still closes the
+        // cycle the gate must refuse.
         let mut registered = TicketDependencyGraph::new();
         registered
-            .add(ticket(2), ticket(1))
+            .add(ticket(2), ticket(9))
+            .expect("the fixture edge lands");
+        registered
+            .add(ticket(9), ticket(1))
             .expect("the fixture edge lands");
 
         let refusal = enforce_approvable(&proposal, &registered, &scope(), &attached).unwrap_err();
@@ -1442,6 +1475,28 @@ mod graph_rules {
             "the Ticket graph is not acyclic against the registered dependencies; \
              the dependency from Ticket 1 to Ticket 2 would close a cycle"
         );
+    }
+
+    #[test]
+    fn the_gate_replaces_a_registered_edge_between_the_graphs_own_tickets() {
+        let attached = [
+            implementation(1, 1, vec![criterion(1, 1, "Graphs record completely.")]),
+            implementation(2, 1, vec![criterion(1, 2, "Slices stay granular.")]),
+            implementation(3, 1, vec![criterion(1, 3, "Stories stay covered.")]),
+        ];
+        let proposal = proposal(
+            vec![ticket(1), ticket(2), ticket(3)],
+            vec![TicketDependency::new(ticket(1), ticket(2))],
+        );
+        // Both endpoints of the registered edge sit in the graph, so
+        // the install replaces it and the gate joins no cycle from it.
+        let mut registered = TicketDependencyGraph::new();
+        registered
+            .add(ticket(2), ticket(1))
+            .expect("the fixture edge lands");
+
+        enforce_approvable(&proposal, &registered, &scope(), &attached)
+            .expect("the install replaces the contradicting inside edge");
     }
 
     #[test]

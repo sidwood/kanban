@@ -157,6 +157,18 @@ impl TicketDependencyGraph {
             .collect()
     }
 
+    /// The registered edges running between two of `members`, in
+    /// insertion order. An approved Ticket graph's install replaces
+    /// exactly these edges; an edge crossing out of the membership
+    /// stands.
+    pub fn edges_within(&self, members: &[TicketId]) -> Vec<TicketDependency> {
+        self.edges
+            .iter()
+            .copied()
+            .filter(|edge| members.contains(&edge.from()) && members.contains(&edge.to()))
+            .collect()
+    }
+
     /// Whether `start` must land before `target` along some chain of
     /// edges — whether a path of dependencies leads from `start` to
     /// `target`.

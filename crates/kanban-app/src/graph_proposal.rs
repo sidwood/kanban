@@ -4,9 +4,11 @@
 //! pinning every Ticket in the graph to that Spec content version —
 //! and read the proposals of one Spec back (KAN-S4-US8, DR-PS-16,
 //! DR-PS-17, DR-DE-06). A proposal joins the dependencies the store
-//! already holds — inside its Tickets or crossing out of them across
-//! Specs and Projects — so recording and the gate both refuse edges
-//! that would close a cycle with them (DR-DE-02). Approval installs
+//! keeps past the install — the registered edges crossing out of its
+//! Tickets across Specs and Projects, never the edges between its own
+//! Tickets, which the install replaces — so recording and the gate
+//! both refuse edges that would close a cycle with them (DR-DE-02).
+//! Approval installs
 //! the proposal's edges as the executable graph for the Spec version
 //! in the DependencyStore, replacing every separately registered edge
 //! between the graph's own Tickets, so readiness and dispatch run the
@@ -363,11 +365,11 @@ impl CommandHandler for ProposeGraph {
             })
             .collect();
         TicketGraphProposal::validate(&tickets, &edges).map_err(refuse)?;
-        // The proposal joins the dependencies the store already holds,
-        // so it records only a graph that can join them without a
-        // cycle (DR-DE-02); approval rechecks against whatever the
-        // store holds by then.
-        enforce_acyclic_with_registered(&edges, &self.0.registered()?)
+        // The proposal joins the dependencies the store keeps past
+        // the install, so it records only a graph that can join them
+        // without a cycle (DR-DE-02); approval rechecks against
+        // whatever the store holds by then.
+        enforce_acyclic_with_registered(&edges, &tickets, &self.0.registered()?)
             .map_err(|reason| GraphProposalError::RegisteredCycle { reason })
             .map_err(refuse)?;
         let spec_id = spec.id();
@@ -439,8 +441,9 @@ impl CommandHandler for ApproveGraph {
             .0
             .scope(&project, spec.number(), version.content().user_stories())?;
         // The gate joins the dependencies the store holds now, not the
-        // ones it held at recording: edges registered in between still
-        // close cycles the gate must refuse.
+        // ones it held at recording: outside edges registered in
+        // between still close cycles the gate must refuse, while the
+        // edges between the graph's own Tickets are replaced below.
         let registered = self.0.registered()?;
         enforce_approvable(&proposal, &registered, &scope, &attached).map_err(refuse)?;
         // The graph's shape holds; the assignments it would execute
@@ -453,14 +456,7 @@ impl CommandHandler for ApproveGraph {
         // between the graph's own Tickets; edges crossing out of the
         // graph stand (Sid ruling 3). The timeline row records both
         // halves of the replacement.
-        let replaced: Vec<TicketDependency> = registered
-            .edges()
-            .iter()
-            .copied()
-            .filter(|held| {
-                proposal.tickets().contains(&held.from()) && proposal.tickets().contains(&held.to())
-            })
-            .collect();
+        let replaced: Vec<TicketDependency> = registered.edges_within(proposal.tickets());
         // Pin every Ticket the graph holds — each one exactly the
         // version the proposal named — and record the decision.
         let mut pinned = Vec::with_capacity(proposal.tickets().len());
@@ -964,15 +960,18 @@ mod registered_cycles {
     }
 
     #[test]
-    fn a_proposal_refuses_an_edge_that_reverses_a_registered_one() {
+    fn a_proposal_reverses_a_registered_edge_between_its_own_tickets() {
         let (harness, proposals) = graph_harness();
         let spec = approved_spec(&harness.core);
         let (first, second) = covered_pair(&harness.core, spec);
         // The operator separately registered second → first before
-        // the graph was proposed (DR-DE-02).
+        // the graph was proposed. Both Tickets sit in the graph, so
+        // the approval's install replaces the leftover edge instead
+        // of joining it; recording refuses no valid replacement
+        // (DR-DE-02).
         proposals.dependencies().seed_edge(edge(second, first));
 
-        let error = harness
+        let recorded = harness
             .core
             .command(
                 "ticket.graph.propose",
@@ -983,18 +982,15 @@ mod registered_cycles {
                     "key-propose",
                 ),
             )
-            .expect_err("the proposal reverses a registered edge");
+            .expect("the proposal replaces the registered inside edge");
 
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(recorded["state"], json!("proposed"));
+        let (edges, _) = proposals.dependencies().snapshot();
         assert_eq!(
-            error.message,
-            format!(
-                "a Ticket graph edge would close a cycle with the registered dependencies; \
-                 the dependency from Ticket {first} to Ticket {second} would close a cycle"
-            )
+            edges,
+            vec![edge(second, first)],
+            "recording installs nothing"
         );
-        let (rows, _) = proposals.snapshot();
-        assert!(rows.is_empty(), "the refusal recorded no proposal");
     }
 
     #[test]
@@ -1090,24 +1086,47 @@ mod registered_cycles {
             .expect("the graph records");
         let proposal = recorded["id"].as_u64().expect("the identity is a number");
 
-        // The operator then registers the opposite edge before the
-        // human gate decides; only the gate's recheck catches it.
-        harness
+        // The operator then chains the opposite direction through a
+        // Ticket outside the graph before the human gate decides.
+        // Outside edges survive the install, so only the gate's
+        // recheck catches the closing cycle.
+        let standing = harness
             .core
             .command(
-                "ticket.dependency.add",
+                "ticket.create",
                 &json!({
-                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-reverse" },
-                    "from_ticket": second,
-                    "to_ticket": first,
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-standing" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Landing drops the integration branch",
+                    "actual_behaviour": "The integration branch is dropped after a review lands.",
+                    "reporter_evidence": "The landing log names the drop immediately after the merge.",
                 }),
             )
-            .expect("the opposite edge registers against the unpinned Tickets");
+            .expect("the standing Bug quick captures");
+        let standing = standing["id"].as_u64().expect("the identity is a number");
+        for (key, from, to) in [
+            ("key-chain-second", second, standing),
+            ("key-chain-standing", standing, first),
+        ] {
+            harness
+                .core
+                .command(
+                    "ticket.dependency.add",
+                    &json!({
+                        "mutation": { "optimistic_version": 1, "idempotency_key": key },
+                        "from_ticket": from,
+                        "to_ticket": to,
+                    }),
+                )
+                .expect("the chain edge registers against the unpinned Tickets");
+        }
 
         let error = harness
             .core
             .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
-            .expect_err("the gate joins the edges registered after recording");
+            .expect_err("the gate joins the outside edges registered after recording");
 
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(
@@ -1138,7 +1157,7 @@ mod registered_cycles {
         let (edges, _) = proposals.dependencies().snapshot();
         assert_eq!(
             edges,
-            vec![edge(second, first)],
+            vec![edge(second, standing), edge(standing, first)],
             "the refusal installed nothing"
         );
     }
@@ -1334,6 +1353,81 @@ mod executable_graph {
                 "replaced_edges": [{ "from_ticket": second, "to_ticket": first }],
             }),
             "the timeline records the replacement"
+        );
+    }
+
+    #[test]
+    fn approval_replaces_a_contradicting_inside_edge() {
+        let (harness, proposals) = graph_harness();
+        let spec = approved_spec(&harness.core);
+        let (first, second) = covered_pair(&harness.core, spec);
+        // The proposal records against a clean store.
+        let recorded = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &propose(
+                    spec,
+                    json!([first, second]),
+                    json!([{ "from_ticket": first, "to_ticket": second }]),
+                    "key-propose",
+                ),
+            )
+            .expect("the graph records");
+        let proposal = recorded["id"].as_u64().expect("the identity is a number");
+
+        // The operator then registers the opposite edge between the
+        // graph's own Tickets before the gate decides. The install
+        // replaces it, so the gate joins no cycle from it.
+        harness
+            .core
+            .command(
+                "ticket.dependency.add",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-reverse" },
+                    "from_ticket": second,
+                    "to_ticket": first,
+                }),
+            )
+            .expect("the opposite edge registers against the unpinned Tickets");
+
+        harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the gate replaces the contradicting inside edge");
+
+        let (edges, _) = proposals.dependencies().snapshot();
+        assert_eq!(
+            edges,
+            vec![edge(first, second)],
+            "the executable graph is the proposal's, not the leftover's (AC3)"
+        );
+        let blocked = harness
+            .core
+            .query("ticket.readiness", &json!({ "ticket_id": second }))
+            .expect("the readiness serves");
+        assert_eq!(
+            blocked["blocked_by"],
+            json!([{ "Ticket": {
+                "from_ticket_id": first,
+                "from_project_id": 1,
+                "from_number": first,
+                "from_state": "draft",
+            }}]),
+            "readiness runs on the installed graph"
+        );
+        assert_eq!(
+            approval_facts(&proposals),
+            json!({
+                "action": "graph_approved",
+                "proposal_id": proposal,
+                "spec_id": spec,
+                "spec_version": 1,
+                "tickets": [first, second],
+                "installed_edges": [{ "from_ticket": first, "to_ticket": second }],
+                "replaced_edges": [{ "from_ticket": second, "to_ticket": first }],
+            }),
+            "the timeline records both halves of the replacement"
         );
     }
 

@@ -29,6 +29,7 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod reassignment;
+pub mod review_config;
 pub mod rulings;
 pub mod run;
 pub mod saved_views;
@@ -88,6 +89,7 @@ pub use mutation::{
 pub use plan::PlanStore;
 pub use profile::{ProfileStore, duplicate_profile_name_error};
 pub use project::{GitObservation, ProjectStore, duplicate_code_error};
+pub use review_config::ReviewConfigStore;
 pub use rulings::{RulingStore, already_superseded_ruling_error};
 pub use run::{RunMint, RunStore};
 pub use saved_views::{SavedViewStore, already_taken_view_name_error};

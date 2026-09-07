@@ -442,6 +442,20 @@ define_exposed_catalogue! {
         mcp: "ticket_review",
         description: "Record one explicit review decision resolving an in-review Ticket.",
     },
+    "ticket.review.configure" => {
+        kind: Command,
+        request: "TicketReviewConfigureRequest",
+        response: "TicketReviewConfigRecord",
+        mcp: "ticket_review_configure",
+        description: "Configure one Ticket's staged review: ordered stages of parallel slots, required or optional, occupied by a human or a named profile. Separation against the implementer validates here, at configuration time.",
+    },
+    "ticket.review.config" => {
+        kind: Query,
+        request: "TicketReviewConfigQuery",
+        response: "TicketReviewConfigResponse",
+        mcp: "ticket_review_config",
+        description: "Read one Ticket's stored review configuration, or nothing while the Ticket carries none.",
+    },
     "ticket.prioritise" => {
         kind: Command,
         request: "TicketPrioritiseRequest",

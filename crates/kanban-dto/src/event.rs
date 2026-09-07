@@ -14,6 +14,7 @@ use crate::lane::LaneRecord;
 use crate::plan::PlanRecord;
 use crate::profile::ProfileRecord;
 use crate::project::ProjectRecord;
+use crate::review::TicketReviewConfigRecord;
 use crate::run::RunRecord;
 use crate::spec::SpecRecord;
 use crate::ticket::TicketRecord;
@@ -175,6 +176,10 @@ define_live_event_catalogue! {
     TicketEdited @ "ticket.edited" => {
         payload: "TicketRecord",
         description: "A Ticket's title, slice description, or priority was edited.",
+    },
+    TicketReviewConfigured @ "ticket.review.configured" => {
+        payload: "TicketReviewConfigRecord",
+        description: "A Ticket's staged review configuration was created or replaced whole.",
     },
     ProfileDefined @ "profile.defined" => {
         payload: "ProfileRecord",
@@ -379,6 +384,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: Box<TicketRecord>,
     },
+    TicketReviewConfigured {
+        sequence: u64,
+        payload: TicketReviewConfigRecord,
+    },
     ProfileDefined {
         sequence: u64,
         payload: ProfileRecord,
@@ -501,6 +510,7 @@ impl LiveEvent {
             Self::TicketAssigned { .. } => LiveEventName::TicketAssigned,
             Self::TicketStateChanged { .. } => LiveEventName::TicketStateChanged,
             Self::TicketEdited { .. } => LiveEventName::TicketEdited,
+            Self::TicketReviewConfigured { .. } => LiveEventName::TicketReviewConfigured,
             Self::ProfileDefined { .. } => LiveEventName::ProfileDefined,
             Self::ProfileUpdated { .. } => LiveEventName::ProfileUpdated,
             Self::ProfileRetired { .. } => LiveEventName::ProfileRetired,
@@ -551,6 +561,7 @@ impl LiveEvent {
             | Self::TicketAssigned { sequence, .. }
             | Self::TicketStateChanged { sequence, .. }
             | Self::TicketEdited { sequence, .. }
+            | Self::TicketReviewConfigured { sequence, .. }
             | Self::ProfileDefined { sequence, .. }
             | Self::ProfileUpdated { sequence, .. }
             | Self::ProfileRetired { sequence, .. }
@@ -700,6 +711,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::TicketStateChanged => LiveEvent::TicketStateChanged {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketReviewConfigured => LiveEvent::TicketReviewConfigured {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

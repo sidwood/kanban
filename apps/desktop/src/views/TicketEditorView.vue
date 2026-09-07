@@ -31,6 +31,7 @@ import {
   type BugQualificationDraft,
 } from '../stores/bug-editor'
 import type { TicketRecord } from '@kanban/contracts'
+import ReviewConfigEditor from '../components/ReviewConfigEditor.vue'
 
 const transport = inject(kanbanTransportKey)
 const projects = useProjectRegisterStore()
@@ -597,6 +598,12 @@ const kindLabels: Record<string, string> = {
         </button>
       </form>
     </section>
+
+    <ReviewConfigEditor
+      v-if="editor.loaded && editor.tickets.length > 0"
+      :tickets="editor.tickets"
+      :project-code="projectCode"
+    />
 
     <section
       v-if="bugs.length > 0"

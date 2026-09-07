@@ -44,7 +44,10 @@ use crate::export::{
     ExportDriftEntry, ExportDriftQuery, ExportDriftResponse, ExportDriftStatus,
     ExportRenderRequest, ExportRenderResponse,
 };
-use crate::health::{HealthQuery, HealthResponse};
+use crate::health::{
+    DatabaseHealth, HealthQuery, HealthResponse, HerdrHealth, HerdrSessionHealth, McpHealth,
+    SchedulerHealth, ServiceHealth, WorkspaceHealthCounts, WorkspacesHealth,
+};
 use crate::herdr::{
     HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
     HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
@@ -166,6 +169,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(CoverageCriterionProposal),
         ),
         ("CriterionRefusal", schema_for!(CriterionRefusal)),
+        ("DatabaseHealth", schema_for!(DatabaseHealth)),
         ("ErrorCode", schema_for!(ErrorCode)),
         ("DeferralIdentity", schema_for!(DeferralIdentity)),
         (
@@ -216,7 +220,9 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(HerdrDefaultsUpdateRequest),
         ),
         ("HerdrGlobalDefaults", schema_for!(HerdrGlobalDefaults)),
+        ("HerdrHealth", schema_for!(HerdrHealth)),
         ("HerdrProjectSettings", schema_for!(HerdrProjectSettings)),
+        ("HerdrSessionHealth", schema_for!(HerdrSessionHealth)),
         ("HerdrSettingsGetQuery", schema_for!(HerdrSettingsGetQuery)),
         (
             "HerdrSettingsGetResponse",
@@ -244,6 +250,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "InitiativeRenameRequest",
             schema_for!(InitiativeRenameRequest),
         ),
+        ("McpHealth", schema_for!(McpHealth)),
         ("MutationContext", schema_for!(MutationContext)),
         ("PlanActivateRequest", schema_for!(PlanActivateRequest)),
         ("PlanArchiveRequest", schema_for!(PlanArchiveRequest)),
@@ -279,6 +286,8 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("ProfileRecord", schema_for!(ProfileRecord)),
         ("ProfileRetireRequest", schema_for!(ProfileRetireRequest)),
         ("ProfileUpdateRequest", schema_for!(ProfileUpdateRequest)),
+        ("SchedulerHealth", schema_for!(SchedulerHealth)),
+        ("ServiceHealth", schema_for!(ServiceHealth)),
         ("SpecContent", schema_for!(SpecContent)),
         ("SpecContentState", schema_for!(SpecContentState)),
         (
@@ -474,6 +483,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TimelineQueryResponse", schema_for!(TimelineQueryResponse)),
         ("TimelineScope", schema_for!(TimelineScope)),
         ("WorkspaceCheckoutDto", schema_for!(WorkspaceCheckoutDto)),
+        ("WorkspaceHealthCounts", schema_for!(WorkspaceHealthCounts)),
         ("WorkspaceHealthDto", schema_for!(WorkspaceHealthDto)),
         ("WorkspaceListQuery", schema_for!(WorkspaceListQuery)),
         ("WorkspaceListResponse", schema_for!(WorkspaceListResponse)),
@@ -495,6 +505,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(WorkspaceRetireRequest),
         ),
         ("WorkspaceReuseDto", schema_for!(WorkspaceReuseDto)),
+        ("WorkspacesHealth", schema_for!(WorkspacesHealth)),
         ("LaneRecord", schema_for!(LaneRecord)),
         ("LaneCreateRequest", schema_for!(LaneCreateRequest)),
         (

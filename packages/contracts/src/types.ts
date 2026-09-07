@@ -171,6 +171,11 @@ export type CoverageCriterionProposal = {
   stories: string[];
 };
 export type CriterionRefusal = 'no_outcome' | 'unlinked' | 'technical_command' | 'malformed_story' | 'foreign_story';
+export type DatabaseHealth = {
+  journal_mode: string;
+  last_change_at?: string | null;
+  schema_version: number;
+};
 export type DeferralIdentity = {
   id: number;
 };
@@ -307,7 +312,13 @@ export type ExportRenderResponse = {
 export type HealthQuery = Record<string, never>;
 export type HealthResponse = {
   connected: boolean;
+  database: DatabaseHealth;
+  herdr: HerdrHealth;
+  mcp: McpHealth;
+  scheduler: SchedulerHealth;
+  service: ServiceHealth;
   service_version: string;
+  workspaces: WorkspacesHealth;
 };
 export type HerdrConnectionDiagnostics = {
   connected: boolean;
@@ -333,6 +344,9 @@ export type HerdrGlobalDefaults = {
   stall_deadline_secs: number;
   version: number;
 };
+export type HerdrHealth = {
+  sessions: HerdrSessionHealth[];
+};
 export type HerdrProjectSettings = {
   missing_result_deadline_secs: number;
   polling_fallback_enabled: boolean;
@@ -340,6 +354,10 @@ export type HerdrProjectSettings = {
   reconciliation_interval_secs: number;
   stall_deadline_secs: number;
   version: number;
+};
+export type HerdrSessionHealth = {
+  diagnostics: HerdrConnectionDiagnostics;
+  project_id: number;
 };
 export type HerdrSettingsGetQuery = {
   project_id: number;
@@ -417,6 +435,9 @@ export type LaneWorkspaceReleaseRequest = {
   mutation: MutationContext;
 };
 export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
+export type McpHealth = {
+  exposed_tools: number;
+};
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
@@ -669,6 +690,12 @@ export type RunRecord = {
   version: number;
 };
 export type RunStatus = 'executing';
+export type SchedulerHealth = {
+  last_backup_success_at?: string | null;
+};
+export type ServiceHealth = {
+  started_at: string;
+};
 export type SpecContent = {
   further_notes: string;
   implementation_decisions: string;
@@ -1072,6 +1099,14 @@ export type TimelineScope = 'global' | {
   project: number;
 };
 export type WorkspaceCheckoutDto = 'branch' | 'detached';
+export type WorkspaceHealthCounts = {
+  assigned: number;
+  available: number;
+  dirty: number;
+  missing: number;
+  retired: number;
+  unobserved: number;
+};
 export type WorkspaceHealthDto = 'available' | 'assigned' | 'dirty' | 'missing' | 'retired' | 'unobserved';
 export type WorkspaceListQuery = {
   project_id: number;
@@ -1116,4 +1151,8 @@ export type WorkspaceReuseDto = {
   free_of_unlanded_commits: boolean;
   reusable: boolean;
   unassigned: boolean;
+};
+export type WorkspacesHealth = {
+  by_health: WorkspaceHealthCounts;
+  last_change_at?: string | null;
 };

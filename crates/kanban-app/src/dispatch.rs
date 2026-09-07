@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use kanban_dto::{ApiError, HealthResponse};
+use kanban_dto::ApiError;
 use serde_json::Value;
 
 use crate::catalog::{OperationDescriptor, OperationKind};
@@ -76,19 +76,16 @@ impl Core {
         }
     }
 
-    /// A core serving the exposed catalog; health is always wired.
+    /// A core serving the exposed catalog, wiring `health` under
+    /// `health.get`: the wiring layer owns the component probes, so
+    /// the answer reports the state the running core actually holds.
     pub fn with_health(
-        service_version: &str,
+        health: Arc<dyn QueryHandler>,
         idempotency: Arc<dyn IdempotencyStore>,
         events: Arc<dyn EventSink>,
     ) -> Result<Self, RegistrationError> {
         let mut core = Self::new(crate::catalog::exposed_operations(), idempotency, events);
-        core.register_query(
-            "health.get",
-            Arc::new(HealthQueryHandler {
-                service_version: service_version.to_owned(),
-            }),
-        )?;
+        core.register_query("health.get", health)?;
         Ok(core)
     }
 
@@ -310,22 +307,6 @@ impl PendingEffects {
     }
 }
 
-/// Serves `health.get`: the core answering is the core connected.
-struct HealthQueryHandler {
-    service_version: String,
-}
-
-impl QueryHandler for HealthQueryHandler {
-    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        crate::mutation::parse_payload::<kanban_dto::HealthQuery>(payload)?;
-        let response = HealthResponse {
-            connected: true,
-            service_version: self.service_version.clone(),
-        };
-        serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -485,10 +466,41 @@ mod tests {
         }
     }
 
+    /// A health handler standing in for the wiring layer's component
+    /// probes: it holds the typed query surface — unknown fields are
+    /// rejected — and answers one canned component report.
+    struct CannedHealth;
+
+    impl QueryHandler for CannedHealth {
+        fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+            crate::mutation::parse_payload::<kanban_dto::HealthQuery>(payload)?;
+            Ok(json!({
+                "connected": true,
+                "service_version": "0.1.0-test",
+                "service": { "started_at": "2026-09-07T09:00:00Z" },
+                "database": {
+                    "journal_mode": "wal",
+                    "schema_version": 1,
+                    "last_change_at": "2026-09-07T09:00:01Z",
+                },
+                "scheduler": { "last_backup_success_at": "2026-09-07T09:00:02Z" },
+                "mcp": { "exposed_tools": 1 },
+                "herdr": { "sessions": [] },
+                "workspaces": {
+                    "by_health": {
+                        "available": 0, "assigned": 0, "dirty": 0,
+                        "missing": 0, "retired": 0, "unobserved": 0,
+                    },
+                    "last_change_at": null,
+                },
+            }))
+        }
+    }
+
     #[test]
     fn health_query_round_trips() {
         let core = Core::with_health(
-            "0.1.0-test",
+            Arc::new(CannedHealth),
             Arc::new(MemoryIdempotencyStore::new()),
             Arc::new(NoopEventSink),
         )
@@ -498,14 +510,33 @@ mod tests {
 
         assert_eq!(
             response,
-            json!({ "connected": true, "service_version": "0.1.0-test" })
+            json!({
+                "connected": true,
+                "service_version": "0.1.0-test",
+                "service": { "started_at": "2026-09-07T09:00:00Z" },
+                "database": {
+                    "journal_mode": "wal",
+                    "schema_version": 1,
+                    "last_change_at": "2026-09-07T09:00:01Z",
+                },
+                "scheduler": { "last_backup_success_at": "2026-09-07T09:00:02Z" },
+                "mcp": { "exposed_tools": 1 },
+                "herdr": { "sessions": [] },
+                "workspaces": {
+                    "by_health": {
+                        "available": 0, "assigned": 0, "dirty": 0,
+                        "missing": 0, "retired": 0, "unobserved": 0,
+                    },
+                    "last_change_at": null,
+                },
+            })
         );
     }
 
     #[test]
     fn the_default_core_serves_catalogued_operations_only() {
         let core = Core::with_health(
-            "0.1.0-test",
+            Arc::new(CannedHealth),
             Arc::new(MemoryIdempotencyStore::new()),
             Arc::new(NoopEventSink),
         )
@@ -580,7 +611,7 @@ mod tests {
     #[test]
     fn a_query_rejects_unknown_fields() {
         let core = Core::with_health(
-            "0.1.0-test",
+            Arc::new(CannedHealth),
             Arc::new(MemoryIdempotencyStore::new()),
             Arc::new(NoopEventSink),
         )

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The service component: the core process answering the query.",
+  "properties": {
+    "started_at": {
+      "description": "When this core process started serving; its state last changed by coming into being.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "started_at"
+  ],
+  "title": "ServiceHealth",
+  "type": "object"
+}

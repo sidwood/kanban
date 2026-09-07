@@ -33,7 +33,25 @@ function project(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
 function harness(projects: ProjectRecord[] = [project()]) {
   const query = vi.fn(async (name: string, request?: unknown) => {
     if (name === 'health.get') {
-      return { connected: true, service_version: '0.1.0' } satisfies HealthResponse
+      return {
+        connected: true,
+        service_version: '0.1.0',
+        service: { started_at: '2026-09-07T09:00:00Z' },
+        database: { journal_mode: 'wal', schema_version: 1 },
+        scheduler: {},
+        mcp: { exposed_tools: 1 },
+        herdr: { sessions: [] },
+        workspaces: {
+          by_health: {
+            available: 0,
+            assigned: 0,
+            dirty: 0,
+            missing: 0,
+            retired: 0,
+            unobserved: 0,
+          },
+        },
+      } satisfies HealthResponse
     }
     if (name === 'project.list') {
       return { projects } satisfies ProjectListResponse

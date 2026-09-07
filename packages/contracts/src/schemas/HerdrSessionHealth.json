@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "HerdrConnectionDiagnostics": {
+      "additionalProperties": false,
+      "description": "Connection diagnostics for one Project's Herdr session.",
+      "properties": {
+        "connected": {
+          "description": "Whether the per-session socket is connected.",
+          "type": "boolean"
+        },
+        "herdr_workspace": {
+          "description": "The required target Herdr workspace, resolved inside the effective session.",
+          "type": "string"
+        },
+        "last_error": {
+          "description": "The last connection or mapping error, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_snapshot_at": {
+          "description": "When the last full snapshot was captured.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product_workspace": {
+          "description": "The product Seed Workspace this session maps to.",
+          "type": "string"
+        },
+        "session_name": {
+          "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "connected",
+        "herdr_workspace",
+        "product_workspace"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One observed Herdr session, named by the Project it serves.",
+  "properties": {
+    "diagnostics": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/HerdrConnectionDiagnostics"
+        }
+      ],
+      "description": "The binding's live connection diagnostics, the same shape `herdr.settings.get` serves."
+    },
+    "project_id": {
+      "description": "The Project whose Herdr binding this session is.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "diagnostics",
+    "project_id"
+  ],
+  "title": "HerdrSessionHealth",
+  "type": "object"
+}

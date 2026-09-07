@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The Workspace census across every Project, one count per health state in the closed vocabulary.",
+  "properties": {
+    "assigned": {
+      "description": "Held by a Lane.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "available": {
+      "description": "Present, clean, and unassigned.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "dirty": {
+      "description": "Present with an unclean working tree.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "missing": {
+      "description": "The path is absent or not a worktree of the repository.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "retired": {
+      "description": "Retired by the operator; the record is preserved.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "unobserved": {
+      "description": "Present, but the last git status read could not complete.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "assigned",
+    "available",
+    "dirty",
+    "missing",
+    "retired",
+    "unobserved"
+  ],
+  "title": "WorkspaceHealthCounts",
+  "type": "object"
+}

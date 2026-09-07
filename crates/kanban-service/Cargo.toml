@@ -16,6 +16,7 @@ kanban-transport = { workspace = true }
 libc = "0.2"
 serde_json = { workspace = true }
 thiserror = "2.0.20"
+time = { workspace = true }
 
 [dev-dependencies]
 # The herdr fixture reaches this crate only through this dev-dependency

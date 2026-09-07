@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The scheduler component: the daily backup loop the core owns.",
+  "properties": {
+    "last_backup_success_at": {
+      "description": "When the daily backup last succeeded, from the scheduler's persisted state; absent until one has.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "SchedulerHealth",
+  "type": "object"
+}

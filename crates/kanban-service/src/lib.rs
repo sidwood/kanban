@@ -7,6 +7,7 @@ pub mod diagnostics;
 pub mod export_files;
 pub mod fleet_clone;
 pub mod git_observer;
+pub mod health;
 pub mod herdr;
 pub mod logs;
 pub mod redaction;
@@ -179,9 +180,18 @@ fn assemble_core(
     ));
     let database = Arc::new(database);
     let timeline_store = Arc::new(StorageTimelineStore::new(database.clone()));
-    let service_version = env!("CARGO_PKG_VERSION");
-    let mut core = Core::with_health(service_version, idempotency_store, events)?;
     let herdr = HerdrObserver::with_observation(database.clone(), herdr_socket_root, observation);
+    // One diagnostics source serves both `herdr.settings.get` and the
+    // health probe, so both report the same live session state.
+    let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
+    let health = Arc::new(health::ComponentHealthHandler::new(
+        database.clone(),
+        data_dir.to_path_buf(),
+        diagnostics.clone(),
+        project_store.clone(),
+        workspace_store.clone(),
+    ));
+    let mut core = Core::with_health(health.clone(), idempotency_store, events)?;
     core.register_initiatives(initiative_store.clone())?;
     let projects = project_store.clone();
     core.register_projects(
@@ -305,13 +315,12 @@ fn assemble_core(
     )?;
     core.register_query(
         "diagnostics.export",
-        Arc::new(DiagnosticsExportHandler::new(data_dir, service_version)),
+        Arc::new(DiagnosticsExportHandler::new(data_dir, health)),
     )?;
     let projects = project_store
         .list()
         .map_err(|cause| ServiceError::ProjectLoad { cause })?;
     herdr.observe_projects(&projects);
-    let diagnostics = Arc::new(LiveHerdrDiagnostics::new(&herdr));
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
     Ok((database, core, herdr, activation_pass))
 }
@@ -564,11 +573,21 @@ mod tests {
         let mut client = Client::connect(core.socket_path());
         let health = client.query("health.get");
 
-        assert_eq!(
-            health,
-            json!({ "connected": true, "service_version": env!("CARGO_PKG_VERSION") }),
-            "the boot smoke test drives the real socket"
-        );
+        assert_eq!(health["connected"], json!(true));
+        assert_eq!(health["service_version"], json!(env!("CARGO_PKG_VERSION")));
+        for component in [
+            "service",
+            "database",
+            "scheduler",
+            "mcp",
+            "herdr",
+            "workspaces",
+        ] {
+            assert!(
+                health[component].is_object(),
+                "the boot smoke test reports the {component} component over the real socket: {health}"
+            );
+        }
 
         core.shutdown();
     }

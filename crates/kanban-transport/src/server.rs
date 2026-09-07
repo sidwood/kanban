@@ -764,7 +764,7 @@ mod tests {
         let server = SocketServer::bind(dir.path()).expect("the server binds");
         let broker = server.broker();
         let core = Core::with_health(
-            "0.1.0-test",
+            Arc::new(CannedHealth),
             Arc::new(MemoryIdempotencyStore::new()),
             broker,
         )
@@ -777,11 +777,52 @@ mod tests {
         assert_eq!(
             response,
             ResponseFrame::Response {
-                payload: json!({ "connected": true, "service_version": "0.1.0-test" })
+                payload: json!({
+                    "connected": true,
+                    "service_version": "0.1.0-test",
+                    "service": { "started_at": "2026-09-07T09:00:00Z" },
+                    "database": { "journal_mode": "wal", "schema_version": 1 },
+                    "scheduler": {},
+                    "mcp": { "exposed_tools": 1 },
+                    "herdr": { "sessions": [] },
+                    "workspaces": {
+                        "by_health": {
+                            "available": 0, "assigned": 0, "dirty": 0,
+                            "missing": 0, "retired": 0, "unobserved": 0,
+                        },
+                    },
+                })
             }
         );
 
         handle.shutdown();
+    }
+
+    /// A stand-in health handler: the transport round trip carries
+    /// whatever the wiring layer answers.
+    struct CannedHealth;
+
+    impl kanban_app::QueryHandler for CannedHealth {
+        fn handle(
+            &self,
+            _payload: &serde_json::Value,
+        ) -> Result<serde_json::Value, kanban_dto::ApiError> {
+            Ok(json!({
+                "connected": true,
+                "service_version": "0.1.0-test",
+                "service": { "started_at": "2026-09-07T09:00:00Z" },
+                "database": { "journal_mode": "wal", "schema_version": 1 },
+                "scheduler": {},
+                "mcp": { "exposed_tools": 1 },
+                "herdr": { "sessions": [] },
+                "workspaces": {
+                    "by_health": {
+                        "available": 0, "assigned": 0, "dirty": 0,
+                        "missing": 0, "retired": 0, "unobserved": 0,
+                    },
+                },
+            }))
+        }
     }
 
     #[test]

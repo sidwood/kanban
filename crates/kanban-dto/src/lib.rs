@@ -75,7 +75,10 @@ pub use export::{
     ExportDriftEntry, ExportDriftQuery, ExportDriftResponse, ExportDriftStatus,
     ExportRenderRequest, ExportRenderResponse,
 };
-pub use health::{HealthQuery, HealthResponse};
+pub use health::{
+    DatabaseHealth, HealthQuery, HealthResponse, HerdrHealth, HerdrSessionHealth, McpHealth,
+    SchedulerHealth, ServiceHealth, WorkspaceHealthCounts, WorkspacesHealth,
+};
 pub use herdr::{
     HerdrConnectionDiagnostics, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse,
     HerdrDefaultsUpdateRequest, HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery,
@@ -179,6 +182,19 @@ mod tests {
 
         assert!(properties.contains_key("service_version"));
         assert!(properties.contains_key("connected"));
+        for component in [
+            "service",
+            "database",
+            "scheduler",
+            "mcp",
+            "herdr",
+            "workspaces",
+        ] {
+            assert!(
+                properties.contains_key(component),
+                "HealthResponse reports the {component} component"
+            );
+        }
     }
 
     #[test]
@@ -214,6 +230,7 @@ mod tests {
                 "CommentRevisionsResponse",
                 "CoverageCriterionProposal",
                 "CriterionRefusal",
+                "DatabaseHealth",
                 "ErrorCode",
                 "DeferralIdentity",
                 "DiagnosticsExportQuery",
@@ -246,7 +263,9 @@ mod tests {
                 "HerdrDefaultsGetResponse",
                 "HerdrDefaultsUpdateRequest",
                 "HerdrGlobalDefaults",
+                "HerdrHealth",
                 "HerdrProjectSettings",
+                "HerdrSessionHealth",
                 "HerdrSettingsGetQuery",
                 "HerdrSettingsGetResponse",
                 "HerdrSettingsUpdateRequest",
@@ -256,6 +275,7 @@ mod tests {
                 "InitiativeListResponse",
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
+                "McpHealth",
                 "MutationContext",
                 "PlanActivateRequest",
                 "PlanArchiveRequest",
@@ -288,6 +308,8 @@ mod tests {
                 "ProfileRecord",
                 "ProfileRetireRequest",
                 "ProfileUpdateRequest",
+                "SchedulerHealth",
+                "ServiceHealth",
                 "SpecContent",
                 "SpecContentState",
                 "SpecContentUpdateRequest",
@@ -387,6 +409,7 @@ mod tests {
                 "TimelineQueryResponse",
                 "TimelineScope",
                 "WorkspaceCheckoutDto",
+                "WorkspaceHealthCounts",
                 "WorkspaceHealthDto",
                 "WorkspaceListQuery",
                 "WorkspaceListResponse",
@@ -396,6 +419,7 @@ mod tests {
                 "WorkspaceRegisterRequest",
                 "WorkspaceRetireRequest",
                 "WorkspaceReuseDto",
+                "WorkspacesHealth",
                 "LaneRecord",
                 "LaneCreateRequest",
                 "LaneWorkspaceAssignRequest",

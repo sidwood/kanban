@@ -13,14 +13,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kanban_app::QueryHandler;
-use kanban_dto::{ApiError, DiagnosticsExportQuery, DiagnosticsExportResponse, HealthResponse};
+use kanban_dto::{ApiError, DiagnosticsExportQuery, DiagnosticsExportResponse};
 use serde_json::Value;
 
 use kanban_storage::paths::{diagnostics_dir, logs_dir};
 
+use crate::health::ComponentHealthHandler;
 use crate::redaction::{RedactionSourceError, Redactor, read_managed_config};
 
 /// Why a diagnostic bundle could not be exported.
@@ -124,16 +126,16 @@ pub fn export_diagnostic_bundle(
 /// broader file access rides with it.
 pub struct DiagnosticsExportHandler {
     data_dir: PathBuf,
-    service_version: String,
+    health: Arc<ComponentHealthHandler>,
 }
 
 impl DiagnosticsExportHandler {
-    /// A handler exporting from `data_dir`, answering health with the
-    /// same version the core serves.
-    pub fn new(data_dir: &Path, service_version: &str) -> Self {
+    /// A handler exporting from `data_dir`, answering health through
+    /// the same probe the core serves under `health.get`.
+    pub fn new(data_dir: &Path, health: Arc<ComponentHealthHandler>) -> Self {
         Self {
             data_dir: data_dir.to_path_buf(),
-            service_version: service_version.to_owned(),
+            health,
         }
     }
 }
@@ -141,11 +143,8 @@ impl DiagnosticsExportHandler {
 impl QueryHandler for DiagnosticsExportHandler {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         kanban_app::parse_payload::<DiagnosticsExportQuery>(payload)?;
-        let health = serde_json::to_value(HealthResponse {
-            connected: true,
-            service_version: self.service_version.clone(),
-        })
-        .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let health = serde_json::to_value(self.health.current()?)
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
         let bundle = export_diagnostic_bundle(&self.data_dir, &health)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let response = DiagnosticsExportResponse {
@@ -189,6 +188,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{DiagnosticsExportHandler, export_diagnostic_bundle};
+    use crate::health::ComponentHealthHandler;
     use crate::logs::{LogLevel, LogRecord, LogRotation, LogWriter};
     use crate::redaction::REDACTED;
     use crate::test_client::Client;
@@ -712,13 +712,29 @@ mod tests {
         );
     }
 
+    /// A component health probe over the fixture's own prepared
+    /// database: the export handler ships the same answer `health.get`
+    /// serves, so its tests drive the same probe the core wires.
+    fn health_probe(dir: &TempDir) -> std::sync::Arc<ComponentHealthHandler> {
+        let database = crate::prepare_database(dir.path()).expect("the database prepares");
+        let projects = std::sync::Arc::new(kanban_storage::SqliteProjectStore::new(&database));
+        let workspaces = std::sync::Arc::new(kanban_storage::SqliteWorkspaceStore::new(&database));
+        std::sync::Arc::new(ComponentHealthHandler::new(
+            std::sync::Arc::new(database),
+            dir.path().to_path_buf(),
+            std::sync::Arc::new(crate::herdr::LiveHerdrDiagnostics::empty()),
+            projects,
+            workspaces,
+        ))
+    }
+
     /// The typed handler is the narrow boundary: it rejects unknown
     /// fields like every catalogued query and answers with exactly the
     /// bundle directory.
     #[test]
     fn the_typed_export_handler_keeps_the_query_surface_narrow() {
         let (dir, _health) = planted_fixture();
-        let handler = DiagnosticsExportHandler::new(dir.path(), "0.1.0-test");
+        let handler = DiagnosticsExportHandler::new(dir.path(), health_probe(&dir));
 
         let refusal = handler
             .handle(&json!({ "surprise": 1 }))

@@ -50,7 +50,9 @@ fn scheduler_state_path(data_dir: &Path) -> PathBuf {
     data_dir.join(".backup-scheduler.json")
 }
 
-fn load_scheduler_state(data_dir: &Path) -> Option<SystemTime> {
+/// The persisted last-success time, or nothing when no backup has
+/// succeeded yet; health probes read this.
+pub(crate) fn load_scheduler_state(data_dir: &Path) -> Option<SystemTime> {
     let path = scheduler_state_path(data_dir);
     let text = fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;

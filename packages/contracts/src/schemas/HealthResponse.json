@@ -1,18 +1,278 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
+  "definitions": {
+    "DatabaseHealth": {
+      "additionalProperties": false,
+      "description": "The database component: the one authoritative SQLite file.",
+      "properties": {
+        "journal_mode": {
+          "description": "The connection's journal mode; the product requires `wal`.",
+          "type": "string"
+        },
+        "last_change_at": {
+          "description": "When the newest timeline row was recorded; absent when nothing is recorded yet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "description": "The applied schema version after migration.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "journal_mode",
+        "schema_version"
+      ],
+      "type": "object"
+    },
+    "HerdrConnectionDiagnostics": {
+      "additionalProperties": false,
+      "description": "Connection diagnostics for one Project's Herdr session.",
+      "properties": {
+        "connected": {
+          "description": "Whether the per-session socket is connected.",
+          "type": "boolean"
+        },
+        "herdr_workspace": {
+          "description": "The required target Herdr workspace, resolved inside the effective session.",
+          "type": "string"
+        },
+        "last_error": {
+          "description": "The last connection or mapping error, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_snapshot_at": {
+          "description": "When the last full snapshot was captured.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product_workspace": {
+          "description": "The product Seed Workspace this session maps to.",
+          "type": "string"
+        },
+        "session_name": {
+          "description": "The named Herdr session, if the Project selected one; absence selects Herdr's default session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "connected",
+        "herdr_workspace",
+        "product_workspace"
+      ],
+      "type": "object"
+    },
+    "HerdrHealth": {
+      "additionalProperties": false,
+      "description": "The Herdr component: every session the core is observing.",
+      "properties": {
+        "sessions": {
+          "description": "One entry per observed Project, in Project identity order.",
+          "items": {
+            "$ref": "#/definitions/HerdrSessionHealth"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
+    "HerdrSessionHealth": {
+      "additionalProperties": false,
+      "description": "One observed Herdr session, named by the Project it serves.",
+      "properties": {
+        "diagnostics": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/HerdrConnectionDiagnostics"
+            }
+          ],
+          "description": "The binding's live connection diagnostics, the same shape `herdr.settings.get` serves."
+        },
+        "project_id": {
+          "description": "The Project whose Herdr binding this session is.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "diagnostics",
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "McpHealth": {
+      "additionalProperties": false,
+      "description": "The MCP component: the tool surface the core exposes to adapters.",
+      "properties": {
+        "exposed_tools": {
+          "description": "How many MCP tool definitions the catalogue exposes.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "exposed_tools"
+      ],
+      "type": "object"
+    },
+    "SchedulerHealth": {
+      "additionalProperties": false,
+      "description": "The scheduler component: the daily backup loop the core owns.",
+      "properties": {
+        "last_backup_success_at": {
+          "description": "When the daily backup last succeeded, from the scheduler's persisted state; absent until one has.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ServiceHealth": {
+      "additionalProperties": false,
+      "description": "The service component: the core process answering the query.",
+      "properties": {
+        "started_at": {
+          "description": "When this core process started serving; its state last changed by coming into being.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "started_at"
+      ],
+      "type": "object"
+    },
+    "WorkspaceHealthCounts": {
+      "additionalProperties": false,
+      "description": "The Workspace census across every Project, one count per health state in the closed vocabulary.",
+      "properties": {
+        "assigned": {
+          "description": "Held by a Lane.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "available": {
+          "description": "Present, clean, and unassigned.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "dirty": {
+          "description": "Present with an unclean working tree.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "missing": {
+          "description": "The path is absent or not a worktree of the repository.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "retired": {
+          "description": "Retired by the operator; the record is preserved.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "unobserved": {
+          "description": "Present, but the last git status read could not complete.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "assigned",
+        "available",
+        "dirty",
+        "missing",
+        "retired",
+        "unobserved"
+      ],
+      "type": "object"
+    },
+    "WorkspacesHealth": {
+      "additionalProperties": false,
+      "description": "The Workspace component: the registered working copies.",
+      "properties": {
+        "by_health": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WorkspaceHealthCounts"
+            }
+          ],
+          "description": "The health census across every Project."
+        },
+        "last_change_at": {
+          "description": "When a Workspace last changed on the timeline; absent until one has.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "by_health"
+      ],
+      "type": "object"
+    }
+  },
   "description": "Response payload for the `health.get` query.",
   "properties": {
     "connected": {
       "type": "boolean"
     },
+    "database": {
+      "$ref": "#/definitions/DatabaseHealth"
+    },
+    "herdr": {
+      "$ref": "#/definitions/HerdrHealth"
+    },
+    "mcp": {
+      "$ref": "#/definitions/McpHealth"
+    },
+    "scheduler": {
+      "$ref": "#/definitions/SchedulerHealth"
+    },
+    "service": {
+      "$ref": "#/definitions/ServiceHealth"
+    },
     "service_version": {
       "type": "string"
+    },
+    "workspaces": {
+      "$ref": "#/definitions/WorkspacesHealth"
     }
   },
   "required": [
     "connected",
-    "service_version"
+    "database",
+    "herdr",
+    "mcp",
+    "scheduler",
+    "service",
+    "service_version",
+    "workspaces"
   ],
   "title": "HealthResponse",
   "type": "object"

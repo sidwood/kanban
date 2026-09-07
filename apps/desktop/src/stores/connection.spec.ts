@@ -5,6 +5,30 @@ import type { HealthResponse, KanbanLiveEvent } from '@kanban/contracts'
 import type { ShellConnectionState, ShellTransport } from '../core/transport'
 import { useConnectionStore } from './connection'
 
+// A complete health answer for the versions these tests steer; the
+// component sections carry the quiet state of a fresh core.
+function healthResponse(version: string): HealthResponse {
+  return {
+    connected: true,
+    service_version: version,
+    service: { started_at: '2026-09-07T09:00:00Z' },
+    database: { journal_mode: 'wal', schema_version: 1 },
+    scheduler: {},
+    mcp: { exposed_tools: 1 },
+    herdr: { sessions: [] },
+    workspaces: {
+      by_health: {
+        available: 0,
+        assigned: 0,
+        dirty: 0,
+        missing: 0,
+        retired: 0,
+        unobserved: 0,
+      },
+    },
+  }
+}
+
 // A controllable transport: the health answers and the event and
 // connection deliveries are all steerable from the test.
 function harness() {
@@ -27,9 +51,7 @@ function harness() {
     transport,
     queries,
     healthy(version: string) {
-      queries.mockImplementation(() =>
-        Promise.resolve({ connected: true, service_version: version } satisfies HealthResponse),
-      )
+      queries.mockImplementation(() => Promise.resolve(healthResponse(version)))
     },
     unreachable() {
       queries.mockImplementation(() =>

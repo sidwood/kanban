@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The MCP component: the tool surface the core exposes to adapters.",
+  "properties": {
+    "exposed_tools": {
+      "description": "How many MCP tool definitions the catalogue exposes.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "exposed_tools"
+  ],
+  "title": "McpHealth",
+  "type": "object"
+}

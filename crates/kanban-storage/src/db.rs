@@ -155,6 +155,41 @@ impl Database {
         Ok(conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
     }
 
+    /// Reports the applied schema version, or 0 before any migration
+    /// has run; health surfaces use this.
+    pub fn schema_version(&self) -> Result<i64, StorageError> {
+        let conn = self.lock();
+        Ok(conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// When the newest timeline row was recorded — the database's own
+    /// last-change time. The stored format orders lexicographically,
+    /// so the maximum is the newest; absent when nothing is recorded
+    /// yet.
+    pub fn last_change_at(&self) -> Result<Option<String>, StorageError> {
+        let conn = self.lock();
+        Ok(
+            conn.query_row("SELECT MAX(recorded_at) FROM timeline_events", [], |row| {
+                row.get(0)
+            })?,
+        )
+    }
+
+    /// When the newest Workspace timeline row was recorded; absent
+    /// when no Workspace has changed yet.
+    pub fn last_workspace_change_at(&self) -> Result<Option<String>, StorageError> {
+        let conn = self.lock();
+        Ok(conn.query_row(
+            "SELECT MAX(recorded_at) FROM timeline_events WHERE entity_kind = ?1",
+            [kanban_dto::TimelineEntityKind::Workspace.as_str()],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Applies pending forward-only migrations, first offering the
     /// hook the chance to refuse (the KAN-T60 backup seam).
     pub fn migrate(
@@ -261,6 +296,92 @@ mod tests {
         assert_eq!(
             reopened.journal_mode().expect("journal mode is readable"),
             "wal"
+        );
+    }
+
+    #[test]
+    fn schema_version_reports_the_applied_migrations() {
+        let dir = scratch_dir();
+        let mut database =
+            Database::open(&dir.path().join("kanban.sqlite")).expect("the database opens");
+        assert_eq!(
+            database.schema_version().expect("the version reads"),
+            0,
+            "an unmigrated database has applied nothing"
+        );
+
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+
+        assert_eq!(
+            database.schema_version().expect("the version reads"),
+            crate::migrations::LATEST_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn last_change_at_tracks_the_newest_recorded_row() {
+        use kanban_app::TimelineEnvelope;
+        use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+        use serde_json::json;
+
+        let (_dir, mut database) = crate::test_support::scratch_database();
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+
+        assert_eq!(
+            database.last_change_at().expect("the change reads"),
+            None,
+            "nothing is recorded yet"
+        );
+        assert_eq!(
+            database
+                .last_workspace_change_at()
+                .expect("the change reads"),
+            None,
+            "no Workspace has changed yet"
+        );
+
+        database
+            .append_timeline_event(&TimelineEnvelope::project(
+                1,
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Ticket,
+                    id: "kan-t1".to_owned(),
+                }),
+                json!({ "action": "created" }),
+            ))
+            .expect("the row lands");
+        database
+            .append_timeline_event(&TimelineEnvelope::project(
+                1,
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Workspace,
+                    id: "3".to_owned(),
+                }),
+                json!({ "action": "registered" }),
+            ))
+            .expect("the row lands");
+
+        let overall = database
+            .last_change_at()
+            .expect("the change reads")
+            .expect("a recorded row exists");
+        let workspace = database
+            .last_workspace_change_at()
+            .expect("the change reads")
+            .expect("a Workspace row exists");
+        assert!(
+            overall.starts_with("20"),
+            "the change is a stored timestamp: {overall}"
+        );
+        assert_eq!(
+            workspace, overall,
+            "the Workspace row is the newest row of all"
         );
     }
 

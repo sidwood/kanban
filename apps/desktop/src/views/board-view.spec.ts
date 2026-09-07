@@ -387,21 +387,57 @@ describe('BoardView', () => {
   })
 
   it('reports the core\'s refusal of an agent-owned drag', async () => {
-    const { wrapper, command } = await mounted(boardTickets())
-    command.mockRejectedValue({
-      code: 'invalid_request',
-      message: 'bug transitions are agent-owned; a human may drag only Task Tickets',
+    const held = boardTickets()
+    const { wrapper, command } = await mounted(held)
+    command.mockImplementation((name: string, request: unknown) => {
+      if (name !== 'ticket.transition') return Promise.resolve({})
+      const { ticket_id } = request as { ticket_id: number }
+      const kind = held.find((entry) => entry.id === ticket_id)?.kind ?? 'bug'
+      return Promise.reject({
+        code: 'invalid_request',
+        message: `${kind} transitions are agent-owned; a human may drag only Task Tickets`,
+      })
     })
 
+    // The Bug and the Implementation are the agent-owned kinds: each
+    // drag reaches the core asking for the column's state, the core
+    // refuses it there as agent-owned, and the card stays where it
+    // stood (KAN-T131-AC2).
     await dragCard(
-      wrapper.find('[data-testid="kanban-card-7"]'),
+      wrapper.find('[data-testid="kanban-card-9"]'),
       wrapper.find('[data-testid="kanban-column-current"]'),
     )
     await flushPromises()
 
+    expect(command).toHaveBeenCalledWith(
+      'ticket.transition',
+      expect.objectContaining({ ticket_id: 9, to: 'active' }),
+    )
     expect(wrapper.find('[data-testid="board-error"]').text()).toContain(
       'bug transitions are agent-owned',
     )
+    expect(
+      wrapper.find('[data-testid="kanban-column-staged"] [data-testid="kanban-card-9"]')
+        .exists(),
+    ).toBe(true)
+
+    await dragCard(
+      wrapper.find('[data-testid="kanban-card-8"]'),
+      wrapper.find('[data-testid="kanban-column-review"]'),
+    )
+    await flushPromises()
+
+    expect(command).toHaveBeenCalledWith(
+      'ticket.transition',
+      expect.objectContaining({ ticket_id: 8, to: 'in_review' }),
+    )
+    expect(wrapper.find('[data-testid="board-error"]').text()).toContain(
+      'implementation transitions are agent-owned',
+    )
+    expect(
+      wrapper.find('[data-testid="kanban-column-current"] [data-testid="kanban-card-8"]')
+        .exists(),
+    ).toBe(true)
   })
 
   it('keeps Draft off the board until cards sit in it or the operator asks', async () => {

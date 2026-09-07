@@ -19,10 +19,6 @@ import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import BoardView from './BoardView.vue'
 import { orderCards } from './board-ordering'
-import {
-  loadBoardChoices,
-  saveBoardChoices,
-} from './board-layout.storage'
 
 const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
   id: 1,
@@ -118,37 +114,64 @@ describe('deterministic card ordering', () => {
     }
   })
 
-  it('persists no card order with the board choices', () => {
-    const store = {
-      value: null as string | null,
-      getItem() {
-        return store.value
-      },
-      setItem(_key: string, next: string) {
-        store.value = next
-      },
-      removeItem() {
-        store.value = null
-      },
-    }
-    saveBoardChoices(loadBoardChoices(store), store)
+  it('orders by the sorting key the active view owns', () => {
+    const cards = [
+      ticket({ id: 1, number: 1, state: 'parked' }),
+      ticket({ id: 2, number: 2, state: 'ready', priority: 'low' }),
+      ticket({ id: 3, number: 3, state: 'blocked', priority: 'urgent' }),
+    ]
 
-    const saved = JSON.parse(store.value ?? '{}') as Record<string, unknown>
-    expect(Object.keys(saved).sort()).toEqual([
-      'done',
-      'draft',
-      'layouts',
-      'presentation',
-      'version',
-    ])
+    // Priority leads: urgent blocked, normal parked, low ready.
+    expect(ids(orderCards(cards))).toEqual([3, 1, 2])
+    // Readiness leads: ready above blocked above parked, priority
+    // only breaking ties beneath it — both orders deterministic.
+    expect(ids(orderCards(cards, 'readiness'))).toEqual([2, 3, 1])
   })
 })
+
+// One saved view for each scope the board loads: the generated
+// defaults, the Project one carrying the sorting key a test names.
+function viewList(sorting: 'priority' | 'readiness') {
+  return {
+    views: [
+      {
+        id: 1,
+        name: 'All work',
+        scope: 'global',
+        filter: {},
+        expanded_groups: [],
+        hidden_columns: ['draft'],
+        mode: 'board',
+        done_placement: 'column',
+        sorting: 'priority',
+        is_default: true,
+        version: 1,
+      },
+      {
+        id: 2,
+        name: 'All work',
+        scope: { project: 1 },
+        filter: { projects: [1] },
+        expanded_groups: [],
+        hidden_columns: ['draft'],
+        mode: 'board',
+        done_placement: 'column',
+        sorting,
+        is_default: true,
+        version: 1,
+      },
+    ],
+  }
+}
 
 // The board itself, ordered end to end: the columns the operator
 // scans hold the deterministic order, and a reload holds the same
 // relative order from a different arrival order.
-function harness(ticketsForLoad: () => TicketRecord[]) {
+function harness(ticketsForLoad: () => TicketRecord[], sorting: 'priority' | 'readiness' = 'priority') {
   const query = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.list') {
+      return Promise.resolve(viewList(sorting))
+    }
     if (name === 'project.list') {
       return Promise.resolve({
         projects: [
@@ -196,9 +219,17 @@ function harness(ticketsForLoad: () => TicketRecord[]) {
       tickets: ticketsForLoad(),
     } satisfies TicketListResponse)
   })
+  const command = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.update') {
+      const body = request as { view_id: number } & Record<string, unknown>
+      const standing = viewList('priority').views.find((view) => view.id === body.view_id)
+      return Promise.resolve({ ...standing, ...body, version: 2 })
+    }
+    return Promise.resolve({})
+  })
   const transport = {
     query,
-    command: vi.fn(),
+    command,
     subscribe: () => () => undefined,
     onConnectionChange: () => () => undefined,
   } as unknown as ShellTransport
@@ -215,10 +246,13 @@ function backlogCards(): TicketRecord[] {
   ]
 }
 
-async function mountedBoard(tickets: TicketRecord[]) {
+async function mountedBoard(
+  tickets: TicketRecord[],
+  sorting: 'priority' | 'readiness' = 'priority',
+) {
   document.documentElement.classList.remove('dark')
   localStorage.clear()
-  const transport = harness(() => tickets)
+  const transport = harness(() => tickets, sorting)
   router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
@@ -265,5 +299,13 @@ describe('the ordered board', () => {
 
     expect(columnCardIds(second, 'backlog')).toEqual(columnCardIds(first, 'backlog'))
     expect(columnCardIds(first, 'backlog')).toEqual([5, 4, 2, 3, 1])
+  })
+
+  it('renders under the sorting key the active view owns', async () => {
+    const wrapper = await mountedBoard([...backlogCards()], 'readiness')
+
+    // Readiness leads: ready, scheduled, blocked, then the parked
+    // pair by priority beneath it.
+    expect(columnCardIds(wrapper, 'backlog')).toEqual([2, 4, 3, 5, 1])
   })
 })

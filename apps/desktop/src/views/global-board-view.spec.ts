@@ -79,17 +79,76 @@ function boardResponse(): BoardGlobalResponse {
   }
 }
 
+// The views a board mounts over: the generated global default, and a
+// named review perspective a switch test restores.
+const viewFixture = {
+  id: 8,
+  name: 'Review queue',
+  scope: 'global',
+  filter: { states: ['in_review'] },
+  expanded_groups: ['backlog', 'staged'],
+  hidden_columns: ['draft', 'done'],
+  mode: 'register',
+  done_placement: 'table',
+  sorting: 'readiness',
+  is_default: false,
+  version: 4,
+}
+
+function viewList() {
+  return {
+    views: [
+      {
+        id: 1,
+        name: 'All work',
+        scope: 'global',
+        filter: {},
+        expanded_groups: [],
+        hidden_columns: ['draft'],
+        mode: 'board',
+        done_placement: 'column',
+        sorting: 'priority',
+        is_default: true,
+        version: 1,
+      },
+      viewFixture,
+    ],
+  }
+}
+
 function harness(answer: (request: unknown) => Promise<BoardGlobalResponse>) {
   const query = vi.fn((name: string, request: unknown) => {
     if (name === 'board.global') return answer(request)
+    if (name === 'view.list') return Promise.resolve(viewList())
     throw new Error(`unexpected query ${name}`)
+  })
+  const command = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.create') {
+      const body = request as { name: string } & Record<string, unknown>
+      return Promise.resolve({ ...viewFixture, id: 21, ...body, version: 1 })
+    }
+    if (name === 'view.update') {
+      const body = request as { view_id: number } & Record<string, unknown>
+      const standing =
+        [viewList().views[0], viewFixture].find((view) => view.id === body.view_id) ?? viewFixture
+      return Promise.resolve({
+        ...standing,
+        expanded_groups: (body.expanded_groups as typeof standing.expanded_groups) ?? standing.expanded_groups,
+        hidden_columns: (body.hidden_columns as typeof standing.hidden_columns) ?? standing.hidden_columns,
+        mode: (body.mode as typeof standing.mode) ?? standing.mode,
+        done_placement: (body.done_placement as typeof standing.done_placement) ?? standing.done_placement,
+        sorting: (body.sorting as typeof standing.sorting) ?? standing.sorting,
+        version: standing.version + 1,
+      })
+    }
+    return Promise.resolve({})
   })
   const transport = {
     query,
-    command: vi.fn(),
+    command,
     subscribe: () => () => undefined,
   } as unknown as ShellTransport
-  return { transport, query }
+  return { transport, query, command }
 }
 
 async function mountBoard(transport: ShellTransport) {
@@ -145,7 +204,54 @@ describe('global board view', () => {
     await flushPromises()
 
     expect(filter).toEqual({ projects: [2] })
-    expect(query).toHaveBeenCalledTimes(2)
+    // The views loaded once on mount; the projection re-queried for
+    // the toggled axis alone.
+    expect(query.mock.calls.filter(([name]) => name === 'board.global')).toHaveLength(2)
+    expect(query.mock.calls.filter(([name]) => name === 'view.list')).toHaveLength(1)
+  })
+
+  it('switches to a saved view and queries under the filter it owns', async () => {
+    let filter: unknown
+    const { transport } = harness((request) => {
+      filter = (request as { filter: unknown }).filter
+      return Promise.resolve(boardResponse())
+    })
+    const wrapper = await mountBoard(transport)
+    expect(filter).toEqual({})
+
+    const select = wrapper.get('[data-testid="global-view-select"]')
+    await select.setValue('8')
+    await flushPromises()
+
+    // The view's owned filter travels to the core whole.
+    expect(filter).toEqual({ states: ['in_review'] })
+    expect((select.element as HTMLSelectElement).selectedOptions[0]?.text).toBe('Review queue')
+
+    // Switching back restores the default's empty filter exactly.
+    await select.setValue('1')
+    await flushPromises()
+    expect(filter).toEqual({})
+  })
+
+  it('names and keeps the perspective the board holds', async () => {
+    const { transport, command } = harness(() => Promise.resolve(boardResponse()))
+    const wrapper = await mountBoard(transport)
+
+    await wrapper.get('[data-testid="save-view-name"]').setValue('Deep work')
+    await wrapper.get('[data-testid="save-view"]').trigger('click')
+    await flushPromises()
+
+    const create = command.mock.calls.find(([name]) => name === 'view.create')
+    expect(create?.[1]).toMatchObject({
+      scope: 'global',
+      name: 'Deep work',
+      mode: 'board',
+      done_placement: 'column',
+      sorting: 'priority',
+    })
+    // The kept perspective becomes the one the board rests on.
+    const select = wrapper.get('[data-testid="global-view-select"]')
+    expect((select.element as HTMLSelectElement).value).toBe('21')
   })
 
   it('clears every axis from the filter bar', async () => {

@@ -8,7 +8,7 @@
 // recomputes nothing — no client-side grouping, no client-side
 // sorting. Lane, profile, and attention values populate as their
 // feeds land; the axes themselves are all here.
-import { computed, inject, onMounted } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import type {
   BoardFilterOption,
   TicketKind,
@@ -23,6 +23,12 @@ import StatusBadge from '../components/StatusBadge.vue'
 import { kanbanTransportKey } from '../core/transport'
 import { useGlobalBoardStore } from '../stores/global-board'
 import type { BoardIdAxis, BoardWordAxis } from '../stores/global-board'
+import {
+  fallbackOwnedSet,
+  ownedCopy,
+  scopeProjectId,
+  useSavedViewsStore,
+} from '../stores/saved-views'
 import { KIND_LABELS, STATUS_LABELS, STATUS_TONES, boardCardNumber, boardCardTitle } from './board-card'
 import {
   ATTENTION_LABELS,
@@ -31,16 +37,69 @@ import {
   activeAxisCount,
   cardsOfGroup,
 } from './global-board-filters'
+import { orderGlobalCards } from './board-ordering'
 
 const transport = inject(kanbanTransportKey)
 const board = useGlobalBoardStore()
+const savedViews = useSavedViewsStore()
 
 onMounted(() => {
   void load()
 })
 
 async function load(): Promise<void> {
+  if (!transport) return
+  // The views land first so the board opens on the active view's
+  // filter and sorting, the operator's own perspective.
+  await savedViews.refresh(transport)
+  await project()
+}
+
+// Re-query the projection alone: the filter changed, the views did
+// not.
+async function project(): Promise<void> {
   if (transport) await board.refresh(transport)
+}
+
+// The view the board rests on, and the switching that restores every
+// property it owns exactly.
+const activeView = computed(() => savedViews.activeGlobalView)
+
+// Every scope's views appear here: a Project's perspective
+// narrows the global board to that Project's work.
+const viewOptions = computed(() =>
+  savedViews.views.map((view) => {
+    const project = scopeProjectId(view.scope)
+    if (project === null) return { value: view.id, label: view.name }
+    const option = board.options?.projects.find((entry) => entry.id === project)
+    const code = option?.label.split(' — ')[0]
+    return { value: view.id, label: code ? `${view.name} · ${code}` : `${view.name} · Project ${project}` }
+  }),
+)
+
+function onSwitchView(event: Event): void {
+  const viewId = Number((event.target as HTMLSelectElement).value)
+  if (savedViews.switchGlobalView(viewId)) void load()
+}
+
+// Name the perspective the board holds right now and keep it.
+const viewName = ref('')
+
+async function onSaveView(): Promise<void> {
+  if (!transport || viewName.value.trim() === '') return
+  const owned = activeView.value ? ownedCopy(activeView.value) : fallbackOwnedSet()
+  owned.filter = { ...board.filter }
+  const created = await savedViews.createView(
+    transport,
+    viewName.value.trim(),
+    'global',
+    owned,
+  )
+  if (created === null) return
+  viewName.value = ''
+  // The kept perspective is the one the board already holds — the
+  // switch names it, and nothing re-queries.
+  savedViews.switchGlobalView(created.id)
 }
 
 /** One selectable value of one axis, with its selected state. */
@@ -153,29 +212,34 @@ const wordAxes = computed<readonly WordFilterAxis[]>(() => {
 
 function onToggleId(axis: BoardIdAxis, id: number): void {
   board.toggleId(axis, id)
-  void load()
+  void reload()
 }
 
 function onToggleWord(axis: BoardWordAxis, value: string): void {
   board.toggleWord(axis, value)
-  void load()
+  void reload()
 }
 
 function onClear(): void {
   board.resetFilter()
-  void load()
+  void reload()
+}
+
+function reload(): void {
+  void project()
 }
 
 const activeCount = computed(() => activeAxisCount(board.filter))
 
 // The six fixed groups, each holding the cards the core placed in it,
-// in the order they arrived.
-const groups = computed(() =>
-  GLOBAL_BOARD_GROUPS.map((entry) => ({
+// in the order the active view reads them.
+const groups = computed(() => {
+  const cards = orderGlobalCards(board.cards, activeView.value?.sorting ?? 'priority')
+  return GLOBAL_BOARD_GROUPS.map((entry) => ({
     ...entry,
-    cards: cardsOfGroup(board.cards, entry.group),
-  })),
-)
+    cards: cardsOfGroup(cards, entry.group),
+  }))
+})
 </script>
 
 <template>
@@ -193,6 +257,44 @@ const groups = computed(() =>
         </p>
       </div>
       <div class="flex items-center gap-3">
+        <div
+          role="group"
+          aria-label="Saved view"
+          class="flex items-center gap-2"
+        >
+          <select
+            :value="activeView?.id ?? ''"
+            data-testid="global-view-select"
+            class="rounded-full border border-line bg-canvas/60 px-3 py-1 text-xs text-ink"
+            aria-label="Saved view"
+            @change="onSwitchView"
+          >
+            <option
+              v-for="option in viewOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+          <input
+            v-model="viewName"
+            data-testid="save-view-name"
+            class="w-36 rounded-full border border-line bg-canvas/60 px-3 py-1 text-xs text-ink"
+            placeholder="Name this view"
+            aria-label="Name this view"
+            @keydown.enter.prevent="onSaveView"
+          >
+          <AppButton
+            variant="secondary"
+            size="sm"
+            data-testid="save-view"
+            :disabled="viewName.trim() === ''"
+            @click="onSaveView"
+          >
+            Save view
+          </AppButton>
+        </div>
         <AppButton
           data-testid="global-board-clear"
           :disabled="activeCount === 0"
@@ -209,8 +311,8 @@ const groups = computed(() =>
       </div>
     </header>
 
-    <InlineAlert v-if="board.error">
-      {{ board.error }}
+    <InlineAlert v-if="board.error || savedViews.error">
+      {{ board.error ?? savedViews.error }}
     </InlineAlert>
 
     <section

@@ -107,6 +107,27 @@ function harness(
   pendingProjects: readonly number[] = [],
 ) {
   const query = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.list') {
+      // The generated defaults, one global and one per Project; a
+      // test that varies the presentation writes through view.update.
+      const base = {
+        filter: {},
+        expanded_groups: [],
+        hidden_columns: ['draft' as const],
+        mode: 'board' as const,
+        done_placement: 'column' as const,
+        sorting: 'priority' as const,
+        is_default: true,
+        version: 1,
+      }
+      return Promise.resolve({
+        views: [
+          { ...base, id: 1, name: 'All work', scope: 'global' as const },
+          { ...base, id: 2, name: 'All work', scope: { project: 1 }, filter: { projects: [1] } },
+          { ...base, id: 3, name: 'All work', scope: { project: 2 }, filter: { projects: [2] } },
+        ],
+      })
+    }
     if (name === 'project.list') {
       return Promise.resolve({
         projects: [project, otherProject],
@@ -136,7 +157,22 @@ function harness(
     }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   })
-  const command = vi.fn()
+  const command = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.update') {
+      // The echo a write-through expects: the whole owned set back,
+      // its version advanced.
+      const body = request as Record<string, unknown>
+      return Promise.resolve({
+        id: body.view_id,
+        name: 'All work',
+        scope: body.view_id === 2 ? { project: 1 } : { project: 2 },
+        is_default: true,
+        version: 2,
+        ...body,
+      })
+    }
+    return Promise.resolve({})
+  })
   const transport = {
     query,
     command,
@@ -517,6 +553,9 @@ describe('BoardView', () => {
       if (name === 'project.list') {
         return Promise.resolve({ projects: [] } satisfies ProjectListResponse)
       }
+      if (name === 'view.list') {
+        return Promise.resolve({ views: [] })
+      }
       return Promise.resolve({ tickets: [] } satisfies TicketListResponse)
     })
     const transport = {
@@ -625,6 +664,25 @@ describe('BoardView', () => {
         return Promise.resolve({
           projects: [project, otherProject],
         } satisfies ProjectListResponse)
+      }
+      if (name === 'view.list') {
+        const base = {
+          filter: {},
+          expanded_groups: [],
+          hidden_columns: ['draft' as const],
+          mode: 'board' as const,
+          done_placement: 'column' as const,
+          sorting: 'priority' as const,
+          is_default: true,
+          version: 1,
+        }
+        return Promise.resolve({
+          views: [
+            { ...base, id: 1, name: 'All work', scope: 'global' as const },
+            { ...base, id: 2, name: 'All work', scope: { project: 1 }, filter: { projects: [1] } },
+            { ...base, id: 3, name: 'All work', scope: { project: 2 }, filter: { projects: [2] } },
+          ],
+        })
       }
       if (name === 'lane.list') {
         return Promise.resolve({ lanes: [] } satisfies { lanes: [] })

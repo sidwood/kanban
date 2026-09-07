@@ -27,14 +27,12 @@ export const BOARD_PRESENTATIONS = ['board', 'register'] as const
 
 export type BoardPresentation = (typeof BOARD_PRESENTATIONS)[number]
 
-export const DRAFT_VISIBILITIES = ['hidden', 'visible'] as const
-
-export type DraftVisibility = (typeof DRAFT_VISIBILITIES)[number]
-
 export type BoardLayoutState = Readonly<Record<BoardLayoutAxis, BoardLayout>>
 
 // The everyday board keeps the six fixed groups: every axis collapsed
-// and Draft out of sight until the operator asks for it.
+// and Draft out of sight until the operator asks for it. A Saved View
+// owns this set per perspective (KAN-T28); these defaults are the
+// generated default view's own values.
 export const DEFAULT_BOARD_LAYOUTS: BoardLayoutState = {
   backlog: 'collapsed',
   completion: 'collapsed',
@@ -44,7 +42,8 @@ export const DEFAULT_DONE_PRESENTATION: DonePresentation = 'column'
 
 export const DEFAULT_BOARD_PRESENTATION: BoardPresentation = 'board'
 
-export const DEFAULT_DRAFT_VISIBILITY: DraftVisibility = 'hidden'
+// The columns the generated default view keeps off the board.
+export const DEFAULT_HIDDEN_COLUMNS: readonly BoardGroupId[] = ['draft']
 
 // The terminal states never appear on the active board; Superseded
 // and Cancelled Tickets keep their history off the columns.
@@ -191,44 +190,44 @@ export function registerColumnFor(
 }
 
 /**
- * Cards in the Draft column force it visible. With none on the board,
- * the operator's saved choice applies and hidden remains the default.
+ * The hidden columns a view owns, resolved for rendering: cards in
+ * the Draft column force it visible, so newly captured work never
+ * disappears, while every other hidden column hides exactly as the
+ * view says.
  */
-export function resolveDraftVisibility(
-  preference: DraftVisibility,
+export function resolveHiddenColumns(
+  hidden: readonly BoardGroupId[],
   draftColumnCardCount: number,
-): DraftVisibility {
-  return draftColumnCardCount > 0 ? 'visible' : preference
+): readonly BoardGroupId[] {
+  return draftColumnCardCount > 0 ? hidden.filter((group) => group !== 'draft') : hidden
 }
 
 export function boardColumnGroups(
   layouts: BoardLayoutState,
   done: DonePresentation = DEFAULT_DONE_PRESENTATION,
-  draft: DraftVisibility = DEFAULT_DRAFT_VISIBILITY,
+  hidden: readonly BoardGroupId[] = DEFAULT_HIDDEN_COLUMNS,
 ): readonly BoardColumnGroup[] {
-  const groups: BoardColumnGroup[] = []
-  if (draft === 'visible') {
-    groups.push({
-      id: 'draft',
-      heading: boardColumnLabel('draft'),
-      subheading: boardColumnSubheading('draft'),
-      grouped: false,
-      columns: ['draft'],
-    })
-  }
-  groups.push(axisGroup('backlog', layouts), fixedGroup('current'), fixedGroup('review'), axisGroup('completion', layouts))
-  if (done === 'column') {
-    groups.push(fixedGroup('done'))
-  }
-  return groups
+  const standing: BoardColumnGroup[] = [
+    fixedGroup('draft'),
+    axisGroup('backlog', layouts),
+    fixedGroup('current'),
+    fixedGroup('review'),
+    axisGroup('completion', layouts),
+    fixedGroup('done'),
+  ]
+  return standing.filter(
+    (group) =>
+      !hidden.includes(group.id as BoardGroupId) &&
+      (done === 'column' || group.id !== 'done'),
+  )
 }
 
 export function visibleColumnsFor(
   layouts: BoardLayoutState,
   done: DonePresentation = DEFAULT_DONE_PRESENTATION,
-  draft: DraftVisibility = DEFAULT_DRAFT_VISIBILITY,
+  hidden: readonly BoardGroupId[] = DEFAULT_HIDDEN_COLUMNS,
 ): readonly BoardColumnId[] {
-  return boardColumnGroups(layouts, done, draft).flatMap((group) => group.columns)
+  return boardColumnGroups(layouts, done, hidden).flatMap((group) => group.columns)
 }
 
 /**
@@ -238,9 +237,9 @@ export function visibleColumnsFor(
  */
 export function registerColumnsFor(
   layouts: BoardLayoutState,
-  draft: DraftVisibility = DEFAULT_DRAFT_VISIBILITY,
+  hidden: readonly BoardGroupId[] = DEFAULT_HIDDEN_COLUMNS,
 ): readonly BoardColumnId[] {
-  return visibleColumnsFor(layouts, 'column', draft)
+  return visibleColumnsFor(layouts, 'column', hidden)
 }
 
 export function boardLayoutAxisControls(

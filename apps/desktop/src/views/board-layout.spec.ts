@@ -4,6 +4,7 @@ import {
   BOARD_LAYOUT_AXES,
   type BoardColumnId,
   DEFAULT_BOARD_LAYOUTS,
+  DEFAULT_HIDDEN_COLUMNS,
   boardColumnGroups,
   boardColumnLabel,
   boardColumnStates,
@@ -14,27 +15,9 @@ import {
   inboundStateForColumn,
   isOnBoard,
   registerColumnsFor,
-  resolveDraftVisibility,
+  resolveHiddenColumns,
   visibleColumnsFor,
 } from './board-layout'
-import {
-  BOARD_LAYOUT_STORAGE_KEY,
-  loadBoardChoices,
-  saveBoardChoices,
-} from './board-layout.storage'
-
-function memoryStore(initial: string | null = null) {
-  let value = initial
-  return {
-    getItem: () => value,
-    setItem: (_key: string, next: string) => {
-      value = next
-    },
-    removeItem: () => {
-      value = null
-    },
-  }
-}
 
 const expandedBacklog = { ...DEFAULT_BOARD_LAYOUTS, backlog: 'expanded' } as const
 const expandedCompletion = {
@@ -70,7 +53,7 @@ describe('the fixed board groups', () => {
   })
 
   it('show the collapsed everyday board as the six fixed groups, Draft hidden', () => {
-    const groups = boardColumnGroups(DEFAULT_BOARD_LAYOUTS, 'column', 'hidden')
+    const groups = boardColumnGroups(DEFAULT_BOARD_LAYOUTS, 'column', DEFAULT_HIDDEN_COLUMNS)
 
     expect(groups.map((group) => group.heading)).toEqual([
       'Backlog',
@@ -79,7 +62,7 @@ describe('the fixed board groups', () => {
       'Staged',
       'Done',
     ])
-    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', 'hidden')).toEqual([
+    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', DEFAULT_HIDDEN_COLUMNS)).toEqual([
       'backlog',
       'current',
       'review',
@@ -89,15 +72,13 @@ describe('the fixed board groups', () => {
   })
 
   it('bring Draft back when the operator asks for it', () => {
-    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', 'visible')[0]).toBe(
-      'draft',
-    )
+    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', [])[0]).toBe('draft')
   })
 })
 
 describe('the collapsible axes', () => {
   it('expand Backlog into its four states under one group', () => {
-    const groups = boardColumnGroups(expandedBacklog, 'column', 'hidden')
+    const groups = boardColumnGroups(expandedBacklog, 'column', DEFAULT_HIDDEN_COLUMNS)
     const backlog = groups.find((group) => group.id === 'backlog')
 
     expect(backlog?.grouped).toBe(true)
@@ -108,13 +89,13 @@ describe('the collapsible axes', () => {
   })
 
   it('expand Staged into Approved and Landing, Done staying its own column', () => {
-    const groups = boardColumnGroups(expandedCompletion, 'column', 'hidden')
+    const groups = boardColumnGroups(expandedCompletion, 'column', DEFAULT_HIDDEN_COLUMNS)
     const completion = groups.find((group) => group.id === 'completion')
 
     expect(completion?.grouped).toBe(true)
     expect(completion?.columns).toEqual(['approved', 'landing'])
     expect(columnForCard('landing', expandedCompletion)).toBe('landing')
-    expect(visibleColumnsFor(expandedCompletion, 'column', 'hidden')).toEqual([
+    expect(visibleColumnsFor(expandedCompletion, 'column', DEFAULT_HIDDEN_COLUMNS)).toEqual([
       'backlog',
       'current',
       'review',
@@ -166,13 +147,13 @@ describe('columns holding several states', () => {
 
 describe('the Done table option', () => {
   it('takes the Done column below the board without touching the axis choice', () => {
-    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'table', 'hidden')).not.toContain(
+    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'table', DEFAULT_HIDDEN_COLUMNS)).not.toContain(
       'done',
     )
   })
 
   it('keeps Done a column on the board by default', () => {
-    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', 'hidden')).toContain(
+    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', DEFAULT_HIDDEN_COLUMNS)).toContain(
       'done',
     )
   })
@@ -219,14 +200,14 @@ describe('drop targets', () => {
 
 describe('the register presentation', () => {
   it('gives every visible column a table, keeping Done a column', () => {
-    expect(registerColumnsFor(DEFAULT_BOARD_LAYOUTS, 'hidden')).toEqual([
+    expect(registerColumnsFor(DEFAULT_BOARD_LAYOUTS, DEFAULT_HIDDEN_COLUMNS)).toEqual([
       'backlog',
       'current',
       'review',
       'staged',
       'done',
     ])
-    expect(registerColumnsFor(expandedBacklog, 'visible')).toEqual([
+    expect(registerColumnsFor(expandedBacklog, [])).toEqual([
       'draft',
       'parked',
       'blocked',
@@ -240,102 +221,24 @@ describe('the register presentation', () => {
   })
 })
 
-describe('draft visibility', () => {
+describe('hidden columns', () => {
   it('forces Draft visible while cards sit in it', () => {
-    expect(resolveDraftVisibility('hidden', 2)).toBe('visible')
-    expect(resolveDraftVisibility('hidden', 0)).toBe('hidden')
-    expect(resolveDraftVisibility('visible', 0)).toBe('visible')
+    expect(resolveHiddenColumns(['draft'], 2)).toEqual([])
+    expect(resolveHiddenColumns(['draft'], 0)).toEqual(['draft'])
+    expect(resolveHiddenColumns([], 0)).toEqual([])
+  })
+
+  it('hide any group a view names, Draft forced visible aside', () => {
+    const hidden = ['draft', 'current', 'done'] as const
+    expect(resolveHiddenColumns(hidden, 0)).toEqual(['draft', 'current', 'done'])
+    expect(resolveHiddenColumns(hidden, 3)).toEqual(['current', 'done'])
+    expect(visibleColumnsFor(DEFAULT_BOARD_LAYOUTS, 'column', ['review'])).toEqual([
+      'draft',
+      'backlog',
+      'current',
+      'staged',
+      'done',
+    ])
   })
 })
 
-describe('stored board choices', () => {
-  it('default every choice when nothing is stored', () => {
-    const choices = loadBoardChoices(memoryStore())
-
-    expect(choices).toEqual({
-      layouts: DEFAULT_BOARD_LAYOUTS,
-      done: 'column',
-      presentation: 'board',
-      draft: 'hidden',
-    })
-  })
-
-  it('round-trip every choice together', () => {
-    const store = memoryStore()
-    saveBoardChoices(
-      {
-        layouts: { backlog: 'expanded', completion: 'expanded' },
-        done: 'table',
-        presentation: 'register',
-        draft: 'visible',
-      },
-      store,
-    )
-
-    expect(loadBoardChoices(store)).toEqual({
-      layouts: { backlog: 'expanded', completion: 'expanded' },
-      done: 'table',
-      presentation: 'register',
-      draft: 'visible',
-    })
-  })
-
-  it('keep the sound choices when one value rots', () => {
-    const store = memoryStore(
-      JSON.stringify({
-        version: 1,
-        layouts: { backlog: 'sideways', completion: 'expanded' },
-        done: 'somewhere else',
-        presentation: 'register',
-        draft: 'visible',
-      }),
-    )
-
-    expect(loadBoardChoices(store)).toEqual({
-      layouts: { backlog: 'collapsed', completion: 'expanded' },
-      done: 'column',
-      presentation: 'register',
-      draft: 'visible',
-    })
-  })
-
-  it('ignore a stored record from another version', () => {
-    const store = memoryStore(
-      JSON.stringify({
-        version: 0,
-        layouts: { backlog: 'expanded', completion: 'expanded' },
-        done: 'table',
-        presentation: 'register',
-        draft: 'visible',
-      }),
-    )
-
-    expect(loadBoardChoices(store).presentation).toBe('board')
-  })
-
-  it('survive a refusing storage', () => {
-    const refusing = {
-      getItem: () => {
-        throw new Error('private mode')
-      },
-      setItem: () => {
-        throw new Error('quota')
-      },
-      removeItem: () => undefined,
-    }
-
-    expect(() =>
-      saveBoardChoices(
-        {
-          layouts: DEFAULT_BOARD_LAYOUTS,
-          done: 'table',
-          presentation: 'board',
-          draft: 'hidden',
-        },
-        refusing,
-      ),
-    ).not.toThrow()
-    expect(loadBoardChoices(refusing).done).toBe('column')
-    expect(BOARD_LAYOUT_STORAGE_KEY).toContain('kanban.board')
-  })
-})

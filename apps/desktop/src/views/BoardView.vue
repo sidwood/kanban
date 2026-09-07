@@ -33,8 +33,8 @@ import {
   BOARD_PRESENTATIONS,
   type BoardColumnId,
   type BoardPresentation,
+  type BoardLayoutAxis,
   type DonePresentation,
-  type DraftVisibility,
   boardColumnGroups,
   boardColumnLabel,
   boardColumnSubheading,
@@ -44,7 +44,7 @@ import {
   dropFor,
   isOnBoard,
   registerColumnsFor,
-  resolveDraftVisibility,
+  resolveHiddenColumns,
   visibleColumnsFor,
 } from './board-layout'
 import {
@@ -60,8 +60,12 @@ import { chipSurfaceClass, chipsFor, laneFor, specFor } from './board-chips'
 import type { CardChip } from './board-chips'
 import { useLanesStore } from '../stores/lanes'
 import { useRunsStore } from '../stores/runs'
-import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
-import type { BoardChoices } from './board-layout.storage'
+import {
+  fallbackOwnedSet,
+  ownedCopy,
+  useSavedViewsStore,
+  type ViewOwnedSet,
+} from '../stores/saved-views'
 import { orderCards } from './board-ordering'
 
 /**
@@ -94,6 +98,7 @@ const projects = useProjectRegisterStore()
 const board = useBoardStore()
 const lanes = useLanesStore()
 const runs = useRunsStore()
+const savedViews = useSavedViewsStore()
 
 const projectId = computed(() => Number(route.params.projectId))
 
@@ -103,17 +108,38 @@ const project = computed(
 
 const projectCode = computed(() => project.value?.code ?? '')
 
-// The operator's kept presentation choices, saved together.
-const choices = ref<BoardChoices>(loadBoardChoices())
+// The presentation choices the active view owns (KAN-T28): the
+// Project's active Saved View supplies every property — expanded
+// groups, hidden columns, mode, Done placement, sorting — and one
+// choice writes through to the authoritative store, never to browser
+// state. Until the views load, the everyday perspective stands in.
+const activeProjectView = computed(() => savedViews.activeProjectView(projectId.value))
+const owned = computed<ViewOwnedSet>(() =>
+  activeProjectView.value ? ownedCopy(activeProjectView.value) : fallbackOwnedSet(),
+)
 
-function choose(next: Partial<BoardChoices>): void {
-  choices.value = { ...choices.value, ...next }
-  saveBoardChoices(choices.value)
+function choose(next: Partial<ViewOwnedSet>): void {
+  const view = activeProjectView.value
+  if (view === null || transport === undefined) return
+  void savedViews.reviseOwnedSet(transport, view.id, next)
 }
 
-const layouts = computed(() => choices.value.layouts)
-const done = computed<DonePresentation>(() => choices.value.done)
-const presentation = computed<BoardPresentation>(() => choices.value.presentation)
+const layouts = computed(() => ({
+  backlog: owned.value.expanded_groups.includes('backlog') ? ('expanded' as const) : ('collapsed' as const),
+  completion: owned.value.expanded_groups.includes('staged') ? ('expanded' as const) : ('collapsed' as const),
+}))
+const done = computed<DonePresentation>(() => owned.value.done_placement)
+const presentation = computed<BoardPresentation>(() => owned.value.mode)
+
+// The axis toggle the operator clicked, as the expanded group set the
+// next view.update carries.
+function toggleAxis(axis: BoardLayoutAxis): ViewOwnedSet['expanded_groups'] {
+  const group = axis === 'backlog' ? 'backlog' : 'staged'
+  const current = owned.value.expanded_groups
+  return current.includes(group)
+    ? current.filter((entry) => entry !== group)
+    : [...current, group]
+}
 
 // The class-based theme the board header swaps.
 const theme = ref(loadTheme())
@@ -151,6 +177,10 @@ function clearBoard(): void {
 async function load(): Promise<void> {
   if (!transport) return
   await projects.refresh(transport)
+  // The active view owns the presentation this board renders; its
+  // refresh lands before the tickets so the first frame is already
+  // the operator's perspective.
+  await savedViews.refresh(transport)
   if (project.value) {
     // The Lanes and the runs arrive beside the Tickets: the Lane chip
     // a card wears comes from the KAN-T32 contract, and its execution
@@ -170,21 +200,33 @@ async function load(): Promise<void> {
 // the register, and the Done table scan the same way, and no manual
 // ordering exists anywhere (DR-LC-11).
 const cards = computed(() =>
-  orderCards(board.tickets.filter((ticket) => isOnBoard(ticket.state))),
+  orderCards(
+    board.tickets.filter((ticket) => isOnBoard(ticket.state)),
+    owned.value.sorting,
+  ),
 )
 
 const draftCount = computed(
   () => board.tickets.filter((ticket) => ticket.state === 'draft').length,
 )
 
-const draft = computed<DraftVisibility>(() =>
-  resolveDraftVisibility(choices.value.draft, draftCount.value),
-)
+// The hidden columns the view owns, resolved for rendering: Draft
+// shows while cards sit in it, whatever the view says.
+const hidden = computed(() => resolveHiddenColumns(owned.value.hidden_columns, draftCount.value))
+
+function toggleDraft(): void {
+  const current = owned.value.hidden_columns
+  choose({
+    hidden_columns: current.includes('draft')
+      ? current.filter((group) => group !== 'draft')
+      : [...current, 'draft'],
+  })
+}
 
 const layoutControls = computed(() => boardLayoutAxisControls(layouts.value))
 
 const groups = computed(() =>
-  boardColumnGroups(layouts.value, done.value, draft.value).map((group) => {
+  boardColumnGroups(layouts.value, done.value, hidden.value).map((group) => {
     const columns = group.columns.map((column) => ({
       id: column,
       label: boardColumnLabel(column),
@@ -208,12 +250,12 @@ const groups = computed(() =>
 /** As many placeholders as the presentation is about to fill. */
 const loadingColumns = computed(() =>
   presentation.value === 'board'
-    ? visibleColumnsFor(layouts.value, done.value, draft.value)
-    : registerColumnsFor(layouts.value, draft.value),
+    ? visibleColumnsFor(layouts.value, done.value, hidden.value)
+    : registerColumnsFor(layouts.value, hidden.value),
 )
 
 const registerColumns = computed<readonly BoardRegisterColumn[]>(() =>
-  registerColumnsFor(layouts.value, draft.value).map((column) => ({
+  registerColumnsFor(layouts.value, hidden.value).map((column) => ({
     id: column,
     label: boardColumnLabel(column),
     subheading: boardColumnSubheading(column),
@@ -240,7 +282,7 @@ function registerRow(ticket: TicketRecord): BoardRegisterRow {
 // Task Tickets alone serves the register alone too.
 function movesFor(ticket: TicketRecord): readonly { column: BoardColumnId; label: string }[] {
   if (ticket.kind !== 'task') return []
-  return registerColumnsFor(layouts.value, draft.value)
+  return registerColumnsFor(layouts.value, hidden.value)
     .filter(
       (column) =>
         column !== 'draft' && columnForCard(ticket.state, layouts.value) !== column,
@@ -258,6 +300,11 @@ const doneRows = computed<readonly BoardRegisterRow[]>(() =>
 
 // The drag: only what the core may accept is highlighted, and the
 // move itself is one command the core judges.
+function onSwitchView(event: Event): void {
+  const viewId = Number((event.target as HTMLSelectElement).value)
+  savedViews.switchProjectView(projectId.value, viewId)
+}
+
 const drag = ref<TicketRecord | null>(null)
 const dropTarget = ref<string | null>(null)
 const moving = ref(false)
@@ -467,13 +514,13 @@ const drawerFacts = computed(() => {
             <AppButton
               variant="secondary"
               size="sm"
-              :aria-pressed="draft === 'visible'"
+              :aria-pressed="!hidden.includes('draft')"
               data-testid="toggle-draft"
-              @click="choose({ draft: draft === 'hidden' ? 'visible' : 'hidden' })"
+              @click="toggleDraft"
             >
-              {{ draft === 'visible' ? 'Hide Draft' : 'Show Draft' }}
+              {{ hidden.includes('draft') ? 'Show Draft' : 'Hide Draft' }}
               <span
-                v-if="draft === 'hidden'"
+                v-if="hidden.includes('draft')"
                 class="rounded-full bg-line px-1.5 py-0.5 font-mono text-[0.625rem] text-ink-muted"
                 aria-live="polite"
                 data-testid="draft-count"
@@ -481,6 +528,26 @@ const drawerFacts = computed(() => {
                 {{ draftCount }}
               </span>
             </AppButton>
+          </div>
+          <div
+            role="group"
+            aria-label="Saved view"
+          >
+            <select
+              :value="activeProjectView?.id ?? ''"
+              data-testid="board-view-select"
+              class="rounded-full border border-line bg-canvas/60 px-3 py-1 text-xs text-ink"
+              :aria-label="`Saved view for ${project?.code ?? 'the board'}`"
+              @change="onSwitchView"
+            >
+              <option
+                v-for="view in savedViews.projectViews(projectId)"
+                :key="view.id"
+                :value="view.id"
+              >
+                {{ view.name }}
+              </option>
+            </select>
           </div>
           <div
             role="group"
@@ -500,7 +567,7 @@ const drawerFacts = computed(() => {
               "
               :aria-pressed="option === presentation"
               :data-testid="`board-presentation-${option}`"
-              @click="choose({ presentation: option })"
+              @click="choose({ mode: option })"
             >
               {{ PRESENTATION_LABELS[option] }}
             </button>
@@ -525,7 +592,7 @@ const drawerFacts = computed(() => {
               "
               :aria-pressed="option === control.layout"
               :data-testid="`layout-axis-${control.axis}-${option}`"
-              @click="choose({ layouts: { ...layouts, [control.axis]: option } })"
+              @click="choose({ expanded_groups: toggleAxis(control.axis) })"
             >
               {{ option === 'collapsed' ? control.collapsedLabel : control.expandedLabel }}
             </button>
@@ -543,10 +610,10 @@ const drawerFacts = computed(() => {
     </p>
 
     <InlineAlert
-      v-if="board.error || lanes.error"
+      v-if="board.error || lanes.error || savedViews.error"
       data-testid="board-error"
     >
-      {{ board.error ?? lanes.error }}
+      {{ board.error ?? lanes.error ?? savedViews.error }}
     </InlineAlert>
 
     <div
@@ -580,7 +647,7 @@ const drawerFacts = computed(() => {
         data-testid="kanban-board"
         :data-backlog-layout="layouts.backlog"
         :data-completion-layout="layouts.completion"
-        :data-draft-visibility="draft"
+        :data-hidden-columns="hidden.join(' ')"
         :data-done-presentation="done"
       >
         <div
@@ -649,7 +716,7 @@ const drawerFacts = computed(() => {
                       class="-my-1.5"
                       aria-label="Move Done below the board"
                       data-testid="move-done-below-board"
-                      @click="choose({ done: 'table' })"
+                      @click="choose({ done_placement: 'table' })"
                     >
                       <ChevronIcon direction="down" />
                     </AppButton>
@@ -761,7 +828,7 @@ const drawerFacts = computed(() => {
         :rows="doneRows"
         :drop-active="dropTarget === 'done' || canDropOn('done')"
         @select="(row) => openTicket(row.ticket)"
-        @promote="choose({ done: 'column' })"
+        @promote="choose({ done_placement: 'column' })"
         @dragover="onDragOver('done', $event)"
         @dragleave="onDragLeave('done')"
         @drop="onDrop('done', $event)"

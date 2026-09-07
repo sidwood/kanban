@@ -4,8 +4,15 @@
 // is never a decision. The ranks mirror the priority and lifecycle
 // vocabularies the domain owns; the number tiebreaker is the minted,
 // immutable identity every Ticket already carries, which is what
-// keeps relative order stable under reload.
-import type { TicketPriority, TicketRecord, TicketState } from '@kanban/contracts'
+// keeps relative order stable under reload. A Saved View chooses
+// which key leads (DR-BP-05); both orders stay deterministic.
+import type {
+  BoardGlobalCard,
+  TicketPriority,
+  TicketRecord,
+  TicketState,
+  ViewSorting,
+} from '@kanban/contracts'
 
 // Urgent first, low last (CONTEXT.md): the priority is the
 // operator's one ordering lever.
@@ -35,12 +42,41 @@ const READINESS_RANK: Record<TicketState, number> = {
   superseded: -1,
 }
 
-/** The order the board, register, and Done table render cards in. */
-export function orderCards(cards: readonly TicketRecord[]): TicketRecord[] {
+/** The order the board, register, and Done table render cards in,
+ * under the sorting key the active view owns. */
+export function orderCards(
+  cards: readonly TicketRecord[],
+  sorting: ViewSorting = 'priority',
+): TicketRecord[] {
+  const lead =
+    sorting === 'readiness'
+      ? (a: TicketRecord, b: TicketRecord) =>
+          READINESS_RANK[b.state] - READINESS_RANK[a.state] ||
+          PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+          a.number - b.number
+      : (a: TicketRecord, b: TicketRecord) =>
+          PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+          READINESS_RANK[b.state] - READINESS_RANK[a.state] ||
+          a.number - b.number
+  return [...cards].sort(lead)
+}
+
+/**
+ * The global projection under the sorting key the active view owns.
+ * The cards arrive in the core's canonical order — a total order — so
+ * a stable re-key under readiness leaves every remaining tie exactly
+ * where the core put it, and the canonical key itself returns the
+ * projection untouched.
+ */
+export function orderGlobalCards(
+  cards: readonly BoardGlobalCard[],
+  sorting: ViewSorting = 'priority',
+): readonly BoardGlobalCard[] {
+  if (sorting === 'priority') return cards
   return [...cards].sort(
     (a, b) =>
-      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
-      READINESS_RANK[b.state] - READINESS_RANK[a.state] ||
-      a.number - b.number,
+      READINESS_RANK[b.ticket.state] - READINESS_RANK[a.ticket.state] ||
+      PRIORITY_RANK[a.ticket.priority] - PRIORITY_RANK[b.ticket.priority] ||
+      0,
   )
 }

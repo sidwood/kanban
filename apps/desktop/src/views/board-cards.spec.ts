@@ -165,6 +165,38 @@ async function mounted(
   document.documentElement.classList.remove('dark')
   localStorage.clear()
   const query = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.list') {
+      return Promise.resolve({
+        views: [
+          {
+            id: 1,
+            name: 'All work',
+            scope: 'global',
+            filter: {},
+            expanded_groups: [],
+            hidden_columns: ['draft'],
+            mode: 'board',
+            done_placement: 'column',
+            sorting: 'priority',
+            is_default: true,
+            version: 1,
+          },
+          {
+            id: 2,
+            name: 'All work',
+            scope: { project: 1 },
+            filter: { projects: [1] },
+            expanded_groups: [],
+            hidden_columns: ['draft'],
+            mode: 'board',
+            done_placement: 'column',
+            sorting: 'priority',
+            is_default: true,
+            version: 1,
+          },
+        ],
+      })
+    }
     if (name === 'project.list') {
       return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
     }

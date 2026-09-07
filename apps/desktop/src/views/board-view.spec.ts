@@ -8,6 +8,7 @@ import type {
   SpecRecord,
   TicketListResponse,
   TicketRecord,
+  TicketState,
 } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
@@ -165,7 +166,7 @@ function harness(
     }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   })
-  const command = vi.fn((name: string, request: unknown) => {
+  const command = vi.fn((name: string, request: unknown): Promise<unknown> => {
     if (name === 'view.update') {
       // The echo a write-through expects: the whole owned set back,
       // its version advanced.
@@ -178,6 +179,13 @@ function harness(
         version: 2,
         ...body,
       })
+    }
+    if (name === 'ticket.transition') {
+      // The record the core mints for a drag it accepted: the same
+      // Ticket, wearing the state the drop named, its version advanced.
+      const { ticket_id, to } = request as { ticket_id: number; to: TicketState }
+      const found = tickets.find((entry) => entry.id === ticket_id) ?? ticket()
+      return Promise.resolve({ ...found, state: to, version: found.version + 1 })
     }
     return Promise.resolve({})
   })
@@ -315,6 +323,67 @@ describe('BoardView', () => {
         mutation: expect.objectContaining({ optimistic_version: 3 }),
       }),
     )
+  })
+
+  it('lands a Task drag at its destination with no error', async () => {
+    const { wrapper, command } = await mounted(boardTickets())
+
+    await dragCard(
+      wrapper.find('[data-testid="kanban-card-7"]'),
+      wrapper.find('[data-testid="kanban-column-current"]'),
+    )
+    await flushPromises()
+
+    expect(command).toHaveBeenCalledWith(
+      'ticket.transition',
+      expect.objectContaining({
+        ticket_id: 7,
+        to: 'active',
+        mutation: expect.objectContaining({ optimistic_version: 3 }),
+      }),
+    )
+    // The record the core returned is the card the board now holds:
+    // it renders at the destination, leaves the column it came from,
+    // and wears the state the transition minted.
+    expect(
+      wrapper.find('[data-testid="kanban-column-current"] [data-testid="kanban-card-7"]')
+        .exists(),
+    ).toBe(true)
+    expect(
+      wrapper.find('[data-testid="kanban-column-backlog"] [data-testid="kanban-card-7"]')
+        .exists(),
+    ).toBe(false)
+    expect(wrapper.find('[data-testid="kanban-card-7"]').attributes('data-state')).toBe(
+      'active',
+    )
+    expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
+  })
+
+  it('renders no destination when the core returns no record', async () => {
+    const { wrapper, command } = await mounted(boardTickets())
+    command.mockImplementation((name: string) => {
+      if (name === 'ticket.transition') return Promise.resolve(undefined)
+      return Promise.resolve({})
+    })
+
+    await dragCard(
+      wrapper.find('[data-testid="kanban-card-7"]'),
+      wrapper.find('[data-testid="kanban-column-current"]'),
+    )
+    await flushPromises()
+
+    // A drag the core never answered with a record lands nowhere: the
+    // board holds the card where it stood rather than moving it on its
+    // own authority, and says so.
+    expect(
+      wrapper.find('[data-testid="kanban-column-current"] [data-testid="kanban-card-7"]')
+        .exists(),
+    ).toBe(false)
+    expect(
+      wrapper.find('[data-testid="kanban-column-backlog"] [data-testid="kanban-card-7"]')
+        .exists(),
+    ).toBe(true)
+    expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(true)
   })
 
   it('reports the core\'s refusal of an agent-owned drag', async () => {

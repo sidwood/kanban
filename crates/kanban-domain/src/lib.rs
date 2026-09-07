@@ -23,6 +23,7 @@ pub mod project;
 pub mod reassignment;
 pub mod ruling;
 pub mod run;
+pub mod saved_view;
 pub mod schedule;
 pub mod spec;
 pub mod ticket;
@@ -93,6 +94,10 @@ pub use project::{
 pub use reassignment::{ReassignmentError, apply_reassignment};
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use run::{ProfileSnapshot, Run, RunError, RunId, RunStatus, resolve_effective};
+pub use saved_view::{
+    DEFAULT_VIEW_NAME, DonePlacement, EXPANDABLE_GROUPS, SavedView, SavedViewError, SavedViewId,
+    ViewMode, ViewName, ViewScope, ViewSorting,
+};
 pub use schedule::{
     Activation, CronExpression, Schedule, ScheduleError, ScheduleId, ScheduleState,
     ScheduleTrigger, Timezone, accepts, stored_instant_of,

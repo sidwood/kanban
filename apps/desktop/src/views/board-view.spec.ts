@@ -151,6 +151,14 @@ function harness(
         ticket_id,
       })
     }
+    if (name === 'ticket.get') {
+      const { ticket_id } = request as { ticket_id: number }
+      const found = tickets.find((entry) => entry.id === ticket_id)
+      return Promise.resolve(found ?? ticket())
+    }
+    if (name === 'timeline.query') {
+      return Promise.resolve({ events: [] })
+    }
     const { project_id } = request as { project_id: number }
     if (pendingProjects.includes(project_id)) {
       return new Promise<TicketListResponse>(() => undefined)

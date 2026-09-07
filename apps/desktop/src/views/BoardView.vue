@@ -13,8 +13,10 @@
 // (KAN-T125).
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { KanbanClient } from '@kanban/contracts'
 import type { TicketRecord, TicketState } from '@kanban/contracts'
 import AppButton from '../components/AppButton.vue'
+import AttemptHistory from '../components/AttemptHistory.vue'
 import BoardRegister from '../components/BoardRegister.vue'
 import ChevronIcon from '../components/ChevronIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
@@ -24,7 +26,8 @@ import SectionHeader from '../components/SectionHeader.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import DoneBoardTable from '../components/DoneBoardTable.vue'
-import { kanbanTransportKey } from '../core/transport'
+import TimelineSurface from '../components/TimelineSurface.vue'
+import { kanbanTransportKey, asApiError } from '../core/transport'
 import { applyTheme, loadTheme, saveTheme } from '../core/theme'
 import type { ThemeName } from '../core/theme'
 import { useBoardStore } from '../stores/board'
@@ -54,6 +57,7 @@ import {
   boardCardNumber,
   boardCardTitle,
   statusSurfaceClass,
+  ticketTimelineId,
 } from './board-card'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
 import { chipSurfaceClass, chipsFor, laneFor, specFor } from './board-chips'
@@ -418,28 +422,54 @@ function cardChips(ticket: TicketRecord): readonly CardChip[] {
 
 // The detail drawer.
 const openTicketId = ref<number | null>(null)
-
-const selectedTicket = computed(
-  () => cards.value.find((ticket) => ticket.id === openTicketId.value) ?? null,
-)
+const drawerTicket = ref<TicketRecord | null>(null)
+const drawerLoading = ref(false)
+const drawerError = ref<string | null>(null)
 
 const drawerTitle = computed(() =>
-  selectedTicket.value ? boardCardTitle(selectedTicket.value) : 'Ticket',
+  drawerTicket.value ? boardCardTitle(drawerTicket.value) : 'Ticket',
 )
 
 const drawerNumber = computed(() =>
-  selectedTicket.value
-    ? boardCardNumber(selectedTicket.value, projectCode.value)
+  drawerTicket.value
+    ? boardCardNumber(drawerTicket.value, projectCode.value)
     : undefined,
 )
 
-function openTicket(ticket: TicketRecord): void {
+async function openTicket(ticket: TicketRecord): Promise<void> {
   openTicketId.value = ticket.id
+  await loadDrawer(ticket.id)
+}
+
+async function loadDrawer(ticketId: number): Promise<void> {
+  if (!transport) return
+  drawerLoading.value = true
+  drawerError.value = null
+  try {
+    drawerTicket.value = await new KanbanClient(transport).queryTicketGet({ ticket_id: ticketId })
+  } catch (failure) {
+    drawerTicket.value = null
+    drawerError.value = asApiError(failure).message
+  } finally {
+    drawerLoading.value = false
+  }
 }
 
 function closeDrawer(): void {
   openTicketId.value = null
+  drawerTicket.value = null
+  drawerError.value = null
 }
+
+const drawerAttempts = computed(() =>
+  drawerTicket.value ? runs.attemptsFor(drawerTicket.value.id) : [],
+)
+
+const drawerTimelineId = computed(() =>
+  drawerTicket.value
+    ? ticketTimelineId(projectCode.value, drawerTicket.value.number)
+    : '',
+)
 
 // The facts the drawer shows for the open Ticket; full history and
 // the embedded timeline arrive with the drawer's own ticket. The Spec
@@ -447,7 +477,7 @@ function closeDrawer(): void {
 // load states no identity at all rather than one built from the row
 // id the Ticket carries.
 const drawerFacts = computed(() => {
-  const ticket = selectedTicket.value
+  const ticket = drawerTicket.value
   if (!ticket) return []
   const facts: { label: string; value: string }[] = [
     { label: 'Kind', value: KIND_LABELS[ticket.kind] },
@@ -836,7 +866,7 @@ const drawerFacts = computed(() => {
     </template>
 
     <DetailDrawer
-      :open="selectedTicket !== null"
+      :open="openTicketId !== null"
       :title="drawerTitle"
       :number="drawerNumber"
       size="wide"
@@ -846,41 +876,107 @@ const drawerFacts = computed(() => {
         {{ project ? `Project · ${project.code}` : '' }}
       </template>
 
-      <dl
-        v-if="selectedTicket"
-        class="flex flex-col gap-3"
+      <p
+        v-if="drawerLoading"
+        class="text-sm text-ink-subtle"
+        data-testid="drawer-loading"
       >
-        <div
-          v-for="fact in drawerFacts"
-          :key="fact.label"
-          class="flex items-baseline justify-between gap-4 border-b border-line pb-2 last:border-b-0"
-        >
-          <dt class="text-[0.625rem] font-semibold tracking-[0.06em] text-ink-subtle uppercase">
-            {{ fact.label }}
-          </dt>
-          <dd
-            v-if="fact.label === 'State'"
-            data-testid="drawer-state"
+        Loading ticket detail…
+      </p>
+      <InlineAlert
+        v-else-if="drawerError"
+        data-testid="drawer-error"
+      >
+        {{ drawerError }}
+      </InlineAlert>
+      <template v-else-if="drawerTicket">
+        <dl class="flex flex-col gap-3">
+          <div
+            v-for="fact in drawerFacts"
+            :key="fact.label"
+            class="flex items-baseline justify-between gap-4 border-b border-line pb-2 last:border-b-0"
           >
-            <StatusBadge :tone="STATUS_TONES[selectedTicket.state]">
+            <dt class="text-[0.625rem] font-semibold tracking-[0.06em] text-ink-subtle uppercase">
+              {{ fact.label }}
+            </dt>
+            <dd
+              v-if="fact.label === 'State'"
+              data-testid="drawer-state"
+            >
+              <StatusBadge :tone="STATUS_TONES[drawerTicket.state]">
+                {{ fact.value }}
+              </StatusBadge>
+            </dd>
+            <dd
+              v-else-if="fact.label === 'Spec'"
+              data-testid="drawer-spec"
+              class="text-sm text-ink"
+            >
               {{ fact.value }}
-            </StatusBadge>
-          </dd>
-          <dd
-            v-else-if="fact.label === 'Spec'"
-            data-testid="drawer-spec"
-            class="text-sm text-ink"
-          >
-            {{ fact.value }}
-          </dd>
-          <dd
-            v-else
-            class="text-sm text-ink"
-          >
-            {{ fact.value }}
-          </dd>
+            </dd>
+            <dd
+              v-else
+              class="text-sm text-ink"
+            >
+              {{ fact.value }}
+            </dd>
+          </div>
+        </dl>
+
+        <section
+          v-if="drawerTicket.criteria.length > 0"
+          class="mt-6 flex flex-col gap-2"
+          data-testid="drawer-criteria"
+        >
+          <h3 class="font-display text-sm font-semibold tracking-tight text-ink">
+            Story-linked criteria
+          </h3>
+          <ul class="flex flex-col gap-2">
+            <li
+              v-for="(criterion, position) in drawerTicket.criteria"
+              :key="position"
+              class="rounded-control border border-line bg-surface/70 px-3 py-2 text-sm text-ink"
+            >
+              {{ criterion.outcome }}
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="drawerTicket.completion.length > 0"
+          class="mt-6 flex flex-col gap-2"
+          data-testid="drawer-completion"
+        >
+          <h3 class="font-display text-sm font-semibold tracking-tight text-ink">
+            Completion criteria
+          </h3>
+          <ul class="flex flex-col gap-2">
+            <li
+              v-for="(outcome, position) in drawerTicket.completion"
+              :key="position"
+              class="rounded-control border border-line bg-surface/70 px-3 py-2 text-sm text-ink"
+            >
+              {{ outcome }}
+            </li>
+          </ul>
+        </section>
+
+        <AttemptHistory
+          class="mt-6"
+          :attempts="drawerAttempts"
+        />
+
+        <div
+          class="mt-6"
+          data-testid="drawer-timeline"
+        >
+          <TimelineSurface
+            :scope="{ project: projectId }"
+            entity-kind="ticket"
+            :entity-id="drawerTimelineId"
+          />
         </div>
-      </dl>
+      </template>
     </DetailDrawer>
   </main>
 </template>

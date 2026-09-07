@@ -37,6 +37,13 @@ export const useRunsStore = defineStore('runs', {
           ? { effective: newest.effective.name, fallback: newest.fallback }
           : null
       },
+    /** Every run the Ticket has ever minted, oldest first. */
+    attemptsFor:
+      (state) =>
+      (ticketId: number): readonly RunRecord[] =>
+        [...state.runs.filter((run) => run.ticket_id === ticketId)].sort(
+          (left, right) => left.created_at - right.created_at,
+        ),
   },
   actions: {
     async load(transport: ShellTransport, projectId: number): Promise<void> {

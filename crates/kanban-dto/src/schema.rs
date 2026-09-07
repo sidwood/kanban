@@ -110,6 +110,11 @@ use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
 };
+use crate::view::{
+    DonePlacement, SavedViewRecord, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewMode,
+    ViewRemoveRequest, ViewRemovedRecord, ViewRenameRequest, ViewScope, ViewSorting,
+    ViewUpdateRequest,
+};
 use crate::workspace::{
     WorkspaceCheckoutDto, WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse,
     WorkspaceObservationDto, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
@@ -544,5 +549,17 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("RunAcknowledgeRequest", schema_for!(RunAcknowledgeRequest)),
         ("RunListQuery", schema_for!(RunListQuery)),
         ("RunListResponse", schema_for!(RunListResponse)),
+        ("ViewScope", schema_for!(ViewScope)),
+        ("ViewMode", schema_for!(ViewMode)),
+        ("DonePlacement", schema_for!(DonePlacement)),
+        ("ViewSorting", schema_for!(ViewSorting)),
+        ("SavedViewRecord", schema_for!(SavedViewRecord)),
+        ("ViewListQuery", schema_for!(ViewListQuery)),
+        ("ViewListResponse", schema_for!(ViewListResponse)),
+        ("ViewCreateRequest", schema_for!(ViewCreateRequest)),
+        ("ViewUpdateRequest", schema_for!(ViewUpdateRequest)),
+        ("ViewRenameRequest", schema_for!(ViewRenameRequest)),
+        ("ViewRemoveRequest", schema_for!(ViewRemoveRequest)),
+        ("ViewRemovedRecord", schema_for!(ViewRemovedRecord)),
     ]
 }

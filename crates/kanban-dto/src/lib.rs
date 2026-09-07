@@ -30,6 +30,7 @@ pub mod spec;
 pub mod ticket;
 pub mod timeline;
 
+pub mod view;
 pub mod workspace;
 
 pub use board::{
@@ -141,6 +142,11 @@ pub use ticket::{
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
+};
+pub use view::{
+    DonePlacement, SavedViewRecord, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewMode,
+    ViewRemoveRequest, ViewRemovedRecord, ViewRenameRequest, ViewScope, ViewSorting,
+    ViewUpdateRequest,
 };
 pub use workspace::{
     WorkspaceCheckoutDto, WorkspaceHealthDto, WorkspaceListQuery, WorkspaceListResponse,
@@ -446,6 +452,18 @@ mod tests {
                 "RunAcknowledgeRequest",
                 "RunListQuery",
                 "RunListResponse",
+                "ViewScope",
+                "ViewMode",
+                "DonePlacement",
+                "ViewSorting",
+                "SavedViewRecord",
+                "ViewListQuery",
+                "ViewListResponse",
+                "ViewCreateRequest",
+                "ViewUpdateRequest",
+                "ViewRenameRequest",
+                "ViewRemoveRequest",
+                "ViewRemovedRecord",
             ]
         );
     }

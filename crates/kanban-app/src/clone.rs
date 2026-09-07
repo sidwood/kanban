@@ -746,6 +746,36 @@ pub(crate) mod testing {
         }
     }
 
+    /// An idempotency store whose spans cannot commit their outcome,
+    /// standing in for a database that refuses the write after the
+    /// mutation itself applied.
+    struct RefusingOutcomeStore;
+
+    impl crate::mutation::IdempotencyStore for RefusingOutcomeStore {
+        fn recorded(
+            &self,
+            _key: &str,
+        ) -> Result<Option<crate::mutation::RecordedOutcome>, ApiError> {
+            Ok(None)
+        }
+
+        fn begin(&self) -> Result<Box<dyn crate::mutation::MutationSpan + '_>, ApiError> {
+            Ok(Box::new(RefusingOutcomeSpan))
+        }
+    }
+
+    struct RefusingOutcomeSpan;
+
+    impl crate::mutation::MutationSpan for RefusingOutcomeSpan {
+        fn commit(
+            self: Box<Self>,
+            _key: &str,
+            _outcome: crate::mutation::RecordedOutcome,
+        ) -> Result<(), ApiError> {
+            Err(ApiError::internal("the outcome row could not be recorded"))
+        }
+    }
+
     /// A core with the Workspace, Lane, and guarded clone operations
     /// wired to in-memory stores over one active Project, whose fleet
     /// tool and published events the test steers and reads. The Lane
@@ -761,8 +791,10 @@ pub(crate) mod testing {
         pub(crate) core: Core,
     }
 
-    /// A harness whose git observer the test chooses.
-    pub(crate) fn clone_harness_with_observer(
+    /// A harness whose idempotency store and git observer the test
+    /// chooses.
+    pub(crate) fn clone_harness_over(
+        idempotency: Arc<dyn crate::mutation::IdempotencyStore>,
         observer: Arc<dyn crate::workspace::WorkspaceGitObserver>,
     ) -> CloneHarness {
         let projects = Arc::new(MemoryProjects::default());
@@ -779,11 +811,7 @@ pub(crate) mod testing {
         let timeline = Arc::new(MemoryCloneGuardStore::default());
         let probe = Arc::new(ScriptedTargetProbe::default());
         let sink = Arc::new(RecordingSink::default());
-        let mut core = Core::new(
-            exposed_operations(),
-            Arc::new(MemoryIdempotencyStore::new()),
-            sink.clone(),
-        );
+        let mut core = Core::new(exposed_operations(), idempotency, sink.clone());
         core.register_tickets(
             tickets.clone(),
             projects.clone(),
@@ -819,11 +847,30 @@ pub(crate) mod testing {
         }
     }
 
+    /// A harness whose git observer the test chooses, recording its
+    /// outcomes in memory.
+    pub(crate) fn clone_harness_with_observer(
+        observer: Arc<dyn crate::workspace::WorkspaceGitObserver>,
+    ) -> CloneHarness {
+        clone_harness_over(Arc::new(MemoryIdempotencyStore::new()), observer)
+    }
+
     /// A harness with a silent git observer: paths read as missing.
     pub(crate) fn clone_harness() -> CloneHarness {
         clone_harness_with_observer(Arc::new(
             crate::workspace::testing::ScriptedObserver::default(),
         ))
+    }
+
+    /// A harness whose command outcomes can never be recorded, with a
+    /// silent git observer: every span refuses its commit, standing in
+    /// for a database that fails the outcome write after the mutation
+    /// itself applied.
+    pub(crate) fn clone_harness_without_outcomes() -> CloneHarness {
+        clone_harness_over(
+            Arc::new(RefusingOutcomeStore),
+            Arc::new(crate::workspace::testing::ScriptedObserver::default()),
+        )
     }
 
     /// A harness whose observer reads `path` as a clean clone on
@@ -853,7 +900,9 @@ mod guarded_clone {
 
     use kanban_dto::ErrorCode;
 
-    use super::testing::{CloneCall, clone_harness, observed_harness};
+    use super::testing::{
+        CloneCall, clone_harness, clone_harness_without_outcomes, observed_harness,
+    };
     use crate::clone::testing::CloneHarness;
 
     fn mutation(version: u64, key: &str) -> Value {
@@ -1512,6 +1561,50 @@ mod guarded_clone {
             "the invocation evidence remains, and no removal row lands: {rows:?}"
         );
         assert_eq!(rows[0].detail()["workspace_id"], json!(1));
+    }
+
+    /// KAN-T128-AC1: the outcome row is the last write a landed
+    /// command owes, and it can fail too. A create whose skill ran and
+    /// whose creation row appended in its span still owes its
+    /// invocation evidence when the outcome cannot be recorded: the
+    /// row deferred to the discard must land once the failed span is
+    /// gone. The in-memory timeline keeps the creation row — only the
+    /// durable span could roll it back — so the guarantee under proof
+    /// is the invocation row's presence, not the creation row's
+    /// absence.
+    #[test]
+    fn an_unrecordable_outcome_after_a_successful_create_keeps_the_invocation() {
+        let harness = clone_harness_without_outcomes();
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("a command whose outcome cannot be recorded is not a success");
+
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(
+            harness.tool.calls().len(),
+            1,
+            "the skill ran and succeeded before the outcome failed"
+        );
+        let rows = harness.timeline.rows();
+        let invocation = rows
+            .iter()
+            .find(|row| row.detail()["action"] == json!("clone_create_invoked"))
+            .expect("the invocation evidence survives the lost outcome");
+        assert_eq!(
+            invocation.detail()["path"],
+            json!("/workspaces/kanban.fleet-t34")
+        );
+        assert_eq!(invocation.detail()["branch"], json!("fleet/kan-t34"));
+        assert_eq!(
+            invocation.detail()["source"],
+            json!("/repositories/kanban"),
+            "the invocation row names the repository the skill was handed"
+        );
     }
 
     #[test]

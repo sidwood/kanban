@@ -203,13 +203,22 @@ impl Core {
                 return Err(error);
             }
         };
-        span.commit(
+        if let Err(error) = span.commit(
             &command.idempotency_key,
             RecordedOutcome {
                 fingerprint,
                 response: response.clone(),
             },
-        )?;
+        ) {
+            // The commit consumes the span, so a commit that cannot
+            // land has already rolled the mutation back: the command
+            // failed no matter what its apply earned, and the writes
+            // it deferred to its discard still owe their landing — an
+            // invocation that ran is evidence even when the outcome
+            // row is lost (KAN-T128).
+            announced.discard();
+            return Err(error);
+        }
         announced.release(self.events.as_ref());
         Ok(response)
     }
@@ -287,11 +296,12 @@ impl PendingEffects {
         }
     }
 
-    /// Run the writes a refused command still owes, in the order they
-    /// were deferred. The caller has already discarded the span, so
-    /// each write opens its own. The events the failed command
-    /// announced are dropped here, never published: a refused command
-    /// has no live surface, only its durable record.
+    /// Run the writes a failed command still owes, in the order they
+    /// were deferred. The caller has already discarded the span — by
+    /// an explicit drop or a commit that consumed it — so each write
+    /// opens its own. The events the failed command announced are
+    /// dropped here, never published: a command that did not land has
+    /// no live surface, only its durable record.
     fn discard(self) {
         self.events
             .into_inner()

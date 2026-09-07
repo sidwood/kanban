@@ -77,6 +77,11 @@ use crate::project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
 };
+use crate::review::{
+    TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
+    TicketReviewConfigureRequest, TicketReviewOccupant, TicketReviewSlot,
+    TicketReviewSlotRequirement, TicketReviewStage,
+};
 use crate::ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
 };
@@ -415,6 +420,29 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("TicketRecord", schema_for!(TicketRecord)),
         ("TicketReviewDecision", schema_for!(TicketReviewDecision)),
         ("TicketReviewRequest", schema_for!(TicketReviewRequest)),
+        (
+            "TicketReviewConfigQuery",
+            schema_for!(TicketReviewConfigQuery),
+        ),
+        (
+            "TicketReviewConfigRecord",
+            schema_for!(TicketReviewConfigRecord),
+        ),
+        (
+            "TicketReviewConfigResponse",
+            schema_for!(TicketReviewConfigResponse),
+        ),
+        (
+            "TicketReviewConfigureRequest",
+            schema_for!(TicketReviewConfigureRequest),
+        ),
+        ("TicketReviewOccupant", schema_for!(TicketReviewOccupant)),
+        ("TicketReviewSlot", schema_for!(TicketReviewSlot)),
+        (
+            "TicketReviewSlotRequirement",
+            schema_for!(TicketReviewSlotRequirement),
+        ),
+        ("TicketReviewStage", schema_for!(TicketReviewStage)),
         ("TicketScheduleRequest", schema_for!(TicketScheduleRequest)),
         ("TicketSeverity", schema_for!(TicketSeverity)),
         ("TicketState", schema_for!(TicketState)),

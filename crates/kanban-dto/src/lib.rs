@@ -23,6 +23,7 @@ pub mod mutation;
 pub mod plan;
 pub mod profile;
 pub mod project;
+pub mod review;
 pub mod ruling;
 pub mod run;
 pub mod schema;
@@ -109,6 +110,11 @@ pub use profile::{
 pub use project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest,
+};
+pub use review::{
+    TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
+    TicketReviewConfigureRequest, TicketReviewOccupant, TicketReviewSlot,
+    TicketReviewSlotRequirement, TicketReviewStage,
 };
 pub use ruling::{
     RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
@@ -376,6 +382,14 @@ mod tests {
                 "TicketRecord",
                 "TicketReviewDecision",
                 "TicketReviewRequest",
+                "TicketReviewConfigQuery",
+                "TicketReviewConfigRecord",
+                "TicketReviewConfigResponse",
+                "TicketReviewConfigureRequest",
+                "TicketReviewOccupant",
+                "TicketReviewSlot",
+                "TicketReviewSlotRequirement",
+                "TicketReviewStage",
                 "TicketScheduleRequest",
                 "TicketSeverity",
                 "TicketState",

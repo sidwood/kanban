@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use kanban_domain::{
     AcceptanceCriterion, CriterionError, ProjectCode, SpecId, StoryRefError, StoryScope,
-    UserStoryRef,
+    UserStoryRef, claims_count_for_version,
 };
 use kanban_dto::{
     ApiError, CoverageCriterionProposal, CriterionRefusal, RefusedCriterion,
@@ -148,9 +148,12 @@ impl Core {
 }
 
 /// Serves `spec.coverage.matrix`: one Spec version's claims, story by
-/// story, from every Ticket attached to the Spec. The version read is
-/// the query's when it names one, else the approved one when
-/// operative, else the working content.
+/// story, from the Tickets attached to the Spec whose claims belong to
+/// that version — its pinned members and, for the operative read, the
+/// active unpinned population a new graph completes over (Sid ruling
+/// 5) — never another version's Tickets, a reused story id included.
+/// The version read is the query's when it names one, else the
+/// approved one when operative, else the working content.
 struct CoverageMatrix {
     tickets: Arc<dyn TicketStore>,
     specs: Arc<dyn SpecStore>,
@@ -170,15 +173,17 @@ impl QueryHandler for CoverageMatrix {
                 query.spec_id
             ))
         })?;
+        let operative = spec
+            .approved_version()
+            .or_else(|| spec.current_version())
+            .ok_or_else(|| ApiError::not_found(&format!("spec {}", query.spec_id)))?;
         let version = match query.version {
             Some(number) => spec
                 .pinned_version(number)
                 .ok_or_else(|| ApiError::not_found(&format!("version {number}")))?,
-            None => spec
-                .approved_version()
-                .or_else(|| spec.current_version())
-                .ok_or_else(|| ApiError::not_found(&format!("spec {}", query.spec_id)))?,
+            None => operative,
         };
+        let current = operative.number() == version.number();
         let scope = StoryScope::extract(
             project.code(),
             spec.number(),
@@ -190,6 +195,7 @@ impl QueryHandler for CoverageMatrix {
             .list(project.id())?
             .into_iter()
             .filter(|ticket| ticket.spec() == Some(spec.id()))
+            .filter(|ticket| claims_count_for_version(ticket, version.number(), current))
             .collect();
         let stories = scope
             .stories()
@@ -548,6 +554,7 @@ mod executable_gate {
 mod coverage_matrix {
     use serde_json::{Value, json};
 
+    use crate::ticket::TicketStore;
     use crate::ticket::testing::ticket_harness;
 
     /// The PRD wire content with a story section naming `stories`.
@@ -755,6 +762,333 @@ mod coverage_matrix {
             draft["stories"].as_array().map(Vec::len),
             Some(1),
             "an explicit version names the scope it wants"
+        );
+    }
+
+    /// Approve the Spec's version one and a Ticket graph over two
+    /// Tickets claiming its stories — the human gate pins both to
+    /// version one — returning the Spec and the two pinned Tickets.
+    fn pinned_version_one(core: &crate::dispatch::Core) -> (u64, u64, u64) {
+        let created = core
+            .command(
+                "spec.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-author" },
+                    "project_id": 1,
+                    "content": content("Registration", STORIES),
+                }),
+            )
+            .expect("the Spec authors");
+        let spec = created["id"].as_u64().expect("the identity is a number");
+        core.command(
+            "spec.version.approve",
+            &json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "key-approve" },
+                "spec_id": spec,
+            }),
+        )
+        .expect("version one approves");
+        let first = implementation(
+            core,
+            spec,
+            "Criteria link to stories",
+            json!([
+                { "outcome": "Criteria link to stories.", "stories": ["CORE-S1-US1"] },
+                { "outcome": "Covered stories stay claimed.", "stories": ["CORE-S1-US2"] },
+            ]),
+            "key-ticket-1",
+        );
+        let second = implementation(
+            core,
+            spec,
+            "The gate before execution",
+            json!([{ "outcome": "The gate runs before execution.", "stories": ["CORE-S1-US3"] }]),
+            "key-ticket-2",
+        );
+        let proposed = core
+            .command(
+                "ticket.graph.propose",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-propose" },
+                    "spec_id": spec,
+                    "spec_version": 1,
+                    "tickets": [first, second],
+                    "edges": [],
+                }),
+            )
+            .expect("the graph records");
+        let proposal = proposed["id"].as_u64().expect("the identity is a number");
+        core.command(
+            "ticket.graph.approve",
+            &json!({
+                "mutation": { "optimistic_version": 1, "idempotency_key": "key-gate" },
+                "proposal_id": proposal,
+            }),
+        )
+        .expect("the human gate approves");
+        (spec, first, second)
+    }
+
+    /// Supersede version one and approve a second version whose
+    /// content reuses the same story ids — the shape a replan of
+    /// unchanged stories mints (DR-PS-11).
+    fn reused_id_version_two(core: &crate::dispatch::Core, spec: u64) {
+        core.command(
+            "spec.version.supersede",
+            &json!({
+                "mutation": { "optimistic_version": 2, "idempotency_key": "key-supersede" },
+                "spec_id": spec,
+                "version": 1,
+            }),
+        )
+        .expect("version one supersedes");
+        core.command(
+            "spec.content.update",
+            &json!({
+                "mutation": { "optimistic_version": 3, "idempotency_key": "key-revise" },
+                "spec_id": spec,
+                "content": content("Registration again", STORIES),
+            }),
+        )
+        .expect("the material change mints a draft");
+        core.command(
+            "spec.version.approve",
+            &json!({
+                "mutation": { "optimistic_version": 4, "idempotency_key": "key-reapprove" },
+                "spec_id": spec,
+            }),
+        )
+        .expect("version two approves");
+    }
+
+    /// Stand one Ticket in a terminal state the graph commands refuse
+    /// to reach, the way the lifecycle slice moves a cancelled member:
+    /// the row keeps its pin and turns terminal.
+    fn cancel(harness: &crate::ticket::testing::TicketHarness, id: u64) {
+        let standing = harness
+            .tickets
+            .find(kanban_domain::TicketId::new(id))
+            .expect("the find serves")
+            .expect("the Ticket stands");
+        let moved = kanban_domain::Ticket::restore(
+            standing.id(),
+            standing.project(),
+            standing.number(),
+            standing.priority(),
+            kanban_domain::TicketState::Cancelled,
+            standing.body().clone(),
+            standing.predecessor(),
+            standing.profile().cloned(),
+            standing.pinned_version(),
+            standing.version() + 1,
+        );
+        harness
+            .tickets
+            .replace_pinned(moved)
+            .expect("the row moves");
+    }
+
+    /// Every claim the matrix holds, as (ticket, outcome) pairs across
+    /// all story rows.
+    fn claimed_pairs(response: &Value) -> Vec<(u64, String)> {
+        response["stories"]
+            .as_array()
+            .expect("the rows stand")
+            .iter()
+            .flat_map(|row| row["claims"].as_array().expect("the claims stand"))
+            .map(|claim| {
+                (
+                    claim["ticket_id"]
+                        .as_u64()
+                        .expect("the identity is a number"),
+                    claim["outcome"]
+                        .as_str()
+                        .expect("the outcome is text")
+                        .to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_current_version_query_counts_only_eligible_claims() {
+        let (harness, _proposals) = crate::graph_proposal::testing::graph_harness();
+        let (spec, first, second) = pinned_version_one(&harness.core);
+        reused_id_version_two(&harness.core, spec);
+        let third = implementation(
+            &harness.core,
+            spec,
+            "Claims stay on their version",
+            json!([{
+                "outcome": "Claims stay on their version.",
+                "stories": ["CORE-S1-US1", "CORE-S1-US2", "CORE-S1-US3"],
+            }]),
+            "key-ticket-3",
+        );
+
+        let response = harness
+            .core
+            .query("spec.coverage.matrix", &json!({ "spec_id": spec }))
+            .expect("the matrix serves");
+
+        assert_eq!(
+            response["version"],
+            json!(2),
+            "the default reads the operative version"
+        );
+        let claims = claimed_pairs(&response);
+        assert_eq!(
+            claims,
+            vec![
+                (third, "Claims stay on their version.".to_owned()),
+                (third, "Claims stay on their version.".to_owned()),
+                (third, "Claims stay on their version.".to_owned()),
+            ],
+            "Tickets pinned to version one never satisfy version two's \
+             executable coverage (KAN-T117-AC1)"
+        );
+        assert!(
+            !claims
+                .iter()
+                .any(|(ticket, _)| *ticket == first || *ticket == second),
+            "no earlier pin lends its claims to the current version"
+        );
+        let explicit = harness
+            .core
+            .query(
+                "spec.coverage.matrix",
+                &json!({ "spec_id": spec, "version": 2 }),
+            )
+            .expect("the matrix serves");
+        assert_eq!(
+            explicit["stories"], response["stories"],
+            "the explicit current query agrees with the default"
+        );
+    }
+
+    #[test]
+    fn a_historical_query_holds_only_its_versions_claims() {
+        let (harness, _proposals) = crate::graph_proposal::testing::graph_harness();
+        let (spec, first, second) = pinned_version_one(&harness.core);
+        reused_id_version_two(&harness.core, spec);
+        let third = implementation(
+            &harness.core,
+            spec,
+            "Claims stay on their version",
+            json!([{
+                "outcome": "Claims stay on their version.",
+                "stories": ["CORE-S1-US1", "CORE-S1-US2", "CORE-S1-US3"],
+            }]),
+            "key-ticket-3",
+        );
+
+        let historical = harness
+            .core
+            .query(
+                "spec.coverage.matrix",
+                &json!({ "spec_id": spec, "version": 1 }),
+            )
+            .expect("the matrix serves");
+
+        assert_eq!(historical["version"], json!(1));
+        assert_eq!(
+            historical["stories"],
+            json!([
+                {
+                    "story": "CORE-S1-US1",
+                    "claims": [{
+                        "ticket_id": first,
+                        "ticket_number": 1,
+                        "outcome": "Criteria link to stories.",
+                    }],
+                },
+                {
+                    "story": "CORE-S1-US2",
+                    "claims": [{
+                        "ticket_id": first,
+                        "ticket_number": 1,
+                        "outcome": "Covered stories stay claimed.",
+                    }],
+                },
+                {
+                    "story": "CORE-S1-US3",
+                    "claims": [{
+                        "ticket_id": second,
+                        "ticket_number": 2,
+                        "outcome": "The gate runs before execution.",
+                    }],
+                },
+            ]),
+            "version one keeps its own pinned claims; the reused story ids \
+             never borrow another version's Tickets (KAN-T117-AC2)"
+        );
+        let current = harness
+            .core
+            .query("spec.coverage.matrix", &json!({ "spec_id": spec }))
+            .expect("the matrix serves");
+        let claimed: Vec<u64> = claimed_pairs(&current)
+            .into_iter()
+            .map(|(ticket, _)| ticket)
+            .collect();
+        assert_eq!(
+            claimed,
+            vec![third, third, third],
+            "the same story ids carry the current version's claims alone"
+        );
+    }
+
+    #[test]
+    fn terminal_history_stays_visible_and_never_covers_the_current_version() {
+        let (harness, _proposals) = crate::graph_proposal::testing::graph_harness();
+        let (spec, first, second) = pinned_version_one(&harness.core);
+        // The pinned member cancels while version one is still the
+        // current one: its claims stop satisfying executable coverage
+        // at once.
+        cancel(&harness, first);
+
+        let current = harness
+            .core
+            .query("spec.coverage.matrix", &json!({ "spec_id": spec }))
+            .expect("the matrix serves");
+        let claims = claimed_pairs(&current);
+        assert!(
+            !claims.iter().any(|(ticket, _)| *ticket == first),
+            "a cancelled Ticket never satisfies current executable coverage \
+             (KAN-T117-AC3)"
+        );
+        assert!(
+            claims.iter().any(|(ticket, _)| *ticket == second),
+            "the open member still covers its story"
+        );
+
+        reused_id_version_two(&harness.core, spec);
+        implementation(
+            &harness.core,
+            spec,
+            "Claims stay on their version",
+            json!([{
+                "outcome": "Claims stay on their version.",
+                "stories": ["CORE-S1-US1", "CORE-S1-US2", "CORE-S1-US3"],
+            }]),
+            "key-ticket-3",
+        );
+        let historical = harness
+            .core
+            .query(
+                "spec.coverage.matrix",
+                &json!({ "spec_id": spec, "version": 1 }),
+            )
+            .expect("the matrix serves");
+
+        assert_eq!(
+            claimed_pairs(&historical),
+            vec![
+                (first, "Criteria link to stories.".to_owned()),
+                (first, "Covered stories stay claimed.".to_owned()),
+                (second, "The gate runs before execution.".to_owned()),
+            ],
+            "the cancelled member stays visible in its version's history \
+             (KAN-T117-AC3)"
         );
     }
 

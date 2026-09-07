@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Response payload for the `view.remove` command.",
+  "properties": {
+    "view_id": {
+      "description": "The view that was removed.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "view_id"
+  ],
+  "title": "ViewRemovedRecord",
+  "type": "object"
+}

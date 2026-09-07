@@ -1,0 +1,534 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AttentionState": {
+      "description": "Why one Ticket demands operator attention: the closed Attention Item classes from CONTEXT.md. The per-Ticket projection that raises them lands with the attention inbox (KAN-S11); the vocabulary is fixed here so the filter surface is complete first.",
+      "oneOf": [
+        {
+          "description": "A registered dependency or external blocker holds the work.",
+          "enum": [
+            "blocker"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A settled run finished without its required submission.",
+          "enum": [
+            "missing_result"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The work waits on a human decision.",
+          "enum": [
+            "human_decision"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A review asks the operator in.",
+          "enum": [
+            "review_request"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A schedule failed to activate or mint its occurrence.",
+          "enum": [
+            "failed_schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An approval no longer validates.",
+          "enum": [
+            "invalid_approval"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The session observing the work disconnected.",
+          "enum": [
+            "disconnected_session"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A run passed its stall deadline.",
+          "enum": [
+            "stale_run"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "BoardFilter": {
+      "additionalProperties": false,
+      "description": "The global board's filter: one set per axis (DR-BP-01). A set a request leaves absent constrains nothing; a set with values admits a card holding any of them; and the axes compose as one intersection.",
+      "properties": {
+        "attention": {
+          "description": "The attention classes whose raised work shows.",
+          "items": {
+            "$ref": "#/definitions/AttentionState"
+          },
+          "type": "array"
+        },
+        "initiatives": {
+          "description": "The Initiatives whose Projects' work shows.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "kinds": {
+          "description": "The kinds that show.",
+          "items": {
+            "$ref": "#/definitions/TicketKind"
+          },
+          "type": "array"
+        },
+        "lanes": {
+          "description": "The Lanes whose held work shows.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "plans": {
+          "description": "The Plans whose Specs' work shows.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "priorities": {
+          "description": "The priorities that show.",
+          "items": {
+            "$ref": "#/definitions/TicketPriority"
+          },
+          "type": "array"
+        },
+        "profiles": {
+          "description": "The Execution Profiles whose assigned work shows, by name.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "projects": {
+          "description": "The Projects whose work shows.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "specs": {
+          "description": "The Specs whose work shows.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "states": {
+          "description": "The lifecycle states that show.",
+          "items": {
+            "$ref": "#/definitions/TicketState"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BoardGroup": {
+      "description": "The fixed Board Groups as the wire carries them (DR-LC-03): the group a card's lifecycle state projects onto, never a state itself. The terminal states reach no group and appear on no board.",
+      "oneOf": [
+        {
+          "description": "Captured work that has not qualified or circulated.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Parked, blocked, scheduled, and ready work (DR-LC-04).",
+          "enum": [
+            "backlog"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Work executing in a Lane.",
+          "enum": [
+            "current"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Work under review.",
+          "enum": [
+            "review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Approved and landing work (DR-LC-05).",
+          "enum": [
+            "staged"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landed work.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DonePlacement": {
+      "description": "Where Done work sits under a view.",
+      "oneOf": [
+        {
+          "description": "Done stands with the other groups.",
+          "enum": [
+            "column"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Done sits below the board as a table.",
+          "enum": [
+            "table"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "TicketKind": {
+      "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+      "oneOf": [
+        {
+          "description": "A small vertical product slice of exactly one Spec.",
+          "enum": [
+            "implementation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A record of incorrect behaviour, with qualification evidence.",
+          "enum": [
+            "bug"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bounded operational, investigative, or administrative work.",
+          "enum": [
+            "task"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketPriority": {
+      "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+      "oneOf": [
+        {
+          "description": "Ahead of everything else.",
+          "enum": [
+            "urgent"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ahead of normal work.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The everyday order.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Behind normal work.",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TicketState": {
+      "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+      "oneOf": [
+        {
+          "description": "Newly created; not yet qualified or planned.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deliberately set aside.",
+          "enum": [
+            "parked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Waiting on something outside the Ticket.",
+          "enum": [
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Qualified but unavailable until activation.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Free to execute when capacity allows.",
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Executing.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Under review.",
+          "enum": [
+            "in_review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Review approved, waiting to land.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landing through the Seed Workspace.",
+          "enum": [
+            "landing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landed in full.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: will not execute.",
+          "enum": [
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: replaced by a reassignment Ticket.",
+          "enum": [
+            "superseded"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ViewMode": {
+      "description": "The mode a view restores: the grouped columns or the register tables.",
+      "oneOf": [
+        {
+          "description": "Grouped columns.",
+          "enum": [
+            "board"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One table per visible column.",
+          "enum": [
+            "register"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ViewScope": {
+      "description": "The scope a view belongs to: the whole board, or one Project's work. The global scope holds exactly one default view; every Project holds exactly one of its own.",
+      "oneOf": [
+        {
+          "description": "Every Project's work on one surface.",
+          "enum": [
+            "global"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One Project's work, named by its numeric identity.",
+          "properties": {
+            "project": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ViewSorting": {
+      "description": "The deterministic order a view reads cards in (DR-LC-11): which key leads. Both keys are closed and deterministic; no view orders cards by hand.",
+      "oneOf": [
+        {
+          "description": "Priority leads, readiness beneath.",
+          "enum": [
+            "priority"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Readiness leads, priority beneath.",
+          "enum": [
+            "readiness"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Request payload for the `view.create` command. The owned set arrives whole; an axis the filter leaves absent constrains nothing.",
+  "properties": {
+    "done_placement": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/DonePlacement"
+        }
+      ],
+      "description": "The owned Done placement."
+    },
+    "expanded_groups": {
+      "default": [],
+      "description": "The owned expanded groups.",
+      "items": {
+        "$ref": "#/definitions/BoardGroup"
+      },
+      "type": "array"
+    },
+    "filter": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BoardFilter"
+        }
+      ],
+      "default": {},
+      "description": "The owned filter."
+    },
+    "hidden_columns": {
+      "default": [],
+      "description": "The owned hidden columns.",
+      "items": {
+        "$ref": "#/definitions/BoardGroup"
+      },
+      "type": "array"
+    },
+    "mode": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ViewMode"
+        }
+      ],
+      "description": "The owned mode."
+    },
+    "mutation": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/MutationContext"
+        }
+      ],
+      "description": "The mutation context."
+    },
+    "name": {
+      "description": "The perspective's name, unique within its scope.",
+      "type": "string"
+    },
+    "scope": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ViewScope"
+        }
+      ],
+      "description": "The scope the view belongs to."
+    },
+    "sorting": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ViewSorting"
+        }
+      ],
+      "description": "The owned sorting key."
+    }
+  },
+  "required": [
+    "done_placement",
+    "mode",
+    "mutation",
+    "name",
+    "scope",
+    "sorting"
+  ],
+  "title": "ViewCreateRequest",
+  "type": "object"
+}

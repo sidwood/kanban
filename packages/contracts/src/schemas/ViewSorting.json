@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The deterministic order a view reads cards in (DR-LC-11): which key leads. Both keys are closed and deterministic; no view orders cards by hand.",
+  "oneOf": [
+    {
+      "description": "Priority leads, readiness beneath.",
+      "enum": [
+        "priority"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Readiness leads, priority beneath.",
+      "enum": [
+        "readiness"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "ViewSorting"
+}

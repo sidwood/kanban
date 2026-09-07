@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The mode a view restores: the grouped columns or the register tables.",
+  "oneOf": [
+    {
+      "description": "Grouped columns.",
+      "enum": [
+        "board"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "One table per visible column.",
+      "enum": [
+        "register"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "ViewMode"
+}

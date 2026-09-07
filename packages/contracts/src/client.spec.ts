@@ -119,6 +119,11 @@ describe('generated client', () => {
       'export.render': 'export_render',
       'export.drift': 'export_drift',
       'board.global': 'board_global',
+      'view.list': 'view_list',
+      'view.create': 'view_create',
+      'view.update': 'view_update',
+      'view.rename': 'view_rename',
+      'view.remove': 'view_remove',
     })
   })
 
@@ -229,6 +234,11 @@ describe('generated client', () => {
       'export.render',
       'export.drift',
       'board.global',
+      'view.list',
+      'view.create',
+      'view.update',
+      'view.rename',
+      'view.remove',
     ])
   })
 

@@ -245,6 +245,7 @@ export type DispatchRequestRecord = {
   version: number;
 };
 export type DispatchStatus = 'queued' | 'claimed';
+export type DonePlacement = 'column' | 'table';
 export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
 export type EventEnvelope = {
   event_type: string;
@@ -690,6 +691,19 @@ export type RunRecord = {
   version: number;
 };
 export type RunStatus = 'executing';
+export type SavedViewRecord = {
+  done_placement: DonePlacement;
+  expanded_groups: BoardGroup[];
+  filter?: BoardFilter;
+  hidden_columns: BoardGroup[];
+  id: number;
+  is_default: boolean;
+  mode: ViewMode;
+  name: string;
+  scope: ViewScope;
+  sorting: ViewSorting;
+  version: number;
+};
 export type SchedulerHealth = {
   last_backup_success_at?: string | null;
 };
@@ -1097,6 +1111,48 @@ export type TimelineQueryResponse = {
 };
 export type TimelineScope = 'global' | {
   project: number;
+};
+export type ViewCreateRequest = {
+  done_placement: DonePlacement;
+  expanded_groups?: BoardGroup[];
+  filter?: BoardFilter;
+  hidden_columns?: BoardGroup[];
+  mode: ViewMode;
+  mutation: MutationContext;
+  name: string;
+  scope: ViewScope;
+  sorting: ViewSorting;
+};
+export type ViewListQuery = Record<string, never>;
+export type ViewListResponse = {
+  views: SavedViewRecord[];
+};
+export type ViewMode = 'board' | 'register';
+export type ViewRemoveRequest = {
+  mutation: MutationContext;
+  view_id: number;
+};
+export type ViewRemovedRecord = {
+  view_id: number;
+};
+export type ViewRenameRequest = {
+  mutation: MutationContext;
+  name: string;
+  view_id: number;
+};
+export type ViewScope = 'global' | {
+  project: number;
+};
+export type ViewSorting = 'priority' | 'readiness';
+export type ViewUpdateRequest = {
+  done_placement: DonePlacement;
+  expanded_groups?: BoardGroup[];
+  filter?: BoardFilter;
+  hidden_columns?: BoardGroup[];
+  mode: ViewMode;
+  mutation: MutationContext;
+  sorting: ViewSorting;
+  view_id: number;
 };
 export type WorkspaceCheckoutDto = 'branch' | 'detached';
 export type WorkspaceHealthCounts = {

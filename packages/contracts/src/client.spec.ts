@@ -124,6 +124,7 @@ describe('generated client', () => {
       'view.update': 'view_update',
       'view.rename': 'view_rename',
       'view.remove': 'view_remove',
+      'search.global': 'search_global',
     })
   })
 
@@ -239,6 +240,7 @@ describe('generated client', () => {
       'view.update',
       'view.rename',
       'view.remove',
+      'search.global',
     ])
   })
 

@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod clone;
 pub mod comment;
 pub mod contracts_gen;
+pub mod coordinator;
 pub mod coverage;
 pub mod deadlines;
 pub mod deferrals;
@@ -59,6 +60,10 @@ pub use clone::{
     CloneGuardStore, CloneTargetProbe, FLEET_TOOL_FAILED, FLEET_TOOL_REFUSED, FleetCloneTool,
 };
 pub use comment::CommentStore;
+pub use coordinator::{
+    CoordinatorHerdr, CoordinatorLoop, CoordinatorLoopOutcome, CoordinatorLoopRequest,
+    CoordinatorStep, ImplementerLaunch, NoopCoordinatorHerdr,
+};
 pub use deadlines::{
     DeadlineConfig, DeadlineMonitor, MISSING_RESULT_DEADLINE_REASON, STALL_DEADLINE_REASON,
 };

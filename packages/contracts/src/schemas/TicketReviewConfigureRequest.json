@@ -22,9 +22,10 @@
       "type": "object"
     },
     "TicketReviewOccupant": {
-      "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values.",
+      "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
       "oneOf": [
         {
+          "additionalProperties": false,
           "description": "A human reviews the slot.",
           "properties": {
             "kind": {
@@ -40,6 +41,7 @@
           "type": "object"
         },
         {
+          "additionalProperties": false,
           "description": "An agent reviews under the profile `name` references.",
           "properties": {
             "kind": {

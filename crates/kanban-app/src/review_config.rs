@@ -125,7 +125,7 @@ fn stages_of(wire: &[TicketReviewStage]) -> Result<Vec<DomainStage>, ApiError> {
                 .map(|slot| {
                     let requirement = requirement_of(slot.requirement);
                     match &slot.occupant {
-                        TicketReviewOccupant::Human => Ok(ReviewSlot::human(requirement)),
+                        TicketReviewOccupant::Human {} => Ok(ReviewSlot::human(requirement)),
                         TicketReviewOccupant::Profile { name } => {
                             Ok(ReviewSlot::profile(name_of(name)?, requirement))
                         }
@@ -150,7 +150,7 @@ fn record_of(ticket: TicketId, configuration: &ReviewConfiguration) -> TicketRev
                     .iter()
                     .map(|slot| TicketReviewSlot {
                         occupant: match slot.assignment() {
-                            ReviewSlotAssignment::Human => TicketReviewOccupant::Human,
+                            ReviewSlotAssignment::Human => TicketReviewOccupant::Human {},
                             ReviewSlotAssignment::Profile(name) => TicketReviewOccupant::Profile {
                                 name: name.as_str().to_owned(),
                             },

@@ -45,12 +45,19 @@ impl TicketReviewSlotRequirement {
 /// One slot's occupant on the wire: a human reviewer, or an agent
 /// reviewer under a named Execution Profile. A human slot carries no
 /// profile and is exempt from separation (DR-EP-15); a profile slot
-/// names its entry by reference, never inlined values.
+/// names its entry by reference, never inlined values. A human
+/// carries nothing but its tag, and every variant denies fields
+/// beyond its own: a smuggled `name` refuses the request rather than
+/// reading as a human and skipping the profile it would have named.
+// The human rides an empty struct, not a unit: a unit takes its tag
+// on trust and drops every other field, while the empty payload
+// still walks the map, so the denial above has a map to deny
+// against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TicketReviewOccupant {
     /// A human reviews the slot.
-    Human,
+    Human {},
     /// An agent reviews under the profile `name` references.
     Profile {
         /// The Execution Profile the slot's assignment names, by its
@@ -158,7 +165,7 @@ mod tests {
                         requirement: TicketReviewSlotRequirement::Required,
                     },
                     TicketReviewSlot {
-                        occupant: TicketReviewOccupant::Human,
+                        occupant: TicketReviewOccupant::Human {},
                         requirement: TicketReviewSlotRequirement::Optional,
                     },
                 ],
@@ -247,6 +254,37 @@ mod tests {
     }
 
     #[test]
+    fn a_human_occupant_refuses_extra_fields() {
+        // A human slot carries nothing but its tag. A payload smuggling
+        // a `name` beside the human tag must refuse the request whole,
+        // not read as a human slot and quietly skip the profile the
+        // name would have named.
+        let sneaky = serde_json::from_value::<TicketReviewOccupant>(
+            json!({ "kind": "human", "name": "reviewer-x" }),
+        );
+        assert!(
+            sneaky.is_err(),
+            "a human occupant carrying extra fields is rejected"
+        );
+
+        let human: TicketReviewOccupant =
+            serde_json::from_value(json!({ "kind": "human" })).expect("a bare human decodes");
+        assert_eq!(
+            serde_json::to_value(&human).expect("the human serialises"),
+            json!({ "kind": "human" })
+        );
+
+        let profile: TicketReviewOccupant =
+            serde_json::from_value(json!({ "kind": "profile", "name": "outsider" }))
+                .expect("a profile occupant decodes");
+        let encoded = serde_json::to_value(&profile).expect("the profile serialises");
+        assert_eq!(
+            serde_json::from_value::<TicketReviewOccupant>(encoded).expect("the profile decodes"),
+            profile
+        );
+    }
+
+    #[test]
     fn the_record_and_query_round_trip() {
         let record = TicketReviewConfigRecord {
             ticket_id: 4,
@@ -306,17 +344,31 @@ mod tests {
         ] {
             let schema = schema_of(name);
             let encoded = serde_json::to_string(&schema).expect("the schema serialises");
-            // An enum is a closed vocabulary, not a struct with
-            // fields: a plain enum denies by its own set, and an
-            // internally tagged enum carries its discriminator as
-            // data, so neither can also deny unknown fields. Every
-            // payload struct must.
-            if !matches!(name, "TicketReviewOccupant" | "TicketReviewSlotRequirement") {
+            // A plain enum is a closed vocabulary with no map to
+            // close, and its discriminator rides the value itself, so
+            // it can deny no properties beyond its own set. The
+            // tagged occupant enum walks a map per variant and closes
+            // it like every payload struct must.
+            if !matches!(name, "TicketReviewSlotRequirement") {
                 assert!(
                     encoded.contains("\"additionalProperties\":false"),
                     "{name} should reject unknown fields"
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_schema_closes_the_human_variant_payload() {
+        // The wire refuses a human occupant smuggling a `name`, so the
+        // published schema must promise the same: the human variant
+        // denies properties beyond its own tag.
+        let schema = schema_of("TicketReviewOccupant");
+        let variants = schema["oneOf"].as_array().expect("the variants list");
+        let human = variants
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["enum"] == json!(["human"]))
+            .expect("the human variant is published");
+        assert_eq!(human["additionalProperties"], json!(false));
     }
 }

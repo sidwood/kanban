@@ -229,6 +229,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "saved views",
         sql: include_str!("../migrations/0035_saved_views.sql"),
     },
+    Migration {
+        version: 36,
+        name: "ticket review configurations",
+        sql: include_str!("../migrations/0036_ticket_review_configurations.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -488,7 +493,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
                 ]
             }
         );
@@ -513,7 +518,7 @@ mod tests {
             versions,
             vec![
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
             ]
         );
         for table in [
@@ -596,7 +601,7 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 35, "one event per applied migration");
+        assert_eq!(events.len(), 36, "one event per applied migration");
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -785,7 +790,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+                applied: vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
             }
         );
         let conn = database.connection();
@@ -872,7 +877,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![27, 28, 29, 30, 31, 32, 33, 34, 35]
+                applied: vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
             }
         );
         let conn = database.connection();
@@ -956,7 +961,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![31, 32, 33, 34, 35]
+                applied: vec![31, 32, 33, 34, 35, 36]
             }
         );
         let conn = database.connection();
@@ -1003,6 +1008,84 @@ mod tests {
     }
 
     #[test]
+    fn migration_0036_creates_the_ticket_review_configuration_table() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 35).expect("the pre-review schema applies");
+        let before: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'ticket_review_configurations'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master is readable");
+        assert_eq!(
+            before, 0,
+            "version thirty-five holds no review configurations"
+        );
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0036 applies");
+
+        assert_eq!(report, MigrationReport { applied: vec![36] });
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO projects
+                 (code, name, repository, seed_workspace, default_branch,
+                  herdr_workspace, herdr_session, archived, version)
+             VALUES ('CORE', 'Control plane', '/repositories/kanban',
+                     '/workspaces/kanban.seed', 'main', 'kanban.seed',
+                     'kanban-main', 0, 1)",
+            [],
+        )
+        .expect("the Project lands");
+        conn.execute(
+            "INSERT INTO tickets
+                 (project_id, number, kind, priority, state, title, criteria,
+                  subtype, mode, completion, version)
+             VALUES (1, 1, 'task', 'normal', 'draft', 'One slice', '[]',
+                     'operational', 'human', '[\"done\"]', 1)",
+            [],
+        )
+        .expect("the Ticket lands");
+        conn.execute(
+            "INSERT INTO ticket_review_configurations (ticket_id, stages, version)
+             VALUES (1, '[{\"slots\":[{\"occupant\":{\"kind\":\"human\"},\"requirement\":\"required\"}]}]', 1)",
+            [],
+        )
+        .expect("a one-stage configuration lands");
+        assert!(
+            conn.execute(
+                "INSERT INTO ticket_review_configurations (ticket_id, stages, version)
+                 VALUES (1, '[]', 1)",
+                [],
+            )
+            .is_err(),
+            "a configuration with no stage reviews nothing"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO ticket_review_configurations (ticket_id, stages, version)
+                 VALUES (2, 'not json', 1)",
+                [],
+            )
+            .is_err(),
+            "the stages column holds JSON or nothing"
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO ticket_review_configurations (ticket_id, stages, version)
+                 VALUES (2, '[]', 0)",
+                [],
+            )
+            .is_err(),
+            "a non-positive version is refused"
+        );
+    }
+
+    #[test]
     fn migrate_from_version_twelve_adds_workspaces() {
         let (_dir, mut database) = scratch_database();
         crate::migrations::apply_through(&database.connection(), 12)
@@ -1026,7 +1109,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                    33, 34, 35
+                    33, 34, 35, 36
                 ]
             }
         );
@@ -1077,7 +1160,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+                applied: vec![25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
             }
         );
         let present: i64 = database
@@ -1142,7 +1225,7 @@ mod tests {
             report,
             MigrationReport {
                 applied: vec![
-                    19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+                    19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
                 ]
             }
         );
@@ -1210,7 +1293,9 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+                applied: vec![
+                    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
+                ]
             }
         );
         let conn = database.connection();
@@ -1304,7 +1389,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-                    34, 35
+                    34, 35, 36
                 ]
             }
         );
@@ -1373,7 +1458,7 @@ mod tests {
             MigrationReport {
                 applied: vec![
                     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-                    35
+                    35, 36
                 ]
             }
         );
@@ -1691,6 +1776,10 @@ mod tests {
                     version: 35,
                     name: "saved views",
                 },
+                PendingMigration {
+                    version: 36,
+                    name: "ticket review configurations",
+                },
             ]]
         );
     }
@@ -1737,7 +1826,7 @@ mod tests {
             report.applied,
             vec![
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                31, 32, 33, 34, 35
+                31, 32, 33, 34, 35, 36
             ]
         );
         let settings: (i64, i64, i64, i64, i64) = database
@@ -1813,7 +1902,7 @@ mod tests {
             report.applied,
             vec![
                 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                32, 33, 34, 35
+                32, 33, 34, 35, 36
             ]
         );
         let outcome = database.connection().execute(
@@ -2126,7 +2215,9 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+            vec![
+                21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
+            ]
         );
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn

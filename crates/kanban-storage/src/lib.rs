@@ -23,6 +23,7 @@ pub mod paths;
 pub mod plan;
 pub mod profiles;
 pub mod projects;
+pub mod review_config;
 pub mod rulings;
 pub mod runs;
 pub mod saved_views;
@@ -64,6 +65,7 @@ pub use paths::{attachments_dir, backups_dir, config_file_name, database_path, m
 pub use plan::SqlitePlanStore;
 pub use profiles::SqliteProfileStore;
 pub use projects::SqliteProjectStore;
+pub use review_config::SqliteReviewConfigStore;
 pub use rulings::SqliteRulingStore;
 pub use runs::SqliteRunStore;
 pub use saved_views::SqliteSavedViewStore;

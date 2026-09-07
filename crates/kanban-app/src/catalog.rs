@@ -785,6 +785,41 @@ define_exposed_catalogue! {
         mcp: "board_global",
         description: "Project the global board: filter every Project's work by Initiative, Project, Plan, Spec, kind, state, priority, Lane, execution profile, and attention state. Cards return grouped and deterministically ordered, beside the values each filter axis offers.",
     },
+    "view.list" => {
+        kind: Query,
+        request: "ViewListQuery",
+        response: "ViewListResponse",
+        mcp: "view_list",
+        description: "List every Saved View of every scope, the generated global default and Project defaults materialised first, each scope's default leading it.",
+    },
+    "view.create" => {
+        kind: Command,
+        request: "ViewCreateRequest",
+        response: "SavedViewRecord",
+        mcp: "view_create",
+        description: "Create a named Saved View owning its whole presentation set: the ten-axis filter, expanded groups, hidden columns, mode, Done placement, and sorting.",
+    },
+    "view.update" => {
+        kind: Command,
+        request: "ViewUpdateRequest",
+        response: "SavedViewRecord",
+        mcp: "view_update",
+        description: "Replace one Saved View's whole owned set at once, guarded by its optimistic version.",
+    },
+    "view.rename" => {
+        kind: Command,
+        request: "ViewRenameRequest",
+        response: "SavedViewRecord",
+        mcp: "view_rename",
+        description: "Rename one Saved View; no owned property moves.",
+    },
+    "view.remove" => {
+        kind: Command,
+        request: "ViewRemoveRequest",
+        response: "ViewRemovedRecord",
+        mcp: "view_remove",
+        description: "Remove one Saved View. A scope whose default is removed generates it again on the next read.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

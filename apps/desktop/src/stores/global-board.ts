@@ -14,7 +14,7 @@ import type {
 } from '@kanban/contracts'
 import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
-import { toggleValue, wireFilter } from '../views/global-board-filters'
+import { emptyFilter, toggleValue, wireFilter } from '../views/global-board-filters'
 
 /// The axes whose values are numeric identities.
 export type BoardIdAxis = 'initiatives' | 'projects' | 'plans' | 'specs' | 'lanes'
@@ -81,6 +81,12 @@ export const useGlobalBoardStore = defineStore('global-board', {
         profiles: [],
         attention: [],
       }
+    },
+    // Adopt one filter whole, every axis exactly as the view that
+    // owns it recorded them — the restoration a saved view performs
+    // on switch (DR-BP-05), never a merge.
+    setFilter(filter: BoardFilter): void {
+      this.filter = { ...emptyFilter(), ...filter }
     },
     // Forget the board: a load still on the wire for it is
     // superseded and writes nothing.

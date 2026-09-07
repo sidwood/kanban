@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values.",
+  "oneOf": [
+    {
+      "description": "A human reviews the slot.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "human"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "An agent reviews under the profile `name` references.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "profile"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "TicketReviewOccupant"
+}

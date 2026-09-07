@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketReviewOccupant": {
+      "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values.",
+      "oneOf": [
+        {
+          "description": "A human reviews the slot.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An agent reviews under the profile `name` references.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "profile"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TicketReviewSlot": {
+      "additionalProperties": false,
+      "description": "One parallel review slot on the wire (DR-EP-09): its occupant and its requirement.",
+      "properties": {
+        "occupant": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketReviewOccupant"
+            }
+          ],
+          "description": "The slot's occupant."
+        },
+        "requirement": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketReviewSlotRequirement"
+            }
+          ],
+          "description": "Whether the stage cannot resolve without this slot finishing."
+        }
+      },
+      "required": [
+        "occupant",
+        "requirement"
+      ],
+      "type": "object"
+    },
+    "TicketReviewSlotRequirement": {
+      "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+      "oneOf": [
+        {
+          "description": "The stage cannot resolve without this slot finishing.",
+          "enum": [
+            "required"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The slot never blocks the stage it sits in.",
+          "enum": [
+            "optional"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "One ordered stage on the wire (DR-EP-09): parallel slots that resolve together.",
+  "properties": {
+    "slots": {
+      "description": "The parallel slots, in configured order.",
+      "items": {
+        "$ref": "#/definitions/TicketReviewSlot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "slots"
+  ],
+  "title": "TicketReviewStage",
+  "type": "object"
+}

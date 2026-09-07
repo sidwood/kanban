@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `ticket.review.config` query.",
+  "properties": {
+    "ticket_id": {
+      "description": "The Ticket whose configuration is read.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "title": "TicketReviewConfigQuery",
+  "type": "object"
+}

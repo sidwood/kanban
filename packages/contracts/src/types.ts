@@ -435,7 +435,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'ticket.review.configured' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
 export type McpHealth = {
   exposed_tools: number;
 };
@@ -1066,11 +1066,41 @@ export type TicketRecord = {
   title?: string | null;
   version: number;
 };
+export type TicketReviewConfigQuery = {
+  ticket_id: number;
+};
+export type TicketReviewConfigRecord = {
+  stages: TicketReviewStage[];
+  ticket_id: number;
+  version: number;
+};
+export type TicketReviewConfigResponse = {
+  config?: TicketReviewConfigRecord | null;
+};
+export type TicketReviewConfigureRequest = {
+  mutation: MutationContext;
+  stages: TicketReviewStage[];
+  ticket_id: number;
+};
 export type TicketReviewDecision = 'approve' | 'reject';
+export type TicketReviewOccupant = {
+  kind: 'human';
+} | {
+  kind: 'profile';
+  name: string;
+};
 export type TicketReviewRequest = {
   decision: TicketReviewDecision;
   mutation: MutationContext;
   ticket_id: number;
+};
+export type TicketReviewSlot = {
+  occupant: TicketReviewOccupant;
+  requirement: TicketReviewSlotRequirement;
+};
+export type TicketReviewSlotRequirement = 'required' | 'optional';
+export type TicketReviewStage = {
+  slots: TicketReviewSlot[];
 };
 export type TicketScheduleRequest = {
   activation?: string | null;

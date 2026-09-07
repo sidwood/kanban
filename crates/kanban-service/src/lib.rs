@@ -32,9 +32,9 @@ use kanban_storage::{
     SqliteCommentStore, SqliteDeferralStore, SqliteDependencyStore, SqliteDispatchStore,
     SqliteEvidenceStore, SqliteGraphProposalStore, SqliteHerdrSettingsStore,
     SqliteIdempotencyStore, SqliteInitiativeStore, SqliteLaneStore, SqlitePlanStore,
-    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteRunStore, SqliteScheduleStore,
-    SqliteSpecStore, SqliteTicketStore, SqliteWorkspaceStore, VerifiedBackupHook,
-    load_backup_settings,
+    SqliteProfileStore, SqliteProjectStore, SqliteRulingStore, SqliteRunStore,
+    SqliteSavedViewStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
+    SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
@@ -281,6 +281,10 @@ fn assemble_core(
         )),
     )?;
     core.register_capacity(capacity_store.clone(), projects.clone())?;
+    core.register_saved_views(
+        Arc::new(SqliteSavedViewStore::new(&database)),
+        projects.clone(),
+    )?;
     core.register_dispatch(
         dispatch_store.clone(),
         ticket_store.clone(),

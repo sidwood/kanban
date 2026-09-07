@@ -280,7 +280,7 @@ impl CommandHandler for MoveTicketSpec {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn CommandEffects,
+        events: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: TicketSpecMoveRequest = parse_payload(&command.payload)?;
         let (project, mut ticket) = self.0.open(request.ticket_id)?;
@@ -316,6 +316,15 @@ impl CommandHandler for MoveTicketSpec {
             &ticket,
             transition(project.id(), ticket.id(), "spec_moved", facts),
         )?;
+        // The announcement follows the write that landed the move: a
+        // refused or rolled-back move returns above and announces
+        // nothing, and a replay never reaches apply.
+        announce(
+            events,
+            LiveEventName::TicketSpecMoved,
+            &ticket,
+            project.code(),
+        );
         encode_record(&ticket, project.code())
     }
 }
@@ -2235,10 +2244,12 @@ mod ticket_queries {
 
 #[cfg(test)]
 mod spec_move {
+    use std::sync::Arc;
+
     use kanban_dto::ErrorCode;
     use serde_json::{Value, json};
 
-    use super::testing::ticket_harness;
+    use super::testing::{ticket_harness, ticket_harness_with_sink};
     use crate::ticket::TicketStore;
 
     /// One `ticket.spec.move` request for `ticket` at `version`,
@@ -2346,6 +2357,126 @@ mod spec_move {
                 "criteria": 1,
                 "version": 2,
             })
+        );
+    }
+
+    #[test]
+    fn a_successful_move_announces_the_ticket_after_commit() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let harness = ticket_harness_with_sink(sink.clone());
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let before = sink
+            .events
+            .lock()
+            .expect("the recorder lock is sound")
+            .len();
+
+        let response = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(
+                    ticket,
+                    destination,
+                    1,
+                    Some(replacement("Tickets claim the Spec they move to.")),
+                    "key-move",
+                ),
+            )
+            .expect("the move lands");
+
+        let events = sink.events.lock().expect("the recorder lock is sound");
+        let announced = &events[before..];
+        assert_eq!(
+            announced
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ticket.spec.moved"],
+            "the move announces exactly one event"
+        );
+        assert_eq!(
+            announced[0].1, response,
+            "the move announces exactly the record the command returns"
+        );
+        assert_eq!(announced[0].1["spec_id"], json!(destination));
+        assert_eq!(
+            announced[0].1["pinned_spec_version"],
+            json!(null),
+            "a draft move pins nothing"
+        );
+    }
+
+    #[test]
+    fn a_refused_move_announces_nothing_live() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let harness = ticket_harness_with_sink(sink.clone());
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let before = sink
+            .events
+            .lock()
+            .expect("the recorder lock is sound")
+            .len();
+        let (_, timeline_before) = harness.tickets.snapshot();
+        let foreign = json!([
+            { "outcome": "Well linked, just not here.", "stories": ["CORE-S9-US1"] }
+        ]);
+
+        let error = harness
+            .core
+            .command(
+                "ticket.spec.move",
+                &moved(ticket, destination, 1, Some(foreign), "key-move"),
+            )
+            .expect_err("the replacement must claim the destination's stories");
+
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        let events = sink.events.lock().expect("the recorder lock is sound");
+        assert!(
+            events[before..].is_empty(),
+            "a refused move has no live surface"
+        );
+        drop(events);
+        let (_, timeline) = harness.tickets.snapshot();
+        assert_eq!(
+            timeline.len(),
+            timeline_before.len(),
+            "the refusal appends no timeline row"
+        );
+    }
+
+    #[test]
+    fn a_replayed_move_announces_no_second_event() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let harness = ticket_harness_with_sink(sink.clone());
+        let (ticket, destination) = draft_implementation(&harness.core, "key-ticket");
+        let request = moved(
+            ticket,
+            destination,
+            1,
+            Some(replacement("Tickets claim the Spec they move to.")),
+            "key-once",
+        );
+        harness
+            .core
+            .command("ticket.spec.move", &request)
+            .expect("the move lands");
+        let before = sink
+            .events
+            .lock()
+            .expect("the recorder lock is sound")
+            .len();
+
+        let replay = harness
+            .core
+            .command("ticket.spec.move", &request)
+            .expect("the retry replays");
+
+        assert_eq!(replay["spec_id"], json!(destination));
+        let events = sink.events.lock().expect("the recorder lock is sound");
+        assert!(
+            events[before..].is_empty(),
+            "a replayed move announces nothing the second time"
         );
     }
 

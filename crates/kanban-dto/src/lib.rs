@@ -26,6 +26,7 @@ pub mod project;
 pub mod ruling;
 pub mod run;
 pub mod schema;
+pub mod search;
 pub mod spec;
 pub mod ticket;
 pub mod timeline;
@@ -117,6 +118,7 @@ pub use run::{
     RunStatus,
 };
 pub use schema::schema_definitions;
+pub use search::{SearchGlobalHit, SearchGlobalQuery, SearchGlobalResponse, SearchHitKind};
 pub use spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -464,6 +466,10 @@ mod tests {
                 "ViewRenameRequest",
                 "ViewRemoveRequest",
                 "ViewRemovedRecord",
+                "SearchGlobalHit",
+                "SearchGlobalQuery",
+                "SearchGlobalResponse",
+                "SearchHitKind",
             ]
         );
     }

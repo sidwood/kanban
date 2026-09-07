@@ -820,6 +820,13 @@ define_exposed_catalogue! {
         mcp: "view_remove",
         description: "Remove one Saved View. A scope whose default is removed generates it again on the next read.",
     },
+    "search.global" => {
+        kind: Query,
+        request: "SearchGlobalQuery",
+        response: "SearchGlobalResponse",
+        mcp: "search_global",
+        description: "Search Initiatives, Projects, Plans, Specs, and Tickets by identifier and text. Hits return in deterministic order; the query never mutates workflow.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

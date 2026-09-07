@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `search.global` query.",
+  "properties": {
+    "q": {
+      "description": "The operator's search text; blank returns no hits.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "q"
+  ],
+  "title": "SearchGlobalQuery",
+  "type": "object"
+}

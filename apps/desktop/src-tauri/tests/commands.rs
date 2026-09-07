@@ -28,7 +28,7 @@ use kanban_dto::{
     PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest, ProfileGetQuery,
     ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest,
     ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery, SpecContent,
+    RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery, SearchGlobalQuery, SpecContent,
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
@@ -527,6 +527,7 @@ fn sample_request(schema: &str) -> Value {
         }),
         "ViewRenameRequest" => json!({ "mutation": mutation, "view_id": 1, "name": "Deep work" }),
         "ViewRemoveRequest" => json!({ "mutation": mutation, "view_id": 1 }),
+        "SearchGlobalQuery" => json!({ "q": "core-t1" }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -781,6 +782,7 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ViewUpdateRequest" => decode_invoke_args::<ViewUpdateRequest>(request).is_err(),
         "ViewRenameRequest" => decode_invoke_args::<ViewRenameRequest>(request).is_err(),
         "ViewRemoveRequest" => decode_invoke_args::<ViewRemoveRequest>(request).is_err(),
+        "SearchGlobalQuery" => decode_invoke_args::<SearchGlobalQuery>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

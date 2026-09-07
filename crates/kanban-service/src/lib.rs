@@ -231,6 +231,13 @@ fn assemble_core(
         lane_store.clone(),
         profile_store.clone(),
     )?;
+    core.register_search(
+        initiative_store.clone(),
+        projects.clone(),
+        plan_store.clone(),
+        spec_store.clone(),
+        ticket_store.clone(),
+    )?;
     core.register_clones(
         fleet_tool,
         projects.clone(),

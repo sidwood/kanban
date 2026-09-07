@@ -84,6 +84,7 @@ use crate::run::{
     ProfileSnapshotRecord, RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord,
     RunStatus,
 };
+use crate::search::{SearchGlobalHit, SearchGlobalQuery, SearchGlobalResponse, SearchHitKind};
 use crate::spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -561,5 +562,9 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("ViewRenameRequest", schema_for!(ViewRenameRequest)),
         ("ViewRemoveRequest", schema_for!(ViewRemoveRequest)),
         ("ViewRemovedRecord", schema_for!(ViewRemovedRecord)),
+        ("SearchGlobalHit", schema_for!(SearchGlobalHit)),
+        ("SearchGlobalQuery", schema_for!(SearchGlobalQuery)),
+        ("SearchGlobalResponse", schema_for!(SearchGlobalResponse)),
+        ("SearchHitKind", schema_for!(SearchHitKind)),
     ]
 }

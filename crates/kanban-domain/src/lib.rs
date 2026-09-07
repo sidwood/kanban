@@ -25,6 +25,7 @@ pub mod ruling;
 pub mod run;
 pub mod saved_view;
 pub mod schedule;
+pub mod search;
 pub mod spec;
 pub mod ticket;
 pub mod timeline;
@@ -102,6 +103,7 @@ pub use schedule::{
     Activation, CronExpression, Schedule, ScheduleError, ScheduleId, ScheduleState,
     ScheduleTrigger, Timezone, accepts, stored_instant_of,
 };
+pub use search::{SearchCandidate, SearchHit, SearchHitKind, matches, search, sort_hits};
 pub use spec::{
     ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,
     SpecVersion,

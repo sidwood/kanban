@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "SearchGlobalHit": {
+      "additionalProperties": false,
+      "description": "One row the `search.global` query returns.",
+      "properties": {
+        "id": {
+          "description": "The immutable, storage-assigned identity.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "identifier": {
+          "description": "The identifier the operator would quote: `CORE-T12`, `CORE`, or an Initiative name.",
+          "type": "string"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SearchHitKind"
+            }
+          ],
+          "description": "The kind of entity this hit names."
+        },
+        "label": {
+          "description": "The line the palette leads with: a title, a name, or a plan label.",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "The Project this hit belongs to, when one exists.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "identifier",
+        "kind",
+        "label"
+      ],
+      "type": "object"
+    },
+    "SearchHitKind": {
+      "description": "The kind of entity one search hit names.",
+      "enum": [
+        "initiative",
+        "project",
+        "plan",
+        "spec",
+        "ticket"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Response payload for the `search.global` query.",
+  "properties": {
+    "hits": {
+      "description": "Every matching entity, in the domain's deterministic order.",
+      "items": {
+        "$ref": "#/definitions/SearchGlobalHit"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "hits"
+  ],
+  "title": "SearchGlobalResponse",
+  "type": "object"
+}

@@ -38,15 +38,15 @@ use kanban_dto::{
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
     RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SavedViewRecord,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
-    SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery, SpecListResponse,
-    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
-    TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
+    SearchGlobalQuery, SearchGlobalResponse, SpecContentUpdateRequest, SpecCoverageCheckQuery,
+    SpecCoverageCheckResponse, SpecCoverageMatrixQuery, SpecCoverageMatrixResponse,
+    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery,
+    SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
+    SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest,
+    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketBugFactsRequest,
+    TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery,
+    TicketDependenciesResponse, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
+    TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
@@ -1625,6 +1625,18 @@ async fn view_remove(
     .await
 }
 
+#[tauri::command]
+async fn search_global(
+    shell: State<'_, Arc<Shell>>,
+    request: SearchGlobalQuery,
+) -> Result<SearchGlobalResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "search global", |shell| {
+        forward_query(shell, "search.global", "global search", request)
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
     health_get,
     diagnostics_export,
@@ -1736,6 +1748,7 @@ shell_handlers::shell_handler_catalogue! {
     view_update,
     view_rename,
     view_remove,
+    search_global,
 }
 
 /// Build the window, start the core on demand, and supervise the

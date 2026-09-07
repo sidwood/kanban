@@ -707,6 +707,20 @@ export type SavedViewRecord = {
 export type SchedulerHealth = {
   last_backup_success_at?: string | null;
 };
+export type SearchGlobalHit = {
+  id: number;
+  identifier: string;
+  kind: SearchHitKind;
+  label: string;
+  project_id?: number | null;
+};
+export type SearchGlobalQuery = {
+  q: string;
+};
+export type SearchGlobalResponse = {
+  hits: SearchGlobalHit[];
+};
+export type SearchHitKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket';
 export type ServiceHealth = {
   started_at: string;
 };

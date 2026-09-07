@@ -15,12 +15,11 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
-use crate::clone::{CloneGuardStore, FleetCloneTool};
+use crate::clone::CloneGuardStore;
 use crate::dispatch::Core;
 use crate::dispatch_request::DispatchStore;
 use crate::lane::LaneStore;
 use crate::mutation::parse_payload;
-use crate::project::ProjectStore;
 use crate::ticket::TicketStore;
 use crate::timeline::TimelineEnvelope;
 use crate::workspace::WorkspaceStore;
@@ -121,8 +120,6 @@ pub struct CoordinatorLoop {
     core: Arc<Core>,
     timeline: Arc<dyn CloneGuardStore>,
     herdr: Arc<dyn CoordinatorHerdr>,
-    fleet: Arc<dyn FleetCloneTool>,
-    projects: Arc<dyn ProjectStore>,
     tickets: Arc<dyn TicketStore>,
     lanes: Arc<dyn LaneStore>,
     workspaces: Arc<dyn WorkspaceStore>,
@@ -136,8 +133,6 @@ impl CoordinatorLoop {
         core: Arc<Core>,
         timeline: Arc<dyn CloneGuardStore>,
         herdr: Arc<dyn CoordinatorHerdr>,
-        fleet: Arc<dyn FleetCloneTool>,
-        projects: Arc<dyn ProjectStore>,
         tickets: Arc<dyn TicketStore>,
         lanes: Arc<dyn LaneStore>,
         workspaces: Arc<dyn WorkspaceStore>,
@@ -147,8 +142,6 @@ impl CoordinatorLoop {
             core,
             timeline,
             herdr,
-            fleet,
-            projects,
             tickets,
             lanes,
             workspaces,
@@ -343,13 +336,6 @@ impl CoordinatorLoop {
                 .iter()
                 .find(|workspace| workspace.id() == selected)
                 .expect("the selected Workspace is listed");
-            let project_record = self
-                .projects
-                .find(project)?
-                .ok_or_else(|| ApiError::not_found(&format!("project {}", project.value())))?;
-            let source = project_record.registration().repository();
-            self.fleet
-                .add_clone(source, workspace.registration().path(), &branch)?;
             let observed = self.core.command(
                 "workspace.observe",
                 &json!({

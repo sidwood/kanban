@@ -129,13 +129,13 @@ fn coordinator_harness(
     git: Arc<ScriptedGit>,
     herdr: Arc<dyn CoordinatorHerdr>,
 ) -> CoordinatorHarness {
-    coordinator_harness_with_clone(git, herdr, Arc::new(AcceptingCloneTool))
+    coordinator_harness_with_clone_tool(git, herdr, Arc::new(AcceptingCloneTool))
 }
 
-fn coordinator_harness_with_clone(
+fn coordinator_harness_with_clone_tool(
     git: Arc<ScriptedGit>,
     herdr: Arc<dyn CoordinatorHerdr>,
-    fleet: Arc<dyn FleetCloneTool>,
+    clone_tool: Arc<dyn FleetCloneTool>,
 ) -> CoordinatorHarness {
     let dir = TempDir::new().expect("a scratch directory is available");
     let database_path = dir.path().join("kanban.sqlite");
@@ -171,7 +171,7 @@ fn coordinator_harness_with_clone(
     )
     .expect("the lane operations register");
     core.register_clones(
-        Arc::new(AcceptingCloneTool),
+        clone_tool,
         projects.clone(),
         workspaces.clone(),
         clone_guard.clone(),
@@ -203,8 +203,6 @@ fn coordinator_harness_with_clone(
         core.clone(),
         clone_guard,
         herdr,
-        fleet,
-        projects.clone(),
         tickets,
         lanes,
         workspaces,
@@ -343,7 +341,7 @@ fn coordinator_loop_claims_prepares_launches_and_acknowledges() {
 
 #[test]
 fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
-    let fleet = Arc::new(RecordingCloneTool::default());
+    let clone_tool = Arc::new(RecordingCloneTool::default());
     let git = Arc::new(ScriptedGit {
         snapshots: HashMap::from([(
             "/workspaces/kanban.kan-t2".to_owned(),
@@ -361,7 +359,7 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
         accepted: true,
         ..RecordingHerdr::default()
     });
-    let harness = coordinator_harness_with_clone(git, herdr, fleet.clone());
+    let harness = coordinator_harness_with_clone_tool(git, herdr, clone_tool.clone());
     let ticket = insert_ticket(&harness.database_path, 2, "high");
     let request_id = enqueue(&harness.core, ticket, "reuse-create");
 
@@ -398,10 +396,11 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
 
     assert_eq!(outcome.workspace_id, workspace_id);
 
-    let clone_calls = fleet.calls.lock().expect("the clone log is sound");
-    assert_eq!(clone_calls.len(), 1);
-    assert_eq!(clone_calls[0].1, "/workspaces/kanban.kan-t2");
-    assert_eq!(clone_calls[0].2, "kan-t2");
+    let clone_calls = clone_tool.calls.lock().expect("the clone log is sound");
+    assert!(
+        clone_calls.is_empty(),
+        "reuse must not invoke the fleet clone skill outside the guarded create path"
+    );
 
     let conn = rusqlite::Connection::open(&harness.database_path).expect("the database reopens");
     let reused: bool = conn

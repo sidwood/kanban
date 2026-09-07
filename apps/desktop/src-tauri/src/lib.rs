@@ -37,7 +37,8 @@ use kanban_dto::{
     ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery,
     ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
     RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SpecContentUpdateRequest,
+    RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SavedViewRecord,
+    SpecContentUpdateRequest,
     SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCoverageMatrixQuery,
     SpecCoverageMatrixResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
     SpecGetResponse, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
@@ -51,8 +52,10 @@ use kanban_dto::{
     TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
     TicketReassignRequest, TicketRecord, TicketReviewRequest, TicketScheduleRequest,
     TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineQuery,
-    TimelineQueryResponse, WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest,
-    WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TimelineQueryResponse, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewRemoveRequest,
+    ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
+    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1563,6 +1566,66 @@ async fn board_global(
     .await
 }
 
+#[tauri::command]
+async fn view_list(
+    shell: State<'_, Arc<Shell>>,
+    request: ViewListQuery,
+) -> Result<ViewListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "view list", move |shell| {
+        forward_query(shell, "view.list", "saved views", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn view_create(
+    shell: State<'_, Arc<Shell>>,
+    request: ViewCreateRequest,
+) -> Result<SavedViewRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "view create", |shell| {
+        forward_command(shell, "view.create", "created the view", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn view_update(
+    shell: State<'_, Arc<Shell>>,
+    request: ViewUpdateRequest,
+) -> Result<SavedViewRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "view update", |shell| {
+        forward_command(shell, "view.update", "updated the view", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn view_rename(
+    shell: State<'_, Arc<Shell>>,
+    request: ViewRenameRequest,
+) -> Result<SavedViewRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "view rename", |shell| {
+        forward_command(shell, "view.rename", "renamed the view", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn view_remove(
+    shell: State<'_, Arc<Shell>>,
+    request: ViewRemoveRequest,
+) -> Result<ViewRemovedRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "view remove", |shell| {
+        forward_command(shell, "view.remove", "removed the view", request)
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
     health_get,
     diagnostics_export,
@@ -1669,6 +1732,11 @@ shell_handlers::shell_handler_catalogue! {
     export_render,
     export_drift,
     board_global,
+    view_list,
+    view_create,
+    view_update,
+    view_rename,
+    view_remove,
 }
 
 /// Build the window, start the core on demand, and supervise the

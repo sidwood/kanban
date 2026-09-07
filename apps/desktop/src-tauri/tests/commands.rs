@@ -12,7 +12,8 @@ use kanban_desktop_lib::commands::{
     decode_invoke_args, forward_command_value, forward_query_value, install_link,
 };
 use kanban_dto::{
-    BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
+    BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest, ViewCreateRequest,
+    ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
     CloneRemoveRequest, CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery,
     DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
@@ -502,6 +503,30 @@ fn sample_request(schema: &str) -> Value {
                 "kinds": ["task"],
             },
         }),
+        "ViewListQuery" => json!({}),
+        "ViewCreateRequest" => json!({
+            "mutation": mutation,
+            "scope": "global",
+            "name": "Review queue",
+            "filter": { "states": ["in_review"] },
+            "expanded_groups": ["backlog"],
+            "hidden_columns": ["draft"],
+            "mode": "board",
+            "done_placement": "column",
+            "sorting": "priority",
+        }),
+        "ViewUpdateRequest" => json!({
+            "mutation": mutation,
+            "view_id": 1,
+            "filter": {},
+            "expanded_groups": [],
+            "hidden_columns": ["draft"],
+            "mode": "board",
+            "done_placement": "column",
+            "sorting": "priority",
+        }),
+        "ViewRenameRequest" => json!({ "mutation": mutation, "view_id": 1, "name": "Deep work" }),
+        "ViewRemoveRequest" => json!({ "mutation": mutation, "view_id": 1 }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -751,6 +776,11 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ExportRenderRequest" => decode_invoke_args::<ExportRenderRequest>(request).is_err(),
         "ExportDriftQuery" => decode_invoke_args::<ExportDriftQuery>(request).is_err(),
         "BoardGlobalQuery" => decode_invoke_args::<BoardGlobalQuery>(request).is_err(),
+        "ViewListQuery" => decode_invoke_args::<ViewListQuery>(request).is_err(),
+        "ViewCreateRequest" => decode_invoke_args::<ViewCreateRequest>(request).is_err(),
+        "ViewUpdateRequest" => decode_invoke_args::<ViewUpdateRequest>(request).is_err(),
+        "ViewRenameRequest" => decode_invoke_args::<ViewRenameRequest>(request).is_err(),
+        "ViewRemoveRequest" => decode_invoke_args::<ViewRemoveRequest>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

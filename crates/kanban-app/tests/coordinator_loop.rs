@@ -417,6 +417,66 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
 }
 
 #[test]
+fn coordinator_loop_refuses_reuse_when_observed_branch_mismatches_execution_branch() {
+    let git = Arc::new(ScriptedGit {
+        snapshots: HashMap::from([(
+            "/workspaces/kanban.kan-t5".to_owned(),
+            WorkspaceGitSnapshot {
+                present: true,
+                repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckout::Branch("main".to_owned())),
+                head: Some("abc123".to_owned()),
+                working_tree_clean: Some(true),
+                unique_unlanded_commits: Some(false),
+            },
+        )]),
+    });
+    let herdr = Arc::new(RecordingHerdr {
+        accepted: true,
+        ..RecordingHerdr::default()
+    });
+    let harness = coordinator_harness(git, herdr);
+    let ticket = insert_ticket(&harness.database_path, 5, "normal");
+    let request_id = enqueue(&harness.core, ticket, "branch-mismatch-create");
+
+    let workspace = harness
+        .core
+        .command(
+            "workspace.register",
+            &json!({
+                "mutation": mutation(0, "branch-mismatch-register"),
+                "project_id": 1,
+                "path": "/workspaces/kanban.kan-t5",
+            }),
+        )
+        .expect("the workspace registers");
+    let workspace_id = workspace["id"].as_u64().expect("the identity is a number");
+    harness
+        .core
+        .command(
+            "workspace.observe",
+            &json!({
+                "mutation": mutation(1, "branch-mismatch-observe"),
+                "workspace_id": workspace_id,
+            }),
+        )
+        .expect("the workspace is observed");
+
+    let error = harness
+        .loop_
+        .execute(CoordinatorLoopRequest {
+            project_id: 1,
+            dispatch_request_id: request_id,
+        })
+        .expect_err("the Coordinator loop refuses a branch mismatch");
+
+    assert_eq!(
+        error.message,
+        "the reused Workspace checkout must match the execution branch"
+    );
+}
+
+#[test]
 fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
     let git = Arc::new(ScriptedGit {
         snapshots: HashMap::from([(

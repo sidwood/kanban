@@ -366,6 +366,11 @@ impl CoordinatorLoop {
                     "the prepared Workspace is not reusable under the reuse rules",
                 ));
             }
+            if record.observation.branch.as_deref() != Some(branch.as_str()) {
+                return Err(ApiError::invalid_request(
+                    "the reused Workspace checkout must match the execution branch",
+                ));
+            }
             self.record_step(
                 project,
                 CoordinatorStep::PrepareWorkspace,

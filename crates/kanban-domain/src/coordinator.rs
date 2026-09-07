@@ -14,13 +14,22 @@ pub fn execution_workspace_path(ticket_number: u64) -> String {
     format!("/workspaces/kanban.{}", execution_branch(ticket_number))
 }
 
-/// Select the first reusable Workspace, in stable id order. A
-/// reusable Workspace is clean, unassigned, and free of unique
-/// unlanded commits (DR-LW-06).
-pub fn select_reusable_workspace(workspaces: &[Workspace]) -> Option<WorkspaceId> {
+/// Select the first reusable Workspace for `ticket_number`, in stable
+/// id order. A reusable Workspace is clean, unassigned, free of unique
+/// unlanded commits (DR-LW-06), not the Project Seed (DR-LW-07), and
+/// registered at the Ticket's execution path.
+pub fn select_reusable_workspace(
+    workspaces: &[Workspace],
+    ticket_number: u64,
+) -> Option<WorkspaceId> {
+    let execution_path = execution_workspace_path(ticket_number);
     workspaces
         .iter()
-        .filter(|workspace| workspace.reuse_evaluation().reusable())
+        .filter(|workspace| {
+            !workspace.registration().is_seed()
+                && workspace.registration().path() == execution_path
+                && workspace.reuse_evaluation().reusable()
+        })
         .min_by_key(|workspace| workspace.id().value())
         .map(|workspace| workspace.id())
 }
@@ -52,13 +61,18 @@ mod reuse_rules {
 
     #[test]
     fn select_reusable_workspace_picks_the_lowest_id() {
-        let mut first = Workspace::new(WorkspaceId::new(2), registration("/workspaces/kanban.one"));
+        let mut first = Workspace::new(
+            WorkspaceId::new(2),
+            registration("/workspaces/kanban.kan-t1"),
+        );
         observed_clean(&mut first);
-        let mut second =
-            Workspace::new(WorkspaceId::new(5), registration("/workspaces/kanban.two"));
+        let mut second = Workspace::new(
+            WorkspaceId::new(5),
+            registration("/workspaces/kanban.kan-t1"),
+        );
         observed_clean(&mut second);
 
-        let selected = select_reusable_workspace(&[second, first]).expect("one is reusable");
+        let selected = select_reusable_workspace(&[second, first], 1).expect("one is reusable");
 
         assert_eq!(selected.value(), 2);
     }
@@ -67,12 +81,12 @@ mod reuse_rules {
     fn select_reusable_workspace_skips_dirty_workspaces() {
         let mut reusable = Workspace::new(
             WorkspaceId::new(3),
-            registration("/workspaces/kanban.clean"),
+            registration("/workspaces/kanban.kan-t1"),
         );
         observed_clean(&mut reusable);
         let mut dirty = Workspace::new(
             WorkspaceId::new(1),
-            registration("/workspaces/kanban.dirty"),
+            registration("/workspaces/kanban.kan-t1"),
         );
         dirty
             .observe(
@@ -85,7 +99,7 @@ mod reuse_rules {
             )
             .expect("the observation transitions");
 
-        let selected = select_reusable_workspace(&[dirty, reusable]).expect("one is reusable");
+        let selected = select_reusable_workspace(&[dirty, reusable], 1).expect("one is reusable");
 
         assert_eq!(selected.value(), 3);
     }
@@ -94,10 +108,48 @@ mod reuse_rules {
     fn select_reusable_workspace_returns_none_when_every_workspace_refuses() {
         let unobserved = Workspace::new(
             WorkspaceId::new(1),
-            registration("/workspaces/kanban.blind"),
+            registration("/workspaces/kanban.kan-t1"),
         );
 
-        assert!(select_reusable_workspace(&[unobserved]).is_none());
+        assert!(select_reusable_workspace(&[unobserved], 1).is_none());
+    }
+
+    #[test]
+    fn select_reusable_workspace_skips_seed_workspaces() {
+        let mut seed = Workspace::new(
+            WorkspaceId::new(1),
+            WorkspaceRegistration::new(ProjectId::new(1), "/workspaces/kanban.seed", true)
+                .expect("the registration validates"),
+        );
+        observed_clean(&mut seed);
+        let mut reusable = Workspace::new(
+            WorkspaceId::new(2),
+            registration("/workspaces/kanban.kan-t1"),
+        );
+        observed_clean(&mut reusable);
+
+        let selected = select_reusable_workspace(&[seed, reusable], 1).expect("one is reusable");
+
+        assert_eq!(selected.value(), 2);
+    }
+
+    #[test]
+    fn select_reusable_workspace_only_selects_the_execution_path() {
+        let mut wrong_path = Workspace::new(
+            WorkspaceId::new(1),
+            registration("/workspaces/kanban.feature"),
+        );
+        observed_clean(&mut wrong_path);
+        let mut right_path = Workspace::new(
+            WorkspaceId::new(2),
+            registration("/workspaces/kanban.kan-t1"),
+        );
+        observed_clean(&mut right_path);
+
+        let selected =
+            select_reusable_workspace(&[wrong_path, right_path], 1).expect("one is reusable");
+
+        assert_eq!(selected.value(), 2);
     }
 
     #[test]

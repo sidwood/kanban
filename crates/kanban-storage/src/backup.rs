@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{ConnectionHandle, Database};
 use crate::error::StorageError;
 use crate::evidence::content_hash;
-use crate::migrations::{PendingMigration, PreMigrationHook};
+use crate::migrations::{PendingMigration, PreMigrationHook, current_schema_version_from};
 use crate::paths::{attachments_dir, backups_dir, config_file_name, database_file_name};
 
 /// How many dated backup bundles the store keeps.
@@ -673,15 +673,6 @@ impl PreMigrationHook for VerifiedBackupHook<'_> {
             ),
         })
     }
-}
-
-fn current_schema_version_from(conn: &Connection) -> Result<i64, StorageError> {
-    let version: Option<i64> = conn
-        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
-            row.get(0)
-        })
-        .unwrap_or(None);
-    Ok(version.unwrap_or(0))
 }
 
 /// Where a snapshot copies from: the database file through a

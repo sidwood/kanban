@@ -159,11 +159,7 @@ impl Database {
     /// has run; health surfaces use this.
     pub fn schema_version(&self) -> Result<i64, StorageError> {
         let conn = self.lock();
-        Ok(conn.query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )?)
+        migrations::current_schema_version_from(&conn)
     }
 
     /// When the newest timeline row was recorded — the database's own

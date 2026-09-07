@@ -305,6 +305,20 @@ fn applied_versions(conn: &Connection) -> Result<Vec<i64>, StorageError> {
     Ok(versions)
 }
 
+/// The applied schema version, or 0 before any migration has run.
+///
+/// The bookkeeping table itself first appears during the earliest
+/// migration, so a database that has not migrated yet has no table
+/// to read: its absence reads as version 0, as does an empty table.
+pub(crate) fn current_schema_version_from(conn: &Connection) -> Result<i64, StorageError> {
+    let version: Option<i64> = conn
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(None);
+    Ok(version.unwrap_or(0))
+}
+
 /// Applies one migration and records it in the same write: either
 /// the schema change and its bookkeeping land together or neither
 /// does.

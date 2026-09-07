@@ -31,14 +31,15 @@ use kanban_domain::{
     enforce_executable_member,
 };
 use kanban_dto::{
-    ApiError, TicketGraphApproveRequest, TicketGraphEdgeRecord, TicketGraphListQuery,
-    TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord, TicketGraphState,
-    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    ApiError, LiveEventName, TicketGraphApproveRequest, TicketGraphEdgeRecord,
+    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
+    TicketGraphState, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dependency::DependencyStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::events::emit_catalogued;
 use crate::mutation::{CommandHandler, ParsedCommand, parse_payload};
 use crate::profile::ProfileStore;
 use crate::project::ProjectStore;
@@ -417,7 +418,7 @@ impl CommandHandler for ApproveGraph {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn crate::mutation::CommandEffects,
+        events: &dyn crate::mutation::CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: TicketGraphApproveRequest = parse_payload(&command.payload)?;
         let mut proposal = self
@@ -496,6 +497,22 @@ impl CommandHandler for ApproveGraph {
         self.0
             .proposals
             .apply_approval(&proposal, &pinned, &envelopes)?;
+        // The announcement follows the one write that landed the whole
+        // approval: the graph itself, then every Ticket it pinned, as
+        // exactly the records the store now holds. A refusal or a
+        // rolled-back write returns above and announces nothing.
+        emit_catalogued(
+            events,
+            LiveEventName::TicketGraphApproved,
+            &record_of(&proposal),
+        );
+        for ticket in &pinned {
+            emit_catalogued(
+                events,
+                LiveEventName::TicketPinned,
+                &crate::ticket::record_of(ticket, project.code()),
+            );
+        }
         encode_record(&proposal)
     }
 }
@@ -537,7 +554,9 @@ pub(crate) mod testing {
 
     use super::GraphProposalStore;
     use crate::dependency::DependencyStore;
-    use crate::ticket::testing::{MemoryTickets, TicketHarness, ticket_harness_with_sink};
+    use crate::ticket::testing::{
+        MemoryTickets, TicketHarness, ticket_harness_with_sink_and_idempotency,
+    };
     use crate::timeline::TimelineEnvelope;
 
     /// The dependency rows the graph operations join with and install
@@ -887,7 +906,20 @@ pub(crate) mod testing {
     pub(crate) fn graph_harness_with_sink(
         events: Arc<dyn crate::events::EventSink>,
     ) -> (TicketHarness, Arc<MemoryGraphProposals>) {
-        let mut harness = ticket_harness_with_sink(events);
+        graph_harness_with_sink_and_idempotency(
+            events,
+            Arc::new(crate::mutation::MemoryIdempotencyStore::new()),
+        )
+    }
+
+    /// The harness the event sink and idempotency store a test chooses,
+    /// so a test can refuse the durable span itself and prove what an
+    /// approval that cannot commit announces.
+    pub(crate) fn graph_harness_with_sink_and_idempotency(
+        events: Arc<dyn crate::events::EventSink>,
+        idempotency: Arc<dyn crate::mutation::IdempotencyStore>,
+    ) -> (TicketHarness, Arc<MemoryGraphProposals>) {
+        let mut harness = ticket_harness_with_sink_and_idempotency(events, idempotency);
         let dependencies = Arc::new(MemoryGraphDependencies::sharing(harness.tickets.clone()));
         harness
             .core
@@ -1910,6 +1942,220 @@ mod graph_proposal_recording {
 
         assert_eq!(error.code, kanban_dto::ErrorCode::UnknownField);
         assert_eq!(error.message, "unknown field `surprise`");
+    }
+}
+
+/// An idempotency store that serves every key normally but refuses to
+/// commit the one key a test names, standing in for a database that
+/// refuses the write the approval tried to land.
+#[cfg(test)]
+struct RefusingIdempotencyStore {
+    inner: crate::mutation::MemoryIdempotencyStore,
+    refuses: &'static str,
+}
+
+#[cfg(test)]
+impl crate::mutation::IdempotencyStore for RefusingIdempotencyStore {
+    fn recorded(&self, key: &str) -> Result<Option<crate::mutation::RecordedOutcome>, ApiError> {
+        self.inner.recorded(key)
+    }
+
+    fn begin(&self) -> Result<Box<dyn crate::mutation::MutationSpan + '_>, ApiError> {
+        Ok(Box::new(RefusingSpan {
+            inner: self.inner.begin()?,
+            refuses: self.refuses,
+        }))
+    }
+}
+
+#[cfg(test)]
+struct RefusingSpan<'a> {
+    inner: Box<dyn crate::mutation::MutationSpan + 'a>,
+    refuses: &'static str,
+}
+
+#[cfg(test)]
+impl crate::mutation::MutationSpan for RefusingSpan<'_> {
+    fn commit(
+        self: Box<Self>,
+        key: &str,
+        outcome: crate::mutation::RecordedOutcome,
+    ) -> Result<(), ApiError> {
+        if key == self.refuses {
+            return Err(ApiError::internal("the outcome could not be recorded"));
+        }
+        self.inner.commit(key, outcome)
+    }
+}
+
+#[cfg(test)]
+mod live_events {
+    use std::sync::Arc;
+
+    use serde_json::{Value, json};
+
+    use super::RefusingIdempotencyStore;
+    use super::graph_approval::{approve, approved_spec, covered_graph, implementation};
+    use super::testing::{graph_harness_with_sink, graph_harness_with_sink_and_idempotency};
+
+    /// The events a sink received past `announced`, the slice a test
+    /// uses to judge one command's announcements alone.
+    fn announced_since(
+        sink: &crate::plan::testing::RecordingSink,
+        announced: usize,
+    ) -> Vec<(String, Value)> {
+        sink.events.lock().expect("the recorder lock is sound")[announced..].to_vec()
+    }
+
+    /// How many events the sink has received so far.
+    fn heard(sink: &crate::plan::testing::RecordingSink) -> usize {
+        sink.events
+            .lock()
+            .expect("the recorder lock is sound")
+            .len()
+    }
+
+    #[test]
+    fn approval_announces_the_graph_and_every_pin_after_commit() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let (harness, _proposals) = graph_harness_with_sink(sink.clone());
+        let (spec, proposal, tickets) = covered_graph(&harness.core);
+        let before = heard(&sink);
+
+        let response = harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect("the human gate approves");
+
+        let announced = announced_since(&sink, before);
+        assert_eq!(
+            announced
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ticket.graph.approved", "ticket.pinned", "ticket.pinned"],
+            "the approval announces itself, then one pin per Ticket it holds"
+        );
+        assert_eq!(
+            announced[0].1, response,
+            "the graph announces exactly the record the command returns"
+        );
+        for (index, ticket) in tickets.iter().enumerate() {
+            let pin = &announced[index + 1].1;
+            assert_eq!(pin["id"], json!(ticket), "the pins follow graph order");
+            assert_eq!(pin["spec_id"], json!(spec));
+            assert_eq!(pin["pinned_spec_version"], json!(1));
+            assert_eq!(
+                pin["version"],
+                json!(2),
+                "the pin carries the row the approval wrote, version moved forward"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_approval_announces_nothing_live() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let (harness, proposals) = graph_harness_with_sink(sink.clone());
+        // The graph holds only the first Ticket; the second stays
+        // outside it, so the gate refuses completeness.
+        let spec = approved_spec(&harness.core);
+        let first = implementation(
+            &harness.core,
+            spec,
+            "Graphs record completely",
+            json!([{ "outcome": "Graphs record completely.", "stories": ["CORE-S1-US1"] }]),
+            "key-ticket-1",
+        );
+        let _second = implementation(
+            &harness.core,
+            spec,
+            "Slices stay granular",
+            json!([{ "outcome": "Slices stay granular.", "stories": ["CORE-S1-US2"] }]),
+            "key-ticket-2",
+        );
+        let proposed = harness
+            .core
+            .command(
+                "ticket.graph.propose",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-propose" },
+                    "spec_id": spec,
+                    "spec_version": 1,
+                    "tickets": [first],
+                    "edges": [],
+                }),
+            )
+            .expect("the graph records");
+        let proposal = proposed["id"].as_u64().expect("the identity is a number");
+        let before = heard(&sink);
+        let (_, timeline_before) = proposals.snapshot();
+
+        let error = harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect_err("an incomplete graph is refused");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert!(
+            announced_since(&sink, before).is_empty(),
+            "a refused gate has no live surface"
+        );
+        let (_, timeline) = proposals.snapshot();
+        assert_eq!(
+            timeline.len(),
+            timeline_before.len(),
+            "the refusal appends no timeline row"
+        );
+    }
+
+    #[test]
+    fn an_approval_that_cannot_commit_announces_nothing() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let (harness, _proposals) = graph_harness_with_sink_and_idempotency(
+            sink.clone(),
+            Arc::new(RefusingIdempotencyStore {
+                inner: crate::mutation::MemoryIdempotencyStore::new(),
+                refuses: "key-gate",
+            }),
+        );
+        let (_spec, proposal, _tickets) = covered_graph(&harness.core);
+        let before = heard(&sink);
+
+        let error = harness
+            .core
+            .command("ticket.graph.approve", &approve(proposal, 1, "key-gate"))
+            .expect_err("an approval whose outcome cannot be recorded is not a success");
+
+        assert_eq!(error.code, kanban_dto::ErrorCode::Internal);
+        assert!(
+            announced_since(&sink, before).is_empty(),
+            "no subscriber may hear about an approval that did not commit"
+        );
+    }
+
+    #[test]
+    fn a_replayed_approval_announces_no_second_event() {
+        let sink = Arc::new(crate::plan::testing::RecordingSink::default());
+        let (harness, _proposals) = graph_harness_with_sink(sink.clone());
+        let (_spec, proposal, _tickets) = covered_graph(&harness.core);
+        let request = approve(proposal, 1, "key-once");
+        harness
+            .core
+            .command("ticket.graph.approve", &request)
+            .expect("the gate approves");
+        let before = heard(&sink);
+
+        let replay = harness
+            .core
+            .command("ticket.graph.approve", &request)
+            .expect("the retry replays");
+
+        assert_eq!(replay["state"], json!("approved"));
+        assert!(
+            announced_since(&sink, before).is_empty(),
+            "a replayed approval announces nothing the second time"
+        );
     }
 }
 

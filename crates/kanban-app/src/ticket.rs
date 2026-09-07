@@ -1197,6 +1197,21 @@ pub(crate) mod testing {
 
     /// A harness whose event sink the test chooses.
     pub(crate) fn ticket_harness_with_sink(events: Arc<dyn EventSink>) -> TicketHarness {
+        ticket_harness_with_sink_and_idempotency(events, Arc::new(MemoryIdempotencyStore::new()))
+    }
+
+    /// A harness with a silent event sink.
+    pub(crate) fn ticket_harness() -> TicketHarness {
+        ticket_harness_with_sink(Arc::new(crate::events::NoopEventSink))
+    }
+
+    /// A harness whose event sink and idempotency store the test
+    /// chooses, so a test can refuse the durable span itself and prove
+    /// what a command that cannot commit announces.
+    pub(crate) fn ticket_harness_with_sink_and_idempotency(
+        events: Arc<dyn EventSink>,
+        idempotency: Arc<dyn crate::mutation::IdempotencyStore>,
+    ) -> TicketHarness {
         let projects = Arc::new(MemoryProjects::default());
         projects.seed(crate::plan::testing::active_project(
             1,
@@ -1207,11 +1222,7 @@ pub(crate) mod testing {
         let specs = Arc::new(MemorySpecs::sharing(projects.clone()));
         let tickets = Arc::new(MemoryTickets::sharing(projects.clone()));
         let evidence = Arc::new(MemoryTicketEvidence::default());
-        let mut core = Core::new(
-            exposed_operations(),
-            Arc::new(MemoryIdempotencyStore::new()),
-            events,
-        );
+        let mut core = Core::new(exposed_operations(), idempotency, events);
         core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .expect("the plan operations register");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
@@ -1230,11 +1241,6 @@ pub(crate) mod testing {
             evidence,
             core,
         }
-    }
-
-    /// A harness with a silent event sink.
-    pub(crate) fn ticket_harness() -> TicketHarness {
-        ticket_harness_with_sink(Arc::new(crate::events::NoopEventSink))
     }
 
     /// Author one Spec on the seeded Project, returning its identity.

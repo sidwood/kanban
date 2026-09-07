@@ -7,6 +7,7 @@ pub mod capability;
 pub mod capacity;
 pub mod clone;
 pub mod comment;
+pub mod coordinator;
 pub mod coverage;
 pub mod deferral;
 pub mod dependency;
@@ -50,6 +51,7 @@ pub use clone::{
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
 };
+pub use coordinator::{execution_branch, execution_workspace_path, select_reusable_workspace};
 pub use coverage::{
     AcceptanceCriterion, CriterionError, ExecutableRefusal, ScopeError, StoryRefError, StoryScope,
     UserStoryRef, VerificationStep, VerificationStepError, enforce_executable,

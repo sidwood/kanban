@@ -133,16 +133,18 @@ impl SavedViewStore for SqliteSavedViewStore {
         let changed = span
             .execute(
                 "UPDATE saved_views
-                 SET filter = ?2,
-                     expanded_groups = ?3,
-                     hidden_columns = ?4,
-                     mode = ?5,
-                     done = ?6,
-                     sorting = ?7,
-                     version = ?8
-                 WHERE id = ?1 AND version = ?9",
+                 SET name = ?2,
+                     filter = ?3,
+                     expanded_groups = ?4,
+                     hidden_columns = ?5,
+                     mode = ?6,
+                     done = ?7,
+                     sorting = ?8,
+                     version = ?9
+                 WHERE id = ?1 AND version = ?10",
                 params![
                     view.id().value() as i64,
+                    view.name().as_str(),
                     filter_json(view.filter()),
                     groups_json(view.expanded()),
                     groups_json(view.hidden()),
@@ -515,6 +517,31 @@ mod saved_view_rows {
             ))
             .expect_err("an unknown view is not found");
         assert_eq!(missing.code, kanban_dto::ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn save_persists_a_renamed_name() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migrations apply");
+        let store = SqliteSavedViewStore::new(&database);
+        let stored = store.insert(&owned()).expect("the view lands");
+
+        let mut renamed = stored.clone();
+        renamed.rename(kanban_domain::ViewName::new("Deep work").expect("the name validates"));
+        store.save(&renamed).expect("the rename lands");
+
+        assert_eq!(
+            store.find(renamed.id()).expect("the find serves"),
+            Some(renamed.clone()),
+            "the new name round trips under its new version"
+        );
+        assert_eq!(
+            store.list().expect("the list serves")[0].name().as_str(),
+            "Deep work",
+            "the stored row answers under the new name alone"
+        );
     }
 
     #[test]

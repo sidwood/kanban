@@ -74,8 +74,8 @@ export function boardCardNumber(ticket: TicketRecord, projectCode: string): stri
 }
 
 /** The timeline entity id the core stores for one Ticket. */
-export function ticketTimelineId(projectCode: string, ticketNumber: number): string {
-  return `${projectCode.toLowerCase()}-t${ticketNumber}`
+export function ticketTimelineId(ticketId: number): string {
+  return String(ticketId)
 }
 
 export interface BoardRegisterRow {

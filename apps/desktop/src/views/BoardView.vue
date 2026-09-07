@@ -466,9 +466,7 @@ const drawerAttempts = computed(() =>
 )
 
 const drawerTimelineId = computed(() =>
-  drawerTicket.value
-    ? ticketTimelineId(projectCode.value, drawerTicket.value.number)
-    : '',
+  drawerTicket.value ? ticketTimelineId(drawerTicket.value.id) : '',
 )
 
 // The facts the drawer shows for the open Ticket; full history and

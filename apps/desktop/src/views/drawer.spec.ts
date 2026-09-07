@@ -241,7 +241,7 @@ describe('ticket drawer', () => {
           id: 1,
           scope: { project: 1 },
           kind: 'transition',
-          entity: { kind: 'ticket', id: 'kan-t13' },
+          entity: { kind: 'ticket', id: '8' },
           recorded_at: '2026-09-04T12:00:01Z',
           detail: { to: 'active' },
         },
@@ -253,7 +253,7 @@ describe('ticket drawer', () => {
       'timeline.query',
       expect.objectContaining({
         scope: { project: 1 },
-        entity: { kind: 'ticket', id: 'kan-t13' },
+        entity: { kind: 'ticket', id: '8' },
       }),
     )
     expect(document.querySelector('[data-testid="drawer-timeline"]')).not.toBeNull()

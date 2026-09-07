@@ -15,11 +15,12 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
-use crate::clone::CloneGuardStore;
+use crate::clone::{CloneGuardStore, FleetCloneTool};
 use crate::dispatch::Core;
 use crate::dispatch_request::DispatchStore;
 use crate::lane::LaneStore;
 use crate::mutation::parse_payload;
+use crate::project::ProjectStore;
 use crate::ticket::TicketStore;
 use crate::timeline::TimelineEnvelope;
 use crate::workspace::WorkspaceStore;
@@ -120,6 +121,8 @@ pub struct CoordinatorLoop {
     core: Arc<Core>,
     timeline: Arc<dyn CloneGuardStore>,
     herdr: Arc<dyn CoordinatorHerdr>,
+    fleet: Arc<dyn FleetCloneTool>,
+    projects: Arc<dyn ProjectStore>,
     tickets: Arc<dyn TicketStore>,
     lanes: Arc<dyn LaneStore>,
     workspaces: Arc<dyn WorkspaceStore>,
@@ -128,10 +131,13 @@ pub struct CoordinatorLoop {
 
 impl CoordinatorLoop {
     /// Wire the loop over the stores and ports the serving core shares.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         core: Arc<Core>,
         timeline: Arc<dyn CloneGuardStore>,
         herdr: Arc<dyn CoordinatorHerdr>,
+        fleet: Arc<dyn FleetCloneTool>,
+        projects: Arc<dyn ProjectStore>,
         tickets: Arc<dyn TicketStore>,
         lanes: Arc<dyn LaneStore>,
         workspaces: Arc<dyn WorkspaceStore>,
@@ -141,6 +147,8 @@ impl CoordinatorLoop {
             core,
             timeline,
             herdr,
+            fleet,
+            projects,
             tickets,
             lanes,
             workspaces,
@@ -172,6 +180,7 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::SeatLane,
+            ticket_id,
             dispatch_request_id,
             None,
             json!({
@@ -189,6 +198,7 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::Claim,
+            ticket_id,
             dispatch_request_id,
             None,
             json!({
@@ -202,7 +212,13 @@ impl CoordinatorLoop {
             .find(queued.ticket())?
             .ok_or_else(|| ApiError::not_found(&format!("ticket {ticket_id}")))?;
         let workspace_id = self.prepare_workspace(project, &ticket, dispatch_request_id)?;
-        self.assign_workspace(project, lane_id, workspace_id, dispatch_request_id)?;
+        self.assign_workspace(
+            project,
+            lane_id,
+            workspace_id,
+            dispatch_request_id,
+            ticket_id,
+        )?;
 
         let launched = self.herdr.launch_implementer(ImplementerLaunch {
             dispatch_request_id,
@@ -219,6 +235,7 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::Launch,
+            ticket_id,
             dispatch_request_id,
             None,
             json!({
@@ -234,6 +251,7 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::Acknowledge,
+            ticket_id,
             dispatch_request_id,
             Some(run_id),
             json!({
@@ -315,24 +333,56 @@ impl CoordinatorLoop {
         ticket: &kanban_domain::Ticket,
         dispatch_request_id: u64,
     ) -> Result<WorkspaceId, ApiError> {
+        let ticket_id = ticket.id().value();
+        let ticket_number = ticket.number().value();
+        let branch = execution_branch(ticket_number);
+        let path = execution_workspace_path(ticket_number);
         let listed = self.workspaces.list_for_project(project)?;
-        if let Some(selected) = select_reusable_workspace(&listed) {
+        if let Some(selected) = select_reusable_workspace(&listed, ticket_number) {
+            let workspace = listed
+                .iter()
+                .find(|workspace| workspace.id() == selected)
+                .expect("the selected Workspace is listed");
+            let project_record = self
+                .projects
+                .find(project)?
+                .ok_or_else(|| ApiError::not_found(&format!("project {}", project.value())))?;
+            let source = project_record.registration().repository();
+            self.fleet
+                .add_clone(source, workspace.registration().path(), &branch)?;
+            let observed = self.core.command(
+                "workspace.observe",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": workspace.version(),
+                        "idempotency_key": format!("coordinator-observe-reuse-{dispatch_request_id}"),
+                    },
+                    "workspace_id": selected.value(),
+                }),
+            )?;
+            let record: WorkspaceRecord = parse_payload(&observed)?;
+            if !record.reuse.reusable {
+                return Err(ApiError::invalid_request(
+                    "the prepared Workspace is not reusable under the reuse rules",
+                ));
+            }
             self.record_step(
                 project,
                 CoordinatorStep::PrepareWorkspace,
+                ticket_id,
                 dispatch_request_id,
                 None,
                 json!({
                     "workspace_id": selected.value(),
                     "reused": true,
-                    "ticket_id": ticket.id().value(),
+                    "ticket_id": ticket_id,
+                    "path": path,
+                    "branch": branch,
                 }),
             )?;
             return Ok(selected);
         }
 
-        let branch = execution_branch(ticket.number().value());
-        let path = execution_workspace_path(ticket.number().value());
         self.core.command(
             "clone.create",
             &json!({
@@ -380,12 +430,13 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::PrepareWorkspace,
+            ticket_id,
             dispatch_request_id,
             None,
             json!({
                 "workspace_id": workspace_id.value(),
                 "reused": false,
-                "ticket_id": ticket.id().value(),
+                "ticket_id": ticket_id,
                 "path": path,
                 "branch": branch,
             }),
@@ -399,6 +450,7 @@ impl CoordinatorLoop {
         lane: LaneId,
         workspace: WorkspaceId,
         dispatch_request_id: u64,
+        ticket_id: u64,
     ) -> Result<(), ApiError> {
         let lane_record = self
             .lanes
@@ -418,6 +470,7 @@ impl CoordinatorLoop {
         self.record_step(
             project,
             CoordinatorStep::AssignWorkspace,
+            ticket_id,
             dispatch_request_id,
             None,
             json!({
@@ -445,6 +498,7 @@ impl CoordinatorLoop {
         &self,
         project: ProjectId,
         step: CoordinatorStep,
+        ticket_id: u64,
         dispatch_request_id: u64,
         run_id: Option<u64>,
         facts: Value,
@@ -455,20 +509,27 @@ impl CoordinatorLoop {
             .expect("coordinator step facts are a JSON object");
         object.insert("action".to_owned(), json!("coordinator_step"));
         object.insert("step".to_owned(), json!(step.wire_name()));
-        object.insert("role".to_owned(), json!("coordinator"));
+        if !object.contains_key("role") {
+            object.insert("role".to_owned(), json!("coordinator"));
+        }
         object.insert("dispatch_request_id".to_owned(), json!(dispatch_request_id));
         if let Some(run_id) = run_id {
             object.insert("run_id".to_owned(), json!(run_id));
         }
+        let entity = match run_id {
+            Some(run_id) => Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Run,
+                id: run_id.to_string(),
+            }),
+            None => Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: ticket_id.to_string(),
+            }),
+        };
         self.timeline.append(TimelineEnvelope::project(
             project.value(),
             TimelineEventKind::Run,
-            Some(TimelineEntityRef {
-                kind: TimelineEntityKind::Run,
-                id: run_id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| dispatch_request_id.to_string()),
-            }),
+            entity,
             detail,
         ))
     }

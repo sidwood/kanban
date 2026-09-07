@@ -66,6 +66,26 @@ impl CoordinatorHerdr for RecordingHerdr {
 }
 
 #[derive(Default)]
+struct RecordingCloneTool {
+    calls: Mutex<Vec<(String, String, String)>>,
+}
+
+impl FleetCloneTool for RecordingCloneTool {
+    fn add_clone(&self, source: &str, path: &str, branch: &str) -> Result<(), ApiError> {
+        self.calls.lock().expect("the clone log is sound").push((
+            source.to_owned(),
+            path.to_owned(),
+            branch.to_owned(),
+        ));
+        Ok(())
+    }
+
+    fn remove_clone(&self, _path: &str) -> Result<(), ApiError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
 struct AcceptingCloneTool;
 
 impl FleetCloneTool for AcceptingCloneTool {
@@ -108,6 +128,14 @@ struct CoordinatorHarness {
 fn coordinator_harness(
     git: Arc<ScriptedGit>,
     herdr: Arc<dyn CoordinatorHerdr>,
+) -> CoordinatorHarness {
+    coordinator_harness_with_clone(git, herdr, Arc::new(AcceptingCloneTool))
+}
+
+fn coordinator_harness_with_clone(
+    git: Arc<ScriptedGit>,
+    herdr: Arc<dyn CoordinatorHerdr>,
+    fleet: Arc<dyn FleetCloneTool>,
 ) -> CoordinatorHarness {
     let dir = TempDir::new().expect("a scratch directory is available");
     let database_path = dir.path().join("kanban.sqlite");
@@ -161,14 +189,22 @@ fn coordinator_harness(
         wake,
     )
     .expect("the dispatch operations register");
-    core.register_runs(runs, requests.clone(), tickets.clone(), profiles, projects)
-        .expect("the run operations register");
+    core.register_runs(
+        runs,
+        requests.clone(),
+        tickets.clone(),
+        profiles,
+        projects.clone(),
+    )
+    .expect("the run operations register");
 
     let core = Arc::new(core);
     let loop_ = CoordinatorLoop::new(
         core.clone(),
         clone_guard,
         herdr,
+        fleet,
+        projects.clone(),
         tickets,
         lanes,
         workspaces,
@@ -201,6 +237,8 @@ fn enqueue(core: &Arc<Core>, ticket: u64, key: &str) -> u64 {
         .expect("the request is created");
     created["id"].as_u64().expect("the identity is a number")
 }
+
+type CoordinatorCorrelation = (Option<String>, Option<String>, Option<i64>, String, String);
 
 fn coordinator_steps(database_path: &std::path::Path) -> Vec<String> {
     let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
@@ -258,38 +296,61 @@ fn coordinator_loop_claims_prepares_launches_and_acknowledges() {
     );
 
     let conn = rusqlite::Connection::open(&harness.database_path).expect("the database reopens");
-    let correlated: Vec<(Option<i64>, String)> = conn
+    let correlated: Vec<CoordinatorCorrelation> = conn
         .prepare(
-            "SELECT json_extract(detail, '$.run_id'), json_extract(detail, '$.role')
+            "SELECT entity_kind, entity_id, json_extract(detail, '$.run_id'), json_extract(detail, '$.role'), json_extract(detail, '$.step')
              FROM timeline_events
              WHERE json_extract(detail, '$.action') = 'coordinator_step'
              ORDER BY id",
         )
         .expect("the statement prepares")
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
         .expect("the rows serve")
         .collect::<Result<Vec<_>, _>>()
         .expect("the correlation decodes");
     assert!(
-        correlated.iter().all(|(_, role)| role == "coordinator"),
-        "every step names the Coordinator role"
+        correlated
+            .iter()
+            .filter(|(_, _, _, _, step)| *step != "launch" && *step != "acknowledge")
+            .all(|(kind, _, _, role, _)| kind.as_deref() == Some("ticket") && role == "coordinator"),
+        "pre-acknowledge steps correlate to the Ticket and name the Coordinator role"
     );
+    let launch = correlated
+        .iter()
+        .find(|(_, _, _, _, step)| *step == "launch")
+        .expect("the launch step is recorded");
+    assert_eq!(launch.0.as_deref(), Some("ticket"));
+    assert_eq!(launch.3, "implementer");
+    let acknowledge = correlated
+        .iter()
+        .find(|(_, _, _, _, step)| *step == "acknowledge")
+        .expect("the acknowledge step is recorded");
+    assert_eq!(acknowledge.0.as_deref(), Some("run"));
     assert_eq!(
-        correlated.last().map(|(run, _)| *run),
-        Some(Some(outcome.run_id as i64)),
+        acknowledge.2.map(|run| run as u64),
+        Some(outcome.run_id),
         "the acknowledge step carries the run identity"
     );
 }
 
 #[test]
 fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
+    let fleet = Arc::new(RecordingCloneTool::default());
     let git = Arc::new(ScriptedGit {
         snapshots: HashMap::from([(
-            "/workspaces/kanban.feature".to_owned(),
+            "/workspaces/kanban.kan-t2".to_owned(),
             WorkspaceGitSnapshot {
                 present: true,
                 repository_identity: Some("identity".to_owned()),
-                checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
+                checkout: Some(WorkspaceCheckout::Branch("kan-t2".to_owned())),
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
@@ -300,7 +361,7 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
         accepted: true,
         ..RecordingHerdr::default()
     });
-    let harness = coordinator_harness(git, herdr);
+    let harness = coordinator_harness_with_clone(git, herdr, fleet.clone());
     let ticket = insert_ticket(&harness.database_path, 2, "high");
     let request_id = enqueue(&harness.core, ticket, "reuse-create");
 
@@ -311,7 +372,7 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
             &json!({
                 "mutation": mutation(0, "reuse-register"),
                 "project_id": 1,
-                "path": "/workspaces/kanban.feature",
+                "path": "/workspaces/kanban.kan-t2",
             }),
         )
         .expect("the workspace registers");
@@ -337,6 +398,11 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
 
     assert_eq!(outcome.workspace_id, workspace_id);
 
+    let clone_calls = fleet.calls.lock().expect("the clone log is sound");
+    assert_eq!(clone_calls.len(), 1);
+    assert_eq!(clone_calls[0].1, "/workspaces/kanban.kan-t2");
+    assert_eq!(clone_calls[0].2, "kan-t2");
+
     let conn = rusqlite::Connection::open(&harness.database_path).expect("the database reopens");
     let reused: bool = conn
         .query_row(
@@ -348,6 +414,65 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
         )
         .expect("the prepare step is recorded");
     assert!(reused);
+}
+
+#[test]
+fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
+    let git = Arc::new(ScriptedGit {
+        snapshots: HashMap::from([(
+            "/workspaces/kanban.seed".to_owned(),
+            WorkspaceGitSnapshot {
+                present: true,
+                repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckout::Branch("main".to_owned())),
+                head: Some("abc123".to_owned()),
+                working_tree_clean: Some(true),
+                unique_unlanded_commits: Some(false),
+            },
+        )]),
+    });
+    let herdr = Arc::new(RecordingHerdr {
+        accepted: true,
+        ..RecordingHerdr::default()
+    });
+    let harness = coordinator_harness(git, herdr);
+    let ticket = insert_ticket(&harness.database_path, 4, "normal");
+    let request_id = enqueue(&harness.core, ticket, "seed-skip-create");
+
+    let seed = harness
+        .core
+        .command(
+            "workspace.register",
+            &json!({
+                "mutation": mutation(0, "seed-register"),
+                "project_id": 1,
+                "path": "/workspaces/kanban.seed",
+            }),
+        )
+        .expect("the seed workspace registers");
+    harness
+        .core
+        .command(
+            "workspace.observe",
+            &json!({
+                "mutation": mutation(1, "seed-observe"),
+                "workspace_id": seed["id"].as_u64().expect("the identity is a number"),
+            }),
+        )
+        .expect("the seed workspace is observed");
+
+    let outcome = harness
+        .loop_
+        .execute(CoordinatorLoopRequest {
+            project_id: 1,
+            dispatch_request_id: request_id,
+        })
+        .expect("the Coordinator loop completes");
+
+    assert_ne!(
+        outcome.workspace_id,
+        seed["id"].as_u64().expect("the identity is a number")
+    );
 }
 
 #[test]
@@ -389,11 +514,11 @@ fn coordinator_loop_launches_through_the_herdr_session_socket() {
 
     let git = Arc::new(ScriptedGit {
         snapshots: HashMap::from([(
-            "/workspaces/kanban.feature".to_owned(),
+            "/workspaces/kanban.kan-t3".to_owned(),
             WorkspaceGitSnapshot {
                 present: true,
                 repository_identity: Some("identity".to_owned()),
-                checkout: Some(WorkspaceCheckout::Branch("feature".to_owned())),
+                checkout: Some(WorkspaceCheckout::Branch("kan-t3".to_owned())),
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
@@ -410,7 +535,7 @@ fn coordinator_loop_launches_through_the_herdr_session_socket() {
             &json!({
                 "mutation": mutation(0, "herdr-register"),
                 "project_id": 1,
-                "path": "/workspaces/kanban.feature",
+                "path": "/workspaces/kanban.kan-t3",
             }),
         )
         .expect("the workspace registers");

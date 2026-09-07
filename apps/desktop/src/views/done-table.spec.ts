@@ -16,8 +16,7 @@ import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import BoardView from './BoardView.vue'
 import { orderCards } from './board-ordering'
-import { columnForCard } from './board-layout'
-import { loadBoardChoices, saveBoardChoices } from './board-layout.storage'
+import { columnForCard, DEFAULT_BOARD_LAYOUTS } from './board-layout'
 
 const project = {
   id: 1,
@@ -56,8 +55,32 @@ const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
   ...overrides,
 })
 
-function harness(tickets: TicketRecord[]) {
+function harness(tickets: TicketRecord[], donePlacement: 'column' | 'table' = 'table') {
   const query = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.list') {
+      const base = {
+        filter: {},
+        expanded_groups: [],
+        hidden_columns: ['draft' as const],
+        mode: 'board' as const,
+        done_placement: donePlacement,
+        sorting: 'priority' as const,
+        is_default: true,
+        version: 1,
+      }
+      return Promise.resolve({
+        views: [
+          { ...base, id: 1, name: 'All work', scope: 'global' as const },
+          {
+            ...base,
+            id: 2,
+            name: 'All work',
+            scope: { project: 1 },
+            filter: { projects: [1] },
+          },
+        ],
+      })
+    }
     if (name === 'project.list') {
       return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
     }
@@ -79,13 +102,35 @@ function harness(tickets: TicketRecord[]) {
         ticket_id,
       })
     }
+    if (name === 'ticket.get') {
+      const { ticket_id } = request as { ticket_id: number }
+      const found = tickets.find((entry) => entry.id === ticket_id)
+      return Promise.resolve(found ?? ticket())
+    }
+    if (name === 'timeline.query') {
+      return Promise.resolve({ events: [] })
+    }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
+  })
+  const command = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.update') {
+      const body = request as Record<string, unknown>
+      return Promise.resolve({
+        id: body.view_id,
+        name: 'All work',
+        scope: { project: 1 },
+        is_default: true,
+        version: 2,
+        ...body,
+      })
+    }
+    return Promise.resolve({})
   })
   return {
     query,
     transport: {
       query,
-      command: vi.fn(),
+      command,
       subscribe: () => () => undefined,
       onConnectionChange: () => () => undefined,
     } as unknown as ShellTransport,
@@ -95,8 +140,7 @@ function harness(tickets: TicketRecord[]) {
 async function mountedDoneTable(tickets: TicketRecord[]) {
   document.documentElement.classList.remove('dark')
   localStorage.clear()
-  saveBoardChoices({ ...loadBoardChoices(), done: 'table' })
-  const { transport } = harness(tickets)
+  const { transport } = harness(tickets, 'table')
   await router.push('/projects/1/board')
   const wrapper = mount(BoardView, {
     global: {
@@ -140,7 +184,6 @@ describe('done table', () => {
   })
 
   it('orders done rows the same way the board column would', async () => {
-    const layouts = loadBoardChoices().layouts
     const tickets = [
       ticket({ id: 10, number: 30, state: 'done', priority: 'low', title: 'Low priority' }),
       ticket({ id: 11, number: 5, state: 'done', priority: 'urgent', title: 'Urgent first' }),
@@ -148,7 +191,7 @@ describe('done table', () => {
       ticket({ id: 13, number: 8, state: 'done', priority: 'normal', title: 'Earlier number' }),
     ]
     const expected = orderCards(tickets)
-      .filter((entry) => columnForCard(entry.state, layouts) === 'done')
+      .filter((entry) => columnForCard(entry.state, DEFAULT_BOARD_LAYOUTS) === 'done')
       .map((entry) => entry.id)
 
     const wrapper = await mountedDoneTable(tickets.reverse())
@@ -162,8 +205,7 @@ describe('done table', () => {
     ]
     document.documentElement.classList.remove('dark')
     localStorage.clear()
-    saveBoardChoices({ ...loadBoardChoices(), done: 'column' })
-    const { transport } = harness(tickets)
+    const { transport } = harness(tickets, 'column')
     await router.push('/projects/1/board')
     const wrapper = mount(BoardView, {
       global: {

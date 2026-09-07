@@ -86,6 +86,30 @@ function harness(options: {
 }) {
   const tickets = options.tickets ?? [ticket()]
   const query = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.list') {
+      const base = {
+        filter: {},
+        expanded_groups: [],
+        hidden_columns: ['draft' as const],
+        mode: 'board' as const,
+        done_placement: 'column' as const,
+        sorting: 'priority' as const,
+        is_default: true,
+        version: 1,
+      }
+      return Promise.resolve({
+        views: [
+          { ...base, id: 1, name: 'All work', scope: 'global' as const },
+          {
+            ...base,
+            id: 2,
+            name: 'All work',
+            scope: { project: 1 },
+            filter: { projects: [1] },
+          },
+        ],
+      })
+    }
     if (name === 'project.list') {
       return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
     }
@@ -133,11 +157,25 @@ function harness(options: {
     }
     return Promise.resolve({ tickets } satisfies TicketListResponse)
   })
+  const command = vi.fn((name: string, request: unknown) => {
+    if (name === 'view.update') {
+      const body = request as Record<string, unknown>
+      return Promise.resolve({
+        id: body.view_id,
+        name: 'All work',
+        scope: { project: 1 },
+        is_default: true,
+        version: 2,
+        ...body,
+      })
+    }
+    return Promise.resolve({})
+  })
   return {
     query,
     transport: {
       query,
-      command: vi.fn(),
+      command,
       subscribe: () => () => undefined,
       onConnectionChange: () => () => undefined,
     } as unknown as ShellTransport,

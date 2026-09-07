@@ -21,6 +21,7 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod reassignment;
+pub mod review_config;
 pub mod ruling;
 pub mod run;
 pub mod saved_view;
@@ -93,6 +94,10 @@ pub use project::{
     ProjectRegistration, ProjectState, RegistrationError,
 };
 pub use reassignment::{ReassignmentError, apply_reassignment};
+pub use review_config::{
+    ReviewConfigError, ReviewConfiguration, ReviewSlot, ReviewSlotAssignment, ReviewStage,
+    SlotRequirement,
+};
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use run::{ProfileSnapshot, Run, RunError, RunId, RunStatus, resolve_effective};
 pub use saved_view::{

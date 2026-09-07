@@ -12,8 +12,7 @@ use kanban_desktop_lib::commands::{
     decode_invoke_args, forward_command_value, forward_query_value, install_link,
 };
 use kanban_dto::{
-    BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest, ViewCreateRequest,
-    ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest,
+    BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
     CloneRemoveRequest, CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery,
     DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
@@ -40,7 +39,8 @@ use kanban_dto::{
     TicketGraphListQuery, TicketGraphProposeRequest, TicketListQuery, TicketParkRequest,
     TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewRequest,
     TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, WorkspaceListQuery,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest,
+    ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;

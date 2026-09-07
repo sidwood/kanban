@@ -17,7 +17,7 @@ use crate::project::ProjectRecord;
 use crate::review::TicketReviewConfigRecord;
 use crate::run::RunRecord;
 use crate::spec::SpecRecord;
-use crate::ticket::TicketRecord;
+use crate::ticket::{TicketGraphRecord, TicketRecord};
 use crate::workspace::WorkspaceRecord;
 
 macro_rules! define_live_event_catalogue {
@@ -180,6 +180,18 @@ define_live_event_catalogue! {
     TicketReviewConfigured @ "ticket.review.configured" => {
         payload: "TicketReviewConfigRecord",
         description: "A Ticket's staged review configuration was created or replaced whole.",
+    },
+    TicketSpecMoved @ "ticket.spec.moved" => {
+        payload: "TicketRecord",
+        description: "A draft Ticket moved between the Specs of its Project.",
+    },
+    TicketPinned @ "ticket.pinned" => {
+        payload: "TicketRecord",
+        description: "A Ticket was pinned to the approved Spec content version a graph approval named.",
+    },
+    TicketGraphApproved @ "ticket.graph.approved" => {
+        payload: "TicketGraphRecord",
+        description: "An agent-proposed Ticket graph passed the human approval gate.",
     },
     ProfileDefined @ "profile.defined" => {
         payload: "ProfileRecord",
@@ -388,6 +400,18 @@ pub enum LiveEvent {
         sequence: u64,
         payload: TicketReviewConfigRecord,
     },
+    TicketSpecMoved {
+        sequence: u64,
+        payload: Box<TicketRecord>,
+    },
+    TicketPinned {
+        sequence: u64,
+        payload: Box<TicketRecord>,
+    },
+    TicketGraphApproved {
+        sequence: u64,
+        payload: TicketGraphRecord,
+    },
     ProfileDefined {
         sequence: u64,
         payload: ProfileRecord,
@@ -511,6 +535,9 @@ impl LiveEvent {
             Self::TicketStateChanged { .. } => LiveEventName::TicketStateChanged,
             Self::TicketEdited { .. } => LiveEventName::TicketEdited,
             Self::TicketReviewConfigured { .. } => LiveEventName::TicketReviewConfigured,
+            Self::TicketSpecMoved { .. } => LiveEventName::TicketSpecMoved,
+            Self::TicketPinned { .. } => LiveEventName::TicketPinned,
+            Self::TicketGraphApproved { .. } => LiveEventName::TicketGraphApproved,
             Self::ProfileDefined { .. } => LiveEventName::ProfileDefined,
             Self::ProfileUpdated { .. } => LiveEventName::ProfileUpdated,
             Self::ProfileRetired { .. } => LiveEventName::ProfileRetired,
@@ -562,6 +589,9 @@ impl LiveEvent {
             | Self::TicketStateChanged { sequence, .. }
             | Self::TicketEdited { sequence, .. }
             | Self::TicketReviewConfigured { sequence, .. }
+            | Self::TicketSpecMoved { sequence, .. }
+            | Self::TicketPinned { sequence, .. }
+            | Self::TicketGraphApproved { sequence, .. }
             | Self::ProfileDefined { sequence, .. }
             | Self::ProfileUpdated { sequence, .. }
             | Self::ProfileRetired { sequence, .. }
@@ -719,6 +749,18 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::TicketEdited => LiveEvent::TicketEdited {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketSpecMoved => LiveEvent::TicketSpecMoved {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketPinned => LiveEvent::TicketPinned {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::TicketGraphApproved => LiveEvent::TicketGraphApproved {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -1189,6 +1231,114 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn catalogued_ticket_graph_events_decode_typed_payloads() {
+        let approval = EventEnvelope {
+            sequence: 12,
+            event_type: "ticket.graph.approved".to_owned(),
+            payload: json!({
+                "id": 1,
+                "spec_id": 6,
+                "spec_version": 2,
+                "state": "approved",
+                "tickets": [3, 4],
+                "edges": [{ "from_ticket": 3, "to_ticket": 4 }],
+                "version": 2,
+            }),
+        };
+
+        let event = decode_live_event(&approval).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::TicketGraphApproved {
+                sequence: 12,
+                payload: TicketGraphRecord {
+                    id: 1,
+                    spec_id: 6,
+                    spec_version: 2,
+                    state: crate::ticket::TicketGraphState::Approved,
+                    tickets: vec![3, 4],
+                    edges: vec![crate::ticket::TicketGraphEdgeRecord {
+                        from_ticket: 3,
+                        to_ticket: 4,
+                    }],
+                    version: 2,
+                },
+            }
+        );
+
+        let pinned = EventEnvelope {
+            sequence: 13,
+            event_type: "ticket.pinned".to_owned(),
+            payload: json!({
+                "id": 3,
+                "project_id": 1,
+                "number": 3,
+                "kind": "implementation",
+                "priority": "normal",
+                "state": "draft",
+                "spec_id": 6,
+                "title": null,
+                "slice": "Graphs record completely",
+                "criteria": [],
+                "bug": null,
+                "subtype": null,
+                "mode": null,
+                "completion": [],
+                "scheduled_for": null,
+                "due": null,
+                "profile": null,
+                "pinned_spec_version": 2,
+                "version": 2,
+            }),
+        };
+
+        let event = decode_live_event(&pinned).expect("the envelope decodes");
+        let LiveEvent::TicketPinned { sequence, payload } = event else {
+            panic!("the pin decodes to its variant, got {event:?}");
+        };
+        assert_eq!(sequence, 13);
+        assert_eq!(payload.pinned_spec_version, Some(2));
+        assert_eq!(payload.version, 2);
+    }
+
+    #[test]
+    fn catalogued_spec_move_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 14,
+            event_type: "ticket.spec.moved".to_owned(),
+            payload: json!({
+                "id": 5,
+                "project_id": 1,
+                "number": 5,
+                "kind": "bug",
+                "priority": "normal",
+                "state": "draft",
+                "spec_id": 7,
+                "title": "Landing drops the integration branch",
+                "slice": null,
+                "criteria": [],
+                "bug": null,
+                "subtype": null,
+                "mode": null,
+                "completion": [],
+                "scheduled_for": null,
+                "due": null,
+                "profile": null,
+                "pinned_spec_version": null,
+                "version": 2,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        let LiveEvent::TicketSpecMoved { sequence, payload } = event else {
+            panic!("the move decodes to its variant, got {event:?}");
+        };
+        assert_eq!(sequence, 14);
+        assert_eq!(payload.spec_id, Some(7));
+        assert_eq!(payload.version, 2);
     }
 
     #[test]

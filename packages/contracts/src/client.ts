@@ -257,6 +257,9 @@ export const KANBAN_CLIENT_EVENTS = [
   'ticket.state.changed',
   'ticket.edited',
   'ticket.review.configured',
+  'ticket.spec.moved',
+  'ticket.pinned',
+  'ticket.graph.approved',
   'profile.defined',
   'profile.updated',
   'profile.retired',
@@ -307,6 +310,9 @@ export type KanbanEventPayloadMap = {
   'ticket.state.changed': TicketRecord;
   'ticket.edited': TicketRecord;
   'ticket.review.configured': TicketReviewConfigRecord;
+  'ticket.spec.moved': TicketRecord;
+  'ticket.pinned': TicketRecord;
+  'ticket.graph.approved': TicketGraphRecord;
   'profile.defined': ProfileRecord;
   'profile.updated': ProfileRecord;
   'profile.retired': ProfileRecord;

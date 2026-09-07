@@ -312,6 +312,7 @@ dependencies = [
  "base64",
  "kanban-domain",
  "kanban-dto",
+ "kanban-herdr",
  "kanban-service",
  "kanban-storage",
  "rusqlite",

@@ -87,7 +87,7 @@ pub fn harness() -> DispatchHarness {
     }
 }
 
-fn seed_project_profile(database: &Database) {
+pub fn seed_project_profile(database: &Database) {
     let projects = SqliteProjectStore::new(database);
     let registration = ProjectRegistration::new(
         "CORE",

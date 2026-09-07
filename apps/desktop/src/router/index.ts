@@ -9,6 +9,7 @@ import HerdrSettingsView from '../views/HerdrSettingsView.vue'
 import CapacitySettingsView from '../views/CapacitySettingsView.vue'
 import ProfilesView from '../views/ProfilesView.vue'
 import WorkspacesView from '../views/WorkspacesView.vue'
+import HealthDashboardView from '../views/HealthDashboardView.vue'
 import SpecEditorView from '../views/SpecEditorView.vue'
 import TicketEditorView from '../views/TicketEditorView.vue'
 import DependencyEditorView from '../views/DependencyEditorView.vue'
@@ -33,6 +34,7 @@ const router = createRouter({
     { path: '/board', name: 'global-board', component: GlobalBoardView },
     { path: '/projects/:projectId/board', name: 'board', component: BoardView },
     { path: '/projects/:projectId/workspaces', name: 'workspaces', component: WorkspacesView },
+    { path: '/health', name: 'health', component: HealthDashboardView },
   ],
 })
 

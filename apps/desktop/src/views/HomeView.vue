@@ -109,6 +109,12 @@ const eventStream = computed(() =>
         Capacity settings
       </RouterLink>
       <RouterLink
+        to="/health"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Component health
+      </RouterLink>
+      <RouterLink
         to="/planning"
         class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
       >

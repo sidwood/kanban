@@ -37,10 +37,11 @@ use kanban_dto::{
     TicketDependenciesQuery, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
     TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
     TicketGraphListQuery, TicketGraphProposeRequest, TicketListQuery, TicketParkRequest,
-    TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewRequest,
-    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
-    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest,
-    ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
+    TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewConfigQuery,
+    TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
+    TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind,
+    TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest, ViewListQuery,
+    ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
@@ -303,6 +304,20 @@ fn sample_request(schema: &str) -> Value {
         "TicketReviewRequest" => {
             json!({ "mutation": mutation, "ticket_id": 1, "decision": "approve" })
         }
+        "TicketReviewConfigureRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "stages": [{
+                "slots": [
+                    {
+                        "occupant": { "kind": "profile", "name": "outsider" },
+                        "requirement": "required",
+                    },
+                    { "occupant": { "kind": "human" }, "requirement": "optional" },
+                ],
+            }],
+        }),
+        "TicketReviewConfigQuery" => json!({ "ticket_id": 1 }),
         "TicketPrioritiseRequest" => {
             json!({ "mutation": mutation, "ticket_id": 1, "priority": "urgent" })
         }
@@ -738,6 +753,12 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "TicketScheduleRequest" => decode_invoke_args::<TicketScheduleRequest>(request).is_err(),
         "TicketCancelRequest" => decode_invoke_args::<TicketCancelRequest>(request).is_err(),
         "TicketReviewRequest" => decode_invoke_args::<TicketReviewRequest>(request).is_err(),
+        "TicketReviewConfigureRequest" => {
+            decode_invoke_args::<TicketReviewConfigureRequest>(request).is_err()
+        }
+        "TicketReviewConfigQuery" => {
+            decode_invoke_args::<TicketReviewConfigQuery>(request).is_err()
+        }
         "TicketPrioritiseRequest" => {
             decode_invoke_args::<TicketPrioritiseRequest>(request).is_err()
         }

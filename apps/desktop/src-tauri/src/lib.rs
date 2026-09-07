@@ -50,11 +50,13 @@ use kanban_dto::{
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
-    TicketReviewRequest, TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest,
-    TicketUnparkRequest, TimelineQuery, TimelineQueryResponse, ViewCreateRequest, ViewListQuery,
-    ViewListResponse, ViewRemoveRequest, ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest,
-    WorkspaceListQuery, WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord,
-    WorkspaceRegisterRequest, WorkspaceRetireRequest,
+    TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
+    TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
+    TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineQuery,
+    TimelineQueryResponse, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewRemoveRequest,
+    ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
+    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -818,6 +820,41 @@ async fn ticket_review(
     let request = decode_invoke_args::<TicketReviewRequest>(request)?;
     run_blocking(shell, "ticket review", |shell| {
         forward_command(shell, "ticket.review", "reviewed Ticket", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_review_configure(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<TicketReviewConfigRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<TicketReviewConfigureRequest>(request)?;
+    run_blocking(shell, "ticket review configure", |shell| {
+        forward_command(
+            shell,
+            "ticket.review.configure",
+            "configured staged review",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_review_config(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketReviewConfigQuery,
+) -> Result<TicketReviewConfigResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket review config", |shell| {
+        forward_query(
+            shell,
+            "ticket.review.config",
+            "ticket review config",
+            request,
+        )
     })
     .await
 }
@@ -1690,6 +1727,8 @@ shell_handlers::shell_handler_catalogue! {
     ticket_schedule,
     ticket_cancel,
     ticket_review,
+    ticket_review_configure,
+    ticket_review_config,
     ticket_prioritise,
     ticket_edit,
     ticket_emergency_override,

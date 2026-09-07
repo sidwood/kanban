@@ -632,6 +632,26 @@ fn eligible_member(ticket: &Ticket) -> bool {
     !ticket.state().is_terminal() && ticket.pinned_version().is_none()
 }
 
+/// Whether one attached Ticket's claims count toward the coverage
+/// matrix of the Spec content version `version` (DR-PS-18, Sid ruling
+/// 5). A Ticket pinned to `version` claims through its pin — and a pin
+/// is never rewritten or inherited (DR-DE-06) — so one version's
+/// matrix never borrows another version's Tickets, a reused story id
+/// included. When `current` names `version` as the Spec's operative
+/// read — the approved version, else the working content — the matrix
+/// measures executable coverage: a pinned Ticket counts while it stays
+/// open, and the active unpinned population a new graph completes over
+/// counts beside it (`eligible_member`, KAN-T116). A version that is
+/// not current is history: its pinned Tickets stay visible there
+/// whatever their state, because historical visibility is separate
+/// from executable eligibility.
+pub fn claims_count_for_version(ticket: &Ticket, version: u64, current: bool) -> bool {
+    match ticket.pinned_version() {
+        Some(pinned) => pinned == version && (!ticket.state().is_terminal() || !current),
+        None => current && !ticket.state().is_terminal(),
+    }
+}
+
 /// Every criterion the graph's Tickets claim, in graph order — the
 /// claims the story-covered gate accumulates. An Implementation
 /// claims through its criteria; a qualified Bug claims through its
@@ -653,8 +673,8 @@ fn claimed_criteria_collected(held: &[&Ticket]) -> Vec<AcceptanceCriterion> {
 mod graph_rules {
     use super::{
         GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState, SpecId,
-        TicketGraphProposal, enforce_acyclic_with_registered, enforce_approvable,
-        enforce_assignable,
+        TicketGraphProposal, claims_count_for_version, enforce_acyclic_with_registered,
+        enforce_approvable, enforce_assignable,
     };
     use crate::coverage::{AcceptanceCriterion, StoryScope, UserStoryRef, VerificationStep};
     use crate::dependency::{DependencyError, TicketDependency, TicketDependencyGraph};
@@ -1240,6 +1260,59 @@ mod graph_rules {
             },
             "ineligible history drops no eligible member from completeness"
         );
+    }
+
+    #[test]
+    fn claims_count_through_pins_and_eligibility_alone() {
+        let criteria = || vec![criterion(1, 1, "Graphs record completely.")];
+
+        // A pinned Ticket claims through its pin alone: visible in its
+        // version's history whatever its state, executable in the
+        // current version only while it stays open.
+        let member = stored(1, TicketState::Approved, Some(2), criteria());
+        assert!(
+            claims_count_for_version(&member, 2, true),
+            "an open member of the current version counts"
+        );
+        assert!(
+            claims_count_for_version(&member, 2, false),
+            "the same pin stays visible once the version is history"
+        );
+        assert!(
+            !claims_count_for_version(&member, 1, false),
+            "a pin never lends its claims to another version"
+        );
+        let cancelled = stored(2, TicketState::Cancelled, Some(1), criteria());
+        assert!(
+            claims_count_for_version(&cancelled, 1, false),
+            "terminal history stays visible in its version's matrix"
+        );
+        assert!(
+            !claims_count_for_version(&cancelled, 1, true),
+            "a terminal Ticket never satisfies current executable coverage"
+        );
+        assert!(!claims_count_for_version(&cancelled, 2, true));
+
+        // An unpinned Ticket claims into the current version alone, and
+        // only while it stays open: the population a new graph
+        // completes over, whatever open state it holds.
+        let eligible = stored(3, TicketState::Draft, None, criteria());
+        assert!(
+            claims_count_for_version(&eligible, 2, true),
+            "the active unpinned population covers the current version"
+        );
+        assert!(
+            !claims_count_for_version(&eligible, 1, false),
+            "an unpinned Ticket belongs to no historical version"
+        );
+        let parked = stored(4, TicketState::Parked, None, criteria());
+        assert!(
+            claims_count_for_version(&parked, 2, true),
+            "every open state is active for coverage"
+        );
+        let superseded = stored(5, TicketState::Superseded, None, criteria());
+        assert!(!claims_count_for_version(&superseded, 2, true));
+        assert!(!claims_count_for_version(&superseded, 1, false));
     }
 
     #[test]

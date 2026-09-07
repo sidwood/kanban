@@ -68,8 +68,8 @@ pub use evidence::{
 };
 pub use graph_proposal::{
     GraphApprovalRefusal, GraphProposalError, GraphProposalId, GraphProposalState,
-    TicketGraphProposal, enforce_acyclic_with_registered, enforce_approvable, enforce_assignable,
-    enforce_executable_member,
+    TicketGraphProposal, claims_count_for_version, enforce_acyclic_with_registered,
+    enforce_approvable, enforce_assignable, enforce_executable_member,
 };
 pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{

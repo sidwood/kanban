@@ -12,7 +12,13 @@
 //! through its parent with the leaf's case folded, and a symlink
 //! whose target is gone is followed to that target (KAN-T122). Every
 //! invocation and every refusal appends a timeline row, so the audit
-//! trail outlives both outcomes. Removal never deletes the Workspace
+//! trail outlives both outcomes: a refused precondition records one
+//! refusal row and invokes nothing, while a skill that runs records
+//! its invocation in its own write before its outcome is known, so
+//! the invocation survives both a failing skill and a persistence
+//! failure that loses the outcome row — an invocation that failed is
+//! never recorded as a refusal that was never invoked (KAN-T128).
+//! Removal never deletes the Workspace
 //! record (DR-LW-11); a successful removal records the checkout gone
 //! itself — health missing, stale git facts cleared, optimistic
 //! version bumped — inside the command's span, so no guard mistakes
@@ -129,7 +135,9 @@ fn workspace_entity(workspace_id: WorkspaceId) -> TimelineEntityRef {
 
 /// Defer one timeline row until the failed command's span has rolled
 /// back — inside that span it would be discarded with the rejection it
-/// records — so the refusal outlives the command that was refused.
+/// records — so the row outlives the command that was refused or
+/// invoked. A row that cannot land even then is reported on stderr and
+/// lost; the refusal itself still reaches its caller (KAN-T128).
 fn record_after_discard(
     timeline: &Arc<dyn CloneGuardStore>,
     events: &dyn CommandEffects,
@@ -139,7 +147,7 @@ fn record_after_discard(
     events.after_discard(Box::new(move || {
         if let Err(error) = timeline.append(envelope) {
             eprintln!(
-                "kanban: the clone refusal could not be recorded: {}",
+                "kanban: the clone timeline row could not be recorded: {}",
                 error.message
             );
         }
@@ -362,6 +370,29 @@ impl CommandHandler for CreateClone {
             return Err(refuse(&conflict));
         }
         let source = project.registration().repository().to_owned();
+        // The invocation is a fact from the moment the skill runs, and
+        // it must outlive whatever follows (KAN-T128). The row is
+        // deferred until the command's span resolves: it lands in its
+        // own write only when the command fails, after the mutation
+        // has rolled back — a creation that records itself atomically
+        // below carries the invocation in its own row and defers
+        // nothing. Registering it here, before the skill runs, means
+        // it can only ever land after an invocation, never instead of
+        // one.
+        record_after_discard(
+            &self.0.timeline,
+            events,
+            clone_transition(
+                project_id,
+                project_entity(project_id),
+                "clone_create_invoked",
+                json!({
+                    "path": path.clone(),
+                    "branch": branch.clone(),
+                    "source": source.clone(),
+                }),
+            ),
+        );
         if let Err(error) = self.0.tool.add_clone(&source, &path, &branch) {
             record_after_discard(
                 &self.0.timeline,
@@ -369,7 +400,7 @@ impl CommandHandler for CreateClone {
                 clone_transition(
                     project_id,
                     project_entity(project_id),
-                    "clone_create_refused",
+                    "clone_create_failed",
                     json!({
                         "path": path,
                         "branch": branch,
@@ -446,6 +477,22 @@ impl CommandHandler for RemoveClone {
             );
             return Err(refuse(&conflict));
         }
+        // The invocation row, deferred exactly as the create side
+        // defers it: it lands only when the command fails, after the
+        // mutation has rolled back, in its own write (KAN-T128).
+        record_after_discard(
+            &self.0.timeline,
+            events,
+            clone_transition(
+                project_id,
+                workspace_entity(workspace.id()),
+                "clone_remove_invoked",
+                json!({
+                    "workspace_id": workspace.id().value(),
+                    "path": path.clone(),
+                }),
+            ),
+        );
         if let Err(error) = self.0.tool.remove_clone(&path) {
             record_after_discard(
                 &self.0.timeline,
@@ -453,7 +500,7 @@ impl CommandHandler for RemoveClone {
                 clone_transition(
                     project_id,
                     workspace_entity(workspace.id()),
-                    "clone_remove_refused",
+                    "clone_remove_failed",
                     json!({
                         "workspace_id": workspace.id().value(),
                         "path": path,
@@ -585,10 +632,13 @@ pub(crate) mod testing {
     }
 
     /// The in-memory clone guard timeline: the rows it was asked to
-    /// land, invocation and refusal alike.
+    /// land, invocation and refusal alike. A scripted outcome answers
+    /// one append the way a failing storage layer would, so a test can
+    /// fail persistence at a chosen append and let the rest land.
     #[derive(Default)]
     pub(crate) struct MemoryCloneGuardStore {
         rows: Mutex<Vec<TimelineEnvelope>>,
+        pub(crate) outcomes: Mutex<Vec<Result<(), ApiError>>>,
     }
 
     impl MemoryCloneGuardStore {
@@ -596,10 +646,21 @@ pub(crate) mod testing {
         pub(crate) fn rows(&self) -> Vec<TimelineEnvelope> {
             self.rows.lock().expect("the rows lock is sound").clone()
         }
+
+        /// Answer the next append from the script.
+        fn next_outcome(&self) -> Result<(), ApiError> {
+            let mut outcomes = self.outcomes.lock().expect("the script lock is sound");
+            if outcomes.is_empty() {
+                Ok(())
+            } else {
+                outcomes.remove(0)
+            }
+        }
     }
 
     impl CloneGuardStore for MemoryCloneGuardStore {
         fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError> {
+            self.next_outcome()?;
             self.rows
                 .lock()
                 .expect("the rows lock is sound")
@@ -1175,11 +1236,13 @@ mod guarded_clone {
         );
         assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
         let rows = harness.timeline.rows();
-        assert_eq!(rows.len(), 1, "the failed invocation still records");
-        assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
-        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_failed"));
+        let failure = rows
+            .iter()
+            .find(|row| row.detail()["action"] == json!("clone_create_failed"))
+            .expect("the failed invocation still records");
+        assert_eq!(failure.detail()["reason"], json!("fleet_tool_failed"));
         assert!(
-            rows[0].detail()["error"]
+            failure.detail()["error"]
                 .as_str()
                 .expect("the error text is recorded")
                 .contains("could not read from remote repository"),
@@ -1213,10 +1276,12 @@ mod guarded_clone {
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
         let rows = harness.timeline.rows();
-        assert_eq!(rows.len(), 1, "the refused invocation still records");
-        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_refused"));
+        let failure = rows
+            .iter()
+            .find(|row| row.detail()["reason"] == json!("fleet_tool_refused"))
+            .expect("the refused invocation still records");
         assert_eq!(
-            rows[0].detail()["error"],
+            failure.detail()["error"],
             json!(
                 "the fleet clone skill `git bc-rm` refused: refusing to remove the clone holding unpushed work"
             ),
@@ -1224,8 +1289,60 @@ mod guarded_clone {
         );
     }
 
+    /// KAN-T128-AC1: a skill failure after invocation is the truth the
+    /// timeline must tell as a pair — the invocation, then the failure
+    /// it explains — never as a refusal, which reads as though nothing
+    /// was ever invoked.
     #[test]
-    fn a_failed_removal_is_refused_and_recorded() {
+    fn a_failed_invocation_records_the_invocation_then_the_failure() {
+        let harness = clone_harness();
+        harness
+            .tool
+            .outcomes
+            .lock()
+            .expect("the script lock is sound")
+            .push(Err(kanban_dto::ApiError::internal(
+                "the fleet clone skill `git bc-add` failed: fatal: could not read from remote repository",
+            )));
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("the failed invocation refuses the command");
+
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
+        let rows = harness.timeline.rows();
+        let actions: Vec<_> = rows
+            .iter()
+            .map(|row| row.detail()["action"].clone())
+            .collect();
+        assert_eq!(
+            actions,
+            vec![json!("clone_create_invoked"), json!("clone_create_failed")],
+            "the invocation lands first, the failure it explains second: {rows:?}"
+        );
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!("/workspaces/kanban.fleet-t34")
+        );
+        assert_eq!(rows[0].detail()["branch"], json!("fleet/kan-t34"));
+        assert_eq!(
+            rows[0].detail()["source"],
+            json!("/repositories/kanban"),
+            "the invocation row names the repository the skill was handed"
+        );
+        assert_eq!(rows[1].detail()["reason"], json!("fleet_tool_failed"));
+    }
+
+    /// KAN-T128-AC1: the invoked-then-failed pair is the remove
+    /// command's truth too, and each row keeps the Workspace it was
+    /// about.
+    #[test]
+    fn a_failed_removal_records_the_invocation_then_the_failure() {
         let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
         register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
         harness
@@ -1245,11 +1362,111 @@ mod guarded_clone {
         assert_eq!(error.code, ErrorCode::Internal);
         assert_eq!(harness.tool.calls().len(), 1, "the skill was invoked");
         let rows = harness.timeline.rows();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].detail()["action"], json!("clone_remove_refused"));
-        assert_eq!(rows[0].detail()["reason"], json!("fleet_tool_failed"));
+        let actions: Vec<_> = rows
+            .iter()
+            .map(|row| row.detail()["action"].clone())
+            .collect();
+        assert_eq!(
+            actions,
+            vec![json!("clone_remove_invoked"), json!("clone_remove_failed")],
+            "the invocation lands first, the failure it explains second: {rows:?}"
+        );
+        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!("/workspaces/kanban.fleet-t31")
+        );
+        assert_eq!(rows[1].detail()["reason"], json!("fleet_tool_failed"));
         let (stored, _) = harness.workspaces.snapshot();
         assert_eq!(stored.len(), 1, "nothing was removed");
+    }
+
+    /// KAN-T128-AC1: a storage failure after a successful skill must
+    /// not erase the invocation. The creation row cannot land, so the
+    /// command fails — but the invocation row, written in its own span
+    /// once the failed mutation has rolled back, remains as the
+    /// evidence that the skill ran.
+    #[test]
+    fn a_storage_failure_after_a_successful_create_keeps_the_invocation() {
+        let harness = clone_harness();
+        harness
+            .timeline
+            .outcomes
+            .lock()
+            .expect("the script lock is sound")
+            .push(Err(kanban_dto::ApiError::internal(
+                "the timeline row could not be written",
+            )));
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "key-1"),
+            )
+            .expect_err("the unrecordable creation fails the command");
+
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(
+            harness.tool.calls().len(),
+            1,
+            "the skill ran and succeeded before storage failed"
+        );
+        let rows = harness.timeline.rows();
+        let actions: Vec<_> = rows
+            .iter()
+            .map(|row| row.detail()["action"].clone())
+            .collect();
+        assert_eq!(
+            actions,
+            vec![json!("clone_create_invoked")],
+            "the invocation evidence remains, and no creation row lands: {rows:?}"
+        );
+        assert_eq!(
+            rows[0].detail()["path"],
+            json!("/workspaces/kanban.fleet-t34")
+        );
+        assert_eq!(rows[0].detail()["branch"], json!("fleet/kan-t34"));
+    }
+
+    /// KAN-T128-AC1: the remove side owes the same survival — the
+    /// removal's own persistence fails, and the invocation row remains
+    /// as the evidence that the skill ran.
+    #[test]
+    fn a_storage_failure_after_a_successful_removal_keeps_the_invocation() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t31", "fleet/kan-t31");
+        register_and_observe(&harness, "/workspaces/kanban.fleet-t31", "key-1");
+        harness
+            .workspaces
+            .save_outcomes
+            .lock()
+            .expect("the script lock is sound")
+            .push(Err(kanban_dto::ApiError::internal(
+                "the workspace row could not be written",
+            )));
+
+        let error = harness
+            .core
+            .command("clone.remove", &remove(1, "key-2", 2))
+            .expect_err("the unrecordable removal fails the command");
+
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert_eq!(
+            harness.tool.calls().len(),
+            1,
+            "the skill ran and succeeded before storage failed"
+        );
+        let rows = harness.timeline.rows();
+        let actions: Vec<_> = rows
+            .iter()
+            .map(|row| row.detail()["action"].clone())
+            .collect();
+        assert_eq!(
+            actions,
+            vec![json!("clone_remove_invoked")],
+            "the invocation evidence remains, and no removal row lands: {rows:?}"
+        );
+        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
     }
 
     #[test]

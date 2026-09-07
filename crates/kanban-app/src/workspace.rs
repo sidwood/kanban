@@ -442,6 +442,10 @@ pub(crate) mod testing {
     #[derive(Default)]
     pub(crate) struct MemoryWorkspaceStore {
         state: Mutex<MemoryState>,
+        /// Saves the tests refuse, one consumed per `save` call in
+        /// script order, so a test can fail a single save the way a
+        /// failing storage layer would.
+        pub(crate) save_outcomes: Mutex<Vec<Result<(), ApiError>>>,
     }
 
     #[derive(Default)]
@@ -463,6 +467,16 @@ pub(crate) mod testing {
                 .expect("the memory store lock is sound")
                 .workspaces
                 .push(workspace);
+        }
+
+        /// Answer the next save from the script.
+        fn next_save_outcome(&self) -> Result<(), ApiError> {
+            let mut outcomes = self.save_outcomes.lock().expect("the script lock is sound");
+            if outcomes.is_empty() {
+                Ok(())
+            } else {
+                outcomes.remove(0)
+            }
         }
     }
 
@@ -493,6 +507,7 @@ pub(crate) mod testing {
         }
 
         fn save(&self, workspace: &Workspace, envelope: TimelineEnvelope) -> Result<(), ApiError> {
+            self.next_save_outcome()?;
             let mut state = self.state.lock().expect("the memory store lock is sound");
             let id = workspace.id();
             if let Some(row) = state.workspaces.iter_mut().find(|row| row.id() == id) {

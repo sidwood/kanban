@@ -858,17 +858,26 @@ mod tests {
         );
 
         let timeline = client.query_with("timeline.query", json!({ "scope": { "project": 1 } }));
-        let row = timeline["events"]
+        let events = timeline["events"]
             .as_array()
             .expect("the timeline answers with events")
+            .clone();
+        let row = events
             .iter()
-            .find(|event| event["detail"]["action"] == json!("clone_create_refused"))
+            .find(|event| event["detail"]["action"] == json!("clone_create_failed"))
             .expect("the overdue attempt records a safe failure")
             .clone();
         // The application layer's landed vocabulary counts an overrun
         // as a tool failure — the caller refused nothing — while the
-        // row itself still lands with the overrun named.
+        // row itself still lands with the overrun named, beside the
+        // invocation row that says the skill ran at all (KAN-T128).
         assert_eq!(row["detail"]["reason"], json!("fleet_tool_failed"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event["detail"]["action"] == json!("clone_create_invoked")),
+            "the invocation evidence lands beside the failure it explains: {events:?}"
+        );
         assert!(
             row["detail"]["error"]
                 .as_str()

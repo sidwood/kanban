@@ -87,6 +87,14 @@ pub const FLEET_TOOL_REFUSED: &str = "fleet_tool_refused";
 /// deliberate report — surfaced as an internal failure.
 pub const FLEET_TOOL_FAILED: &str = "fleet_tool_failed";
 
+/// The reason code recorded when the Project itself is archived: no
+/// clone command may touch it, so nothing is ever invoked.
+pub const PROJECT_ARCHIVED: &str = "project_archived";
+
+/// What every archived-Project refusal says, in fixed words, on both
+/// the caller's error and the durable row.
+const ARCHIVED_PROJECT_REFUSAL: &str = "archived Projects accept no clone commands";
+
 /// Which fleet tool outcome a durable row names, keeping the timeline
 /// and the caller's error agreeing on what happened: the tool's error
 /// code already carries the classification.
@@ -332,7 +340,25 @@ impl CommandHandler for CreateClone {
         let project_id = ProjectId::new(request.project_id);
         let project = load_project(&self.0.projects, project_id)?;
         if project.is_archived() {
-            return Err(refuse("archived Projects accept no clone commands"));
+            // The refusal is evidence too: it records what was asked
+            // and why nothing will run, and if the row cannot land the
+            // refusal itself still reaches the caller (KAN-T128-AC2).
+            record_after_discard(
+                &self.0.timeline,
+                events,
+                clone_transition(
+                    project_id,
+                    project_entity(project_id),
+                    "clone_create_refused",
+                    json!({
+                        "path": request.path,
+                        "branch": request.branch,
+                        "reason": PROJECT_ARCHIVED,
+                        "message": ARCHIVED_PROJECT_REFUSAL,
+                    }),
+                ),
+            );
+            return Err(refuse(ARCHIVED_PROJECT_REFUSAL));
         }
         let (path, branch) =
             validate_clone_target(&request.path, &request.branch).map_err(refuse)?;
@@ -460,7 +486,26 @@ impl CommandHandler for RemoveClone {
         let project_id = workspace.registration().project_id();
         let project = load_project(&self.0.projects, project_id)?;
         if project.is_archived() {
-            return Err(refuse("archived Projects accept no clone commands"));
+            // The create side's rule, on the Workspace it protects:
+            // record the refusal, invoke nothing, and let the
+            // refusal reach its caller even if the row cannot land
+            // (KAN-T128-AC2).
+            record_after_discard(
+                &self.0.timeline,
+                events,
+                clone_transition(
+                    project_id,
+                    workspace_entity(workspace.id()),
+                    "clone_remove_refused",
+                    json!({
+                        "workspace_id": workspace.id().value(),
+                        "path": workspace.registration().path(),
+                        "reason": PROJECT_ARCHIVED,
+                        "message": ARCHIVED_PROJECT_REFUSAL,
+                    }),
+                ),
+            );
+            return Err(refuse(ARCHIVED_PROJECT_REFUSAL));
         }
         let path = workspace.registration().path().to_owned();
         let facts = WorkspaceCloneFacts::from_workspace(&workspace);
@@ -1541,6 +1586,14 @@ mod guarded_clone {
             harness.tool.calls().is_empty(),
             "an archived Project invokes nothing"
         );
+        // KAN-T128-AC2: the refusal is durable evidence, not only an
+        // error that vanishes with its caller.
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the archived refusal records");
+        assert_eq!(rows[0].detail()["action"], json!("clone_create_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("project_archived"));
+        assert_eq!(rows[0].detail()["path"], json!("/workspaces/old.fleet"));
+        assert_eq!(rows[0].detail()["branch"], json!("fleet/old"));
     }
 
     #[test]
@@ -1577,6 +1630,89 @@ mod guarded_clone {
         assert!(
             harness.tool.calls().is_empty(),
             "an archived Project invokes nothing"
+        );
+        // KAN-T128-AC2: the refusal records on the Workspace it
+        // protected, and invokes nothing.
+        let rows = harness.timeline.rows();
+        assert_eq!(rows.len(), 1, "the archived refusal records");
+        assert_eq!(rows[0].detail()["action"], json!("clone_remove_refused"));
+        assert_eq!(rows[0].detail()["reason"], json!("project_archived"));
+        assert_eq!(rows[0].detail()["workspace_id"], json!(1));
+        assert_eq!(
+            rows[0].entity().map(|entity| entity.kind),
+            Some(kanban_dto::TimelineEntityKind::Workspace),
+            "the refusal row is about the Workspace that was protected"
+        );
+    }
+
+    /// KAN-T128-AC2: an archived refusal whose row cannot land stays
+    /// observable anyway — the refusal still reaches its caller, the
+    /// skill still never runs, and the failed write is reported rather
+    /// than swallowed silently.
+    #[test]
+    fn an_archived_refusal_stays_observable_when_its_row_cannot_land() {
+        let harness = clone_harness();
+        harness.projects.seed(kanban_domain::Project::restore(
+            kanban_domain::ProjectId::new(2),
+            kanban_domain::ProjectRegistration::new(
+                "OLD",
+                "Retired work",
+                "/repositories/old",
+                "/workspaces/old.seed",
+                "main",
+                "old.seed",
+                Some("old-main"),
+                None,
+            )
+            .expect("the fixture registration validates"),
+            kanban_domain::ProjectState::Archived,
+            kanban_domain::ProjectCounters::zeroed(),
+            1,
+        ));
+        harness
+            .timeline
+            .outcomes
+            .lock()
+            .expect("the script lock is sound")
+            .push(Err(kanban_dto::ApiError::internal(
+                "the timeline row could not be written",
+            )));
+
+        let error = harness
+            .core
+            .command(
+                "clone.create",
+                &create_in_project(2, "/workspaces/old.fleet", "fleet/old", "key-1"),
+            )
+            .expect_err("the archived Project is still refused");
+
+        assert_eq!(
+            error.code,
+            ErrorCode::InvalidRequest,
+            "the lost row never masks the refusal: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("archived"),
+            "the refusal itself stays observable to its caller: {}",
+            error.message
+        );
+        assert!(
+            harness.tool.calls().is_empty(),
+            "a lost refusal row still invokes nothing"
+        );
+        assert!(
+            harness
+                .timeline
+                .outcomes
+                .lock()
+                .expect("the script lock is sound")
+                .is_empty(),
+            "the refusal row was written and lost, never skipped"
+        );
+        assert!(
+            harness.timeline.rows().is_empty(),
+            "the lost row landed nowhere"
         );
     }
 

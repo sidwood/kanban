@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "FindingSeverity": {
+      "enum": [
+        "p0",
+        "p1",
+        "p2",
+        "p3"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "evidence": {
+      "type": "string"
+    },
+    "in_scope": {
+      "type": "boolean"
+    },
+    "location": {
+      "type": "string"
+    },
+    "proposed_resolution": {
+      "type": "string"
+    },
+    "severity": {
+      "$ref": "#/definitions/FindingSeverity"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "evidence",
+    "in_scope",
+    "location",
+    "proposed_resolution",
+    "severity",
+    "summary"
+  ],
+  "title": "ReviewFindingRecord",
+  "type": "object"
+}

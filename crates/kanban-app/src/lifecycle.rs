@@ -84,6 +84,7 @@ struct LifecycleContext {
     dependencies: Arc<dyn DependencyStore>,
     projects: Arc<dyn ProjectStore>,
     schedules: Arc<dyn crate::schedule::ScheduleStore>,
+    bindings: Option<Arc<dyn crate::tip_binding::CriterionBindingStore>>,
 }
 
 impl LifecycleContext {
@@ -267,12 +268,14 @@ impl Core {
         dependencies: Arc<dyn DependencyStore>,
         projects: Arc<dyn ProjectStore>,
         schedules: Arc<dyn crate::schedule::ScheduleStore>,
+        bindings: Option<Arc<dyn crate::tip_binding::CriterionBindingStore>>,
     ) -> Result<(), RegistrationError> {
         let context = LifecycleContext {
             tickets,
             dependencies,
             projects,
             schedules,
+            bindings,
         };
         self.register_command(
             "ticket.transition",
@@ -517,6 +520,23 @@ impl CommandHandler for ReviewTicket {
         let request: TicketReviewRequest = parse_payload(&command.payload)?;
         let (project, mut ticket) = self.0.open(request.ticket_id)?;
         let decision = domain_decision(request.decision);
+        if decision == ReviewDecision::Approve
+            && ticket.kind() == kanban_domain::TicketKind::Implementation
+        {
+            let Some(bindings) = &self.0.bindings else {
+                return Err(ApiError::invalid_request(
+                    "Implementation approval requires criterion evidence at the bound tip",
+                ));
+            };
+            let listed = bindings.list(request.ticket_id)?;
+            if listed.len() != ticket.criteria().len()
+                || listed.iter().any(|binding| !binding.satisfied())
+            {
+                return Err(ApiError::invalid_request(
+                    "Implementation approval requires every criterion to be satisfied at the bound tip",
+                ));
+            }
+        }
         let wire_decision = decision.as_str();
         self.0.land(
             &project,
@@ -1170,8 +1190,14 @@ pub(crate) mod testing {
             evidence.clone(),
         )
         .expect("the ticket operations register");
-        core.register_lifecycle(rows.clone(), rows.clone(), projects.clone(), rows.clone())
-            .expect("the lifecycle operations register");
+        core.register_lifecycle(
+            rows.clone(),
+            rows.clone(),
+            projects.clone(),
+            rows.clone(),
+            None,
+        )
+        .expect("the lifecycle operations register");
         LifecycleHarness {
             rows,
             projects,

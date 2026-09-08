@@ -222,45 +222,58 @@ impl CommandHandler for CreateTicket {
         events: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: TicketCreateRequest = parse_payload(&command.payload)?;
-        let mut project = self
-            .0
-            .projects
-            .find(ProjectId::new(request.project_id))?
-            .ok_or_else(|| ApiError::not_found(&format!("project {}", request.project_id)))?;
-        if project.is_archived() {
-            return Err(ApiError::invalid_request(
-                "archived is terminal; the Project accepts no further changes",
-            ));
-        }
-        let priority = priority_of(request.priority);
-        let body = body_of(&request, &project, self.0.specs.as_ref())?;
-        let number = TicketNumber::new(project.mint(NumberKind::Ticket).map_err(refuse)?)
-            .expect("a minted number is positive");
-        let identity = project.id();
-        let kind = body.kind().wire_name().to_owned();
-        let ticket = self
-            .0
-            .tickets
-            .create(&project, number, priority, &body, &|id| {
-                transition(
-                    identity,
-                    id,
-                    "created",
-                    json!({
-                        "project_id": identity.value(),
-                        "number": number.value(),
-                        "kind": kind,
-                    }),
-                )
-            })?;
-        announce(
+        create_ticket(
+            &request,
+            self.0.projects.as_ref(),
+            self.0.tickets.as_ref(),
+            self.0.specs.as_ref(),
             events,
-            LiveEventName::TicketCreated,
-            &ticket,
-            project.code(),
-        );
-        encode_record(&ticket, project.code())
+        )
     }
+}
+
+/// Compose Ticket creation inside the caller's Core mutation, preserving
+/// the existing number, attachment, validation and event rules atomically.
+pub(crate) fn create_ticket(
+    request: &TicketCreateRequest,
+    projects: &dyn ProjectStore,
+    tickets: &dyn TicketStore,
+    specs: &dyn SpecStore,
+    events: &dyn CommandEffects,
+) -> Result<Value, ApiError> {
+    let mut project = projects
+        .find(ProjectId::new(request.project_id))?
+        .ok_or_else(|| ApiError::not_found(&format!("project {}", request.project_id)))?;
+    if project.is_archived() {
+        return Err(ApiError::invalid_request(
+            "archived is terminal; the Project accepts no further changes",
+        ));
+    }
+    let priority = priority_of(request.priority);
+    let body = body_of(request, &project, specs)?;
+    let number = TicketNumber::new(project.mint(NumberKind::Ticket).map_err(refuse)?)
+        .expect("a minted number is positive");
+    let identity = project.id();
+    let kind = body.kind().wire_name().to_owned();
+    let ticket = tickets.create(&project, number, priority, &body, &|id| {
+        transition(
+            identity,
+            id,
+            "created",
+            json!({
+                "project_id": identity.value(),
+                "number": number.value(),
+                "kind": kind,
+            }),
+        )
+    })?;
+    announce(
+        events,
+        LiveEventName::TicketCreated,
+        &ticket,
+        project.code(),
+    );
+    encode_record(&ticket, project.code())
 }
 
 /// Serves `ticket.spec.move`.

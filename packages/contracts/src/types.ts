@@ -115,6 +115,11 @@ export type ChipVocabulary = {
   sets: ChipSet[];
   version: number;
 };
+export type CloneAdoptRequest = {
+  intent_key: string;
+  mutation: MutationContext;
+  project_id: number;
+};
 export type CloneCreateRequest = {
   branch: string;
   mutation: MutationContext;
@@ -125,6 +130,21 @@ export type CloneCreatedRecord = {
   branch: string;
   path: string;
   project_id: number;
+  workspace_id: number;
+};
+export type CloneRecoveriesQuery = {
+  project_id: number;
+};
+export type CloneRecoveriesResponse = {
+  attempts: CloneRecoveryRecord[];
+  project_id: number;
+};
+export type CloneRecoveryRecord = {
+  branch: string;
+  idempotency_key: string;
+  path: string;
+  project_id: number;
+  source: string;
 };
 export type CloneRemoveRequest = {
   mutation: MutationContext;
@@ -170,7 +190,53 @@ export type CoverageCriterionProposal = {
   outcome: string;
   stories: string[];
 };
+export type CriterionBindingListQuery = {
+  ticket_id: number;
+};
+export type CriterionBindingListResponse = {
+  bindings: CriterionBindingRecord[];
+};
+export type CriterionBindingRecord = {
+  criterion_index: number;
+  evidence_id: number;
+  kind: CriterionKindDto;
+  review: EvidenceReviewDto;
+  satisfied: boolean;
+  ticket_id: number;
+  tip: string;
+  void: boolean;
+};
+export type CriterionCompleteRequest = {
+  criterion_index: number;
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type CriterionEvidenceAttachRequest = {
+  criterion_index: number;
+  evidence_id: number;
+  mutation: MutationContext;
+  ticket_id: number;
+  tip: string;
+};
+export type CriterionEvidenceReviewRequest = {
+  criterion_index: number;
+  mutation: MutationContext;
+  review: EvidenceReviewDto;
+  ticket_id: number;
+};
+export type CriterionInvalidateRequest = {
+  mutation: MutationContext;
+  observed_tip: string;
+  ticket_id: number;
+};
+export type CriterionKindDto = 'acceptance' | 'task';
 export type CriterionRefusal = 'no_outcome' | 'unlinked' | 'technical_command' | 'malformed_story' | 'foreign_story';
+export type CriterionSatisfyRequest = {
+  criterion_index: number;
+  mutation: MutationContext;
+  ticket_id: number;
+  tip: string;
+};
 export type DatabaseHealth = {
   journal_mode: string;
   last_change_at?: string | null;
@@ -185,6 +251,31 @@ export type DeferralListQuery = {
 };
 export type DeferralListResponse = {
   deferrals: DeferralRecord[];
+};
+export type DeferralPromoteRequest = {
+  deferral_id: number;
+  mutation: MutationContext;
+  priority: TicketPriority;
+  project_id: number;
+  target: DeferralPromotionTarget;
+};
+export type DeferralPromoteResponse = {
+  promotion: DeferralPromotionRecord;
+  ticket: TicketRecord;
+};
+export type DeferralPromotionRecord = {
+  deferral_id: number;
+  finding_id: string;
+  project_id: number;
+  ticket_id: number;
+};
+export type DeferralPromotionTarget = {
+  kind: 'bug';
+} | {
+  completion: string[];
+  kind: 'task';
+  mode: TaskMode;
+  subtype: TaskSubtype;
 };
 export type DeferralRecord = {
   finding_id: string;
@@ -239,6 +330,7 @@ export type DispatchRequestRecord = {
   priority: TicketPriority;
   project_id: number;
   ready: boolean;
+  reviewer?: ReviewerDispatchRecord | null;
   status: DispatchStatus;
   ticket_id: number;
   usage_pool: string;
@@ -285,6 +377,7 @@ export type EvidenceRecord = {
   project_id: number;
   relative_path?: string | null;
 };
+export type EvidenceReviewDto = 'pending' | 'validated' | 'rejected';
 export type ExportDriftEntry = {
   path: string;
   status: ExportDriftStatus;
@@ -310,6 +403,32 @@ export type ExportRenderResponse = {
   files: string[];
   project_id: number;
 };
+export type FindingGetQuery = {
+  finding_id: string;
+  project_id: number;
+};
+export type FindingListQuery = {
+  project_id: number;
+  review_id?: number | null;
+};
+export type FindingListResponse = {
+  findings: FindingRecord[];
+  project_id: number;
+};
+export type FindingRecord = {
+  blocking: boolean;
+  counts_for_resolution: boolean;
+  finding: ReviewFindingRecord;
+  id: string;
+  project_id: number;
+  promotion?: DeferralPromotionRecord | null;
+  review_id: number;
+  slot_id: number;
+  submission_id?: number | null;
+  ticket_id: number;
+  tip: string;
+};
+export type FindingSeverity = 'p0' | 'p1' | 'p2' | 'p3';
 export type HealthQuery = Record<string, never>;
 export type HealthResponse = {
   connected: boolean;
@@ -636,6 +755,109 @@ export type RefusedCriterion = {
   outcome: string;
   reason: CriterionRefusal;
 };
+export type ReviewAttemptRecord = {
+  attempt: number;
+  invalidations: string[];
+  outcome: string;
+  review_id?: number | null;
+  verdicts: string[];
+};
+export type ReviewBounceRecord = {
+  findings: ReviewFindingReference[];
+  stage_index: number;
+  tip: string;
+};
+export type ReviewExecutionRecord = {
+  bounce?: ReviewBounceRecord | null;
+  configuration_version: number;
+  id: number;
+  project_id: number;
+  stages: ReviewStageRecord[];
+  status: ReviewExecutionStatus;
+  submission_id: number;
+  ticket_id: number;
+  tip: string;
+  version: number;
+};
+export type ReviewExecutionStatus = 'in_progress' | 'approved' | 'rejected' | 'expired';
+export type ReviewExpireRequest = {
+  mutation: MutationContext;
+  review_id: number;
+};
+export type ReviewFindingRecord = {
+  evidence: string;
+  in_scope: boolean;
+  location: string;
+  proposed_resolution: string;
+  severity: FindingSeverity;
+  summary: string;
+};
+export type ReviewFindingReference = {
+  finding: ReviewFindingRecord;
+  finding_index: number;
+  slot_id: number;
+  submission_id?: number | null;
+};
+export type ReviewGetQuery = {
+  review_id: number;
+};
+export type ReviewHistoryQuery = {
+  ticket_id: number;
+};
+export type ReviewHistoryResponse = {
+  attempts: ReviewAttemptRecord[];
+  needs_revalidation: boolean;
+};
+export type ReviewHumanSubmitRequest = {
+  approve: boolean;
+  findings?: ReviewFindingRecord[];
+  mutation: MutationContext;
+  review_id: number;
+  slot_id: number;
+  summary: string;
+  tip: string;
+};
+export type ReviewRevalidateRequest = {
+  mutation: MutationContext;
+  ticket_id: number;
+};
+export type ReviewSlotRecord = {
+  dispatch_request_id?: number | null;
+  effective?: ProfileSnapshotRecord | null;
+  fallback_path: string[];
+  id: number;
+  occupant: TicketReviewOccupant;
+  requested?: ProfileSnapshotRecord | null;
+  requirement: TicketReviewSlotRequirement;
+  verdict?: ReviewVerdictRecord | null;
+};
+export type ReviewStageRecord = {
+  index: number;
+  slots: ReviewSlotRecord[];
+  status: ReviewStageStatus;
+};
+export type ReviewStageStatus = 'waiting' | 'approved' | 'rejected';
+export type ReviewStartRequest = {
+  mutation: MutationContext;
+  submission_id: number;
+  ticket_id: number;
+};
+export type ReviewVerdictRecord = {
+  approve: boolean;
+  counts_for_resolution: boolean;
+  findings?: ReviewFindingRecord[];
+  submission_id?: number | null;
+  summary: string;
+  tip: string;
+};
+export type ReviewerDispatchRecord = {
+  effective: ProfileSnapshotRecord;
+  fallback_path: string[];
+  requested: ProfileSnapshotRecord;
+  review_id: number;
+  slot_id: number;
+  tip: string;
+};
 export type RulingIdentity = {
   id: number;
 };
@@ -825,6 +1047,41 @@ export type SpecVersionSupersedeRequest = {
   mutation: MutationContext;
   spec_id: number;
   version: number;
+};
+export type SubmissionListQuery = {
+  project_id: number;
+};
+export type SubmissionListResponse = {
+  project_id: number;
+  submissions: SubmissionRecord[];
+};
+export type SubmissionRecord = {
+  capability_id: number;
+  created_at: number;
+  id: number;
+  project_id: number;
+  result: SubmissionResult;
+  reviewer_slot_id?: number | null;
+  role: CapabilityRole;
+  run_id: number;
+  ticket_id: number;
+};
+export type SubmissionResult = {
+  kind: 'implementation';
+  summary: string;
+  tip: string;
+} | {
+  approve: boolean;
+  findings?: ReviewFindingRecord[];
+  kind: 'review';
+  summary: string;
+  tip: string;
+};
+export type SubmissionSubmitRequest = {
+  capability_id: number;
+  mutation: MutationContext;
+  result: SubmissionResult;
+  run_id: number;
 };
 export type TaskMode = 'human' | 'agent';
 export type TaskSubtype = 'operational' | 'investigative' | 'administrative' | 'research' | 'prototype' | 'migration' | 'manual';

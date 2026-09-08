@@ -17,8 +17,11 @@ use kanban_dto::{
     CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
     CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse, DeferralListQuery, DeferralListResponse,
-    DeferralRecord, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
+    CommentRevisionsQuery, CommentRevisionsResponse, CriterionBindingListQuery,
+    CriterionBindingListResponse, CriterionBindingRecord, CriterionCompleteRequest,
+    CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest, CriterionInvalidateRequest,
+    CriterionSatisfyRequest, DeferralListQuery, DeferralListResponse, DeferralRecord,
+    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
     DiagnosticsExportResponse, DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery,
     DispatchQueueResponse, DispatchRequestCreateRequest, DispatchRequestRecord,
     EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
@@ -1205,6 +1208,99 @@ async fn evidence_list(
 }
 
 #[tauri::command]
+async fn criterion_evidence_attach(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionEvidenceAttachRequest>(request)?;
+    run_blocking(shell, "criterion evidence attach", |shell| {
+        forward_command(
+            shell,
+            "criterion.evidence.attach",
+            "bound criterion evidence",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn criterion_evidence_review(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionEvidenceReviewRequest>(request)?;
+    run_blocking(shell, "criterion evidence review", |shell| {
+        forward_command(
+            shell,
+            "criterion.evidence.review",
+            "reviewed criterion evidence",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn criterion_satisfy(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionSatisfyRequest>(request)?;
+    run_blocking(shell, "criterion satisfy", |shell| {
+        forward_command(shell, "criterion.satisfy", "satisfied criterion", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn criterion_complete(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionCompleteRequest>(request)?;
+    run_blocking(shell, "criterion complete", |shell| {
+        forward_command(shell, "criterion.complete", "completed criterion", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn criterion_invalidate(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionInvalidateRequest>(request)?;
+    run_blocking(shell, "criterion invalidate", |shell| {
+        forward_command(
+            shell,
+            "criterion.invalidate",
+            "invalidated criterion approvals",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn criterion_bindings(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CriterionBindingListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CriterionBindingListQuery>(request)?;
+    run_blocking(shell, "criterion bindings", |shell| {
+        forward_query(shell, "criterion.bindings", "criterion bindings", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn herdr_settings_get(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1412,6 +1508,32 @@ async fn run_acknowledge(
 }
 
 #[tauri::command]
+async fn submission_submit(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::SubmissionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::SubmissionSubmitRequest>(request)?;
+    run_blocking(shell, "submission submit", move |shell| {
+        forward_command(shell, "submission.submit", "accepted submission", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn submission_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::submission::SubmissionListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::submission::SubmissionListQuery>(request)?;
+    run_blocking(shell, "submission list", move |shell| {
+        forward_query(shell, "submission.list", "submission list", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn run_list(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -1538,6 +1660,149 @@ async fn lane_list(
     let shell = shell.inner().clone();
     run_blocking(shell, "lane list", |shell| {
         forward_query(shell, "lane.list", "lane list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn deferral_promote(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::DeferralPromoteResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::DeferralPromoteRequest>(request)?;
+    run_blocking(shell, "deferral promotion", |shell| {
+        forward_command(shell, "deferral.promote", "deferral promotion", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn finding_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::FindingListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::FindingListQuery>(request)?;
+    run_blocking(shell, "recorded findings", |shell| {
+        forward_query(shell, "finding.list", "recorded findings", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn finding_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::FindingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::FindingGetQuery>(request)?;
+    run_blocking(shell, "recorded findings", |shell| {
+        forward_query(shell, "finding.get", "recorded findings", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_start(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewExecutionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewStartRequest>(request)?;
+    run_blocking(shell, "review execution", |shell| {
+        forward_command(shell, "review.start", "review execution", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_human_submit(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewExecutionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewHumanSubmitRequest>(request)?;
+    run_blocking(shell, "review execution", |shell| {
+        forward_command(shell, "review.human.submit", "review execution", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_revalidate(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewHistoryResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewRevalidateRequest>(request)?;
+    run_blocking(shell, "review revalidation", |shell| {
+        forward_command(shell, "review.revalidate", "review revalidation", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_expire(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewExecutionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewExpireRequest>(request)?;
+    run_blocking(shell, "review expiry", |shell| {
+        forward_command(shell, "review.expire", "review expiry", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewExecutionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewGetQuery>(request)?;
+    run_blocking(shell, "review execution", |shell| {
+        forward_query(shell, "review.get", "review execution", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_history(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewHistoryResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewHistoryQuery>(request)?;
+    run_blocking(shell, "review history", |shell| {
+        forward_query(shell, "review.history", "review history", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn clone_adopt(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<WorkspaceRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::CloneAdoptRequest>(request)?;
+    run_blocking(shell, "clone adoption", |shell| {
+        forward_command(shell, "clone.adopt", "adopted Workspace", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn clone_recoveries(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::CloneRecoveriesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::CloneRecoveriesQuery>(request)?;
+    run_blocking(shell, "clone recoveries", |shell| {
+        forward_query(shell, "clone.recoveries", "clone recoveries", request)
     })
     .await
 }
@@ -1754,6 +2019,12 @@ shell_handlers::shell_handler_catalogue! {
     deferral_list,
     evidence_attach,
     evidence_list,
+    criterion_evidence_attach,
+    criterion_evidence_review,
+    criterion_satisfy,
+    criterion_complete,
+    criterion_invalidate,
+    criterion_bindings,
     herdr_settings_get,
     herdr_settings_update,
     herdr_defaults_get,
@@ -1766,6 +2037,8 @@ shell_handlers::shell_handler_catalogue! {
     dispatch_claim,
     dispatch_queue,
     run_acknowledge,
+    submission_submit,
+    submission_list,
     run_list,
     workspace_register,
     workspace_observe,
@@ -1777,6 +2050,17 @@ shell_handlers::shell_handler_catalogue! {
     lane_ticket_assign,
     lane_ticket_release,
     lane_list,
+    deferral_promote,
+    finding_list,
+    finding_get,
+    review_start,
+    review_human_submit,
+    review_revalidate,
+    review_expire,
+    review_get,
+    review_history,
+    clone_adopt,
+    clone_recoveries,
     clone_create,
     clone_remove,
     export_render,

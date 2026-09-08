@@ -15,6 +15,7 @@ pub mod error;
 pub mod event;
 pub mod evidence;
 pub mod export;
+pub mod finding;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
@@ -24,13 +25,27 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod review;
+pub use finding::{
+    FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord, FindingSeverity,
+    ReviewFindingRecord,
+};
+pub mod review_execution;
 pub mod ruling;
+pub use review_execution::{
+    ReviewAttemptRecord, ReviewBounceRecord, ReviewExecutionRecord, ReviewExecutionStatus,
+    ReviewExpireRequest, ReviewFindingReference, ReviewGetQuery, ReviewHistoryQuery,
+    ReviewHistoryResponse, ReviewHumanSubmitRequest, ReviewRevalidateRequest, ReviewSlotRecord,
+    ReviewStageRecord, ReviewStageStatus, ReviewStartRequest, ReviewVerdictRecord,
+    ReviewerDispatchRecord,
+};
 pub mod run;
 pub mod schema;
 pub mod search;
 pub mod spec;
+pub mod submission;
 pub mod ticket;
 pub mod timeline;
+pub mod tip_binding;
 
 pub mod view;
 pub mod workspace;
@@ -46,7 +61,10 @@ pub use capacity::{
     CapacitySettingsGetResponse, CapacitySettingsUpdateRequest,
 };
 pub use chip::{CHIP_VOCABULARY_VERSION, ChipKind, ChipSet, ChipVocabulary};
-pub use clone::{CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord};
+pub use clone::{
+    CloneAdoptRequest, CloneCreateRequest, CloneCreatedRecord, CloneRecoveriesQuery,
+    CloneRecoveriesResponse, CloneRecoveryRecord, CloneRemoveRequest, CloneRemovedRecord,
+};
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
     CommentRevisionsQuery, CommentRevisionsResponse,
@@ -57,7 +75,8 @@ pub use coverage::{
     SpecCoverageMatrixResponse, SpecCoverageMatrixRow,
 };
 pub use deferral::{
-    DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
+    DeferralListQuery, DeferralListResponse, DeferralPromoteRequest, DeferralPromoteResponse,
+    DeferralPromotionRecord, DeferralPromotionTarget, DeferralRecord, DeferralRecordRequest,
     DeferralSupersedeRequest,
 };
 pub use diagnostics::{DiagnosticsExportQuery, DiagnosticsExportResponse};
@@ -131,6 +150,7 @@ pub use spec::{
     SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
     SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
 };
+pub use submission::{SubmissionRecord, SubmissionResult, SubmissionSubmitRequest};
 pub use ticket::{
     TaskMode, TaskSubtype, TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRecord,
     TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualification,
@@ -150,6 +170,11 @@ pub use ticket::{
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
     TimelineQueryResponse, TimelineScope,
+};
+pub use tip_binding::{
+    CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
+    CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
+    CriterionInvalidateRequest, CriterionKindDto, CriterionSatisfyRequest, EvidenceReviewDto,
 };
 pub use view::{
     DonePlacement, SavedViewRecord, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewMode,
@@ -222,6 +247,38 @@ mod tests {
             names,
             vec![
                 "ApiError",
+                "DeferralPromoteRequest",
+                "DeferralPromoteResponse",
+                "DeferralPromotionRecord",
+                "DeferralPromotionTarget",
+                "FindingGetQuery",
+                "FindingListQuery",
+                "FindingListResponse",
+                "FindingRecord",
+                "FindingSeverity",
+                "ReviewBounceRecord",
+                "ReviewExecutionRecord",
+                "ReviewExecutionStatus",
+                "ReviewFindingRecord",
+                "ReviewFindingReference",
+                "ReviewGetQuery",
+                "ReviewHistoryQuery",
+                "ReviewHistoryResponse",
+                "ReviewAttemptRecord",
+                "ReviewExpireRequest",
+                "ReviewRevalidateRequest",
+                "ReviewHumanSubmitRequest",
+                "ReviewSlotRecord",
+                "ReviewStageRecord",
+                "ReviewStageStatus",
+                "ReviewStartRequest",
+                "ReviewVerdictRecord",
+                "ReviewerDispatchRecord",
+                "SubmissionRecord",
+                "SubmissionListQuery",
+                "SubmissionListResponse",
+                "SubmissionResult",
+                "SubmissionSubmitRequest",
                 "CapabilityRecord",
                 "CapabilityRole",
                 "CapabilityStatus",
@@ -243,6 +300,15 @@ mod tests {
                 "CommentRevisionsQuery",
                 "CommentRevisionsResponse",
                 "CoverageCriterionProposal",
+                "CriterionBindingListQuery",
+                "CriterionBindingListResponse",
+                "CriterionBindingRecord",
+                "CriterionCompleteRequest",
+                "CriterionEvidenceAttachRequest",
+                "CriterionEvidenceReviewRequest",
+                "CriterionInvalidateRequest",
+                "CriterionKindDto",
+                "CriterionSatisfyRequest",
                 "CriterionRefusal",
                 "DatabaseHealth",
                 "ErrorCode",
@@ -269,6 +335,7 @@ mod tests {
                 "EvidenceListResponse",
                 "EvidenceListSummary",
                 "EvidenceRecord",
+                "EvidenceReviewDto",
                 "LiveEventName",
                 "HealthQuery",
                 "HealthResponse",
@@ -450,7 +517,11 @@ mod tests {
                 "LaneTicketReleaseRequest",
                 "LaneListQuery",
                 "LaneListResponse",
+                "CloneAdoptRequest",
                 "CloneCreateRequest",
+                "CloneRecoveriesQuery",
+                "CloneRecoveriesResponse",
+                "CloneRecoveryRecord",
                 "CloneRemoveRequest",
                 "CloneCreatedRecord",
                 "CloneRemovedRecord",

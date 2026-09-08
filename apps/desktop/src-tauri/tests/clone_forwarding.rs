@@ -91,6 +91,7 @@ fn remove_request() -> Value {
 fn created_answer() -> Value {
     json!({
         "project_id": 1,
+        "workspace_id": 1,
         "path": "/workspaces/kanban.fleet-kan-t115",
         "branch": "fleet/kan-t115",
     })

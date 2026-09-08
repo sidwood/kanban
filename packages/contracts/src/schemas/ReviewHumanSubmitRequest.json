@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "FindingSeverity": {
+      "enum": [
+        "p0",
+        "p1",
+        "p2",
+        "p3"
+      ],
+      "type": "string"
+    },
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "ReviewFindingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "in_scope": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "proposed_resolution": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/FindingSeverity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "in_scope",
+        "location",
+        "proposed_resolution",
+        "severity",
+        "summary"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "approve": {
+      "type": "boolean"
+    },
+    "findings": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/ReviewFindingRecord"
+      },
+      "type": "array"
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "review_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "slot_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "tip": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "approve",
+    "mutation",
+    "review_id",
+    "slot_id",
+    "summary",
+    "tip"
+  ],
+  "title": "ReviewHumanSubmitRequest",
+  "type": "object"
+}

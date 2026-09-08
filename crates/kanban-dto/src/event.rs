@@ -1188,6 +1188,7 @@ mod tests {
             sequence: 8,
             event_type: "clone.created".to_owned(),
             payload: json!({
+                "workspace_id": 1,
                 "project_id": 1,
                 "path": "/workspaces/kanban.fleet-t34",
                 "branch": "fleet/kan-t34",
@@ -1201,6 +1202,7 @@ mod tests {
                 sequence: 8,
                 payload: CloneCreatedRecord {
                     project_id: 1,
+                    workspace_id: 1,
                     path: "/workspaces/kanban.fleet-t34".to_owned(),
                     branch: "fleet/kan-t34".to_owned(),
                 },

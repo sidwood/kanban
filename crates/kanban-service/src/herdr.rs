@@ -395,12 +395,19 @@ impl HerdrObserver {
     /// collapsing those re-reports into Attention items belongs to
     /// the consumer.
     pub fn attention_signals(&self, project_id: u64) -> Vec<AttentionSignal> {
-        self.signals
+        let signals = self
+            .signals
             .lock()
             .unwrap()
             .get(&project_id)
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        kanban_app::submission::unresolved_submission_signals(
+            &kanban_storage::SqliteSubmissionStore::new(&self.database),
+            project_id,
+            &signals,
+        )
+        .unwrap_or(signals)
     }
 
     /// Stop observing one Project, release its socket and database
@@ -902,6 +909,21 @@ impl HerdrObserverHandle {
     /// attention inbox.
     fn append_push_event(&self, deadlines: &mut DeadlineMonitor, event: &Value) {
         deadlines.observe_event(SystemTime::now(), event);
+        match kanban_app::submission::missing_submission_signal(
+            &kanban_storage::SqliteSubmissionStore::new(&self.database),
+            self.project_id,
+            event,
+        ) {
+            Ok(Some(signal)) => {
+                let mut emitted = self.signals.lock().unwrap();
+                let entry = emitted.entry(self.project_id).or_default();
+                entry.push(signal);
+                let surplus = entry.len().saturating_sub(RETAINED_SIGNALS_PER_PROJECT);
+                entry.drain(..surplus);
+            }
+            Ok(None) => {}
+            Err(error) => self.mark_error(ObservationError::Timeline(error.message)),
+        }
         for projection in project_herdr_event(self.project_id, event) {
             match projection {
                 TelemetryProjection::Timeline(envelope) => {

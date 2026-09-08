@@ -1,3 +1,21 @@
+use crate::submission::{
+    SubmissionListQuery, SubmissionListResponse, SubmissionRecord, SubmissionResult,
+    SubmissionSubmitRequest,
+};
+use crate::{
+    CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
+    CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
+    CriterionInvalidateRequest, CriterionKindDto, CriterionSatisfyRequest, DeferralPromoteRequest,
+    DeferralPromoteResponse, DeferralPromotionRecord, DeferralPromotionTarget, EvidenceReviewDto,
+    FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord,
+};
+use crate::{
+    FindingSeverity, ReviewAttemptRecord, ReviewBounceRecord, ReviewExecutionRecord,
+    ReviewExecutionStatus, ReviewExpireRequest, ReviewFindingRecord, ReviewFindingReference,
+    ReviewGetQuery, ReviewHistoryQuery, ReviewHistoryResponse, ReviewHumanSubmitRequest,
+    ReviewRevalidateRequest, ReviewSlotRecord, ReviewStageRecord, ReviewStageStatus,
+    ReviewStartRequest, ReviewVerdictRecord, ReviewerDispatchRecord,
+};
 use schemars::schema::RootSchema;
 use schemars::schema_for;
 
@@ -13,7 +31,8 @@ use crate::capacity::{
 };
 use crate::chip::{ChipKind, ChipSet, ChipVocabulary};
 use crate::clone::{
-    CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest, CloneRemovedRecord,
+    CloneAdoptRequest, CloneCreateRequest, CloneCreatedRecord, CloneRecoveriesQuery,
+    CloneRecoveriesResponse, CloneRecoveryRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
 use crate::comment::{
     CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
@@ -131,6 +150,68 @@ use crate::workspace::{
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
         ("ApiError", schema_for!(ApiError)),
+        (
+            "DeferralPromoteRequest",
+            schema_for!(DeferralPromoteRequest),
+        ),
+        (
+            "DeferralPromoteResponse",
+            schema_for!(DeferralPromoteResponse),
+        ),
+        (
+            "DeferralPromotionRecord",
+            schema_for!(DeferralPromotionRecord),
+        ),
+        (
+            "DeferralPromotionTarget",
+            schema_for!(DeferralPromotionTarget),
+        ),
+        ("FindingGetQuery", schema_for!(FindingGetQuery)),
+        ("FindingListQuery", schema_for!(FindingListQuery)),
+        ("FindingListResponse", schema_for!(FindingListResponse)),
+        ("FindingRecord", schema_for!(FindingRecord)),
+        ("FindingSeverity", schema_for!(FindingSeverity)),
+        ("ReviewBounceRecord", schema_for!(ReviewBounceRecord)),
+        ("ReviewExecutionRecord", schema_for!(ReviewExecutionRecord)),
+        ("ReviewExecutionStatus", schema_for!(ReviewExecutionStatus)),
+        ("ReviewFindingRecord", schema_for!(ReviewFindingRecord)),
+        (
+            "ReviewFindingReference",
+            schema_for!(ReviewFindingReference),
+        ),
+        ("ReviewGetQuery", schema_for!(ReviewGetQuery)),
+        ("ReviewHistoryQuery", schema_for!(ReviewHistoryQuery)),
+        ("ReviewHistoryResponse", schema_for!(ReviewHistoryResponse)),
+        ("ReviewAttemptRecord", schema_for!(ReviewAttemptRecord)),
+        ("ReviewExpireRequest", schema_for!(ReviewExpireRequest)),
+        (
+            "ReviewRevalidateRequest",
+            schema_for!(ReviewRevalidateRequest),
+        ),
+        (
+            "ReviewHumanSubmitRequest",
+            schema_for!(ReviewHumanSubmitRequest),
+        ),
+        ("ReviewSlotRecord", schema_for!(ReviewSlotRecord)),
+        ("ReviewStageRecord", schema_for!(ReviewStageRecord)),
+        ("ReviewStageStatus", schema_for!(ReviewStageStatus)),
+        ("ReviewStartRequest", schema_for!(ReviewStartRequest)),
+        ("ReviewVerdictRecord", schema_for!(ReviewVerdictRecord)),
+        (
+            "ReviewerDispatchRecord",
+            schema_for!(ReviewerDispatchRecord),
+        ),
+        ("SubmissionRecord", schema_for!(SubmissionRecord)),
+        ("SubmissionListQuery", schema_for!(SubmissionListQuery)),
+        (
+            "SubmissionListResponse",
+            schema_for!(SubmissionListResponse),
+        ),
+        ("SubmissionResult", schema_for!(SubmissionResult)),
+        (
+            "SubmissionSubmitRequest",
+            schema_for!(SubmissionSubmitRequest),
+        ),
         ("CapabilityRecord", schema_for!(CapabilityRecord)),
         ("CapabilityRole", schema_for!(CapabilityRole)),
         ("CapabilityStatus", schema_for!(CapabilityStatus)),
@@ -179,6 +260,39 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "CoverageCriterionProposal",
             schema_for!(CoverageCriterionProposal),
         ),
+        (
+            "CriterionBindingListQuery",
+            schema_for!(CriterionBindingListQuery),
+        ),
+        (
+            "CriterionBindingListResponse",
+            schema_for!(CriterionBindingListResponse),
+        ),
+        (
+            "CriterionBindingRecord",
+            schema_for!(CriterionBindingRecord),
+        ),
+        (
+            "CriterionCompleteRequest",
+            schema_for!(CriterionCompleteRequest),
+        ),
+        (
+            "CriterionEvidenceAttachRequest",
+            schema_for!(CriterionEvidenceAttachRequest),
+        ),
+        (
+            "CriterionEvidenceReviewRequest",
+            schema_for!(CriterionEvidenceReviewRequest),
+        ),
+        (
+            "CriterionInvalidateRequest",
+            schema_for!(CriterionInvalidateRequest),
+        ),
+        ("CriterionKindDto", schema_for!(CriterionKindDto)),
+        (
+            "CriterionSatisfyRequest",
+            schema_for!(CriterionSatisfyRequest),
+        ),
         ("CriterionRefusal", schema_for!(CriterionRefusal)),
         ("DatabaseHealth", schema_for!(DatabaseHealth)),
         ("ErrorCode", schema_for!(ErrorCode)),
@@ -214,6 +328,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("EvidenceListResponse", schema_for!(EvidenceListResponse)),
         ("EvidenceListSummary", schema_for!(EvidenceListSummary)),
         ("EvidenceRecord", schema_for!(EvidenceRecord)),
+        ("EvidenceReviewDto", schema_for!(EvidenceReviewDto)),
         ("LiveEventName", schema_for!(LiveEventName)),
         ("HealthQuery", schema_for!(HealthQuery)),
         ("HealthResponse", schema_for!(HealthResponse)),
@@ -560,7 +675,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("LaneListQuery", schema_for!(LaneListQuery)),
         ("LaneListResponse", schema_for!(LaneListResponse)),
+        ("CloneAdoptRequest", schema_for!(CloneAdoptRequest)),
         ("CloneCreateRequest", schema_for!(CloneCreateRequest)),
+        ("CloneRecoveriesQuery", schema_for!(CloneRecoveriesQuery)),
+        (
+            "CloneRecoveriesResponse",
+            schema_for!(CloneRecoveriesResponse),
+        ),
+        ("CloneRecoveryRecord", schema_for!(CloneRecoveryRecord)),
         ("CloneRemoveRequest", schema_for!(CloneRemoveRequest)),
         ("CloneCreatedRecord", schema_for!(CloneCreatedRecord)),
         ("CloneRemovedRecord", schema_for!(CloneRemovedRecord)),

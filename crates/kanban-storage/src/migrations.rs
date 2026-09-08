@@ -234,6 +234,36 @@ const MIGRATIONS: &[Migration] = &[
         name: "ticket review configurations",
         sql: include_str!("../migrations/0036_ticket_review_configurations.sql"),
     },
+    Migration {
+        version: 37,
+        name: "submissions",
+        sql: include_str!("../migrations/0037_submissions.sql"),
+    },
+    Migration {
+        version: 38,
+        name: "clone creation intents",
+        sql: include_str!("../migrations/0038_clone_creation_intents.sql"),
+    },
+    Migration {
+        version: 39,
+        name: "review execution",
+        sql: include_str!("../migrations/0039_review_execution.sql"),
+    },
+    Migration {
+        version: 40,
+        name: "finding promotions",
+        sql: include_str!("../migrations/0040_finding_promotions.sql"),
+    },
+    Migration {
+        version: 41,
+        name: "criterion bindings",
+        sql: include_str!("../migrations/0041_criterion_bindings.sql"),
+    },
+    Migration {
+        version: 42,
+        name: "gate revalidation",
+        sql: include_str!("../migrations/0042_gate_revalidation.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -491,10 +521,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-                ]
+                applied: (1..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         assert_eq!(
@@ -516,10 +543,7 @@ mod tests {
             .expect("versions decode");
         assert_eq!(
             versions,
-            vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-            ]
+            (1..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
         );
         for table in [
             "audit_events",
@@ -601,7 +625,11 @@ mod tests {
             .expect("the audit query runs")
             .collect::<Result<Vec<_>, _>>()
             .expect("the audit rows decode");
-        assert_eq!(events.len(), 36, "one event per applied migration");
+        assert_eq!(
+            events.len(),
+            MIGRATIONS.len(),
+            "one event per applied migration"
+        );
         assert_eq!(events[0].1, "migration.applied");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&events[0].2).expect("the detail is JSON"),
@@ -790,7 +818,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+                applied: (26..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let conn = database.connection();
@@ -877,7 +905,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+                applied: (27..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let conn = database.connection();
@@ -961,7 +989,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![31, 32, 33, 34, 35, 36]
+                applied: (31..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let conn = database.connection();
@@ -1029,7 +1057,12 @@ mod tests {
             .migrate(&AllowAllMigrations)
             .expect("migration 0036 applies");
 
-        assert_eq!(report, MigrationReport { applied: vec![36] });
+        assert_eq!(
+            report,
+            MigrationReport {
+                applied: (36..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
+            }
+        );
         let conn = database.connection();
         conn.execute(
             "INSERT INTO projects
@@ -1107,10 +1140,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                    33, 34, 35, 36
-                ]
+                applied: (13..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let present: i64 = database
@@ -1160,7 +1190,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+                applied: (25..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let present: i64 = database
@@ -1224,9 +1254,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-                ]
+                applied: (19..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let rewritten = database
@@ -1293,9 +1321,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-                ]
+                applied: (21..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let conn = database.connection();
@@ -1387,10 +1413,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
-                    34, 35, 36
-                ]
+                applied: (14..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let after: i64 = database
@@ -1456,10 +1479,7 @@ mod tests {
         assert_eq!(
             report,
             MigrationReport {
-                applied: vec![
-                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-                    35, 36
-                ]
+                applied: (15..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
             }
         );
         let conn = database.connection();
@@ -1613,8 +1633,8 @@ mod tests {
         database
             .connection()
             .execute(
-                "INSERT INTO schema_migrations (version, name) VALUES (42, 'future')",
-                [],
+                "INSERT INTO schema_migrations (version, name) VALUES (?1, 'future')",
+                [crate::migrations::LATEST_SCHEMA_VERSION + 1],
             )
             .expect("the fabricated history lands");
 
@@ -1780,6 +1800,30 @@ mod tests {
                     version: 36,
                     name: "ticket review configurations",
                 },
+                PendingMigration {
+                    version: 37,
+                    name: "submissions",
+                },
+                PendingMigration {
+                    version: 38,
+                    name: "clone creation intents",
+                },
+                PendingMigration {
+                    version: 39,
+                    name: "review execution"
+                },
+                PendingMigration {
+                    version: 40,
+                    name: "finding promotions"
+                },
+                PendingMigration {
+                    version: 41,
+                    name: "criterion bindings"
+                },
+                PendingMigration {
+                    version: 42,
+                    name: "gate revalidation"
+                },
             ]]
         );
     }
@@ -1824,10 +1868,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![
-                10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                31, 32, 33, 34, 35, 36
-            ]
+            (10..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
         );
         let settings: (i64, i64, i64, i64, i64) = database
             .connection()
@@ -1900,10 +1941,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![
-                11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                32, 33, 34, 35, 36
-            ]
+            (11..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
         );
         let outcome = database.connection().execute(
             "INSERT INTO rulings (project_id, summary, supersedes_id)
@@ -1912,7 +1950,7 @@ mod tests {
         );
         let error = outcome.expect_err("a second successor is refused after upgrade");
         assert!(
-            error.to_string().contains("UNIQUE constraint failed"),
+            matches!(&error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "the schema should enforce one successor: {error}"
         );
     }
@@ -1948,7 +1986,7 @@ mod tests {
         );
         let error = outcome.expect_err("a second successor is refused after upgrade");
         assert!(
-            error.to_string().contains("UNIQUE constraint failed"),
+            matches!(&error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "the schema should enforce one successor: {error}"
         );
     }
@@ -1978,9 +2016,7 @@ mod tests {
         );
         let ruling_error = ruling_outcome.expect_err("a second ruling successor is refused");
         assert!(
-            ruling_error
-                .to_string()
-                .contains("UNIQUE constraint failed"),
+            matches!(&ruling_error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "fresh stores should enforce one ruling successor: {ruling_error}"
         );
 
@@ -2003,9 +2039,7 @@ mod tests {
         );
         let deferral_error = deferral_outcome.expect_err("a second deferral successor is refused");
         assert!(
-            deferral_error
-                .to_string()
-                .contains("UNIQUE constraint failed"),
+            matches!(&deferral_error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "fresh stores should enforce one deferral successor: {deferral_error}"
         );
     }
@@ -2094,7 +2128,7 @@ mod tests {
         );
         let error = outcome.expect_err("a second successor stays refused after recovery");
         assert!(
-            error.to_string().contains("UNIQUE constraint failed"),
+            matches!(&error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "the schema should enforce one successor: {error}"
         );
     }
@@ -2176,7 +2210,7 @@ mod tests {
         );
         let error = outcome.expect_err("a second successor stays refused after recovery");
         assert!(
-            error.to_string().contains("UNIQUE constraint failed"),
+            matches!(&error, rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation),
             "the schema should enforce one successor: {error}"
         );
     }
@@ -2215,9 +2249,7 @@ mod tests {
 
         assert_eq!(
             report.applied,
-            vec![
-                21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
-            ]
+            (21..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
         );
         let conn = database.connection();
         let legacy_task: (Option<String>, Option<String>, String) = conn

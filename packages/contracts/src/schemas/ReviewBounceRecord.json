@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "FindingSeverity": {
+      "enum": [
+        "p0",
+        "p1",
+        "p2",
+        "p3"
+      ],
+      "type": "string"
+    },
+    "ReviewFindingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "in_scope": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "proposed_resolution": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/FindingSeverity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "in_scope",
+        "location",
+        "proposed_resolution",
+        "severity",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "ReviewFindingReference": {
+      "additionalProperties": false,
+      "properties": {
+        "finding": {
+          "$ref": "#/definitions/ReviewFindingRecord"
+        },
+        "finding_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "slot_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "finding",
+        "finding_index",
+        "slot_id"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/definitions/ReviewFindingReference"
+      },
+      "type": "array"
+    },
+    "stage_index": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "tip": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "findings",
+    "stage_index",
+    "tip"
+  ],
+  "title": "ReviewBounceRecord",
+  "type": "object"
+}

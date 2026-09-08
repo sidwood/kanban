@@ -428,6 +428,36 @@ fn sample_request(schema: &str) -> Value {
             "commit_identity": "c9eac24",
         }),
         "EvidenceListQuery" => json!({ "project_id": 1 }),
+        "CriterionEvidenceAttachRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "criterion_index": 0,
+            "evidence_id": 1,
+            "tip": "a".repeat(40),
+        }),
+        "CriterionEvidenceReviewRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "criterion_index": 0,
+            "review": "validated",
+        }),
+        "CriterionSatisfyRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "criterion_index": 0,
+            "tip": "a".repeat(40),
+        }),
+        "CriterionCompleteRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "criterion_index": 0,
+        }),
+        "CriterionInvalidateRequest" => json!({
+            "mutation": mutation,
+            "ticket_id": 1,
+            "observed_tip": "b".repeat(40),
+        }),
+        "CriterionBindingListQuery" => json!({ "ticket_id": 1 }),
         "HerdrSettingsGetQuery" => json!({ "project_id": 1 }),
         "HerdrSettingsUpdateRequest" => json!({
             "mutation": mutation,
@@ -471,7 +501,24 @@ fn sample_request(schema: &str) -> Value {
             "mutation": mutation,
             "dispatch_request_id": 1,
         }),
-        "RunListQuery" => json!({ "project_id": 1 }),
+        "RunListQuery" | "SubmissionListQuery" => json!({ "project_id": 1 }),
+        "DeferralPromoteRequest" => {
+            json!({"mutation":mutation,"project_id":1,"deferral_id":1,"priority":"normal","target":{"kind":"bug"}})
+        }
+        "FindingListQuery" => json!({"project_id":1,"review_id":null}),
+        "FindingGetQuery" => json!({"project_id":1,"finding_id":"review:1:slot:1:finding:0"}),
+        "ReviewStartRequest" => json!({"mutation":mutation,"ticket_id":1,"submission_id":1}),
+        "ReviewHumanSubmitRequest" => {
+            json!({"mutation":mutation,"review_id":1,"slot_id":1,"tip":"a".repeat(40),"approve":true,"summary":"Verified","findings":[]})
+        }
+        "ReviewRevalidateRequest" => json!({"mutation":mutation,"ticket_id":1}),
+        "ReviewExpireRequest" => json!({"mutation":mutation,"review_id":1}),
+        "ReviewGetQuery" => json!({"review_id":1}),
+        "ReviewHistoryQuery" => json!({"ticket_id":1}),
+        "SubmissionSubmitRequest" => json!({
+            "mutation": mutation, "run_id": 1, "capability_id": 1,
+            "result": {"kind": "implementation", "tip": "a".repeat(40), "summary": "Finished"}
+        }),
         "WorkspaceRegisterRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -496,6 +543,10 @@ fn sample_request(schema: &str) -> Value {
         }
         "LaneTicketReleaseRequest" => json!({ "mutation": mutation, "lane_id": 1 }),
         "LaneListQuery" => json!({ "project_id": 1 }),
+        "CloneAdoptRequest" => {
+            json!({"mutation":mutation,"project_id":1,"intent_key":"original-clone"})
+        }
+        "CloneRecoveriesQuery" => json!({"project_id":1}),
         "CloneCreateRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -665,6 +716,24 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "DeferralListQuery" => decode_invoke_args::<DeferralListQuery>(request).is_err(),
         "EvidenceAttachRequest" => decode_invoke_args::<EvidenceAttachRequest>(request).is_err(),
         "EvidenceListQuery" => decode_invoke_args::<EvidenceListQuery>(request).is_err(),
+        "CriterionEvidenceAttachRequest" => {
+            decode_invoke_args::<kanban_dto::CriterionEvidenceAttachRequest>(request).is_err()
+        }
+        "CriterionEvidenceReviewRequest" => {
+            decode_invoke_args::<kanban_dto::CriterionEvidenceReviewRequest>(request).is_err()
+        }
+        "CriterionSatisfyRequest" => {
+            decode_invoke_args::<kanban_dto::CriterionSatisfyRequest>(request).is_err()
+        }
+        "CriterionCompleteRequest" => {
+            decode_invoke_args::<kanban_dto::CriterionCompleteRequest>(request).is_err()
+        }
+        "CriterionInvalidateRequest" => {
+            decode_invoke_args::<kanban_dto::CriterionInvalidateRequest>(request).is_err()
+        }
+        "CriterionBindingListQuery" => {
+            decode_invoke_args::<kanban_dto::CriterionBindingListQuery>(request).is_err()
+        }
         "HerdrSettingsGetQuery" => decode_invoke_args::<HerdrSettingsGetQuery>(request).is_err(),
         "HerdrSettingsUpdateRequest" => {
             decode_invoke_args::<HerdrSettingsUpdateRequest>(request).is_err()
@@ -692,6 +761,33 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "DispatchQueueQuery" => decode_invoke_args::<DispatchQueueQuery>(request).is_err(),
         "RunAcknowledgeRequest" => decode_invoke_args::<RunAcknowledgeRequest>(request).is_err(),
         "RunListQuery" => decode_invoke_args::<RunListQuery>(request).is_err(),
+        "SubmissionListQuery" => {
+            decode_invoke_args::<kanban_dto::submission::SubmissionListQuery>(request).is_err()
+        }
+        "DeferralPromoteRequest" => {
+            decode_invoke_args::<kanban_dto::DeferralPromoteRequest>(request).is_err()
+        }
+        "FindingListQuery" => decode_invoke_args::<kanban_dto::FindingListQuery>(request).is_err(),
+        "FindingGetQuery" => decode_invoke_args::<kanban_dto::FindingGetQuery>(request).is_err(),
+        "ReviewStartRequest" => {
+            decode_invoke_args::<kanban_dto::ReviewStartRequest>(request).is_err()
+        }
+        "ReviewHumanSubmitRequest" => {
+            decode_invoke_args::<kanban_dto::ReviewHumanSubmitRequest>(request).is_err()
+        }
+        "ReviewRevalidateRequest" => {
+            decode_invoke_args::<kanban_dto::ReviewRevalidateRequest>(request).is_err()
+        }
+        "ReviewExpireRequest" => {
+            decode_invoke_args::<kanban_dto::ReviewExpireRequest>(request).is_err()
+        }
+        "ReviewGetQuery" => decode_invoke_args::<kanban_dto::ReviewGetQuery>(request).is_err(),
+        "ReviewHistoryQuery" => {
+            decode_invoke_args::<kanban_dto::ReviewHistoryQuery>(request).is_err()
+        }
+        "SubmissionSubmitRequest" => {
+            decode_invoke_args::<kanban_dto::SubmissionSubmitRequest>(request).is_err()
+        }
         "SpecCreateRequest" => decode_invoke_args::<SpecCreateRequest>(request).is_err(),
         "SpecContentUpdateRequest" => {
             decode_invoke_args::<SpecContentUpdateRequest>(request).is_err()
@@ -793,6 +889,12 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<LaneTicketReleaseRequest>(request).is_err()
         }
         "LaneListQuery" => decode_invoke_args::<LaneListQuery>(request).is_err(),
+        "CloneAdoptRequest" => {
+            decode_invoke_args::<kanban_dto::CloneAdoptRequest>(request).is_err()
+        }
+        "CloneRecoveriesQuery" => {
+            decode_invoke_args::<kanban_dto::CloneRecoveriesQuery>(request).is_err()
+        }
         "CloneCreateRequest" => decode_invoke_args::<CloneCreateRequest>(request).is_err(),
         "CloneRemoveRequest" => decode_invoke_args::<CloneRemoveRequest>(request).is_err(),
         "ExportRenderRequest" => decode_invoke_args::<ExportRenderRequest>(request).is_err(),

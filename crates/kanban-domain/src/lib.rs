@@ -13,6 +13,8 @@ pub mod deferral;
 pub mod dependency;
 pub mod dispatch;
 pub mod evidence;
+pub mod finding;
+pub mod gate_revalidation;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
@@ -23,6 +25,7 @@ pub mod profile;
 pub mod project;
 pub mod reassignment;
 pub mod review_config;
+pub mod review_execution;
 pub mod ruling;
 pub mod run;
 pub mod saved_view;
@@ -32,6 +35,7 @@ pub mod spec;
 pub mod ticket;
 pub mod timeline;
 pub mod timeline_time;
+pub mod tip_binding;
 pub mod workspace;
 
 pub use board::{BoardGroup, board_group_for};
@@ -124,6 +128,11 @@ pub use ticket::{
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use timeline_time::{
     TimelineTimeError, normalise_timeline_bound, validate_timeline_time_window,
+};
+pub use tip_binding::{
+    CriterionBinding, CriterionKind, EvidenceReview, TipBindingError, attach_criterion_evidence,
+    complete_task_criterion, complete_task_criterion_kind, invalidate_on_content_change,
+    review_criterion_evidence, satisfy_at_approved_tip,
 };
 pub use workspace::{
     ReuseEvaluation, ReuseInputs, Workspace, WorkspaceCheckout, WorkspaceHealth,

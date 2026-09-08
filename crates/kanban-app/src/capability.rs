@@ -30,11 +30,15 @@ use crate::timeline::TimelineEnvelope;
 /// dispatch.
 pub const AGENT_MCP_OPERATIONS: &[&str] = &[
     "comment.create",
+    "criterion.evidence.attach",
+    "criterion.evidence.review",
+    "criterion.satisfy",
     "evidence.attach",
     "evidence.list",
     "health.get",
     "spec.get",
     "spec.version.get",
+    "submission.submit",
     "ticket.get",
     "timeline.query",
 ];
@@ -91,6 +95,22 @@ impl CapabilityMintDraft {
     /// Draft the implementer mint for the run `dispatch` won: the
     /// Ticket, the Lane it executes in, the implementer role, and
     /// the agent surface as the permitted set.
+    pub fn reviewer(
+        dispatch: DispatchRequestId,
+        ticket: TicketId,
+        lane: LaneId,
+        slot: kanban_domain::ReviewerSlotId,
+        minted_at: u64,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            dispatch,
+            scope: CapabilityScope::new(ticket, lane, CapabilityRole::Reviewer, Some(slot))
+                .map_err(|e| ApiError::invalid_request(&e.to_string()))?,
+            operations: agent_surface()?,
+            minted_at,
+        })
+    }
+
     pub fn implementer(
         dispatch: DispatchRequestId,
         ticket: TicketId,

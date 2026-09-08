@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod review;
+
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 
@@ -77,8 +79,44 @@ pub fn harness() -> DispatchHarness {
         wake.clone(),
     )
     .expect("the dispatch operations register");
+    core.register_deferrals(
+        Arc::new(kanban_storage::SqliteDeferralStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+    )
+    .unwrap();
+    core.register_deferral_promotions(
+        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
+        Arc::new(kanban_storage::SqliteDeferralStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
+        Arc::new(kanban_storage::SqliteSpecStore::new(&database)),
+    )
+    .unwrap();
+    core.register_findings(
+        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+    )
+    .unwrap();
+    core.register_reviews(
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteReviewConfigStore::new(&database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProfileStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteRunStore::new(&database)),
+        wake.clone(),
+    )
+    .unwrap();
     core.register_runs(runs, requests, tickets, profiles, projects)
         .expect("the run operations register");
+    core.register_submissions(
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteCapabilityStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        wake.clone(),
+    )
+    .expect("the submission operations register");
     DispatchHarness {
         _dir: dir,
         core,

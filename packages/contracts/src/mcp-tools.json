@@ -20964,6 +20964,79 @@
             }
           ]
         },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewerDispatchRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "effective": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "requested": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "effective",
+            "fallback_path",
+            "requested",
+            "review_id",
+            "slot_id",
+            "tip"
+          ],
+          "type": "object"
+        },
         "TicketPriority": {
           "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
           "oneOf": [
@@ -21037,6 +21110,17 @@
         "ready": {
           "description": "Whether the Ticket was ready at enqueue.",
           "type": "boolean"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewerDispatchRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Frozen reviewer instructions, absent for implementation requests."
         },
         "status": {
           "allOf": [
@@ -21298,6 +21382,17 @@
               "description": "Whether the Ticket was ready at enqueue.",
               "type": "boolean"
             },
+            "reviewer": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewerDispatchRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Frozen reviewer instructions, absent for implementation requests."
+            },
             "status": {
               "allOf": [
                 {
@@ -21356,6 +21451,79 @@
               "type": "string"
             }
           ]
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewerDispatchRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "effective": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "requested": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "effective",
+            "fallback_path",
+            "requested",
+            "review_id",
+            "slot_id",
+            "tip"
+          ],
+          "type": "object"
         },
         "TicketPriority": {
           "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
@@ -21499,6 +21667,17 @@
               "description": "Whether the Ticket was ready at enqueue.",
               "type": "boolean"
             },
+            "reviewer": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewerDispatchRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Frozen reviewer instructions, absent for implementation requests."
+            },
             "status": {
               "allOf": [
                 {
@@ -21557,6 +21736,79 @@
               "type": "string"
             }
           ]
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewerDispatchRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "effective": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "requested": {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "effective",
+            "fallback_path",
+            "requested",
+            "review_id",
+            "slot_id",
+            "tip"
+          ],
+          "type": "object"
         },
         "TicketPriority": {
           "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
@@ -21801,6 +22053,2652 @@
         "version"
       ],
       "title": "RunRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Start the frozen review stages for one implementation submission.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "submission_id",
+        "ticket_id"
+      ],
+      "title": "ReviewStartRequest",
+      "type": "object"
+    },
+    "name": "review_start",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewBounceRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "findings": {
+              "items": {
+                "$ref": "#/definitions/ReviewFindingReference"
+              },
+              "type": "array"
+            },
+            "stage_index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "findings",
+            "stage_index",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "ReviewExecutionStatus": {
+          "enum": [
+            "in_progress",
+            "approved",
+            "rejected",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingReference": {
+          "additionalProperties": false,
+          "properties": {
+            "finding": {
+              "$ref": "#/definitions/ReviewFindingRecord"
+            },
+            "finding_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "finding",
+            "finding_index",
+            "slot_id"
+          ],
+          "type": "object"
+        },
+        "ReviewSlotRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "dispatch_request_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "occupant": {
+              "$ref": "#/definitions/TicketReviewOccupant"
+            },
+            "requested": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "requirement": {
+              "$ref": "#/definitions/TicketReviewSlotRequirement"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewVerdictRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "fallback_path",
+            "id",
+            "occupant",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        "ReviewStageRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slots": {
+              "items": {
+                "$ref": "#/definitions/ReviewSlotRecord"
+              },
+              "type": "array"
+            },
+            "status": {
+              "$ref": "#/definitions/ReviewStageStatus"
+            }
+          },
+          "required": [
+            "index",
+            "slots",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ReviewStageStatus": {
+          "enum": [
+            "waiting",
+            "approved",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "ReviewVerdictRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "approve": {
+              "type": "boolean"
+            },
+            "counts_for_resolution": {
+              "description": "Late optional results remain evidence but cannot rewrite a resolved stage.",
+              "type": "boolean"
+            },
+            "findings": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ReviewFindingRecord"
+              },
+              "type": "array"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "approve",
+            "counts_for_resolution",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "TicketReviewOccupant": {
+          "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "A human reviews the slot.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "human"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An agent reviews under the profile `name` references.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TicketReviewSlotRequirement": {
+          "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+          "oneOf": [
+            {
+              "description": "The stage cannot resolve without this slot finishing.",
+              "enum": [
+                "required"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The slot never blocks the stage it sits in.",
+              "enum": [
+                "optional"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "bounce": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewBounceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/definitions/ReviewStageRecord"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/ReviewExecutionStatus"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "configuration_version",
+        "id",
+        "project_id",
+        "stages",
+        "status",
+        "submission_id",
+        "ticket_id",
+        "tip",
+        "version"
+      ],
+      "title": "ReviewExecutionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Record the human verdict for an active human review slot.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "approve": {
+          "type": "boolean"
+        },
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ReviewFindingRecord"
+          },
+          "type": "array"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "slot_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approve",
+        "mutation",
+        "review_id",
+        "slot_id",
+        "summary",
+        "tip"
+      ],
+      "title": "ReviewHumanSubmitRequest",
+      "type": "object"
+    },
+    "name": "review_human_submit",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewBounceRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "findings": {
+              "items": {
+                "$ref": "#/definitions/ReviewFindingReference"
+              },
+              "type": "array"
+            },
+            "stage_index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "findings",
+            "stage_index",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "ReviewExecutionStatus": {
+          "enum": [
+            "in_progress",
+            "approved",
+            "rejected",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingReference": {
+          "additionalProperties": false,
+          "properties": {
+            "finding": {
+              "$ref": "#/definitions/ReviewFindingRecord"
+            },
+            "finding_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "finding",
+            "finding_index",
+            "slot_id"
+          ],
+          "type": "object"
+        },
+        "ReviewSlotRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "dispatch_request_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "occupant": {
+              "$ref": "#/definitions/TicketReviewOccupant"
+            },
+            "requested": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "requirement": {
+              "$ref": "#/definitions/TicketReviewSlotRequirement"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewVerdictRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "fallback_path",
+            "id",
+            "occupant",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        "ReviewStageRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slots": {
+              "items": {
+                "$ref": "#/definitions/ReviewSlotRecord"
+              },
+              "type": "array"
+            },
+            "status": {
+              "$ref": "#/definitions/ReviewStageStatus"
+            }
+          },
+          "required": [
+            "index",
+            "slots",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ReviewStageStatus": {
+          "enum": [
+            "waiting",
+            "approved",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "ReviewVerdictRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "approve": {
+              "type": "boolean"
+            },
+            "counts_for_resolution": {
+              "description": "Late optional results remain evidence but cannot rewrite a resolved stage.",
+              "type": "boolean"
+            },
+            "findings": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ReviewFindingRecord"
+              },
+              "type": "array"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "approve",
+            "counts_for_resolution",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "TicketReviewOccupant": {
+          "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "A human reviews the slot.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "human"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An agent reviews under the profile `name` references.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TicketReviewSlotRequirement": {
+          "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+          "oneOf": [
+            {
+              "description": "The stage cannot resolve without this slot finishing.",
+              "enum": [
+                "required"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The slot never blocks the stage it sits in.",
+              "enum": [
+                "optional"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "bounce": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewBounceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/definitions/ReviewStageRecord"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/ReviewExecutionStatus"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "configuration_version",
+        "id",
+        "project_id",
+        "stages",
+        "status",
+        "submission_id",
+        "ticket_id",
+        "tip",
+        "version"
+      ],
+      "title": "ReviewExecutionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Open a new attempt after a failed or expired gate while preserving prior history.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "ticket_id"
+      ],
+      "title": "ReviewRevalidateRequest",
+      "type": "object"
+    },
+    "name": "review_revalidate",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ReviewAttemptRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "invalidations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "verdicts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "attempt",
+            "invalidations",
+            "outcome",
+            "verdicts"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/definitions/ReviewAttemptRecord"
+          },
+          "type": "array"
+        },
+        "needs_revalidation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempts",
+        "needs_revalidation"
+      ],
+      "title": "ReviewHistoryResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Expire an in-progress review gate so approval cannot proceed until revalidation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "review_id"
+      ],
+      "title": "ReviewExpireRequest",
+      "type": "object"
+    },
+    "name": "review_expire",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewBounceRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "findings": {
+              "items": {
+                "$ref": "#/definitions/ReviewFindingReference"
+              },
+              "type": "array"
+            },
+            "stage_index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "findings",
+            "stage_index",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "ReviewExecutionStatus": {
+          "enum": [
+            "in_progress",
+            "approved",
+            "rejected",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingReference": {
+          "additionalProperties": false,
+          "properties": {
+            "finding": {
+              "$ref": "#/definitions/ReviewFindingRecord"
+            },
+            "finding_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "finding",
+            "finding_index",
+            "slot_id"
+          ],
+          "type": "object"
+        },
+        "ReviewSlotRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "dispatch_request_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "occupant": {
+              "$ref": "#/definitions/TicketReviewOccupant"
+            },
+            "requested": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "requirement": {
+              "$ref": "#/definitions/TicketReviewSlotRequirement"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewVerdictRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "fallback_path",
+            "id",
+            "occupant",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        "ReviewStageRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slots": {
+              "items": {
+                "$ref": "#/definitions/ReviewSlotRecord"
+              },
+              "type": "array"
+            },
+            "status": {
+              "$ref": "#/definitions/ReviewStageStatus"
+            }
+          },
+          "required": [
+            "index",
+            "slots",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ReviewStageStatus": {
+          "enum": [
+            "waiting",
+            "approved",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "ReviewVerdictRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "approve": {
+              "type": "boolean"
+            },
+            "counts_for_resolution": {
+              "description": "Late optional results remain evidence but cannot rewrite a resolved stage.",
+              "type": "boolean"
+            },
+            "findings": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ReviewFindingRecord"
+              },
+              "type": "array"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "approve",
+            "counts_for_resolution",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "TicketReviewOccupant": {
+          "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "A human reviews the slot.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "human"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An agent reviews under the profile `name` references.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TicketReviewSlotRequirement": {
+          "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+          "oneOf": [
+            {
+              "description": "The stage cannot resolve without this slot finishing.",
+              "enum": [
+                "required"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The slot never blocks the stage it sits in.",
+              "enum": [
+                "optional"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "bounce": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewBounceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/definitions/ReviewStageRecord"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/ReviewExecutionStatus"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "configuration_version",
+        "id",
+        "project_id",
+        "stages",
+        "status",
+        "submission_id",
+        "ticket_id",
+        "tip",
+        "version"
+      ],
+      "title": "ReviewExecutionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read a review's exact tip, frozen stages and authoritative verdicts.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "review_id"
+      ],
+      "title": "ReviewGetQuery",
+      "type": "object"
+    },
+    "name": "review_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ProfileSnapshotRecord": {
+          "additionalProperties": false,
+          "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+          "properties": {
+            "effort": {
+              "description": "The snapshotted effort.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The snapshotted harness family.",
+              "type": "string"
+            },
+            "model": {
+              "description": "The snapshotted model family.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The snapshotted entry name.",
+              "type": "string"
+            },
+            "usage_pool": {
+              "description": "The snapshotted usage pool.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "effort",
+            "harness",
+            "model",
+            "name",
+            "usage_pool"
+          ],
+          "type": "object"
+        },
+        "ReviewBounceRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "findings": {
+              "items": {
+                "$ref": "#/definitions/ReviewFindingReference"
+              },
+              "type": "array"
+            },
+            "stage_index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "findings",
+            "stage_index",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "ReviewExecutionStatus": {
+          "enum": [
+            "in_progress",
+            "approved",
+            "rejected",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingReference": {
+          "additionalProperties": false,
+          "properties": {
+            "finding": {
+              "$ref": "#/definitions/ReviewFindingRecord"
+            },
+            "finding_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "finding",
+            "finding_index",
+            "slot_id"
+          ],
+          "type": "object"
+        },
+        "ReviewSlotRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "dispatch_request_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fallback_path": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "occupant": {
+              "$ref": "#/definitions/TicketReviewOccupant"
+            },
+            "requested": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProfileSnapshotRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "requirement": {
+              "$ref": "#/definitions/TicketReviewSlotRequirement"
+            },
+            "verdict": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewVerdictRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "fallback_path",
+            "id",
+            "occupant",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        "ReviewStageRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slots": {
+              "items": {
+                "$ref": "#/definitions/ReviewSlotRecord"
+              },
+              "type": "array"
+            },
+            "status": {
+              "$ref": "#/definitions/ReviewStageStatus"
+            }
+          },
+          "required": [
+            "index",
+            "slots",
+            "status"
+          ],
+          "type": "object"
+        },
+        "ReviewStageStatus": {
+          "enum": [
+            "waiting",
+            "approved",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "ReviewVerdictRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "approve": {
+              "type": "boolean"
+            },
+            "counts_for_resolution": {
+              "description": "Late optional results remain evidence but cannot rewrite a resolved stage.",
+              "type": "boolean"
+            },
+            "findings": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ReviewFindingRecord"
+              },
+              "type": "array"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "approve",
+            "counts_for_resolution",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "TicketReviewOccupant": {
+          "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "A human reviews the slot.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "human"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An agent reviews under the profile `name` references.",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TicketReviewSlotRequirement": {
+          "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+          "oneOf": [
+            {
+              "description": "The stage cannot resolve without this slot finishing.",
+              "enum": [
+                "required"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The slot never blocks the stage it sits in.",
+              "enum": [
+                "optional"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "bounce": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewBounceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configuration_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/definitions/ReviewStageRecord"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/ReviewExecutionStatus"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "configuration_version",
+        "id",
+        "project_id",
+        "stages",
+        "status",
+        "submission_id",
+        "ticket_id",
+        "tip",
+        "version"
+      ],
+      "title": "ReviewExecutionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read every prior review attempt, verdict and invalidation for one Ticket.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticket_id"
+      ],
+      "title": "ReviewHistoryQuery",
+      "type": "object"
+    },
+    "name": "review_history",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ReviewAttemptRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "invalidations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "verdicts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "attempt",
+            "invalidations",
+            "outcome",
+            "verdicts"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/definitions/ReviewAttemptRecord"
+          },
+          "type": "array"
+        },
+        "needs_revalidation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attempts",
+        "needs_revalidation"
+      ],
+      "title": "ReviewHistoryResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Submit the immutable structured result of one scoped run.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "SubmissionResult": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "implementation"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approve": {
+                  "type": "boolean"
+                },
+                "findings": {
+                  "default": [],
+                  "items": {
+                    "$ref": "#/definitions/ReviewFindingRecord"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "review"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approve",
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "capability_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "result": {
+          "$ref": "#/definitions/SubmissionResult"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capability_id",
+        "mutation",
+        "result",
+        "run_id"
+      ],
+      "title": "SubmissionSubmitRequest",
+      "type": "object"
+    },
+    "name": "submission_submit",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CapabilityRole": {
+          "description": "The run role a capability grants, on the wire.",
+          "oneOf": [
+            {
+              "description": "Executing an Implementation or Bug Ticket in a Lane.",
+              "enum": [
+                "implementer"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Reviewing one Review Slot.",
+              "enum": [
+                "reviewer"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "SubmissionResult": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "implementation"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approve": {
+                  "type": "boolean"
+                },
+                "findings": {
+                  "default": [],
+                  "items": {
+                    "$ref": "#/definitions/ReviewFindingRecord"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "review"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approve",
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "capability_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/definitions/SubmissionResult"
+        },
+        "reviewer_slot_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/definitions/CapabilityRole"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capability_id",
+        "created_at",
+        "id",
+        "project_id",
+        "result",
+        "role",
+        "run_id",
+        "ticket_id"
+      ],
+      "title": "SubmissionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read a Project's immutable structured results in receipt order.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "SubmissionListQuery",
+      "type": "object"
+    },
+    "name": "submission_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CapabilityRole": {
+          "description": "The run role a capability grants, on the wire.",
+          "oneOf": [
+            {
+              "description": "Executing an Implementation or Bug Ticket in a Lane.",
+              "enum": [
+                "implementer"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Reviewing one Review Slot.",
+              "enum": [
+                "reviewer"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "SubmissionRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "capability_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "result": {
+              "$ref": "#/definitions/SubmissionResult"
+            },
+            "reviewer_slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "role": {
+              "$ref": "#/definitions/CapabilityRole"
+            },
+            "run_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "capability_id",
+            "created_at",
+            "id",
+            "project_id",
+            "result",
+            "role",
+            "run_id",
+            "ticket_id"
+          ],
+          "type": "object"
+        },
+        "SubmissionResult": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "implementation"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approve": {
+                  "type": "boolean"
+                },
+                "findings": {
+                  "default": [],
+                  "items": {
+                    "$ref": "#/definitions/ReviewFindingRecord"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "review"
+                  ],
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approve",
+                "kind",
+                "summary",
+                "tip"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "submissions": {
+          "items": {
+            "$ref": "#/definitions/SubmissionRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "project_id",
+        "submissions"
+      ],
+      "title": "SubmissionListResponse",
       "type": "object"
     }
   },
@@ -23247,6 +26145,1979 @@
         "rulings"
       ],
       "title": "RulingListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read recorded findings with their immutable review custody.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "review_id": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "FindingListQuery",
+      "type": "object"
+    },
+    "name": "finding_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DeferralPromotionRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "deferral_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "finding_id": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "deferral_id",
+            "finding_id",
+            "project_id",
+            "ticket_id"
+          ],
+          "type": "object"
+        },
+        "FindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "blocking": {
+              "type": "boolean"
+            },
+            "counts_for_resolution": {
+              "type": "boolean"
+            },
+            "finding": {
+              "$ref": "#/definitions/ReviewFindingRecord"
+            },
+            "id": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "promotion": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/DeferralPromotionRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "review_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "slot_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "submission_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "blocking",
+            "counts_for_resolution",
+            "finding",
+            "id",
+            "project_id",
+            "review_id",
+            "slot_id",
+            "ticket_id",
+            "tip"
+          ],
+          "type": "object"
+        },
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/definitions/FindingRecord"
+          },
+          "type": "array"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "findings",
+        "project_id"
+      ],
+      "title": "FindingListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read a canonical finding identity within one Project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "finding_id",
+        "project_id"
+      ],
+      "title": "FindingGetQuery",
+      "type": "object"
+    },
+    "name": "finding_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DeferralPromotionRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "deferral_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "finding_id": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "deferral_id",
+            "finding_id",
+            "project_id",
+            "ticket_id"
+          ],
+          "type": "object"
+        },
+        "FindingSeverity": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "type": "string"
+        },
+        "ReviewFindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "type": "string"
+            },
+            "in_scope": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "string"
+            },
+            "proposed_resolution": {
+              "type": "string"
+            },
+            "severity": {
+              "$ref": "#/definitions/FindingSeverity"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence",
+            "in_scope",
+            "location",
+            "proposed_resolution",
+            "severity",
+            "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "blocking": {
+          "type": "boolean"
+        },
+        "counts_for_resolution": {
+          "type": "boolean"
+        },
+        "finding": {
+          "$ref": "#/definitions/ReviewFindingRecord"
+        },
+        "id": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "promotion": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeferralPromotionRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "slot_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blocking",
+        "counts_for_resolution",
+        "finding",
+        "id",
+        "project_id",
+        "review_id",
+        "slot_id",
+        "ticket_id",
+        "tip"
+      ],
+      "title": "FindingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Attach implementer evidence to one Ticket criterion at a reviewed code tip.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "mutation",
+        "ticket_id",
+        "tip"
+      ],
+      "title": "CriterionEvidenceAttachRequest",
+      "type": "object"
+    },
+    "name": "criterion_evidence_attach",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/CriterionKindDto"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "void": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "kind",
+        "review",
+        "satisfied",
+        "ticket_id",
+        "tip",
+        "void"
+      ],
+      "title": "CriterionBindingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Validate or reject evidence attached to one Ticket criterion.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "mutation",
+        "review",
+        "ticket_id"
+      ],
+      "title": "CriterionEvidenceReviewRequest",
+      "type": "object"
+    },
+    "name": "criterion_evidence_review",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/CriterionKindDto"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "void": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "kind",
+        "review",
+        "satisfied",
+        "ticket_id",
+        "tip",
+        "void"
+      ],
+      "title": "CriterionBindingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Satisfy a criterion only through approval of the exact bound code tip.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "mutation",
+        "ticket_id",
+        "tip"
+      ],
+      "title": "CriterionSatisfyRequest",
+      "type": "object"
+    },
+    "name": "criterion_satisfy",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/CriterionKindDto"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "void": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "kind",
+        "review",
+        "satisfied",
+        "ticket_id",
+        "tip",
+        "void"
+      ],
+      "title": "CriterionBindingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Let a human complete one Task criterion directly.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "mutation",
+        "ticket_id"
+      ],
+      "title": "CriterionCompleteRequest",
+      "type": "object"
+    },
+    "name": "criterion_complete",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/CriterionKindDto"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "void": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "kind",
+        "review",
+        "satisfied",
+        "ticket_id",
+        "tip",
+        "void"
+      ],
+      "title": "CriterionBindingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Void outstanding criterion approvals when the reviewed tree changes.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "observed_tip": {
+          "type": "string"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "observed_tip",
+        "ticket_id"
+      ],
+      "title": "CriterionInvalidateRequest",
+      "type": "object"
+    },
+    "name": "criterion_invalidate",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionBindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "criterion_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "evidence_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/definitions/CriterionKindDto"
+            },
+            "review": {
+              "$ref": "#/definitions/EvidenceReviewDto"
+            },
+            "satisfied": {
+              "type": "boolean"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            },
+            "void": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "criterion_index",
+            "evidence_id",
+            "kind",
+            "review",
+            "satisfied",
+            "ticket_id",
+            "tip",
+            "void"
+          ],
+          "type": "object"
+        },
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "bindings": {
+          "items": {
+            "$ref": "#/definitions/CriterionBindingRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bindings"
+      ],
+      "title": "CriterionBindingListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List criterion evidence bindings for one Ticket.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticket_id"
+      ],
+      "title": "CriterionBindingListQuery",
+      "type": "object"
+    },
+    "name": "criterion_bindings",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CriterionBindingRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "criterion_index": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "evidence_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/definitions/CriterionKindDto"
+            },
+            "review": {
+              "$ref": "#/definitions/EvidenceReviewDto"
+            },
+            "satisfied": {
+              "type": "boolean"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tip": {
+              "type": "string"
+            },
+            "void": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "criterion_index",
+            "evidence_id",
+            "kind",
+            "review",
+            "satisfied",
+            "ticket_id",
+            "tip",
+            "void"
+          ],
+          "type": "object"
+        },
+        "CriterionKindDto": {
+          "enum": [
+            "acceptance",
+            "task"
+          ],
+          "type": "string"
+        },
+        "EvidenceReviewDto": {
+          "enum": [
+            "pending",
+            "validated",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "bindings": {
+          "items": {
+            "$ref": "#/definitions/CriterionBindingRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bindings"
+      ],
+      "title": "CriterionBindingListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Explicitly promote a deferred finding into one linked draft ticket without rewriting its deferral.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DeferralPromotionTarget": {
+          "description": "Promotion is deliberate and creates a draft; it never qualifies or dispatches it.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "bug"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "completion": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "task"
+                  ],
+                  "type": "string"
+                },
+                "mode": {
+                  "$ref": "#/definitions/TaskMode"
+                },
+                "subtype": {
+                  "$ref": "#/definitions/TaskSubtype"
+                }
+              },
+              "required": [
+                "completion",
+                "kind",
+                "mode",
+                "subtype"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "deferral_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "priority": {
+          "$ref": "#/definitions/TicketPriority"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "target": {
+          "$ref": "#/definitions/DeferralPromotionTarget"
+        }
+      },
+      "required": [
+        "deferral_id",
+        "mutation",
+        "priority",
+        "project_id",
+        "target"
+      ],
+      "title": "DeferralPromoteRequest",
+      "type": "object"
+    },
+    "name": "deferral_promote",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "DeferralPromotionRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "deferral_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "finding_id": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "deferral_id",
+            "finding_id",
+            "project_id",
+            "ticket_id"
+          ],
+          "type": "object"
+        },
+        "TaskMode": {
+          "description": "The closed Task mode vocabulary on the wire (KAN-S4-US4): whether a human or an agent executes the bounded work.",
+          "oneOf": [
+            {
+              "description": "Sid executes the work.",
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An agent executes the work under dispatch.",
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TaskSubtype": {
+          "description": "The closed Task subtype vocabulary on the wire (DR-TK-06): the seven bounded flavours of non-story work.",
+          "oneOf": [
+            {
+              "description": "Keeping the product and its operations running.",
+              "enum": [
+                "operational"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Finding out what is true before acting on it.",
+              "enum": [
+                "investigative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bookkeeping and record-keeping work.",
+              "enum": [
+                "administrative"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Learning without a deliverable committed up front.",
+              "enum": [
+                "research"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Proving an approach before committing to it.",
+              "enum": [
+                "prototype"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Moving work or data from one place to another.",
+              "enum": [
+                "migration"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Work done by hand, on purpose.",
+              "enum": [
+                "manual"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketBugQualification": {
+          "additionalProperties": false,
+          "description": "One complete Bug qualification (DR-TK-09): the ten facts a Bug needs before it may leave draft, with the severity qualification assigned (DR-LC-13). Sent whole; qualification is one act.",
+          "properties": {
+            "affected_scope": {
+              "description": "What the defect affects.",
+              "type": "string"
+            },
+            "criteria": {
+              "description": "The story-linked Acceptance Criteria, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketCriterion"
+              },
+              "type": "array"
+            },
+            "environment": {
+              "description": "Where the defect occurs.",
+              "type": "string"
+            },
+            "expected_behaviour": {
+              "description": "The behaviour that should have happened.",
+              "type": "string"
+            },
+            "frequency": {
+              "description": "How often the defect occurs.",
+              "type": "string"
+            },
+            "reproduction": {
+              "description": "The reproduction steps or the failing test demonstrating the defect.",
+              "type": "string"
+            },
+            "risk": {
+              "description": "What the defect puts at risk.",
+              "type": "string"
+            },
+            "severity": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketSeverity"
+                }
+              ],
+              "description": "The severity qualification assigned (DR-LC-13)."
+            },
+            "verification_steps": {
+              "description": "The Verification Steps, at least one.",
+              "items": {
+                "$ref": "#/definitions/TicketVerificationStep"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "affected_scope",
+            "criteria",
+            "environment",
+            "expected_behaviour",
+            "frequency",
+            "reproduction",
+            "risk",
+            "severity",
+            "verification_steps"
+          ],
+          "type": "object"
+        },
+        "TicketBugRecord": {
+          "additionalProperties": false,
+          "description": "The Bug-specific body of a Ticket record: the quick-capture facts, the qualification once one exists, and the vendor-neutral collections the Bug carries (DR-TK-08 to DR-TK-10).",
+          "properties": {
+            "actual_behaviour": {
+              "description": "What the Bug records happening, as the reporter stated it.",
+              "type": "string"
+            },
+            "evidence_ids": {
+              "description": "The identities of the Evidence Items this Bug carries (DR-TK-10).",
+              "items": {
+                "format": "uint64",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "external_references": {
+              "description": "The External References, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketExternalReference"
+              },
+              "type": "array"
+            },
+            "occurrence_snapshots": {
+              "description": "The Occurrence Snapshots, in recording order (DR-TK-10).",
+              "items": {
+                "$ref": "#/definitions/TicketOccurrenceSnapshot"
+              },
+              "type": "array"
+            },
+            "qualification": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TicketBugQualification"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The complete qualification, once one exists (DR-TK-09)."
+            },
+            "reporter_evidence": {
+              "description": "The evidence the reporter holds, as the reporter stated it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "actual_behaviour",
+            "evidence_ids",
+            "external_references",
+            "occurrence_snapshots",
+            "reporter_evidence"
+          ],
+          "type": "object"
+        },
+        "TicketCriterion": {
+          "additionalProperties": false,
+          "description": "One story-linked criterion a Ticket claims: an observable outcome and the User Stories it delivers, named like `CORE-S3-US6` or `S3-US6` (DR-TK-04, DR-PS-13).",
+          "properties": {
+            "outcome": {
+              "description": "The observable outcome the criterion states.",
+              "type": "string"
+            },
+            "stories": {
+              "description": "The User Stories the criterion claims.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "outcome",
+            "stories"
+          ],
+          "type": "object"
+        },
+        "TicketExternalReference": {
+          "additionalProperties": false,
+          "description": "One vendor-neutral External Reference a Bug carries (DR-TK-10): a URI naming an outside link, with an optional label.",
+          "properties": {
+            "label": {
+              "description": "The reference's label, when it carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri": {
+              "description": "The referenced URI.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "uri"
+          ],
+          "type": "object"
+        },
+        "TicketKind": {
+          "description": "The closed Ticket kind vocabulary on the wire (DR-TK-01).",
+          "oneOf": [
+            {
+              "description": "A small vertical product slice of exactly one Spec.",
+              "enum": [
+                "implementation"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A record of incorrect behaviour, with qualification evidence.",
+              "enum": [
+                "bug"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Bounded operational, investigative, or administrative work.",
+              "enum": [
+                "task"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketOccurrenceSnapshot": {
+          "additionalProperties": false,
+          "description": "One Occurrence Snapshot a Bug carries (DR-TK-10): the RFC 3339 moment one occurrence was observed and what was seen then.",
+          "properties": {
+            "observation": {
+              "description": "What was observed at that moment.",
+              "type": "string"
+            },
+            "observed_at": {
+              "description": "The observed moment, RFC 3339.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "observation",
+            "observed_at"
+          ],
+          "type": "object"
+        },
+        "TicketPriority": {
+          "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",
+          "oneOf": [
+            {
+              "description": "Ahead of everything else.",
+              "enum": [
+                "urgent"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Ahead of normal work.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The everyday order.",
+              "enum": [
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Behind normal work.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketRecord": {
+          "additionalProperties": false,
+          "description": "The Ticket record as every client sees it: the Project it belongs to, the number that Project minted, the kind whose schema it carries, the kind-specific fields — a title for Bugs and Tasks, a slice and criteria for Implementations, the Bug body for a Bug, and for Tasks the subtype, mode, completion criteria, and optional timing — and the Execution Profile the assignment names, if it carries one.",
+          "properties": {
+            "bug": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TicketBugRecord"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The Bug body, if this Ticket carries one."
+            },
+            "completion": {
+              "description": "The Task's completion criteria; empty for every other kind.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "criteria": {
+              "description": "The Implementation's story-linked criteria; empty for every other kind.",
+              "items": {
+                "$ref": "#/definitions/TicketCriterion"
+              },
+              "type": "array"
+            },
+            "due": {
+              "description": "The Task's due date, if it carries one; RFC 3339 in UTC.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The immutable, storage-assigned identity.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketKind"
+                }
+              ],
+              "description": "The kind whose schema this Ticket carries."
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TaskMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The Task's human-or-agent mode, if this Ticket carries one."
+            },
+            "number": {
+              "description": "The number this Project minted for this Ticket; rendered with the Project's code, for example `CORE-T17`.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "pinned_spec_version": {
+              "description": "The Spec content version an approved Ticket graph pinned this Ticket to, if one did (DR-DE-06); a pinned Ticket stays with its Spec and version.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "predecessor_id": {
+              "description": "The Ticket this one replaced, when reassignment created it as a replacement (DR-DE-07); an ordinary Ticket references none and the field stays absent.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "priority": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketPriority"
+                }
+              ],
+              "description": "The Ticket's priority (DR-LC-12)."
+            },
+            "profile": {
+              "description": "The Execution Profile this Ticket's assignment names, by its catalogue name. The reference keeps its name through every later catalogue change (DR-EP-05).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project_id": {
+              "description": "The Project this Ticket belongs to.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "scheduled_for": {
+              "description": "The Task's one-time activation instant, if it carries one; RFC 3339 in UTC, stored for KAN-S11.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "slice": {
+              "description": "The Implementation slice description, if this Ticket carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "spec_id": {
+              "description": "The Spec this Ticket attaches to, if it attaches to one.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "state": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/TicketState"
+                }
+              ],
+              "description": "The lifecycle state (DR-LC-01)."
+            },
+            "subtype": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TaskSubtype"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The Task's subtype, if this Ticket carries one."
+            },
+            "title": {
+              "description": "The Bug or Task title, if this Ticket carries one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "version": {
+              "description": "The aggregate version, for optimistic mutation checks.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "completion",
+            "criteria",
+            "id",
+            "kind",
+            "number",
+            "priority",
+            "project_id",
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        "TicketSeverity": {
+          "description": "The closed Bug severity vocabulary on the wire (DR-LC-13): critical, high, medium, low. Severity arrives only inside a qualification (DR-TK-09).",
+          "oneOf": [
+            {
+              "description": "Data loss, secret exposure, or unauthorised execution.",
+              "enum": [
+                "critical"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A failed approved criterion or workflow invariant.",
+              "enum": [
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Usable behaviour, wrongly shaped.",
+              "enum": [
+                "medium"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Cosmetic or local clarity.",
+              "enum": [
+                "low"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketState": {
+          "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+          "oneOf": [
+            {
+              "description": "Newly created; not yet qualified or planned.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Deliberately set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Waiting on something outside the Ticket.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Qualified but unavailable until activation.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Free to execute when capacity allows.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Executing.",
+              "enum": [
+                "active"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Under review.",
+              "enum": [
+                "in_review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Review approved, waiting to land.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landing through the Seed Workspace.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landed in full.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: will not execute.",
+              "enum": [
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: replaced by a reassignment Ticket.",
+              "enum": [
+                "superseded"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "TicketVerificationStep": {
+          "additionalProperties": false,
+          "description": "One Verification Step a Ticket claims: the command or scripted procedure that demonstrates a criterion (DR-PS-15). Commands live here and never as criteria.",
+          "properties": {
+            "command": {
+              "description": "The command as it runs.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "promotion": {
+          "$ref": "#/definitions/DeferralPromotionRecord"
+        },
+        "ticket": {
+          "$ref": "#/definitions/TicketRecord"
+        }
+      },
+      "required": [
+        "promotion",
+        "ticket"
+      ],
+      "title": "DeferralPromoteResponse",
       "type": "object"
     }
   },
@@ -25604,6 +30475,289 @@
     }
   },
   {
+    "description": "Reconcile a surviving clone's Workspace after verifying its recorded source and branch; never create it again.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Deliberately reconcile a surviving clone; never invoke creation again.",
+      "properties": {
+        "intent_key": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "intent_key",
+        "mutation",
+        "project_id"
+      ],
+      "title": "CloneAdoptRequest",
+      "type": "object"
+    },
+    "name": "clone_adopt",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "WorkspaceCheckoutDto": {
+          "description": "The closed checkout vocabulary as every client sees it: HEAD is on a branch, or detached. Detached is a state of its own, never a branch name.",
+          "enum": [
+            "branch",
+            "detached"
+          ],
+          "type": "string"
+        },
+        "WorkspaceHealthDto": {
+          "description": "The closed health vocabulary as every client sees it. The `unobserved` state means the last git status read could not complete: the tree claims neither clean nor dirty (KAN-T99).",
+          "enum": [
+            "available",
+            "assigned",
+            "dirty",
+            "missing",
+            "retired",
+            "unobserved"
+          ],
+          "type": "string"
+        },
+        "WorkspaceObservationDto": {
+          "additionalProperties": false,
+          "description": "The git facts the core last observed without mutating the clone.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "checkout": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WorkspaceCheckoutDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lane_assignment": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "repository_identity": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unique_unlanded_commits": {
+              "description": "Whether the Workspace holds unique unlanded commits; absent when the observer could not decide.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "working_tree_clean": {
+              "description": "Whether the working tree is clean. Absent when no status read completed — a failed observation, never a clean verdict.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "WorkspaceReuseDto": {
+          "additionalProperties": false,
+          "description": "The reuse verdict with every condition evaluated (DR-LW-06).",
+          "properties": {
+            "clean": {
+              "description": "The working tree is clean on a present path.",
+              "type": "boolean"
+            },
+            "free_of_unlanded_commits": {
+              "description": "No unique unlanded commits sit on the Workspace.",
+              "type": "boolean"
+            },
+            "reusable": {
+              "description": "Reusable only when every condition holds and the record is present and not retired.",
+              "type": "boolean"
+            },
+            "unassigned": {
+              "description": "No Lane assignment holds the Workspace.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clean",
+            "free_of_unlanded_commits",
+            "reusable",
+            "unassigned"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "The Workspace record as every client sees it.",
+      "properties": {
+        "health": {
+          "$ref": "#/definitions/WorkspaceHealthDto"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "is_seed": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/definitions/WorkspaceObservationDto"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "reuse": {
+          "$ref": "#/definitions/WorkspaceReuseDto"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "health",
+        "id",
+        "is_seed",
+        "observation",
+        "path",
+        "project_id",
+        "reuse",
+        "version"
+      ],
+      "title": "WorkspaceRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List durable clone intents whose Workspace adoption needs reconciliation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "CloneRecoveriesQuery",
+      "type": "object"
+    },
+    "name": "clone_recoveries",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CloneRecoveryRecord": {
+          "additionalProperties": false,
+          "description": "A durable intent whose external effect may have outlived its transaction. It is evidence requiring reconciliation, not proof that cloning succeeded.",
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "branch",
+            "idempotency_key",
+            "path",
+            "project_id",
+            "source"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/definitions/CloneRecoveryRecord"
+          },
+          "type": "array"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempts",
+        "project_id"
+      ],
+      "title": "CloneRecoveriesResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Create a branch clone through the guarded fleet skill. Conflicting paths, branches, and Lane assignments are refused before anything runs.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -25675,12 +30829,19 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "workspace_id": {
+          "description": "The non-seed Workspace registered and observed by this command.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
         }
       },
       "required": [
         "branch",
         "path",
-        "project_id"
+        "project_id",
+        "workspace_id"
       ],
       "title": "CloneCreatedRecord",
       "type": "object"

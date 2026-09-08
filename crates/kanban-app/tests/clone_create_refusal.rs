@@ -97,6 +97,7 @@ fn wired(scratch: &Path) -> Wired {
         workspaces,
         clone_guard,
         Arc::new(LocalCloneTargetProbe),
+        Arc::new(kanban_service::git_observer::LocalWorkspaceGitObserver),
     )
     .expect("the clone operations register");
     Wired {
@@ -293,7 +294,12 @@ fn a_free_target_still_reaches_the_fleet_skill_through_the_real_probe() {
     );
     assert_eq!(
         recorded_actions(&database_path),
-        vec!["registered".to_owned(), "branch_clone_created".to_owned(),],
+        vec![
+            "registered".to_owned(),
+            "registered".to_owned(),
+            "observed".to_owned(),
+            "branch_clone_created".to_owned()
+        ],
         "the invocation row lands for a target that was genuinely free"
     );
 }

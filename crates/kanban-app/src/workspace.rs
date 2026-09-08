@@ -203,6 +203,75 @@ impl CommandHandler for RegisterWorkspace {
     }
 }
 
+/// Adopt only a clone this guarded command has just created. The caller owns
+/// the transaction, so registration, observation and its outcome commit together.
+pub(crate) fn adopt_created_workspace(
+    store: &dyn WorkspaceStore,
+    git: &dyn WorkspaceGitObserver,
+    project: &kanban_domain::Project,
+    path: &str,
+    events: &dyn CommandEffects,
+) -> Result<Workspace, ApiError> {
+    let project_id = project.id();
+    let registration = WorkspaceRegistration::new(project_id, path, false)
+        .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+    let mut workspace = store.create(&registration, &|id| {
+        transition(
+            project_id,
+            id,
+            "registered",
+            json!({"path": path, "is_seed": false, "project_id": project_id.value()}),
+        )
+    })?;
+    announce(events, LiveEventName::WorkspaceRegistered, &workspace);
+    observe_workspace(
+        &mut workspace,
+        project.registration().repository(),
+        store,
+        git,
+        events,
+    )?;
+    Ok(workspace)
+}
+
+pub(crate) fn observe_workspace(
+    workspace: &mut Workspace,
+    repository: &str,
+    store: &dyn WorkspaceStore,
+    git: &dyn WorkspaceGitObserver,
+    events: &dyn CommandEffects,
+) -> Result<(), ApiError> {
+    let project_id = workspace.registration().project_id();
+    let snapshot = git.observe(workspace.registration().path(), repository);
+    let health_change = workspace.observe(
+        snapshot.present,
+        snapshot.repository_identity,
+        snapshot.checkout,
+        snapshot.head,
+        snapshot.working_tree_clean,
+        snapshot.unique_unlanded_commits,
+    );
+    let envelope = if let Some((from, to)) = health_change {
+        health_transition(
+            project_id,
+            workspace.id(),
+            from,
+            to,
+            observation_facts(workspace),
+        )
+    } else {
+        transition(
+            project_id,
+            workspace.id(),
+            "observed",
+            observation_facts(workspace),
+        )
+    };
+    store.save(workspace, envelope)?;
+    announce(events, LiveEventName::WorkspaceObserved, workspace);
+    Ok(())
+}
+
 struct ObserveWorkspace {
     store: Arc<dyn WorkspaceStore>,
     projects: Arc<dyn ProjectStore>,
@@ -230,36 +299,13 @@ impl CommandHandler for ObserveWorkspace {
         let mut workspace = load_workspace(&self.store, request.workspace_id)?;
         let project_id = workspace.registration().project_id();
         let project = load_project(&self.projects, project_id)?;
-        let snapshot = self.git.observe(
-            workspace.registration().path(),
+        observe_workspace(
+            &mut workspace,
             project.registration().repository(),
-        );
-        let health_change = workspace.observe(
-            snapshot.present,
-            snapshot.repository_identity,
-            snapshot.checkout,
-            snapshot.head,
-            snapshot.working_tree_clean,
-            snapshot.unique_unlanded_commits,
-        );
-        let envelope = if let Some((from, to)) = health_change {
-            health_transition(
-                project_id,
-                workspace.id(),
-                from,
-                to,
-                observation_facts(&workspace),
-            )
-        } else {
-            transition(
-                project_id,
-                workspace.id(),
-                "observed",
-                observation_facts(&workspace),
-            )
-        };
-        self.store.save(&workspace, envelope)?;
-        announce(events, LiveEventName::WorkspaceObserved, &workspace);
+            self.store.as_ref(),
+            self.git.as_ref(),
+            events,
+        )?;
         encode_record(&workspace)
     }
 }
@@ -412,7 +458,7 @@ fn health_dto(health: WorkspaceHealth) -> WorkspaceHealthDto {
     }
 }
 
-fn encode_record(workspace: &Workspace) -> Result<Value, ApiError> {
+pub(crate) fn encode_record(workspace: &Workspace) -> Result<Value, ApiError> {
     serde_json::to_value(record_of(workspace))
         .map_err(|error| ApiError::internal(&error.to_string()))
 }

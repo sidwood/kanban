@@ -264,6 +264,12 @@ pub trait CommandHandler: Send + Sync {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError>;
     /// The aggregate's current version, or [`ApiError::not_found`].
     fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError>;
+    /// Durably record an external-effect intent before the mutation opens.
+    /// The guard has already checked replay and version. This must not invoke
+    /// external work or claim success; its journal survives process death.
+    fn prepare(&self, _command: &ParsedCommand) -> Result<(), ApiError> {
+        Ok(())
+    }
     /// Apply the mutation. Runs at most once per idempotency key.
     /// Everything that must outlive the write span — events and
     /// post-commit effects alike — is reported through `effects`.

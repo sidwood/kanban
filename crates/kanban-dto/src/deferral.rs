@@ -59,3 +59,41 @@ pub struct DeferralListResponse {
     /// Every deferral for the project, superseded originals included.
     pub deferrals: Vec<DeferralRecord>,
 }
+
+/// Promotion is deliberate and creates a draft; it never qualifies or dispatches it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeferralPromotionTarget {
+    Bug {},
+    Task {
+        subtype: super::TaskSubtype,
+        mode: super::TaskMode,
+        completion: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeferralPromoteRequest {
+    pub mutation: super::MutationContext,
+    pub project_id: u64,
+    pub deferral_id: u64,
+    pub priority: super::TicketPriority,
+    pub target: DeferralPromotionTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeferralPromotionRecord {
+    pub project_id: u64,
+    pub deferral_id: u64,
+    pub finding_id: String,
+    pub ticket_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeferralPromoteResponse {
+    pub promotion: DeferralPromotionRecord,
+    pub ticket: super::TicketRecord,
+}

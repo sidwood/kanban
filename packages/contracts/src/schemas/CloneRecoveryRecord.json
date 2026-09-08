@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "A durable intent whose external effect may have outlived its transaction. It is evidence requiring reconciliation, not proof that cloning succeeded.",
+  "properties": {
+    "branch": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "source": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "branch",
+    "idempotency_key",
+    "path",
+    "project_id",
+    "source"
+  ],
+  "title": "CloneRecoveryRecord",
+  "type": "object"
+}

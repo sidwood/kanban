@@ -47,7 +47,11 @@ mod append_only {
             .connection()
             .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
             .expect("the audit trail is readable");
-        assert_eq!(rows, 37, "one event per migration, plus the probe");
+        assert_eq!(
+            rows,
+            crate::migrations::LATEST_SCHEMA_VERSION + 1,
+            "one event per migration, plus the probe"
+        );
     }
 
     #[test]

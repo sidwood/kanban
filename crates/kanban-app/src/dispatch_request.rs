@@ -114,6 +114,10 @@ pub struct DispatchEnqueue {
 /// `try_claim` is the atomic claim: status, capacity, and the row
 /// change share one write so concurrent claimants cannot both win.
 pub trait DispatchStore: Send + Sync {
+    fn reviewer(
+        &self,
+        id: DispatchRequestId,
+    ) -> Result<Option<kanban_dto::ReviewerDispatchRecord>, ApiError>;
     /// Insert a fresh queued request. Storage assigns the identity
     /// and asks `envelope` for the timeline row that identity belongs
     /// in. A Ticket that already has an open request is refused.
@@ -278,7 +282,7 @@ impl CommandHandler for CreateDispatchRequest {
                 )
             },
         )?;
-        let record = encode_record(&queued);
+        let record = encode_record(&queued, None);
         emit_catalogued(effects, LiveEventName::DispatchRequested, &record);
         let wake = CoordinatorWakeRequest {
             project_id: project.id().value(),
@@ -386,13 +390,24 @@ impl CommandHandler for ClaimDispatchRequest {
         // refusal rolls the claim back with it. The draft is built
         // only on a win, so a capacity miss or a lost race never
         // mints and never demands a Lane.
+        let reviewer = self.0.requests.reviewer(queued.id())?;
         let mint = || -> Result<CapabilityMintDraft, ApiError> {
             let lane = lane_holding(&lanes, queued.ticket()).ok_or_else(|| {
                 ApiError::invalid_request(
                     "a Dispatch Request claim requires its Ticket seated in a Lane",
                 )
             })?;
-            CapabilityMintDraft::implementer(queued.id(), queued.ticket(), lane, unix_now())
+            if let Some(reviewer) = &reviewer {
+                CapabilityMintDraft::reviewer(
+                    queued.id(),
+                    queued.ticket(),
+                    lane,
+                    kanban_domain::ReviewerSlotId::new(reviewer.slot_id),
+                    unix_now(),
+                )
+            } else {
+                CapabilityMintDraft::implementer(queued.id(), queued.ticket(), lane, unix_now())
+            }
         };
         let (updated, decision, capability) = self.0.requests.try_claim(
             queued.id(),
@@ -420,7 +435,7 @@ impl CommandHandler for ClaimDispatchRequest {
                 capability_mint_transition(queued.project(), queued.ticket(), minted, capability)
             },
         )?;
-        let record = encode_record(&updated);
+        let record = encode_record(&updated, reviewer.clone());
         let (claimed, capacity_refusal) = match &decision {
             ClaimDecision::Claim => {
                 emit_catalogued(effects, LiveEventName::DispatchClaimed, &record);
@@ -470,7 +485,14 @@ impl QueryHandler for ListDispatchQueue {
         sort_queue(&mut requests);
         let response = DispatchQueueResponse {
             project_id: query.project_id,
-            requests: requests.iter().map(encode_record).collect(),
+            requests: requests
+                .iter()
+                .map(|request| {
+                    self.requests
+                        .reviewer(request.id())
+                        .map(|reviewer| encode_record(request, reviewer))
+                })
+                .collect::<Result<Vec<_>, ApiError>>()?,
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -502,8 +524,12 @@ fn transition(
     )
 }
 
-fn encode_record(request: &DispatchRequest) -> DispatchRequestRecord {
+fn encode_record(
+    request: &DispatchRequest,
+    reviewer: Option<kanban_dto::ReviewerDispatchRecord>,
+) -> DispatchRequestRecord {
     DispatchRequestRecord {
+        reviewer,
         id: request.id().value(),
         project_id: request.project().value(),
         ticket_id: request.ticket().value(),

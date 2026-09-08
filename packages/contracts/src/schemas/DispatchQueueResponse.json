@@ -44,6 +44,17 @@
           "description": "Whether the Ticket was ready at enqueue.",
           "type": "boolean"
         },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewerDispatchRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Frozen reviewer instructions, absent for implementation requests."
+        },
         "status": {
           "allOf": [
             {
@@ -102,6 +113,79 @@
           "type": "string"
         }
       ]
+    },
+    "ProfileSnapshotRecord": {
+      "additionalProperties": false,
+      "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+      "properties": {
+        "effort": {
+          "description": "The snapshotted effort.",
+          "type": "string"
+        },
+        "harness": {
+          "description": "The snapshotted harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The snapshotted model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The snapshotted entry name.",
+          "type": "string"
+        },
+        "usage_pool": {
+          "description": "The snapshotted usage pool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "usage_pool"
+      ],
+      "type": "object"
+    },
+    "ReviewerDispatchRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "effective": {
+          "$ref": "#/definitions/ProfileSnapshotRecord"
+        },
+        "fallback_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requested": {
+          "$ref": "#/definitions/ProfileSnapshotRecord"
+        },
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "slot_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "effective",
+        "fallback_path",
+        "requested",
+        "review_id",
+        "slot_id",
+        "tip"
+      ],
+      "type": "object"
     },
     "TicketPriority": {
       "description": "The closed priority vocabulary on the wire (DR-LC-12): urgent, high, normal, low.",

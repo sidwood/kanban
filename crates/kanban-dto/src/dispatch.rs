@@ -25,6 +25,9 @@ pub enum DispatchStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DispatchRequestRecord {
+    /// Frozen reviewer instructions, absent for implementation requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<crate::ReviewerDispatchRecord>,
     /// The storage-assigned identity.
     pub id: u64,
     /// The Project the request belongs to.

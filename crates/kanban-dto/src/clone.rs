@@ -37,6 +37,8 @@ pub struct CloneRemoveRequest {
 #[serde(deny_unknown_fields)]
 pub struct CloneCreatedRecord {
     pub project_id: u64,
+    /// The non-seed Workspace registered and observed by this command.
+    pub workspace_id: u64,
     /// The directory the branch clone landed in.
     pub path: String,
     /// The branch the clone checked out.
@@ -56,6 +58,40 @@ pub struct CloneRemovedRecord {
     pub path: String,
     /// The branch the Workspace last observed, when any.
     pub branch: Option<String>,
+}
+
+/// Deliberately reconcile a surviving clone; never invoke creation again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloneAdoptRequest {
+    pub mutation: super::MutationContext,
+    pub project_id: u64,
+    pub intent_key: String,
+}
+
+/// A durable intent whose external effect may have outlived its transaction.
+/// It is evidence requiring reconciliation, not proof that cloning succeeded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloneRecoveryRecord {
+    pub project_id: u64,
+    pub idempotency_key: String,
+    pub path: String,
+    pub branch: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloneRecoveriesQuery {
+    pub project_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloneRecoveriesResponse {
+    pub project_id: u64,
+    pub attempts: Vec<CloneRecoveryRecord>,
 }
 
 #[cfg(test)]
@@ -106,6 +142,7 @@ mod tests {
     #[test]
     fn clone_records_round_trip() {
         let created = CloneCreatedRecord {
+            workspace_id: 1,
             project_id: 1,
             path: "/workspaces/kanban.fleet-t34".to_owned(),
             branch: "fleet/kan-t34".to_owned(),

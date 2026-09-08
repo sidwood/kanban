@@ -188,6 +188,7 @@ impl Core {
 
         // The mutation belongs to the span: an apply that fails, or
         // an outcome that cannot be recorded, discards both together.
+        handler.prepare(&command)?;
         let span = self.idempotency.begin()?;
         let announced = PendingEffects::default();
         let applied = handler.apply(&command, &announced);

@@ -161,7 +161,7 @@ fn coordinator_harness_with_clone_tool(
         RetentionPolicy::keep_most_recent(NonZeroU32::new(100).expect("the bound is not zero")),
     ));
     let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
-    core.register_workspaces(workspaces.clone(), projects.clone(), git)
+    core.register_workspaces(workspaces.clone(), projects.clone(), git.clone())
         .expect("the workspace operations register");
     core.register_lanes(
         lanes.clone(),
@@ -176,6 +176,7 @@ fn coordinator_harness_with_clone_tool(
         workspaces.clone(),
         clone_guard.clone(),
         Arc::new(LocalCloneTargetProbe),
+        git,
     )
     .expect("the clone operations register");
     core.register_dispatch(
@@ -250,6 +251,40 @@ fn coordinator_steps(database_path: &std::path::Path) -> Vec<String> {
     .expect("the rows serve")
     .collect::<Result<Vec<_>, _>>()
     .expect("the steps decode")
+}
+
+#[test]
+fn coordinator_loop_refuses_a_fresh_clone_on_the_wrong_branch() {
+    let git = Arc::new(ScriptedGit {
+        snapshots: HashMap::from([(
+            "/workspaces/kanban.kan-t1".to_owned(),
+            WorkspaceGitSnapshot {
+                present: true,
+                repository_identity: Some("identity".to_owned()),
+                checkout: Some(WorkspaceCheckout::Branch("wrong-branch".to_owned())),
+                head: Some("a".repeat(40)),
+                working_tree_clean: Some(true),
+                unique_unlanded_commits: Some(false),
+            },
+        )]),
+    });
+    let herdr = Arc::new(RecordingHerdr {
+        accepted: true,
+        ..RecordingHerdr::default()
+    });
+    let harness = coordinator_harness(git, herdr.clone());
+    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let request = enqueue(&harness.core, ticket, "wrong-branch");
+    assert!(
+        harness
+            .loop_
+            .execute(CoordinatorLoopRequest {
+                project_id: 1,
+                dispatch_request_id: request
+            })
+            .is_err()
+    );
+    assert!(herdr.launches.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -478,17 +513,30 @@ fn coordinator_loop_refuses_reuse_when_observed_branch_mismatches_execution_bran
 #[test]
 fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
     let git = Arc::new(ScriptedGit {
-        snapshots: HashMap::from([(
-            "/workspaces/kanban.seed".to_owned(),
-            WorkspaceGitSnapshot {
-                present: true,
-                repository_identity: Some("identity".to_owned()),
-                checkout: Some(WorkspaceCheckout::Branch("main".to_owned())),
-                head: Some("abc123".to_owned()),
-                working_tree_clean: Some(true),
-                unique_unlanded_commits: Some(false),
-            },
-        )]),
+        snapshots: HashMap::from([
+            (
+                "/workspaces/kanban.seed".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("main".to_owned())),
+                    head: Some("abc123".to_owned()),
+                    working_tree_clean: Some(true),
+                    unique_unlanded_commits: Some(false),
+                },
+            ),
+            (
+                "/workspaces/kanban.kan-t4".to_owned(),
+                WorkspaceGitSnapshot {
+                    present: true,
+                    repository_identity: Some("identity".to_owned()),
+                    checkout: Some(WorkspaceCheckout::Branch("kan-t4".to_owned())),
+                    head: Some("abc123".to_owned()),
+                    working_tree_clean: Some(true),
+                    unique_unlanded_commits: Some(false),
+                },
+            ),
+        ]),
     });
     let herdr = Arc::new(RecordingHerdr {
         accepted: true,

@@ -42,6 +42,16 @@ impl FleetCloneTool for CountingTool {
             .lock()
             .expect("the tool lock is sound")
             .push(format!("add {source} {path} {branch}"));
+        if std::env::var_os("KANBAN_TEST_CRASH_AFTER_CLONE").is_some() {
+            // Real Git in the fixture; process death bypasses all Rust drops.
+            git(
+                Path::new(source),
+                &["clone", "--no-hardlinks", source, path],
+            );
+            git(Path::new(path), &["checkout", "-b", branch]);
+            git(Path::new(path), &["config", "bc.source", source]);
+            std::process::exit(37);
+        }
         match self
             .fail_add_with
             .lock()
@@ -71,6 +81,22 @@ struct SteeredTimeline {
 }
 
 impl CloneGuardStore for SteeredTimeline {
+    fn prepare_creation(&self, intent: &kanban_dto::CloneRecoveryRecord) -> Result<(), ApiError> {
+        self.inner.prepare_creation(intent)
+    }
+    fn complete_creation(
+        &self,
+        key: &str,
+        workspace_id: kanban_domain::WorkspaceId,
+    ) -> Result<(), ApiError> {
+        self.inner.complete_creation(key, workspace_id)
+    }
+    fn pending_creations(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<kanban_dto::CloneRecoveryRecord>, ApiError> {
+        self.inner.pending_creations(project_id)
+    }
     fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError> {
         if self.fail_first.swap(false, Ordering::SeqCst) {
             return Err(ApiError::internal("the timeline row could not be written"));
@@ -130,6 +156,7 @@ fn wired(scratch: &Path, fail_first: bool) -> Wired {
         workspaces,
         timeline,
         Arc::new(LocalCloneTargetProbe),
+        Arc::new(kanban_service::git_observer::LocalWorkspaceGitObserver),
     )
     .expect("the clone operations register");
     Wired {
@@ -143,11 +170,15 @@ fn wired(scratch: &Path, fail_first: bool) -> Wired {
 
 /// Seed the fixture Project directly through the store.
 fn create_project(projects: &SqliteProjectStore) {
+    create_project_at(projects, "/repositories/kanban", "/workspaces/kanban.seed");
+}
+
+fn create_project_at(projects: &SqliteProjectStore, repository: &str, seed: &str) {
     let registration = ProjectRegistration::new(
         "CORE",
         "Control plane",
-        "/repositories/kanban",
-        "/workspaces/kanban.seed",
+        repository,
+        seed,
         "main",
         "kanban.seed",
         Some("kanban-main"),
@@ -325,7 +356,11 @@ fn a_storage_failure_after_a_successful_skill_keeps_the_invocation() {
         rows.iter()
             .map(|(action, _)| action.as_str())
             .collect::<Vec<_>>(),
-        vec!["registered", "clone_create_invoked"],
+        vec![
+            "registered",
+            "clone_create_invoked",
+            "clone_adoption_failed"
+        ],
         "the invocation evidence remains, and no creation row ever lands"
     );
     let (_, invoked) = &rows[1];
@@ -390,5 +425,171 @@ fn an_archived_project_refusal_lands_durably_and_invokes_nothing() {
     assert!(
         events.iter().all(|(name, _)| name != "clone.created"),
         "a refused request announces no clone.created live event: {events:?}"
+    );
+}
+
+#[test]
+fn clone_adoption_failure_keeps_repair_evidence_without_workspace_or_success() {
+    let scratch = TempDir::new().unwrap();
+    let wired = wired(scratch.path(), false);
+    create_project(&wired.projects);
+    let conn = rusqlite::Connection::open(&wired.database_path).unwrap();
+    conn.execute_batch("CREATE TRIGGER refuse_adoption BEFORE INSERT ON workspaces BEGIN SELECT RAISE(ABORT, 'fixture adoption failure'); END;").unwrap();
+    assert!(
+        wired
+            .core
+            .command(
+                "clone.create",
+                &create(
+                    "/workspaces/kanban.test-adoption",
+                    "test-adoption",
+                    "adopt-key"
+                )
+            )
+            .is_err()
+    );
+    assert_eq!(wired.tool.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM workspaces", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(wired.sink.events.lock().unwrap().is_empty());
+    let rows = recorded_rows(&wired.database_path);
+    let detail = &rows
+        .iter()
+        .find(|(action, _)| action == "clone_adoption_failed")
+        .expect("a created but unregistered clone has explicit repair evidence")
+        .1;
+    assert_eq!(detail["path"], "/workspaces/kanban.test-adoption");
+    assert_eq!(detail["branch"], "test-adoption");
+    assert_eq!(detail["source"], "/repositories/kanban");
+}
+
+fn git(root: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn clone_crash_worker() {
+    let Some(root) = std::env::var_os("KANBAN_TEST_CRASH_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let repository = root.join("seed");
+    std::fs::create_dir(&repository).unwrap();
+    git(&repository, &["init", "-b", "main"]);
+    git(
+        &repository,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Create the fixture",
+        ],
+    );
+    let repository = repository.canonicalize().unwrap();
+    let wired = wired(&root, false);
+    create_project_at(
+        &wired.projects,
+        repository.to_str().unwrap(),
+        repository.to_str().unwrap(),
+    );
+    wired
+        .core
+        .command(
+            "clone.create",
+            &create(
+                root.join("external").to_str().unwrap(),
+                "crash-test",
+                "crash-key",
+            ),
+        )
+        .unwrap();
+    panic!("the fixture should terminate inside the external clone tool");
+}
+
+#[test]
+fn clone_creation_intent_survives_process_death_before_adoption() {
+    let scratch = TempDir::new().unwrap();
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "clone_crash_worker", "--nocapture"])
+        .env("KANBAN_TEST_CRASH_ROOT", scratch.path())
+        .env("KANBAN_TEST_CRASH_AFTER_CLONE", "1")
+        .status()
+        .unwrap();
+    assert_eq!(child.code(), Some(37));
+    assert!(scratch.path().join("external").is_dir());
+    let restarted = wired(scratch.path(), false);
+    let recoveries = restarted
+        .core
+        .query("clone.recoveries", &json!({"project_id":1}))
+        .expect("recovery after process death exposes the durable unadopted clone");
+    assert_eq!(recoveries["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        recoveries["attempts"][0]["path"],
+        scratch.path().join("external").to_str().unwrap()
+    );
+    assert_eq!(recoveries["attempts"][0]["branch"], "crash-test");
+    assert_eq!(recoveries["attempts"][0]["idempotency_key"], "crash-key");
+    let conn = rusqlite::Connection::open(&restarted.database_path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM workspaces", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM idempotency_outcomes", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+
+    let request = json!({"mutation":{"optimistic_version":0,"idempotency_key":"adopt-after-crash"},
+        "project_id":1,"intent_key":"crash-key"});
+    let adopted = restarted
+        .core
+        .command("clone.adopt", &request)
+        .expect("an operator reconciles the surviving clone without invoking creation again");
+    assert!(adopted["id"].as_u64().unwrap() > 0);
+    assert_eq!(adopted["observation"]["branch"], "crash-test");
+    assert_eq!(adopted["health"], "available");
+    assert_eq!(
+        restarted.core.command("clone.adopt", &request).unwrap(),
+        adopted
+    );
+    assert!(
+        restarted
+            .core
+            .query("clone.recoveries", &json!({"project_id":1}))
+            .unwrap()["attempts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(restarted.tool.calls.lock().unwrap().is_empty());
+    assert!(
+        !restarted
+            .sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(name, _)| name == "clone.created")
     );
 }

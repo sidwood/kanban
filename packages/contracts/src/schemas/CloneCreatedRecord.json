@@ -15,12 +15,19 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "workspace_id": {
+      "description": "The non-seed Workspace registered and observed by this command.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     }
   },
   "required": [
     "branch",
     "path",
-    "project_id"
+    "project_id",
+    "workspace_id"
   ],
   "title": "CloneCreatedRecord",
   "type": "object"

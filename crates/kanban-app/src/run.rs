@@ -129,31 +129,48 @@ impl CommandHandler for AcknowledgeRun {
         // The snapshots freeze the catalogue as it stands at the mint:
         // the requested entry under the assignment's own name, and the
         // entry the fallback policy resolves to (DR-EP-04, DR-EP-05).
-        let catalogue = self.profiles.list()?;
-        let assigned = self
-            .tickets
-            .find(claim.ticket())?
-            .ok_or_else(|| ApiError::not_found(&format!("ticket {}", claim.ticket().value())))?
-            .profile()
-            .cloned()
-            .ok_or_else(|| {
-                ApiError::invalid_request("a run requires the Ticket's assigned Execution Profile")
-            })?;
-        let (effective, path) = resolve_effective(&catalogue, &assigned).map_err(refuse)?;
-        let requested_entry = catalogue
-            .iter()
-            .find(|entry| entry.name() == &assigned)
-            .ok_or_else(|| ApiError::internal("the requested name resolved and then vanished"))?;
-        let requested = snapshot_of(requested_entry).map_err(refuse)?;
-        let effective_snapshot = snapshot_of(effective).map_err(refuse)?;
-        let fallback_path: Vec<String> = path.iter().map(|name| name.as_str().to_owned()).collect();
-        let facts = json!({
-            "ticket_id": claim.ticket().value(),
-            "dispatch_request_id": claim.id().value(),
-            "requested": assigned.as_str(),
-            "effective": effective.name().as_str(),
-            "fallback": effective.name() != requested_entry.name(),
-        });
+        let (requested, effective_snapshot, fallback_path) =
+            if let Some(reviewer) = self.requests.reviewer(claim.id())? {
+                let restore = |p: &ProfileSnapshotRecord| {
+                    ProfileSnapshot::restore(
+                        p.name.clone(),
+                        p.harness.clone(),
+                        p.model.clone(),
+                        p.effort.clone(),
+                        p.usage_pool.clone(),
+                    )
+                };
+                (
+                    restore(&reviewer.requested),
+                    restore(&reviewer.effective),
+                    reviewer.fallback_path,
+                )
+            } else {
+                let catalogue = self.profiles.list()?;
+                let assigned = self
+                    .tickets
+                    .find(claim.ticket())?
+                    .ok_or_else(|| ApiError::not_found("ticket"))?
+                    .profile()
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::invalid_request(
+                            "a run requires the Ticket's assigned Execution Profile",
+                        )
+                    })?;
+                let (effective, path) = resolve_effective(&catalogue, &assigned).map_err(refuse)?;
+                let requested = catalogue
+                    .iter()
+                    .find(|entry| entry.name() == &assigned)
+                    .ok_or_else(|| ApiError::internal("requested profile vanished"))?;
+                (
+                    snapshot_of(requested).map_err(refuse)?,
+                    snapshot_of(effective).map_err(refuse)?,
+                    path.iter().map(|name| name.as_str().to_owned()).collect(),
+                )
+            };
+        let facts = json!({"ticket_id":claim.ticket().value(),"dispatch_request_id":claim.id().value(),
+            "requested":requested.name(),"effective":effective_snapshot.name(),"fallback":requested.name()!=effective_snapshot.name()});
         let created_at = unix_now();
         let project = claim.project();
         let run = self.runs.mint(

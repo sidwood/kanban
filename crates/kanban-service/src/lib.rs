@@ -244,6 +244,7 @@ fn assemble_core(
         workspace_store.clone(),
         clone_guard_store,
         Arc::new(LocalCloneTargetProbe),
+        Arc::new(LocalWorkspaceGitObserver),
     )?;
     core.register_dependencies(
         dependency_store.clone(),
@@ -262,6 +263,9 @@ fn assemble_core(
         dependency_store.clone(),
         projects.clone(),
         schedule_store,
+        Some(Arc::new(kanban_storage::SqliteCriterionBindingStore::new(
+            &database,
+        ))),
     )?;
     core.register_graph_proposals(
         graph_proposal_store,
@@ -302,6 +306,33 @@ fn assemble_core(
         dependency_store.clone(),
         herdr.clone(),
     )?;
+    core.register_submissions(
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteCapabilityStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        herdr.clone(),
+    )?;
+    core.register_deferral_promotions(
+        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
+        Arc::new(kanban_storage::SqliteDeferralStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
+        Arc::new(kanban_storage::SqliteSpecStore::new(&database)),
+    )?;
+    core.register_findings(
+        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+    )?;
+    core.register_reviews(
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteReviewConfigStore::new(&database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProfileStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteRunStore::new(&database)),
+        herdr.clone(),
+    )?;
     core.register_runs(
         Arc::new(SqliteRunStore::new(&database)),
         dispatch_store,
@@ -318,14 +349,19 @@ fn assemble_core(
     core.register_exports(
         plan_store,
         spec_store,
-        ticket_store,
+        ticket_store.clone(),
         projects,
         Arc::new(export_files::LocalExportFiles),
     )?;
     core.register_comments(comment_store, project_store.clone())?;
     core.register_rulings(ruling_store, project_store.clone())?;
     core.register_deferrals(deferral_store, project_store.clone())?;
-    core.register_evidence(evidence_store, project_store.clone())?;
+    core.register_evidence(evidence_store.clone(), project_store.clone())?;
+    core.register_criterion_bindings(
+        Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database)),
+        ticket_store.clone(),
+        evidence_store,
+    )?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),

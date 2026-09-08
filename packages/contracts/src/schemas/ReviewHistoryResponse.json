@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ReviewAttemptRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "invalidations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "review_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "verdicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "attempt",
+        "invalidations",
+        "outcome",
+        "verdicts"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "attempts": {
+      "items": {
+        "$ref": "#/definitions/ReviewAttemptRecord"
+      },
+      "type": "array"
+    },
+    "needs_revalidation": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "attempts",
+    "needs_revalidation"
+  ],
+  "title": "ReviewHistoryResponse",
+  "type": "object"
+}

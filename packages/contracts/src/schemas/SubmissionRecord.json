@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CapabilityRole": {
+      "description": "The run role a capability grants, on the wire.",
+      "oneOf": [
+        {
+          "description": "Executing an Implementation or Bug Ticket in a Lane.",
+          "enum": [
+            "implementer"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reviewing one Review Slot.",
+          "enum": [
+            "reviewer"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "FindingSeverity": {
+      "enum": [
+        "p0",
+        "p1",
+        "p2",
+        "p3"
+      ],
+      "type": "string"
+    },
+    "ReviewFindingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "in_scope": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "proposed_resolution": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/FindingSeverity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "in_scope",
+        "location",
+        "proposed_resolution",
+        "severity",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "SubmissionResult": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "implementation"
+              ],
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "approve": {
+              "type": "boolean"
+            },
+            "findings": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/ReviewFindingRecord"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "review"
+              ],
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "approve",
+            "kind",
+            "summary",
+            "tip"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "capability_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "created_at": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "result": {
+      "$ref": "#/definitions/SubmissionResult"
+    },
+    "reviewer_slot_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "role": {
+      "$ref": "#/definitions/CapabilityRole"
+    },
+    "run_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ticket_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "capability_id",
+    "created_at",
+    "id",
+    "project_id",
+    "result",
+    "role",
+    "run_id",
+    "ticket_id"
+  ],
+  "title": "SubmissionRecord",
+  "type": "object"
+}

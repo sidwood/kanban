@@ -1,0 +1,280 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "FindingSeverity": {
+      "enum": [
+        "p0",
+        "p1",
+        "p2",
+        "p3"
+      ],
+      "type": "string"
+    },
+    "ProfileSnapshotRecord": {
+      "additionalProperties": false,
+      "description": "One frozen profile snapshot as every client sees it: the entry's name and its five decisions as they stood at the run's mint.",
+      "properties": {
+        "effort": {
+          "description": "The snapshotted effort.",
+          "type": "string"
+        },
+        "harness": {
+          "description": "The snapshotted harness family.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The snapshotted model family.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The snapshotted entry name.",
+          "type": "string"
+        },
+        "usage_pool": {
+          "description": "The snapshotted usage pool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effort",
+        "harness",
+        "model",
+        "name",
+        "usage_pool"
+      ],
+      "type": "object"
+    },
+    "ReviewFindingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "in_scope": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "proposed_resolution": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/FindingSeverity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "in_scope",
+        "location",
+        "proposed_resolution",
+        "severity",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "ReviewSlotRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatch_request_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fallback_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "occupant": {
+          "$ref": "#/definitions/TicketReviewOccupant"
+        },
+        "requested": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProfileSnapshotRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requirement": {
+          "$ref": "#/definitions/TicketReviewSlotRequirement"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewVerdictRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "fallback_path",
+        "id",
+        "occupant",
+        "requirement"
+      ],
+      "type": "object"
+    },
+    "ReviewStageStatus": {
+      "enum": [
+        "waiting",
+        "approved",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "ReviewVerdictRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "approve": {
+          "type": "boolean"
+        },
+        "counts_for_resolution": {
+          "description": "Late optional results remain evidence but cannot rewrite a resolved stage.",
+          "type": "boolean"
+        },
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ReviewFindingRecord"
+          },
+          "type": "array"
+        },
+        "submission_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tip": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approve",
+        "counts_for_resolution",
+        "summary",
+        "tip"
+      ],
+      "type": "object"
+    },
+    "TicketReviewOccupant": {
+      "description": "One slot's occupant on the wire: a human reviewer, or an agent reviewer under a named Execution Profile. A human slot carries no profile and is exempt from separation (DR-EP-15); a profile slot names its entry by reference, never inlined values. A human carries nothing but its tag, and every variant denies fields beyond its own: a smuggled `name` refuses the request rather than reading as a human and skipping the profile it would have named.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A human reviews the slot.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "human"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An agent reviews under the profile `name` references.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "profile"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "description": "The Execution Profile the slot's assignment names, by its catalogue name.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TicketReviewSlotRequirement": {
+      "description": "The closed slot requirement vocabulary on the wire (DR-EP-09): every required slot in a stage must finish before the stage resolves; an optional slot never blocks it.",
+      "oneOf": [
+        {
+          "description": "The stage cannot resolve without this slot finishing.",
+          "enum": [
+            "required"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The slot never blocks the stage it sits in.",
+          "enum": [
+            "optional"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "index": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "slots": {
+      "items": {
+        "$ref": "#/definitions/ReviewSlotRecord"
+      },
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/definitions/ReviewStageStatus"
+    }
+  },
+  "required": [
+    "index",
+    "slots",
+    "status"
+  ],
+  "title": "ReviewStageRecord",
+  "type": "object"
+}

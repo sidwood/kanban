@@ -38,6 +38,12 @@ impl SqliteDispatchStore {
 }
 
 impl DispatchStore for SqliteDispatchStore {
+    fn reviewer(
+        &self,
+        id: DispatchRequestId,
+    ) -> Result<Option<kanban_dto::ReviewerDispatchRecord>, ApiError> {
+        crate::review_execution::reviewer_for_request(&self.lock(), id.value())
+    }
     fn enqueue(
         &self,
         draft: &DispatchEnqueue,
@@ -213,7 +219,7 @@ fn open_status(
 ) -> Result<Option<DispatchStatus>, ApiError> {
     match conn.query_row(
         "SELECT status FROM dispatch_requests
-         WHERE ticket_id = ?1 AND status IN ('queued', 'claimed')",
+         WHERE ticket_id = ?1 AND status IN ('queued', 'claimed') AND reviewer_slot_id IS NULL",
         params![ticket.value() as i64],
         |row| row.get::<_, String>(0),
     ) {

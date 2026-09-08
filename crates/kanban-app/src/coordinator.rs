@@ -374,7 +374,7 @@ impl CoordinatorLoop {
             return Ok(selected);
         }
 
-        self.core.command(
+        let created = self.core.command(
             "clone.create",
             &json!({
                 "mutation": {
@@ -386,27 +386,17 @@ impl CoordinatorLoop {
                 "branch": branch,
             }),
         )?;
-        let registered = self.core.command(
-            "workspace.register",
-            &json!({
-                "mutation": {
-                    "optimistic_version": 0,
-                    "idempotency_key": format!("coordinator-register-{dispatch_request_id}"),
-                },
-                "project_id": project.value(),
-                "path": path,
-            }),
-        )?;
-        let workspace_id = WorkspaceId::new(
-            registered["id"]
-                .as_u64()
-                .expect("the Workspace has an identity"),
-        );
+        let created: kanban_dto::CloneCreatedRecord = parse_payload(&created)?;
+        let workspace_id = WorkspaceId::new(created.workspace_id);
+        let workspace = self
+            .workspaces
+            .find(workspace_id)?
+            .ok_or_else(|| ApiError::internal("the created clone has no adopted Workspace"))?;
         let observed = self.core.command(
             "workspace.observe",
             &json!({
                 "mutation": {
-                    "optimistic_version": 1,
+                    "optimistic_version": workspace.version(),
                     "idempotency_key": format!("coordinator-observe-{dispatch_request_id}"),
                 },
                 "workspace_id": workspace_id.value(),
@@ -416,6 +406,11 @@ impl CoordinatorLoop {
         if !record.reuse.reusable {
             return Err(ApiError::invalid_request(
                 "the prepared Workspace is not reusable under the reuse rules",
+            ));
+        }
+        if record.observation.branch.as_deref() != Some(branch.as_str()) {
+            return Err(ApiError::invalid_request(
+                "the created Workspace checkout must match the execution branch",
             ));
         }
         self.record_step(

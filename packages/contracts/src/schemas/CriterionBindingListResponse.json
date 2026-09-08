@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CriterionBindingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_index": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "evidence_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/CriterionKindDto"
+        },
+        "review": {
+          "$ref": "#/definitions/EvidenceReviewDto"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tip": {
+          "type": "string"
+        },
+        "void": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "criterion_index",
+        "evidence_id",
+        "kind",
+        "review",
+        "satisfied",
+        "ticket_id",
+        "tip",
+        "void"
+      ],
+      "type": "object"
+    },
+    "CriterionKindDto": {
+      "enum": [
+        "acceptance",
+        "task"
+      ],
+      "type": "string"
+    },
+    "EvidenceReviewDto": {
+      "enum": [
+        "pending",
+        "validated",
+        "rejected"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "bindings": {
+      "items": {
+        "$ref": "#/definitions/CriterionBindingRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "bindings"
+  ],
+  "title": "CriterionBindingListResponse",
+  "type": "object"
+}

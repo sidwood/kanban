@@ -20,6 +20,7 @@ pub mod event_catalog;
 pub mod events;
 pub mod evidence;
 pub mod exports;
+pub mod findings;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
@@ -31,15 +32,18 @@ pub mod profile;
 pub mod project;
 pub mod reassignment;
 pub mod review_config;
+pub mod review_execution;
 pub mod rulings;
 pub mod run;
 pub mod saved_views;
 pub mod schedule;
 pub mod search;
 pub mod spec;
+pub mod submission;
 pub mod telemetry;
 pub mod ticket;
 pub mod timeline;
+pub mod tip_binding;
 pub mod workspace;
 
 #[cfg(test)]
@@ -105,6 +109,7 @@ pub use ticket::TicketStore;
 pub use timeline::{
     TimelineEnvelope, TimelineError, TimelineFacts, TimelineQueryHandler, TimelineStore,
 };
+pub use tip_binding::CriterionBindingStore;
 pub use workspace::{
     WorkspaceGitObserver, WorkspaceGitSnapshot, WorkspaceStore, duplicate_path_error,
 };

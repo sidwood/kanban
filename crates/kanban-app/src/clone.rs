@@ -64,6 +64,15 @@ pub trait FleetCloneTool: Send + Sync {
 pub trait CloneGuardStore: Send + Sync {
     /// Append one timeline row.
     fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError>;
+    /// Persist before starting the external operation, outside its write span.
+    fn prepare_creation(&self, intent: &kanban_dto::CloneRecoveryRecord) -> Result<(), ApiError>;
+    /// Complete in the same atomic write as Workspace adoption and replay.
+    fn complete_creation(&self, key: &str, workspace_id: WorkspaceId) -> Result<(), ApiError>;
+    /// Pending effects are deliberately visible after a process restart.
+    fn pending_creations(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<kanban_dto::CloneRecoveryRecord>, ApiError>;
 }
 
 /// The filesystem probe the create guard reads before anything is
@@ -270,6 +279,34 @@ struct CloneContext {
     workspaces: Arc<dyn WorkspaceStore>,
     timeline: Arc<dyn CloneGuardStore>,
     probe: Arc<dyn CloneTargetProbe>,
+    git: Arc<dyn crate::workspace::WorkspaceGitObserver>,
+}
+
+impl CloneContext {
+    fn creation_conflict(
+        &self,
+        project: &kanban_domain::Project,
+        path: &str,
+        branch: &str,
+    ) -> Result<Option<CloneConflict>, ApiError> {
+        let facts: Vec<_> = self
+            .workspaces
+            .list_for_project(project.id())?
+            .iter()
+            .map(|workspace| {
+                let mut facts = WorkspaceCloneFacts::from_workspace(workspace);
+                facts.path = resolved_filesystem_identity(&facts.path);
+                facts
+            })
+            .collect();
+        Ok(clone_create_conflict(
+            &resolved_filesystem_identity(path),
+            branch,
+            &resolved_filesystem_identity(project.registration().seed_workspace()),
+            &facts,
+            self.probe.exists(path),
+        ))
+    }
 }
 
 impl Core {
@@ -284,6 +321,7 @@ impl Core {
         workspaces: Arc<dyn WorkspaceStore>,
         timeline: Arc<dyn CloneGuardStore>,
         probe: Arc<dyn CloneTargetProbe>,
+        git: Arc<dyn crate::workspace::WorkspaceGitObserver>,
     ) -> Result<(), RegistrationError> {
         let context = CloneContext {
             tool,
@@ -291,8 +329,14 @@ impl Core {
             workspaces,
             timeline,
             probe,
+            git,
         };
+        self.register_query(
+            "clone.recoveries",
+            Arc::new(CloneRecoveries(context.clone())),
+        )?;
         self.register_command("clone.create", Arc::new(CreateClone(context.clone())))?;
+        self.register_command("clone.adopt", Arc::new(AdoptClone(context.clone())))?;
         self.register_command("clone.remove", Arc::new(RemoveClone(context)))?;
         Ok(())
     }
@@ -320,6 +364,113 @@ fn load_workspace(
 /// only then — let the fleet skill create the clone.
 struct CreateClone(CloneContext);
 
+struct AdoptClone(CloneContext);
+impl CommandHandler for AdoptClone {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        let request: kanban_dto::CloneAdoptRequest = parse_payload(payload)?;
+        if request.intent_key.is_empty() {
+            return Err(ApiError::invalid_request("an intent key is required"));
+        }
+        ParsedCommand::lift("clone_adoption", payload)
+    }
+    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        events: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: kanban_dto::CloneAdoptRequest = parse_payload(&command.payload)?;
+        let project_id = ProjectId::new(request.project_id);
+        let project = load_project(&self.0.projects, project_id)?;
+        if project.is_archived() {
+            return Err(refuse(ARCHIVED_PROJECT_REFUSAL));
+        }
+        let intent = self
+            .0
+            .timeline
+            .pending_creations(project_id)?
+            .into_iter()
+            .find(|intent| intent.idempotency_key == request.intent_key)
+            .ok_or_else(|| ApiError::not_found("pending clone intent"))?;
+        if intent.source != project.registration().repository()
+            || resolved_filesystem_identity(&intent.path)
+                == resolved_filesystem_identity(project.registration().seed_workspace())
+        {
+            return Err(ApiError::invalid_request(
+                "the clone intent no longer matches the Project",
+            ));
+        }
+        let existing = self
+            .0
+            .workspaces
+            .list_for_project(project_id)?
+            .into_iter()
+            .find(|workspace| workspace.registration().path() == intent.path);
+        let workspace = match existing {
+            Some(mut workspace) => {
+                if workspace.registration().is_seed() || workspace.is_retired() {
+                    return Err(ApiError::invalid_request(
+                        "a Seed or retired Workspace cannot be adopted",
+                    ));
+                }
+                crate::workspace::observe_workspace(
+                    &mut workspace,
+                    &intent.source,
+                    self.0.workspaces.as_ref(),
+                    self.0.git.as_ref(),
+                    events,
+                )?;
+                workspace
+            }
+            None => crate::workspace::adopt_created_workspace(
+                self.0.workspaces.as_ref(),
+                self.0.git.as_ref(),
+                &project,
+                &intent.path,
+                events,
+            )?,
+        };
+        if !workspace.reuse_evaluation().reusable()
+            || workspace.observation().branch() != Some(intent.branch.as_str())
+            // The observer proves membership in source. Identity itself names
+            // this clone's Git common directory, not the source's path.
+            || workspace.observation().repository_identity().is_none()
+        {
+            return Err(ApiError::invalid_request(
+                "the surviving clone must be clean, unassigned, and match its recorded source and branch",
+            ));
+        }
+        self.0
+            .timeline
+            .complete_creation(&intent.idempotency_key, workspace.id())?;
+        self.0.timeline.append(clone_transition(
+            project_id,
+            workspace_entity(workspace.id()),
+            "clone_adoption_reconciled",
+            json!({"intent_key":intent.idempotency_key,
+                "path":intent.path,"branch":intent.branch,"source":intent.source}),
+        ))?;
+        crate::workspace::encode_record(&workspace)
+    }
+}
+
+struct CloneRecoveries(CloneContext);
+impl crate::dispatch::QueryHandler for CloneRecoveries {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let query: kanban_dto::CloneRecoveriesQuery = parse_payload(payload)?;
+        load_project(&self.0.projects, ProjectId::new(query.project_id))?;
+        encode(&kanban_dto::CloneRecoveriesResponse {
+            project_id: query.project_id,
+            attempts: self
+                .0
+                .timeline
+                .pending_creations(ProjectId::new(query.project_id))?,
+        })
+    }
+}
+
 impl CommandHandler for CreateClone {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
         parse_payload::<CloneCreateRequest>(payload)?;
@@ -329,6 +480,36 @@ impl CommandHandler for CreateClone {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         // A fresh clone target is created at version 0.
         Ok(0)
+    }
+
+    fn prepare(&self, command: &ParsedCommand) -> Result<(), ApiError> {
+        let request: CloneCreateRequest = parse_payload(&command.payload)?;
+        let project_id = ProjectId::new(request.project_id);
+        let project = load_project(&self.0.projects, project_id)?;
+        // Refusals still go through apply, which records their exact reason.
+        // A rejected precondition creates no external-effect intent.
+        if project.is_archived() {
+            return Ok(());
+        }
+        let Ok((path, branch)) = validate_clone_target(&request.path, &request.branch) else {
+            return Ok(());
+        };
+        if self
+            .0
+            .creation_conflict(&project, &path, &branch)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.0
+            .timeline
+            .prepare_creation(&kanban_dto::CloneRecoveryRecord {
+                project_id: request.project_id,
+                idempotency_key: command.idempotency_key.clone(),
+                path,
+                branch,
+                source: project.registration().repository().to_owned(),
+            })
     }
 
     fn apply(
@@ -362,27 +543,7 @@ impl CommandHandler for CreateClone {
         }
         let (path, branch) =
             validate_clone_target(&request.path, &request.branch).map_err(refuse)?;
-        let registered = self.0.workspaces.list_for_project(project_id)?;
-        // Every side of the conflict check is judged by the identity
-        // the filesystem gives the path, never by its spelling
-        // (KAN-T122); the refusal row below still records the
-        // spelling that was asked for.
-        let facts: Vec<_> = registered
-            .iter()
-            .map(|workspace| {
-                let mut facts = WorkspaceCloneFacts::from_workspace(workspace);
-                facts.path = resolved_filesystem_identity(&facts.path);
-                facts
-            })
-            .collect();
-        let target_exists = self.0.probe.exists(&path);
-        if let Some(conflict) = clone_create_conflict(
-            &resolved_filesystem_identity(&path),
-            &branch,
-            &resolved_filesystem_identity(project.registration().seed_workspace()),
-            &facts,
-            target_exists,
-        ) {
+        if let Some(conflict) = self.0.creation_conflict(&project, &path, &branch)? {
             record_after_discard(
                 &self.0.timeline,
                 events,
@@ -437,7 +598,31 @@ impl CommandHandler for CreateClone {
             );
             return Err(error);
         }
+        // The filesystem clone survives a rollback. Preserve its successful
+        // creation and incomplete adoption for deliberate operator repair.
+        record_after_discard(
+            &self.0.timeline,
+            events,
+            clone_transition(
+                project_id,
+                project_entity(project_id),
+                "clone_adoption_failed",
+                json!({"path": path, "branch": branch, "source": source,
+                    "message": "The clone was created, but Workspace adoption did not commit"}),
+            ),
+        );
+        let workspace = crate::workspace::adopt_created_workspace(
+            self.0.workspaces.as_ref(),
+            self.0.git.as_ref(),
+            &project,
+            &path,
+            events,
+        )?;
+        self.0
+            .timeline
+            .complete_creation(&command.idempotency_key, workspace.id())?;
         let record = CloneCreatedRecord {
+            workspace_id: workspace.id().value(),
             project_id: project_id.value(),
             path: path.clone(),
             branch: branch.clone(),
@@ -447,6 +632,7 @@ impl CommandHandler for CreateClone {
             project_entity(project_id),
             "branch_clone_created",
             json!({
+                "workspace_id": workspace.id().value(),
                 "path": path,
                 "branch": branch,
                 "source": source,
@@ -683,6 +869,7 @@ pub(crate) mod testing {
     #[derive(Default)]
     pub(crate) struct MemoryCloneGuardStore {
         rows: Mutex<Vec<TimelineEnvelope>>,
+        intents: Mutex<Vec<kanban_dto::CloneRecoveryRecord>>,
         pub(crate) outcomes: Mutex<Vec<Result<(), ApiError>>>,
     }
 
@@ -704,6 +891,47 @@ pub(crate) mod testing {
     }
 
     impl CloneGuardStore for MemoryCloneGuardStore {
+        fn prepare_creation(
+            &self,
+            intent: &kanban_dto::CloneRecoveryRecord,
+        ) -> Result<(), ApiError> {
+            let mut intents = self.intents.lock().unwrap();
+            if let Some(existing) = intents
+                .iter()
+                .find(|i| i.idempotency_key == intent.idempotency_key)
+            {
+                if existing != intent {
+                    return Err(ApiError::duplicate_idempotency_key(&intent.idempotency_key));
+                }
+            } else {
+                intents.push(intent.clone());
+            }
+            Ok(())
+        }
+        fn complete_creation(
+            &self,
+            key: &str,
+            _workspace_id: kanban_domain::WorkspaceId,
+        ) -> Result<(), ApiError> {
+            self.intents
+                .lock()
+                .unwrap()
+                .retain(|intent| intent.idempotency_key != key);
+            Ok(())
+        }
+        fn pending_creations(
+            &self,
+            project_id: kanban_domain::ProjectId,
+        ) -> Result<Vec<kanban_dto::CloneRecoveryRecord>, ApiError> {
+            Ok(self
+                .intents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|i| i.project_id == project_id.value())
+                .cloned()
+                .collect())
+        }
         fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError> {
             self.next_outcome()?;
             self.rows
@@ -819,7 +1047,7 @@ pub(crate) mod testing {
             Arc::new(MemoryTicketEvidence::default()),
         )
         .expect("the ticket operations register");
-        core.register_workspaces(workspaces.clone(), projects.clone(), observer)
+        core.register_workspaces(workspaces.clone(), projects.clone(), observer.clone())
             .expect("the workspace operations register");
         core.register_lanes(
             lanes.clone(),
@@ -834,6 +1062,7 @@ pub(crate) mod testing {
             workspaces.clone(),
             timeline.clone(),
             probe.clone(),
+            observer,
         )
         .expect("the clone operations register");
         CloneHarness {
@@ -961,6 +1190,37 @@ mod guarded_clone {
     }
 
     #[test]
+    fn created_clone_is_adopted_as_an_observed_workspace() {
+        let harness = observed_harness("/workspaces/kanban.fleet-t34", "fleet/kan-t34");
+        let payload = create("/workspaces/kanban.fleet-t34", "fleet/kan-t34", "adopt");
+        let response = harness.core.command("clone.create", &payload).unwrap();
+        assert_eq!(response["workspace_id"], 1);
+        let (stored, rows) = harness.workspaces.snapshot();
+        assert_eq!(stored.len(), 1);
+        assert!(!stored[0].registration().is_seed());
+        assert_eq!(
+            stored[0].registration().path(),
+            response["path"].as_str().unwrap()
+        );
+        assert_eq!(stored[0].observation().branch(), Some("fleet/kan-t34"));
+        assert_eq!(
+            stored[0].health(),
+            kanban_domain::WorkspaceHealth::Available
+        );
+        assert!(rows.iter().any(|r| r.detail()["action"] == "registered"));
+        assert!(
+            rows.iter()
+                .any(|r| r.detail()["action"] == "health_changed")
+        );
+        assert_eq!(
+            harness.core.command("clone.create", &payload).unwrap(),
+            response
+        );
+        assert_eq!(harness.workspaces.snapshot().0.len(), 1);
+        assert_eq!(harness.tool.calls().len(), 1);
+    }
+
+    #[test]
     fn creating_invokes_the_fleet_skill_with_the_registered_repository() {
         let harness = clone_harness();
 
@@ -1021,9 +1281,16 @@ mod guarded_clone {
             .lock()
             .expect("the sink lock is sound")
             .clone();
-        assert_eq!(events.len(), 1, "one live event, nothing else");
-        assert_eq!(events[0].0, "clone.created");
-        assert_eq!(events[0].1["path"], json!("/workspaces/kanban.fleet-t34"));
+        assert_eq!(
+            events.iter().map(|e| e.0.as_str()).collect::<Vec<_>>(),
+            [
+                "workspace.registered",
+                "workspace.observed",
+                "clone.created"
+            ]
+        );
+        assert_eq!(events[2].1["path"], json!("/workspaces/kanban.fleet-t34"));
+        assert_eq!(events[2].1["workspace_id"], 1);
     }
 
     #[test]
@@ -1513,7 +1780,10 @@ mod guarded_clone {
             .collect();
         assert_eq!(
             actions,
-            vec![json!("clone_create_invoked")],
+            vec![
+                json!("clone_create_invoked"),
+                json!("clone_adoption_failed")
+            ],
             "the invocation evidence remains, and no creation row lands: {rows:?}"
         );
         assert_eq!(

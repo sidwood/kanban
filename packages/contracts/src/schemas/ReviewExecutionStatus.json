@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "enum": [
+    "in_progress",
+    "approved",
+    "rejected",
+    "expired"
+  ],
+  "title": "ReviewExecutionStatus",
+  "type": "string"
+}

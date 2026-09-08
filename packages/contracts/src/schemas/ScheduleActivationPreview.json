@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "local": {
+      "type": "string"
+    },
+    "utc": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "local",
+    "utc"
+  ],
+  "title": "ScheduleActivationPreview",
+  "type": "object"
+}

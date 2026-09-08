@@ -43,25 +43,25 @@ use kanban_dto::{
     ProjectSchedulePolicySetRequest, RulingListQuery, RulingListResponse, RulingRecord,
     RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
     RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
-    ScheduleAttentionListResponse, SearchGlobalQuery, SearchGlobalResponse,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
-    SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecIntegrationApproveRequest,
-    SpecIntegrationClaimRequest, SpecIntegrationRecord, SpecListQuery, SpecListResponse,
-    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
-    SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
-    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
-    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
-    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
-    TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
-    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
-    TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
-    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
-    TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
-    TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
-    TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineQuery,
-    TimelineQueryResponse, ViewCreateRequest, ViewListQuery, ViewListResponse, ViewRemoveRequest,
-    ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
+    ScheduleAttentionListResponse, ScheduleGetQuery, ScheduleGetResponse, SchedulePreviewQuery,
+    SchedulePreviewResponse, SearchGlobalQuery, SearchGlobalResponse, SpecContentUpdateRequest,
+    SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCoverageMatrixQuery,
+    SpecCoverageMatrixResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecGetResponse, SpecIntegrationApproveRequest, SpecIntegrationClaimRequest,
+    SpecIntegrationRecord, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+    TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
+    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
+    TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphListResponse,
+    TicketGraphProposeRequest, TicketGraphRecord, TicketListQuery, TicketListResponse,
+    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
+    TicketReassignRequest, TicketRecord, TicketReviewConfigQuery, TicketReviewConfigRecord,
+    TicketReviewConfigResponse, TicketReviewConfigureRequest, TicketReviewRequest,
+    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
+    TimelineQuery, TimelineQueryResponse, ViewCreateRequest, ViewListQuery, ViewListResponse,
+    ViewRemoveRequest, ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
     WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
     WorkspaceRetireRequest,
 };
@@ -241,6 +241,32 @@ async fn project_schedule_policy_set(
             "project schedule policy set",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn schedule_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ScheduleGetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ScheduleGetQuery>(request)?;
+    run_blocking(shell, "schedule get", |shell| {
+        forward_query(shell, "schedule.get", "schedule get", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn schedule_preview(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<SchedulePreviewResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SchedulePreviewQuery>(request)?;
+    run_blocking(shell, "schedule preview", |shell| {
+        forward_query(shell, "schedule.preview", "schedule preview", request)
     })
     .await
 }
@@ -2080,6 +2106,8 @@ shell_handlers::shell_handler_catalogue! {
     initiative_archive,
     initiative_list,
     project_register,
+    schedule_get,
+    schedule_preview,
     schedule_attention_list,
     project_schedule_policy_get,
     project_schedule_policy_set,

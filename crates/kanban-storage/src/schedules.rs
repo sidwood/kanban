@@ -14,6 +14,7 @@
 use kanban_app::{DueActivation, ScheduleStore, TimelineEnvelope};
 use kanban_domain::{Schedule, ScheduleId, ScheduleState, ScheduleTrigger, Ticket};
 use kanban_dto::ApiError;
+use rusqlite::OptionalExtension;
 use rusqlite::params;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -268,6 +269,24 @@ fn identified(schedule: &Schedule, id: ScheduleId) -> Schedule {
 /// Report a SQLite failure the caller cannot act on.
 fn internal(error: rusqlite::Error) -> ApiError {
     ApiError::internal(&error.to_string())
+}
+
+impl kanban_app::schedule_preview::ScheduleReadStore for SqliteScheduleStore {
+    fn get(&self, ticket: kanban_domain::TicketId) -> Result<Option<Schedule>, ApiError> {
+        let conn = self.lock();
+        let sql = format!(
+            "SELECT {}, {}, {} FROM schedules s
+            JOIN tickets t ON t.id=s.ticket_id JOIN projects p ON p.id=t.project_id
+            WHERE s.ticket_id=?1",
+            qualified(crate::tickets::TICKET_COLUMNS, "t"),
+            qualified(crate::projects::PROJECT_COLUMNS, "p"),
+            SCHEDULE_COLUMNS
+        );
+        conn.query_row(&sql, [ticket.value() as i64], load_due_row)
+            .optional()
+            .map(|due| due.map(|due| due.schedule))
+            .map_err(internal)
+    }
 }
 
 #[cfg(test)]

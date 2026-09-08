@@ -372,6 +372,11 @@ fn assemble_core(
         lane_store.clone(),
         Arc::new(git_landing::LocalGitLanding),
     )?;
+    core.register_schedule_preview()?;
+    core.register_schedule_reads(
+        Arc::new(kanban_storage::SqliteScheduleStore::new(&database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
+    )?;
     core.register_scheduling_policy(
         Arc::new(kanban_storage::recurrence::SqliteRecurrenceStore::new(
             &database,

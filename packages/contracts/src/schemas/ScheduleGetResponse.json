@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ScheduleRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "activation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cron": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "next_activation": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "next_activation",
+        "profile",
+        "timezone"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ScheduleRecord"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ticket_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "title": "ScheduleGetResponse",
+  "type": "object"
+}

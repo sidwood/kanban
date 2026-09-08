@@ -10,6 +10,7 @@ import type {
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import TicketEditorView from './TicketEditorView.vue'
+import ScheduleEditor from '../components/ScheduleEditor.vue'
 
 const project = {
   id: 4,
@@ -132,6 +133,7 @@ async function mountView(transport: ShellTransport) {
   const wrapper = mount(TicketEditorView, {
     global: {
       plugins: [createPinia()],
+      stubs: { RouterLink: true },
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })
@@ -339,4 +341,18 @@ describe('TicketEditorView', () => {
       'an Implementation Ticket carries story-linked criteria',
     )
   })
+
+  it('provides the schedule editor and refreshes after a saved schedule', async () => {
+    const { transport, operations } = harness()
+    const wrapper = await mountView(transport)
+    const schedule = wrapper.findComponent(ScheduleEditor)
+    expect(schedule.exists()).toBe(true)
+    expect(schedule.props('tickets')).toEqual(tickets)
+    expect(schedule.props('projectCode')).toBe('CORE')
+    const before = operations.filter((op) => op.name === 'ticket.list').length
+    schedule.vm.$emit('saved', tickets[2]!)
+    await flushPromises()
+    expect(operations.filter((op) => op.name === 'ticket.list')).toHaveLength(before + 1)
+  })
+
 })

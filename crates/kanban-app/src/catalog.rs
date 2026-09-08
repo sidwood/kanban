@@ -99,6 +99,20 @@ define_exposed_catalogue! {
         mcp: "project_register",
         description: "Register a Project with one Git repository, Seed Workspace, default branch, and exclusive Herdr session.",
     },
+    "schedule.get" => {
+        kind: Query,
+        request: "ScheduleGetQuery",
+        response: "ScheduleGetResponse",
+        mcp: "schedule_get",
+        description: "Read the standing Schedule of a Ticket before editing its timing and profile.",
+    },
+    "schedule.preview" => {
+        kind: Query,
+        request: "SchedulePreviewQuery",
+        response: "SchedulePreviewResponse",
+        mcp: "schedule_preview",
+        description: "Preview UTC and local activations with the scheduler's exact DST rules, without saving.",
+    },
     "schedule.attention.list" => {
         kind: Query,
         request: "ScheduleAttentionListQuery",

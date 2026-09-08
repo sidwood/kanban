@@ -32,6 +32,7 @@ import {
 } from '../stores/bug-editor'
 import type { TicketRecord } from '@kanban/contracts'
 import ReviewConfigEditor from '../components/ReviewConfigEditor.vue'
+import ScheduleEditor from '../components/ScheduleEditor.vue'
 
 const transport = inject(kanbanTransportKey)
 const projects = useProjectRegisterStore()
@@ -151,6 +152,12 @@ async function submitCreate(): Promise<void> {
     if (landed) {
       draft.value = blankTicketDraft()
     }
+  }
+}
+
+async function scheduleSaved(ticket: TicketRecord): Promise<void> {
+  if (transport && ticket.project_id === pickedProjectId.value) {
+    await editor.refresh(transport, ticket.project_id)
   }
 }
 
@@ -598,6 +605,14 @@ const kindLabels: Record<string, string> = {
         </button>
       </form>
     </section>
+
+    <ScheduleEditor
+      v-if="editor.loaded && editor.tickets.length > 0"
+      :key="pickedProjectId ?? 'none'"
+      :tickets="editor.tickets"
+      :project-code="projectCode"
+      @saved="scheduleSaved"
+    />
 
     <ReviewConfigEditor
       v-if="editor.loaded && editor.tickets.length > 0"

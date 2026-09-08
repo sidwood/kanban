@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "activation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cron": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "next_activation": {
+      "type": "string"
+    },
+    "profile": {
+      "type": "string"
+    },
+    "timezone": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "next_activation",
+    "profile",
+    "timezone"
+  ],
+  "title": "ScheduleRecord",
+  "type": "object"
+}

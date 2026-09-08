@@ -974,6 +974,10 @@ export type SavedViewRecord = {
   sorting: ViewSorting;
   version: number;
 };
+export type ScheduleActivationPreview = {
+  local: string;
+  utc: string;
+};
 export type ScheduleAttentionListQuery = {
   project_id: number;
 };
@@ -991,6 +995,38 @@ export type ScheduleAttentionRecord = {
   schedule_id: number;
   template_ticket_id: number;
   updated_at: string;
+};
+export type ScheduleDstBehaviour = {
+  fall_back: string;
+  kind: ScheduleDstKind;
+  spring_forward: string;
+};
+export type ScheduleDstKind = 'fixed_instant' | 'fixed_time' | 'interval_wildcard';
+export type ScheduleGetQuery = {
+  ticket_id: number;
+};
+export type ScheduleGetResponse = {
+  schedule?: ScheduleRecord | null;
+  ticket_id: number;
+};
+export type SchedulePreviewQuery = {
+  activation?: string | null;
+  after: string;
+  count: number;
+  cron?: string | null;
+  timezone: string;
+};
+export type SchedulePreviewResponse = {
+  activations: ScheduleActivationPreview[];
+  dst_behaviour: ScheduleDstBehaviour;
+};
+export type ScheduleRecord = {
+  activation?: string | null;
+  cron?: string | null;
+  id: number;
+  next_activation: string;
+  profile: string;
+  timezone: string;
 };
 export type SchedulerHealth = {
   last_backup_success_at?: string | null;

@@ -26,10 +26,15 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod recurrence;
+pub mod schedule_preview;
 pub use recurrence::{
     ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord, ProjectSchedulePolicySetRequest,
     ScheduleAttentionListQuery, ScheduleAttentionListResponse, ScheduleAttentionReason,
     ScheduleAttentionRecord,
+};
+pub use schedule_preview::{
+    ScheduleActivationPreview, ScheduleDstBehaviour, ScheduleDstKind, ScheduleGetQuery,
+    ScheduleGetResponse, SchedulePreviewQuery, SchedulePreviewResponse, ScheduleRecord,
 };
 pub mod review;
 pub use finding::{
@@ -528,6 +533,14 @@ mod tests {
                 "LaneTicketReleaseRequest",
                 "LaneListQuery",
                 "LaneListResponse",
+                "SchedulePreviewQuery",
+                "SchedulePreviewResponse",
+                "ScheduleDstBehaviour",
+                "ScheduleDstKind",
+                "ScheduleActivationPreview",
+                "ScheduleGetQuery",
+                "ScheduleGetResponse",
+                "ScheduleRecord",
                 "LandingBugRequest",
                 "LandingLaneRequest",
                 "LandingRecord",

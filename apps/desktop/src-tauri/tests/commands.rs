@@ -520,6 +520,10 @@ fn sample_request(schema: &str) -> Value {
             json!({"mutation":mutation,"project_id":1,"catch_up_one":false})
         }
         "ScheduleAttentionListQuery" => json!({"project_id":1}),
+        "ScheduleGetQuery" => json!({"ticket_id":1}),
+        "SchedulePreviewQuery" => {
+            json!({"cron":"0 9 * * *","timezone":"UTC","after":"2026-09-08T00:00:00Z","count":5})
+        }
         "SpecIntegrationClaimRequest" => {
             json!({"mutation":mutation,"spec_id":1,"branch":"kan-s1","workspace_path":"/workspaces/kanban.kan-s1"})
         }
@@ -813,6 +817,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "ScheduleAttentionListQuery" => {
             decode_invoke_args::<kanban_dto::ScheduleAttentionListQuery>(request).is_err()
+        }
+        "ScheduleGetQuery" => decode_invoke_args::<kanban_dto::ScheduleGetQuery>(request).is_err(),
+        "SchedulePreviewQuery" => {
+            decode_invoke_args::<kanban_dto::SchedulePreviewQuery>(request).is_err()
         }
         "SpecIntegrationClaimRequest" => {
             decode_invoke_args::<kanban_dto::SpecIntegrationClaimRequest>(request).is_err()

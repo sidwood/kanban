@@ -39,6 +39,7 @@ pub mod rulings;
 pub mod run;
 pub mod saved_views;
 pub mod schedule;
+pub mod schedule_preview;
 pub mod search;
 pub mod spec;
 pub mod submission;

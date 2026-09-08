@@ -32,6 +32,7 @@ pub mod ruling;
 pub mod run;
 pub mod saved_view;
 pub mod schedule;
+pub mod schedule_preview;
 pub mod search;
 pub mod spec;
 pub mod ticket;

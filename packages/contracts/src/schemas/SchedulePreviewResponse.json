@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ScheduleActivationPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "local": {
+          "type": "string"
+        },
+        "utc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "local",
+        "utc"
+      ],
+      "type": "object"
+    },
+    "ScheduleDstBehaviour": {
+      "additionalProperties": false,
+      "properties": {
+        "fall_back": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ScheduleDstKind"
+        },
+        "spring_forward": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fall_back",
+        "kind",
+        "spring_forward"
+      ],
+      "type": "object"
+    },
+    "ScheduleDstKind": {
+      "enum": [
+        "fixed_instant",
+        "fixed_time",
+        "interval_wildcard"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "activations": {
+      "items": {
+        "$ref": "#/definitions/ScheduleActivationPreview"
+      },
+      "type": "array"
+    },
+    "dst_behaviour": {
+      "$ref": "#/definitions/ScheduleDstBehaviour"
+    }
+  },
+  "required": [
+    "activations",
+    "dst_behaviour"
+  ],
+  "title": "SchedulePreviewResponse",
+  "type": "object"
+}

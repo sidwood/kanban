@@ -677,6 +677,29 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("LaneListQuery", schema_for!(LaneListQuery)),
         ("LaneListResponse", schema_for!(LaneListResponse)),
+        (
+            "SchedulePreviewQuery",
+            schema_for!(crate::SchedulePreviewQuery),
+        ),
+        (
+            "SchedulePreviewResponse",
+            schema_for!(crate::SchedulePreviewResponse),
+        ),
+        (
+            "ScheduleDstBehaviour",
+            schema_for!(crate::ScheduleDstBehaviour),
+        ),
+        ("ScheduleDstKind", schema_for!(crate::ScheduleDstKind)),
+        (
+            "ScheduleActivationPreview",
+            schema_for!(crate::ScheduleActivationPreview),
+        ),
+        ("ScheduleGetQuery", schema_for!(crate::ScheduleGetQuery)),
+        (
+            "ScheduleGetResponse",
+            schema_for!(crate::ScheduleGetResponse),
+        ),
+        ("ScheduleRecord", schema_for!(crate::ScheduleRecord)),
         ("LandingBugRequest", schema_for!(LandingBugRequest)),
         ("LandingLaneRequest", schema_for!(LandingLaneRequest)),
         ("LandingRecord", schema_for!(LandingRecord)),

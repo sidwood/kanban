@@ -67,6 +67,11 @@ fn harness() -> Harness {
         Arc::new(SqliteProjectStore::new(&database)),
     )
     .unwrap();
+    core.register_schedule_reads(
+        Arc::new(SqliteScheduleStore::new(&database)),
+        Arc::new(SqliteTicketStore::new(&database)),
+    )
+    .unwrap();
     Harness {
         core,
         _database: database,
@@ -606,5 +611,30 @@ fn recurrence_two_writers_cannot_duplicate_a_window() {
         })
         .unwrap(),
         3
+    );
+}
+
+#[test]
+fn schedule_editor_reads_the_standing_schedule_before_replacing_it() {
+    let h = scheduled_pair();
+    let result = h
+        .core
+        .query("schedule.get", &json!({"ticket_id":2}))
+        .expect("the editor can load its existing Schedule");
+    assert_eq!(
+        result,
+        json!({
+            "ticket_id":2,
+            "schedule":{
+                "id":1,"activation":null,"cron":"*/15 * * * *","timezone":"UTC",
+                "profile":"standard","next_activation":"2026-09-08T09:15:00.000Z",
+            },
+        })
+    );
+    assert_eq!(
+        h.core
+            .query("schedule.get", &json!({"ticket_id":1}))
+            .unwrap(),
+        json!({"ticket_id":1,"schedule":null})
     );
 }

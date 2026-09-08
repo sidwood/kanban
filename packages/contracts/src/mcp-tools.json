@@ -834,6 +834,200 @@
     }
   },
   {
+    "description": "Read the standing Schedule of a Ticket before editing its timing and profile.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticket_id"
+      ],
+      "title": "ScheduleGetQuery",
+      "type": "object"
+    },
+    "name": "schedule_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ScheduleRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "activation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cron": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "next_activation": {
+              "type": "string"
+            },
+            "profile": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "next_activation",
+            "profile",
+            "timezone"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "schedule": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ScheduleRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticket_id"
+      ],
+      "title": "ScheduleGetResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Preview UTC and local activations with the scheduler's exact DST rules, without saving.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "activation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "after": {
+          "type": "string"
+        },
+        "count": {
+          "format": "uint8",
+          "maximum": 20.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "cron": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "after",
+        "count",
+        "timezone"
+      ],
+      "title": "SchedulePreviewQuery",
+      "type": "object"
+    },
+    "name": "schedule_preview",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ScheduleActivationPreview": {
+          "additionalProperties": false,
+          "properties": {
+            "local": {
+              "type": "string"
+            },
+            "utc": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "local",
+            "utc"
+          ],
+          "type": "object"
+        },
+        "ScheduleDstBehaviour": {
+          "additionalProperties": false,
+          "properties": {
+            "fall_back": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/ScheduleDstKind"
+            },
+            "spring_forward": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "fall_back",
+            "kind",
+            "spring_forward"
+          ],
+          "type": "object"
+        },
+        "ScheduleDstKind": {
+          "enum": [
+            "fixed_instant",
+            "fixed_time",
+            "interval_wildcard"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "activations": {
+          "items": {
+            "$ref": "#/definitions/ScheduleActivationPreview"
+          },
+          "type": "array"
+        },
+        "dst_behaviour": {
+          "$ref": "#/definitions/ScheduleDstBehaviour"
+        }
+      },
+      "required": [
+        "activations",
+        "dst_behaviour"
+      ],
+      "title": "SchedulePreviewResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Read consolidated missed-window and overlap attention for a Project.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

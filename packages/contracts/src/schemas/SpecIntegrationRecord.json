@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "approved_tip": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "base_tip": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "review_approved": {
+      "type": "boolean"
+    },
+    "spec_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "workspace_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "workspace_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "base_tip",
+    "branch",
+    "review_approved",
+    "spec_id",
+    "workspace_path"
+  ],
+  "title": "SpecIntegrationRecord",
+  "type": "object"
+}

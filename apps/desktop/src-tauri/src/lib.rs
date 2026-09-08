@@ -30,26 +30,28 @@ use kanban_dto::{
     HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
-    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
-    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanDiagnosticsQuery, PlanDiagnosticsResponse, PlanEdgeAddRequest,
-    PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse,
-    PlanRecord, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest,
-    ProfileDefineRequest, ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord,
-    ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery,
-    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, RulingListQuery,
-    RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SavedViewRecord,
-    SearchGlobalQuery, SearchGlobalResponse, SpecContentUpdateRequest, SpecCoverageCheckQuery,
-    SpecCoverageCheckResponse, SpecCoverageMatrixQuery, SpecCoverageMatrixResponse,
-    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecListQuery,
-    SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
-    SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest,
-    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketBugFactsRequest,
-    TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery,
-    TicketDependenciesResponse, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
-    TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
+    LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest, LaneCreateRequest,
+    LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest, LaneTicketReleaseRequest,
+    LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest, PlanActivateRequest,
+    PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest,
+    PlanDiagnosticsQuery, PlanDiagnosticsResponse, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
+    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
+    ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord, ProfileRetireRequest,
+    ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
+    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
+    RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
+    RunListResponse, RunRecord, SavedViewRecord, SearchGlobalQuery, SearchGlobalResponse,
+    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
+    SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
+    SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecIntegrationApproveRequest,
+    SpecIntegrationClaimRequest, SpecIntegrationRecord, SpecListQuery, SpecListResponse,
+    SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest, SpecVersionGetQuery,
+    SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest, TicketBlockerAddRequest,
+    TicketBlockerRemoveRequest, TicketBugFactsRequest, TicketBugQualifyRequest,
+    TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery, TicketDependenciesResponse,
+    TicketDependencyAddRequest, TicketDependencyRemoveRequest, TicketEditRequest,
+    TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
     TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
     TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
@@ -507,6 +509,81 @@ async fn spec_execution_move(
             "moved Spec execution",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_integration_claim(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<SpecIntegrationRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecIntegrationClaimRequest>(request)?;
+    run_blocking(shell, "spec integration claim", |shell| {
+        forward_command(
+            shell,
+            "spec.integration.claim",
+            "claimed Spec integration",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn spec_integration_approve(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<SpecIntegrationRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<SpecIntegrationApproveRequest>(request)?;
+    run_blocking(shell, "spec integration approve", |shell| {
+        forward_command(
+            shell,
+            "spec.integration.approve",
+            "approved Spec integration",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn landing_lane(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<LandingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<LandingLaneRequest>(request)?;
+    run_blocking(shell, "landing lane", |shell| {
+        forward_command(shell, "landing.lane", "landed lane", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn landing_seed(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<LandingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<LandingSeedRequest>(request)?;
+    run_blocking(shell, "landing seed", |shell| {
+        forward_command(shell, "landing.seed", "landed seed", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn landing_bug(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<LandingRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<LandingBugRequest>(request)?;
+    run_blocking(shell, "landing bug", |shell| {
+        forward_command(shell, "landing.bug", "landed bug", request)
     })
     .await
 }
@@ -1969,6 +2046,11 @@ shell_handlers::shell_handler_catalogue! {
     spec_version_supersede,
     spec_plan_join,
     spec_execution_move,
+    spec_integration_claim,
+    spec_integration_approve,
+    landing_lane,
+    landing_seed,
+    landing_bug,
     spec_list,
     spec_get,
     spec_version_get,

@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "from_branch": {
+      "type": "string"
+    },
+    "from_path": {
+      "type": "string"
+    },
+    "from_tip": {
+      "type": "string"
+    },
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "into_branch": {
+      "type": "string"
+    },
+    "into_path": {
+      "type": "string"
+    },
+    "into_tip": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "landed_tip": {
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "spec_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "ticket_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "from_branch",
+    "from_path",
+    "from_tip",
+    "id",
+    "into_branch",
+    "into_path",
+    "into_tip",
+    "kind",
+    "landed_tip",
+    "project_id"
+  ],
+  "title": "LandingRecord",
+  "type": "object"
+}

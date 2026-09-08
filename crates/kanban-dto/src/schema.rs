@@ -7,7 +7,9 @@ use crate::{
     CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
     CriterionInvalidateRequest, CriterionKindDto, CriterionSatisfyRequest, DeferralPromoteRequest,
     DeferralPromoteResponse, DeferralPromotionRecord, DeferralPromotionTarget, EvidenceReviewDto,
-    FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord,
+    FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord, LandingBugRequest,
+    LandingLaneRequest, LandingRecord, LandingSeedRequest, SpecIntegrationApproveRequest,
+    SpecIntegrationClaimRequest, SpecIntegrationRecord,
 };
 use crate::{
     FindingSeverity, ReviewAttemptRecord, ReviewBounceRecord, ReviewExecutionRecord,
@@ -675,6 +677,19 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ),
         ("LaneListQuery", schema_for!(LaneListQuery)),
         ("LaneListResponse", schema_for!(LaneListResponse)),
+        ("LandingBugRequest", schema_for!(LandingBugRequest)),
+        ("LandingLaneRequest", schema_for!(LandingLaneRequest)),
+        ("LandingRecord", schema_for!(LandingRecord)),
+        ("LandingSeedRequest", schema_for!(LandingSeedRequest)),
+        (
+            "SpecIntegrationApproveRequest",
+            schema_for!(SpecIntegrationApproveRequest),
+        ),
+        (
+            "SpecIntegrationClaimRequest",
+            schema_for!(SpecIntegrationClaimRequest),
+        ),
+        ("SpecIntegrationRecord", schema_for!(SpecIntegrationRecord)),
         ("CloneAdoptRequest", schema_for!(CloneAdoptRequest)),
         ("CloneCreateRequest", schema_for!(CloneCreateRequest)),
         ("CloneRecoveriesQuery", schema_for!(CloneRecoveriesQuery)),

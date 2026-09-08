@@ -18,6 +18,7 @@ pub mod gate_revalidation;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
+pub mod landing;
 pub mod lane;
 pub mod lifecycle;
 pub mod plan;
@@ -82,6 +83,9 @@ pub use graph_proposal::{
 pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
+};
+pub use landing::{
+    LandingKind, LandingRefusal, LandingRequest, land_lane, land_seed, land_standalone_bug,
 };
 pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
 pub use lifecycle::{

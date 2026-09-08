@@ -19,6 +19,7 @@ pub mod finding;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
+pub mod landing;
 pub mod lane;
 pub mod mutation;
 pub mod plan;
@@ -109,6 +110,10 @@ pub use herdr::{
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
+};
+pub use landing::{
+    LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest,
+    SpecIntegrationApproveRequest, SpecIntegrationClaimRequest, SpecIntegrationRecord,
 };
 pub use lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -517,6 +522,13 @@ mod tests {
                 "LaneTicketReleaseRequest",
                 "LaneListQuery",
                 "LaneListResponse",
+                "LandingBugRequest",
+                "LandingLaneRequest",
+                "LandingRecord",
+                "LandingSeedRequest",
+                "SpecIntegrationApproveRequest",
+                "SpecIntegrationClaimRequest",
+                "SpecIntegrationRecord",
                 "CloneAdoptRequest",
                 "CloneCreateRequest",
                 "CloneRecoveriesQuery",

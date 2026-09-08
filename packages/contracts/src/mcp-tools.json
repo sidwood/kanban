@@ -4211,6 +4211,595 @@
     }
   },
   {
+    "description": "Claim the Spec's integration branch and Workspace.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "branch",
+        "mutation",
+        "spec_id",
+        "workspace_path"
+      ],
+      "title": "SpecIntegrationClaimRequest",
+      "type": "object"
+    },
+    "name": "spec_integration_claim",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "approved_tip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base_tip": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "review_approved": {
+          "type": "boolean"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "base_tip",
+        "branch",
+        "review_approved",
+        "spec_id",
+        "workspace_path"
+      ],
+      "title": "SpecIntegrationRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Approve the combined Spec result before Seed landing.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "reviewed_tip": {
+          "type": "string"
+        },
+        "reviewer": {
+          "type": "string"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "evidence",
+        "mutation",
+        "reviewed_tip",
+        "reviewer",
+        "spec_id"
+      ],
+      "title": "SpecIntegrationApproveRequest",
+      "type": "object"
+    },
+    "name": "spec_integration_approve",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "approved_tip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base_tip": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "review_approved": {
+          "type": "boolean"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "base_tip",
+        "branch",
+        "review_approved",
+        "spec_id",
+        "workspace_path"
+      ],
+      "title": "SpecIntegrationRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Land a Ticket Lane into the Spec integration branch.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "from_path": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_path",
+        "into_path",
+        "mutation",
+        "project_id",
+        "spec_id"
+      ],
+      "title": "LandingLaneRequest",
+      "type": "object"
+    },
+    "name": "landing_lane",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "from_branch": {
+          "type": "string"
+        },
+        "from_path": {
+          "type": "string"
+        },
+        "from_tip": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "into_branch": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "into_tip": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "landed_tip": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_branch",
+        "from_path",
+        "from_tip",
+        "id",
+        "into_branch",
+        "into_path",
+        "into_tip",
+        "kind",
+        "landed_tip",
+        "project_id"
+      ],
+      "title": "LandingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Land an approved Spec integration through the Seed Workspace.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "from_path": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_path",
+        "into_path",
+        "mutation",
+        "project_id",
+        "spec_id"
+      ],
+      "title": "LandingSeedRequest",
+      "type": "object"
+    },
+    "name": "landing_seed",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "from_branch": {
+          "type": "string"
+        },
+        "from_path": {
+          "type": "string"
+        },
+        "from_tip": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "into_branch": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "into_tip": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "landed_tip": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_branch",
+        "from_path",
+        "from_tip",
+        "id",
+        "into_branch",
+        "into_path",
+        "into_tip",
+        "kind",
+        "landed_tip",
+        "project_id"
+      ],
+      "title": "LandingRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Land a standalone Bug through the Seed when no active Spec is attached.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "from_path": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_path",
+        "into_path",
+        "mutation",
+        "project_id",
+        "ticket_id"
+      ],
+      "title": "LandingBugRequest",
+      "type": "object"
+    },
+    "name": "landing_bug",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "from_branch": {
+          "type": "string"
+        },
+        "from_path": {
+          "type": "string"
+        },
+        "from_tip": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "into_branch": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "into_tip": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "landed_tip": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_branch",
+        "from_path",
+        "from_tip",
+        "id",
+        "into_branch",
+        "into_path",
+        "into_tip",
+        "kind",
+        "landed_tip",
+        "project_id"
+      ],
+      "title": "LandingRecord",
+      "type": "object"
+    }
+  },
+  {
     "description": "List every Spec of a Project, terminal execution states included.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

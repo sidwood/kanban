@@ -264,6 +264,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "gate revalidation",
         sql: include_str!("../migrations/0042_gate_revalidation.sql"),
     },
+    Migration {
+        version: 43,
+        name: "landings",
+        sql: include_str!("../migrations/0043_landings.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1823,6 +1828,10 @@ mod tests {
                 PendingMigration {
                     version: 42,
                     name: "gate revalidation"
+                },
+                PendingMigration {
+                    version: 43,
+                    name: "landings"
                 },
             ]]
         );

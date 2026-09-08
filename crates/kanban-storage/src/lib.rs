@@ -18,6 +18,7 @@ pub mod graph_proposals;
 pub mod herdr;
 pub mod idempotency;
 pub mod initiatives;
+pub mod landing;
 pub mod lanes;
 pub mod migrations;
 pub mod paths;
@@ -63,6 +64,7 @@ pub use graph_proposals::SqliteGraphProposalStore;
 pub use herdr::SqliteHerdrSettingsStore;
 pub use idempotency::{RetentionPolicy, SqliteIdempotencyStore};
 pub use initiatives::SqliteInitiativeStore;
+pub use landing::SqliteLandingStore;
 pub use lanes::SqliteLaneStore;
 pub use migrations::{
     AllowAllMigrations, Migration, MigrationReport, PendingMigration, PreMigrationHook,

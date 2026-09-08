@@ -519,6 +519,41 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
+export type LandingBugRequest = {
+  from_path: string;
+  into_path: string;
+  mutation: MutationContext;
+  project_id: number;
+  ticket_id: number;
+};
+export type LandingLaneRequest = {
+  from_path: string;
+  into_path: string;
+  mutation: MutationContext;
+  project_id: number;
+  spec_id: number;
+};
+export type LandingRecord = {
+  from_branch: string;
+  from_path: string;
+  from_tip: string;
+  id: number;
+  into_branch: string;
+  into_path: string;
+  into_tip: string;
+  kind: string;
+  landed_tip: string;
+  project_id: number;
+  spec_id?: number | null;
+  ticket_id?: number | null;
+};
+export type LandingSeedRequest = {
+  from_path: string;
+  into_path: string;
+  mutation: MutationContext;
+  project_id: number;
+  spec_id: number;
+};
 export type LaneCreateRequest = {
   mutation: MutationContext;
   project_id: number;
@@ -1009,6 +1044,28 @@ export type SpecGetQuery = {
 export type SpecGetResponse = {
   spec: SpecRecord;
   versions: SpecVersionRecord[];
+};
+export type SpecIntegrationApproveRequest = {
+  evidence: string;
+  mutation: MutationContext;
+  reviewed_tip: string;
+  reviewer: string;
+  spec_id: number;
+};
+export type SpecIntegrationClaimRequest = {
+  branch: string;
+  mutation: MutationContext;
+  spec_id: number;
+  workspace_path: string;
+};
+export type SpecIntegrationRecord = {
+  approved_tip?: string | null;
+  base_tip: string;
+  branch: string;
+  review_approved: boolean;
+  spec_id: number;
+  workspace_id?: number | null;
+  workspace_path: string;
 };
 export type SpecListQuery = {
   project_id: number;

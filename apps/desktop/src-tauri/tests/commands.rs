@@ -515,6 +515,21 @@ fn sample_request(schema: &str) -> Value {
         "ReviewExpireRequest" => json!({"mutation":mutation,"review_id":1}),
         "ReviewGetQuery" => json!({"review_id":1}),
         "ReviewHistoryQuery" => json!({"ticket_id":1}),
+        "SpecIntegrationClaimRequest" => {
+            json!({"mutation":mutation,"spec_id":1,"branch":"kan-s1","workspace_path":"/workspaces/kanban.kan-s1"})
+        }
+        "SpecIntegrationApproveRequest" => {
+            json!({"mutation":mutation,"spec_id":1,"reviewed_tip":"a".repeat(40),"reviewer":"operator","evidence":"Combined-result review"})
+        }
+        "LandingLaneRequest" => {
+            json!({"mutation":mutation,"project_id":1,"spec_id":1,"from_path":"/workspaces/kanban.kan-t1","into_path":"/workspaces/kanban.kan-s1"})
+        }
+        "LandingSeedRequest" => {
+            json!({"mutation":mutation,"project_id":1,"spec_id":1,"from_path":"/workspaces/kanban.kan-s1","into_path":"/workspaces/kanban.seed"})
+        }
+        "LandingBugRequest" => {
+            json!({"mutation":mutation,"project_id":1,"ticket_id":1,"from_path":"/workspaces/kanban.kan-t2","into_path":"/workspaces/kanban.seed"})
+        }
         "SubmissionSubmitRequest" => json!({
             "mutation": mutation, "run_id": 1, "capability_id": 1,
             "result": {"kind": "implementation", "tip": "a".repeat(40), "summary": "Finished"}
@@ -784,6 +799,21 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ReviewGetQuery" => decode_invoke_args::<kanban_dto::ReviewGetQuery>(request).is_err(),
         "ReviewHistoryQuery" => {
             decode_invoke_args::<kanban_dto::ReviewHistoryQuery>(request).is_err()
+        }
+        "SpecIntegrationClaimRequest" => {
+            decode_invoke_args::<kanban_dto::SpecIntegrationClaimRequest>(request).is_err()
+        }
+        "SpecIntegrationApproveRequest" => {
+            decode_invoke_args::<kanban_dto::SpecIntegrationApproveRequest>(request).is_err()
+        }
+        "LandingLaneRequest" => {
+            decode_invoke_args::<kanban_dto::LandingLaneRequest>(request).is_err()
+        }
+        "LandingSeedRequest" => {
+            decode_invoke_args::<kanban_dto::LandingSeedRequest>(request).is_err()
+        }
+        "LandingBugRequest" => {
+            decode_invoke_args::<kanban_dto::LandingBugRequest>(request).is_err()
         }
         "SubmissionSubmitRequest" => {
             decode_invoke_args::<kanban_dto::SubmissionSubmitRequest>(request).is_err()

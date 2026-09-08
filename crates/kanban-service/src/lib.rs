@@ -6,6 +6,7 @@ mod backup_scheduler;
 pub mod diagnostics;
 pub mod export_files;
 pub mod fleet_clone;
+pub mod git_landing;
 pub mod git_observer;
 pub mod health;
 pub mod herdr;
@@ -348,7 +349,7 @@ fn assemble_core(
     )?;
     core.register_exports(
         plan_store,
-        spec_store,
+        spec_store.clone(),
         ticket_store.clone(),
         projects,
         Arc::new(export_files::LocalExportFiles),
@@ -361,6 +362,15 @@ fn assemble_core(
         Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database)),
         ticket_store.clone(),
         evidence_store,
+    )?;
+    core.register_landings(
+        Arc::new(kanban_storage::SqliteLandingStore::new(&database)),
+        project_store.clone(),
+        spec_store.clone(),
+        ticket_store.clone(),
+        workspace_store.clone(),
+        lane_store.clone(),
+        Arc::new(git_landing::LocalGitLanding),
     )?;
     core.register_query(
         "timeline.query",

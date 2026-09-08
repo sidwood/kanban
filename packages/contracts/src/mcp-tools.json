@@ -834,6 +834,975 @@
     }
   },
   {
+    "description": "Record an explicit operator acknowledgement with who and when; never change the source workflow.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "item_id": {
+          "type": "string"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "who": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "mutation",
+        "who"
+      ],
+      "title": "AttentionAcknowledgeRequest",
+      "type": "object"
+    },
+    "name": "attention_acknowledge",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "AttentionState": {
+          "description": "Why one Ticket demands operator attention: the closed Attention Item classes from CONTEXT.md. The per-Ticket projection that raises them lands with the attention inbox (KAN-S11); the vocabulary is fixed here so the filter surface is complete first.",
+          "oneOf": [
+            {
+              "description": "A registered dependency or external blocker holds the work.",
+              "enum": [
+                "blocker"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A settled run finished without its required submission.",
+              "enum": [
+                "missing_result"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The work waits on a human decision.",
+              "enum": [
+                "human_decision"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A review asks the operator in.",
+              "enum": [
+                "review_request"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A schedule failed to activate or mint its occurrence.",
+              "enum": [
+                "failed_schedule"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An approval no longer validates.",
+              "enum": [
+                "invalid_approval"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The session observing the work disconnected.",
+              "enum": [
+                "disconnected_session"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A run passed its stall deadline.",
+              "enum": [
+                "stale_run"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "AttentionSubjectKind": {
+          "enum": [
+            "ticket",
+            "run",
+            "spec",
+            "project",
+            "deferral",
+            "graph",
+            "schedule",
+            "role"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "acknowledged_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acknowledged_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "detail": true,
+        "first_seen_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/AttentionState"
+        },
+        "last_seen_at": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "subject_id": {
+          "type": "string"
+        },
+        "subject_kind": {
+          "$ref": "#/definitions/AttentionSubjectKind"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "detail",
+        "first_seen_at",
+        "id",
+        "kind",
+        "last_seen_at",
+        "project_id",
+        "subject_id",
+        "subject_kind",
+        "summary",
+        "version"
+      ],
+      "title": "AttentionItemRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read actual platform permission; never acknowledge an Inbox item.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "title": "NotificationPermissionQuery",
+      "type": "object"
+    },
+    "name": "notification_permission_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NotificationPermissionState": {
+          "enum": [
+            "not_determined",
+            "denied",
+            "granted",
+            "unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request_pending": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/definitions/NotificationPermissionState"
+        }
+      },
+      "required": [
+        "request_pending",
+        "state"
+      ],
+      "title": "NotificationPermissionRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Request platform notification consent explicitly; never acknowledge an Inbox item.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "mutation"
+      ],
+      "title": "NotificationPermissionRequest",
+      "type": "object"
+    },
+    "name": "notification_permission_request",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "accepted"
+      ],
+      "title": "NotificationPermissionResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read delivery receipts and failures without acknowledging their attention items.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "NotificationDeliveriesQuery",
+      "type": "object"
+    },
+    "name": "notification_deliveries",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NotificationChannel": {
+          "enum": [
+            "local",
+            "herdr_mirror"
+          ],
+          "type": "string"
+        },
+        "NotificationDeliveryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "channel": {
+              "$ref": "#/definitions/NotificationChannel"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "item_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "last_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "receipt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/definitions/NotificationDeliveryStatus"
+            },
+            "target": {
+              "$ref": "#/definitions/NotificationTarget"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "channel",
+            "created_at",
+            "id",
+            "item_id",
+            "item_version",
+            "project_id",
+            "status",
+            "target",
+            "updated_at",
+            "version"
+          ],
+          "type": "object"
+        },
+        "NotificationDeliveryStatus": {
+          "enum": [
+            "queued",
+            "prepared",
+            "submitted",
+            "failed",
+            "uncertain"
+          ],
+          "type": "string"
+        },
+        "NotificationTarget": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "local"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "herdr_workspace": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "herdr_mirror"
+                  ],
+                  "type": "string"
+                },
+                "product_workspace": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "session_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "herdr_workspace",
+                "kind",
+                "product_workspace",
+                "role"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "deliveries": {
+          "items": {
+            "$ref": "#/definitions/NotificationDeliveryRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "deliveries"
+      ],
+      "title": "NotificationDeliveriesResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Retry a known unsent delivery only; never repeat submitted or uncertain effects and never acknowledge attention.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "delivery_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        }
+      },
+      "required": [
+        "delivery_id",
+        "mutation"
+      ],
+      "title": "NotificationRetryRequest",
+      "type": "object"
+    },
+    "name": "notification_retry",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NotificationChannel": {
+          "enum": [
+            "local",
+            "herdr_mirror"
+          ],
+          "type": "string"
+        },
+        "NotificationDeliveryStatus": {
+          "enum": [
+            "queued",
+            "prepared",
+            "submitted",
+            "failed",
+            "uncertain"
+          ],
+          "type": "string"
+        },
+        "NotificationTarget": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "local"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "herdr_workspace": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "herdr_mirror"
+                  ],
+                  "type": "string"
+                },
+                "product_workspace": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "session_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "herdr_workspace",
+                "kind",
+                "product_workspace",
+                "role"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotificationChannel"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "item_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "receipt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/NotificationDeliveryStatus"
+        },
+        "target": {
+          "$ref": "#/definitions/NotificationTarget"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channel",
+        "created_at",
+        "id",
+        "item_id",
+        "item_version",
+        "project_id",
+        "status",
+        "target",
+        "updated_at",
+        "version"
+      ],
+      "title": "NotificationDeliveryRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read explicit Project notification and mirror preferences; never acknowledge attention.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "NotificationSettingsQuery",
+      "type": "object"
+    },
+    "name": "notification_settings_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "local_enabled": {
+          "type": "boolean"
+        },
+        "mirror_role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "local_enabled",
+        "project_id",
+        "version"
+      ],
+      "title": "NotificationSettingsRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Replace explicit Project notification and mirror preferences; never acknowledge attention.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "local_enabled": {
+          "type": "boolean"
+        },
+        "mirror_role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "local_enabled",
+        "mutation",
+        "project_id"
+      ],
+      "title": "NotificationSettingsUpdateRequest",
+      "type": "object"
+    },
+    "name": "notification_settings_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "local_enabled": {
+          "type": "boolean"
+        },
+        "mirror_role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "local_enabled",
+        "project_id",
+        "version"
+      ],
+      "title": "NotificationSettingsRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read the consolidated global Attention Inbox without acknowledging anything.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "include_acknowledged": {
+          "default": false,
+          "type": "boolean"
+        },
+        "include_inactive": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "title": "AttentionListQuery",
+      "type": "object"
+    },
+    "name": "attention_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "AttentionItemRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "acknowledged_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "acknowledged_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "detail": true,
+            "first_seen_at": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/AttentionState"
+            },
+            "last_seen_at": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "subject_id": {
+              "type": "string"
+            },
+            "subject_kind": {
+              "$ref": "#/definitions/AttentionSubjectKind"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "active",
+            "detail",
+            "first_seen_at",
+            "id",
+            "kind",
+            "last_seen_at",
+            "project_id",
+            "subject_id",
+            "subject_kind",
+            "summary",
+            "version"
+          ],
+          "type": "object"
+        },
+        "AttentionState": {
+          "description": "Why one Ticket demands operator attention: the closed Attention Item classes from CONTEXT.md. The per-Ticket projection that raises them lands with the attention inbox (KAN-S11); the vocabulary is fixed here so the filter surface is complete first.",
+          "oneOf": [
+            {
+              "description": "A registered dependency or external blocker holds the work.",
+              "enum": [
+                "blocker"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A settled run finished without its required submission.",
+              "enum": [
+                "missing_result"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The work waits on a human decision.",
+              "enum": [
+                "human_decision"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A review asks the operator in.",
+              "enum": [
+                "review_request"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A schedule failed to activate or mint its occurrence.",
+              "enum": [
+                "failed_schedule"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "An approval no longer validates.",
+              "enum": [
+                "invalid_approval"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The session observing the work disconnected.",
+              "enum": [
+                "disconnected_session"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "A run passed its stall deadline.",
+              "enum": [
+                "stale_run"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "AttentionSubjectKind": {
+          "enum": [
+            "ticket",
+            "run",
+            "spec",
+            "project",
+            "deferral",
+            "graph",
+            "schedule",
+            "role"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/AttentionItemRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "AttentionListResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Read the standing Schedule of a Ticket before editing its timing and profile.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -25927,7 +26896,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26054,7 +27024,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26213,7 +27184,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26288,7 +27260,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26424,7 +27397,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26600,7 +27574,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26688,7 +27663,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26762,7 +27738,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -26911,7 +27888,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -27007,7 +27985,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },
@@ -27126,7 +28105,8 @@
             "comment",
             "workspace",
             "lane",
-            "profile"
+            "profile",
+            "attention_item"
           ],
           "type": "string"
         },

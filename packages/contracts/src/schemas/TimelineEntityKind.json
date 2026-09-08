@@ -14,7 +14,8 @@
     "comment",
     "workspace",
     "lane",
-    "profile"
+    "profile",
+    "attention_item"
   ],
   "title": "TimelineEntityKind",
   "type": "string"

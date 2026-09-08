@@ -2,6 +2,7 @@
 //! application core, and the socket transport together and keeps
 //! serving after the desktop UI quits (ADR-0001).
 
+mod attention;
 mod backup_scheduler;
 pub mod diagnostics;
 pub mod export_files;
@@ -11,6 +12,7 @@ pub mod git_observer;
 pub mod health;
 pub mod herdr;
 pub mod logs;
+mod notifications;
 pub mod redaction;
 mod schedule_scheduler;
 pub mod timeline;
@@ -97,6 +99,8 @@ pub struct CoreProcess {
     logs: Arc<LogWriter>,
     _backup_scheduler: BackupScheduler,
     _activation_scheduler: ActivationScheduler,
+    _attention_scheduler: attention::AttentionScheduler,
+    _notification_scheduler: notifications::NotificationScheduler,
 }
 
 impl CoreProcess {
@@ -121,8 +125,12 @@ impl CoreProcess {
             logs,
             _backup_scheduler,
             _activation_scheduler,
+            _attention_scheduler,
+            _notification_scheduler,
         } = self;
         server.shutdown();
+        drop(_notification_scheduler);
+        drop(_attention_scheduler);
         herdr.shutdown();
         // A failing log write must never fail the shutdown it records.
         let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));
@@ -231,6 +239,9 @@ fn assemble_core(
         ticket_store.clone(),
         lane_store.clone(),
         profile_store.clone(),
+        Some(Arc::new(
+            kanban_storage::attention::SqliteAttentionStore::new(&database),
+        )),
     )?;
     core.register_search(
         initiative_store.clone(),
@@ -372,6 +383,18 @@ fn assemble_core(
         lane_store.clone(),
         Arc::new(git_landing::LocalGitLanding),
     )?;
+    core.register_notification_permissions(notifications::shared_native())?;
+    core.register_notification_settings(
+        Arc::new(kanban_storage::notifications::SqliteNotificationSettingsStore::new(&database)),
+        project_store.clone(),
+    )?;
+    core.register_notification_deliveries(
+        Arc::new(kanban_storage::notifications::SqliteNotificationDeliveryStore::new(&database)),
+        project_store.clone(),
+    )?;
+    core.register_attention(Arc::new(
+        kanban_storage::attention::SqliteAttentionStore::new(&database),
+    ))?;
     core.register_schedule_preview()?;
     core.register_schedule_reads(
         Arc::new(kanban_storage::SqliteScheduleStore::new(&database)),
@@ -423,6 +446,7 @@ fn serve_configured(
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
+    let mirror_socket_root = herdr_socket_root.clone();
     let (database, core, herdr, activation_pass) = assemble_core(
         data_dir,
         database,
@@ -440,6 +464,36 @@ fn serve_configured(
     ));
     let activation_scheduler =
         ActivationScheduler::spawn(activation_pass, recurrence_pass, broker, logs.clone());
+    let attention_projector = kanban_app::attention::AttentionProjector::new(
+        Arc::new(
+            kanban_storage::attention::SqliteAttentionSource::new(&database)
+                .with_runtime(herdr.clone()),
+        ),
+        Arc::new(kanban_storage::attention::SqliteAttentionStore::new(
+            &database,
+        )),
+    );
+    let attention_scheduler =
+        attention::AttentionScheduler::spawn(attention_projector, logs.clone());
+    let native = notifications::shared_native();
+
+    let notification_settings =
+        Arc::new(kanban_storage::notifications::SqliteNotificationSettingsStore::new(&database));
+
+    let dispatcher = kanban_app::notifications::NotificationDispatcher::new(
+        Arc::new(kanban_storage::attention::SqliteAttentionStore::new(
+            &database,
+        )),
+        notification_settings,
+        Arc::new(kanban_storage::notifications::SqliteNotificationDeliveryStore::new(&database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(notifications::NotificationRouter::new(
+            native,
+            mirror_socket_root,
+        )),
+    );
+    let notification_scheduler =
+        notifications::NotificationScheduler::spawn(dispatcher, logs.clone());
     let server = server.serve(Arc::new(core))?;
     let socket_path = server.socket_path().to_path_buf();
     // The startup record names the live socket, which is the fact a
@@ -456,6 +510,8 @@ fn serve_configured(
         logs,
         _backup_scheduler: backup_scheduler,
         _activation_scheduler: activation_scheduler,
+        _attention_scheduler: attention_scheduler,
+        _notification_scheduler: notification_scheduler,
     })
 }
 

@@ -207,29 +207,26 @@ fn resolved_filesystem_identity_within(path: &str, followed: usize) -> String {
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().into_owned();
     }
-    if followed < ALIAS_SYMLINK_LIMIT {
-        if let Ok(target) = std::fs::read_link(path) {
-            let resolution = match target.is_absolute() {
-                true => target,
-                false => Path::new(path)
-                    .parent()
-                    .map(|parent| parent.join(&target))
-                    .unwrap_or(target),
-            };
-            return resolved_filesystem_identity_within(
-                &resolution.to_string_lossy(),
-                followed + 1,
-            );
-        }
+    if followed < ALIAS_SYMLINK_LIMIT
+        && let Ok(target) = std::fs::read_link(path)
+    {
+        let resolution = match target.is_absolute() {
+            true => target,
+            false => Path::new(path)
+                .parent()
+                .map(|parent| parent.join(&target))
+                .unwrap_or(target),
+        };
+        return resolved_filesystem_identity_within(&resolution.to_string_lossy(), followed + 1);
     }
     let destination = Path::new(path);
-    if let (Some(parent), Some(leaf)) = (destination.parent(), destination.file_name()) {
-        if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-            return canonical_parent
-                .join(leaf.to_string_lossy().to_lowercase())
-                .to_string_lossy()
-                .into_owned();
-        }
+    if let (Some(parent), Some(leaf)) = (destination.parent(), destination.file_name())
+        && let Ok(canonical_parent) = std::fs::canonicalize(parent)
+    {
+        return canonical_parent
+            .join(leaf.to_string_lossy().to_lowercase())
+            .to_string_lossy()
+            .into_owned();
     }
     path.to_owned()
 }

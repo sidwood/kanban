@@ -13,7 +13,35 @@ export type ApiError = {
   current_version?: number | null;
   message: string;
 };
+export type AttentionAcknowledgeRequest = {
+  item_id: string;
+  mutation: MutationContext;
+  who: string;
+};
+export type AttentionItemRecord = {
+  acknowledged_at?: string | null;
+  acknowledged_by?: string | null;
+  active: boolean;
+  detail: JsonValue;
+  first_seen_at: string;
+  id: string;
+  kind: AttentionState;
+  last_seen_at: string;
+  project_id: number;
+  subject_id: string;
+  subject_kind: AttentionSubjectKind;
+  summary: string;
+  version: number;
+};
+export type AttentionListQuery = {
+  include_acknowledged?: boolean;
+  include_inactive?: boolean;
+};
+export type AttentionListResponse = {
+  items: AttentionItemRecord[];
+};
 export type AttentionState = 'blocker' | 'missing_result' | 'human_decision' | 'review_request' | 'failed_schedule' | 'invalid_approval' | 'disconnected_session' | 'stale_run';
+export type AttentionSubjectKind = 'ticket' | 'run' | 'spec' | 'project' | 'deferral' | 'graph' | 'schedule' | 'role';
 export type BoardFilter = {
   attention?: AttentionState[];
   initiatives?: number[];
@@ -596,6 +624,69 @@ export type McpHealth = {
 export type MutationContext = {
   idempotency_key: string;
   optimistic_version: number;
+};
+export type NotificationChannel = 'local' | 'herdr_mirror';
+export type NotificationDeliveriesQuery = {
+  project_id: number;
+};
+export type NotificationDeliveriesResponse = {
+  deliveries: NotificationDeliveryRecord[];
+};
+export type NotificationDeliveryRecord = {
+  channel: NotificationChannel;
+  created_at: string;
+  id: number;
+  item_id: string;
+  item_version: number;
+  last_error?: string | null;
+  project_id: number;
+  receipt?: string | null;
+  status: NotificationDeliveryStatus;
+  target: NotificationTarget;
+  updated_at: string;
+  version: number;
+};
+export type NotificationDeliveryStatus = 'queued' | 'prepared' | 'submitted' | 'failed' | 'uncertain';
+export type NotificationPermissionQuery = Record<string, never>;
+export type NotificationPermissionRecord = {
+  reason?: string | null;
+  request_pending: boolean;
+  state: NotificationPermissionState;
+};
+export type NotificationPermissionRequest = {
+  mutation: MutationContext;
+};
+export type NotificationPermissionResponse = {
+  accepted: boolean;
+};
+export type NotificationPermissionState = 'not_determined' | 'denied' | 'granted' | 'unavailable';
+export type NotificationRetryRequest = {
+  delivery_id: number;
+  mutation: MutationContext;
+};
+export type NotificationSettingsQuery = {
+  project_id: number;
+};
+export type NotificationSettingsRecord = {
+  local_enabled: boolean;
+  mirror_role?: string | null;
+  project_id: number;
+  version: number;
+};
+export type NotificationSettingsUpdateRequest = {
+  local_enabled: boolean;
+  mirror_role?: string | null;
+  mutation: MutationContext;
+  project_id: number;
+};
+export type NotificationTarget = {
+  kind: 'local';
+} | {
+  herdr_workspace: string;
+  kind: 'herdr_mirror';
+  product_workspace: string;
+  role: string;
+  session_name?: string | null;
 };
 export type PlanActivateRequest = {
   mutation: MutationContext;
@@ -1512,7 +1603,7 @@ export type TicketUnparkRequest = {
 export type TicketVerificationStep = {
   command: string;
 };
-export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace' | 'lane' | 'profile';
+export type TimelineEntityKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket' | 'run' | 'review' | 'finding' | 'evidence' | 'comment' | 'workspace' | 'lane' | 'profile' | 'attention_item';
 export type TimelineEntityRef = {
   id: string;
   kind: TimelineEntityKind;

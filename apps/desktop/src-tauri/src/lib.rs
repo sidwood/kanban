@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kanban_dto::{
-    ApiError, BoardGlobalQuery, BoardGlobalResponse, CapacityDefaultsGetQuery,
+    ApiError, AttentionAcknowledgeRequest, AttentionItemRecord, AttentionListQuery,
+    AttentionListResponse, BoardGlobalQuery, BoardGlobalResponse, CapacityDefaultsGetQuery,
     CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest, CapacityGlobalDefaults,
     CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
@@ -32,14 +33,18 @@ use kanban_dto::{
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
     LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest, LaneCreateRequest,
     LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest, LaneTicketReleaseRequest,
-    LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest, PlanActivateRequest,
-    PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest,
-    PlanDiagnosticsQuery, PlanDiagnosticsResponse, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
-    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
-    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
-    ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord, ProfileRetireRequest,
-    ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
-    ProjectRecord, ProjectRegisterRequest, ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord,
+    LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest, NotificationDeliveriesQuery,
+    NotificationDeliveriesResponse, NotificationDeliveryRecord, NotificationPermissionQuery,
+    NotificationPermissionRecord, NotificationPermissionRequest, NotificationPermissionResponse,
+    NotificationRetryRequest, NotificationSettingsQuery, NotificationSettingsRecord,
+    NotificationSettingsUpdateRequest, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
+    PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
+    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse, PlanListQuery,
+    PlanListResponse, PlanRecord, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest,
+    PlanSpecRemoveRequest, ProfileDefineRequest, ProfileGetQuery, ProfileListQuery,
+    ProfileListResponse, ProfileRecord, ProfileRetireRequest, ProfileUpdateRequest,
+    ProjectArchiveRequest, ProjectListQuery, ProjectListResponse, ProjectRecord,
+    ProjectRegisterRequest, ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord,
     ProjectSchedulePolicySetRequest, RulingListQuery, RulingListResponse, RulingRecord,
     RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
     RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
@@ -241,6 +246,140 @@ async fn project_schedule_policy_set(
             "project schedule policy set",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn attention_acknowledge(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<AttentionItemRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<AttentionAcknowledgeRequest>(request)?;
+    run_blocking(shell, "attention acknowledge", |shell| {
+        forward_command(
+            shell,
+            "attention.acknowledge",
+            "attention acknowledge",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_permission_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationPermissionRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationPermissionQuery>(request)?;
+    run_blocking(shell, "notification permission get", |shell| {
+        forward_query(
+            shell,
+            "notification.permission.get",
+            "notification permission get",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_permission_request(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationPermissionResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationPermissionRequest>(request)?;
+    run_blocking(shell, "notification permission request", |shell| {
+        forward_command(
+            shell,
+            "notification.permission.request",
+            "notification permission request",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_deliveries(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationDeliveriesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationDeliveriesQuery>(request)?;
+    run_blocking(shell, "notification deliveries", |shell| {
+        forward_query(
+            shell,
+            "notification.deliveries",
+            "notification deliveries",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_retry(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationDeliveryRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationRetryRequest>(request)?;
+    run_blocking(shell, "notification retry", |shell| {
+        forward_command(shell, "notification.retry", "notification retry", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_settings_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationSettingsRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationSettingsQuery>(request)?;
+    run_blocking(shell, "notification settings get", |shell| {
+        forward_query(
+            shell,
+            "notification.settings.get",
+            "notification settings get",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn notification_settings_update(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<NotificationSettingsRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<NotificationSettingsUpdateRequest>(request)?;
+    run_blocking(shell, "notification settings update", |shell| {
+        forward_command(
+            shell,
+            "notification.settings.update",
+            "notification settings update",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn attention_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<AttentionListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<AttentionListQuery>(request)?;
+    run_blocking(shell, "attention list", |shell| {
+        forward_query(shell, "attention.list", "attention list", request)
     })
     .await
 }
@@ -2106,6 +2245,14 @@ shell_handlers::shell_handler_catalogue! {
     initiative_archive,
     initiative_list,
     project_register,
+    attention_acknowledge,
+    notification_permission_get,
+    notification_permission_request,
+    notification_deliveries,
+    notification_retry,
+    notification_settings_get,
+    notification_settings_update,
+    attention_list,
     schedule_get,
     schedule_preview,
     schedule_attention_list,

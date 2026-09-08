@@ -78,6 +78,7 @@ impl Default for DeadlineConfig {
 /// What one observed role's deadlines hang on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct RoleDeadlines {
+    observed_run: Option<u64>,
     last_activity: Option<SystemTime>,
     settled_at: Option<SystemTime>,
     result_at: Option<SystemTime>,
@@ -135,6 +136,13 @@ impl DeadlineMonitor {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let entry = self.roles.entry(role.to_owned()).or_default();
+        if let Some(run) = event.get("run") {
+            let observed = crate::telemetry::observed_run_id(run);
+            if observed.is_some() && observed != entry.observed_run {
+                *entry = RoleDeadlines::default();
+            }
+            entry.observed_run = observed;
+        }
         entry.last_activity = Some(at);
         match kind {
             "role.settled" => entry.settled_at = Some(at),
@@ -209,13 +217,16 @@ impl DeadlineMonitor {
             return (elapsed >= self.config.missing_result().as_secs()).then(|| AttentionSignal {
                 project_id,
                 reason: MISSING_RESULT_DEADLINE_REASON.to_owned(),
-                detail: json!({
-                    "deadline": "missing_result",
-                    "role": role,
-                    "deadline_secs": self.config.missing_result().as_secs(),
-                    "breached_after_secs": elapsed,
-                    "settled_unix_secs": unix_secs(settled_at),
-                }),
+                detail: with_observed_run(
+                    json!({
+                        "deadline": "missing_result",
+                        "role": role,
+                        "deadline_secs": self.config.missing_result().as_secs(),
+                        "breached_after_secs": elapsed,
+                        "settled_unix_secs": unix_secs(settled_at),
+                    }),
+                    entry.observed_run,
+                ),
             });
         }
         let last_activity = entry.last_activity?;
@@ -223,15 +234,25 @@ impl DeadlineMonitor {
         (elapsed >= self.config.stall().as_secs()).then(|| AttentionSignal {
             project_id,
             reason: STALL_DEADLINE_REASON.to_owned(),
-            detail: json!({
-                "deadline": "stall",
-                "role": role,
-                "deadline_secs": self.config.stall().as_secs(),
-                "breached_after_secs": elapsed,
-                "last_activity_unix_secs": unix_secs(last_activity),
-            }),
+            detail: with_observed_run(
+                json!({
+                    "deadline": "stall",
+                    "role": role,
+                    "deadline_secs": self.config.stall().as_secs(),
+                    "breached_after_secs": elapsed,
+                    "last_activity_unix_secs": unix_secs(last_activity),
+                }),
+                entry.observed_run,
+            ),
         })
     }
+}
+
+fn with_observed_run(mut detail: Value, run: Option<u64>) -> Value {
+    if let Some(run) = run {
+        detail["run_id"] = json!(run);
+    }
+    detail
 }
 
 /// Whole seconds from `anchor` to `now`, saturating at zero when the

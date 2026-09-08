@@ -26,6 +26,7 @@ pub struct CommittedRecurrence {
 
 /// Storage reads fresh facts and applies the decision under the same write lock.
 pub trait RecurrenceStore: Send + Sync {
+    fn record_failure(&self, id: ScheduleId, at: &str, error: &ApiError) -> Result<(), ApiError>;
     fn due(&self, now: &str) -> Result<Vec<ScheduleId>, ApiError>;
     fn advance(
         &self,
@@ -38,6 +39,7 @@ pub trait RecurrenceStore: Send + Sync {
 #[derive(Default)]
 pub struct RecurrenceReport {
     pub minted: Vec<TicketId>,
+    pub failed: usize,
 }
 
 pub struct RecurrencePass {
@@ -71,7 +73,15 @@ impl RecurrencePass {
                     });
                 }
                 Ok(Some(decision))
-            })?;
+            });
+            let committed = match committed {
+                Ok(committed) => committed,
+                Err(error) => {
+                    self.store.record_failure(id, now, &error)?;
+                    report.failed += 1;
+                    continue;
+                }
+            };
             if let Some(CommittedRecurrence {
                 activation,
                 ticket: Some(ticket),

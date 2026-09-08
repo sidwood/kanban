@@ -160,20 +160,20 @@ impl PlanContext {
         plan: PlanId,
         spec: SpecNumber,
     ) -> Result<(), ApiError> {
-        if let Some(mut held) = self.specs.find_by_number(project.id(), spec)? {
-            if held.plan() == Some(plan) {
-                held.leave_plan(plan).map_err(refuse)?;
-                let execution = held.execution().wire_name();
-                return self.specs.save(
-                    &held,
-                    crate::spec::transition(
-                        project.id(),
-                        held.id(),
-                        execution,
-                        json!({ "plan_id": plan.value() }),
-                    ),
-                );
-            }
+        if let Some(mut held) = self.specs.find_by_number(project.id(), spec)?
+            && held.plan() == Some(plan)
+        {
+            held.leave_plan(plan).map_err(refuse)?;
+            let execution = held.execution().wire_name();
+            return self.specs.save(
+                &held,
+                crate::spec::transition(
+                    project.id(),
+                    held.id(),
+                    execution,
+                    json!({ "plan_id": plan.value() }),
+                ),
+            );
         }
         Ok(())
     }

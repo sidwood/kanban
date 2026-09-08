@@ -5,10 +5,8 @@
 //! domain rule the ten filter axes as one intersection, and returns
 //! the cards already placed in their fixed groups and already in the
 //! deterministic order — a client renders the projection, it never
-//! recomputes it. The attention axis is complete on the wire today
-//! while no Ticket yet raises a class: the projection that feeds it
-//! lands with the attention inbox, and until then the axis selects
-//! nothing.
+//! recomputes it. The attention axis consumes the same active,
+//! unacknowledged projection as the global Attention Inbox.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,6 +45,7 @@ struct BoardContext {
     tickets: Arc<dyn TicketStore>,
     lanes: Arc<dyn LaneStore>,
     profiles: Arc<dyn ProfileStore>,
+    attention: Option<Arc<dyn crate::attention::AttentionStore>>,
 }
 
 impl Core {
@@ -62,6 +61,7 @@ impl Core {
         tickets: Arc<dyn TicketStore>,
         lanes: Arc<dyn LaneStore>,
         profiles: Arc<dyn ProfileStore>,
+        attention: Option<Arc<dyn crate::attention::AttentionStore>>,
     ) -> Result<(), RegistrationError> {
         let context = BoardContext {
             initiatives,
@@ -71,6 +71,7 @@ impl Core {
             tickets,
             lanes,
             profiles,
+            attention,
         };
         self.register_query("board.global", Arc::new(GlobalBoard(context)))?;
         Ok(())
@@ -95,6 +96,14 @@ impl GlobalBoard {
     /// axis offers.
     fn project(&self, filter: &BoardFilter) -> Result<BoardGlobalResponse, ApiError> {
         let domain_filter = domain_filter_of(filter)?;
+        let attention_items = match &self.0.attention {
+            Some(store) => {
+                store
+                    .list(&kanban_dto::AttentionListQuery::default())?
+                    .items
+            }
+            None => Vec::new(),
+        };
         let projects = self.0.projects.list()?;
         // One read per Project, gathered first so the cards borrow
         // facts that outlive every loop: the Project's Tickets, the
@@ -152,10 +161,24 @@ impl GlobalBoard {
                 lane_of_ticket,
             });
         }
-        // The attention classes raised on a Ticket; no feed exists
-        // yet, so the axis selects nothing until the attention
-        // projection lands and starts filling this in.
-        const SILENT: &[DomainAttention] = &[];
+        let mut raised: HashMap<(u64, u64), Vec<DomainAttention>> = HashMap::new();
+        for fact in &facts {
+            for ticket in &fact.tickets {
+                let mut classes = Vec::new();
+                for item in &attention_items {
+                    if item.project_id != ticket.project().value()
+                        || !attention_targets(item, ticket)
+                    {
+                        continue;
+                    }
+                    let class = domain_attention(item.kind);
+                    if !classes.contains(&class) {
+                        classes.push(class);
+                    }
+                }
+                raised.insert((ticket.project().value(), ticket.id().value()), classes);
+            }
+        }
         let mut cards: Vec<(BoardCard<'_>, BoardGlobalCard)> = Vec::new();
         for fact in &facts {
             for ticket in &fact.tickets {
@@ -166,7 +189,10 @@ impl GlobalBoard {
                         .spec()
                         .and_then(|spec| fact.plan_of_spec.get(&spec).copied()),
                     lane: fact.lane_of_ticket.get(&ticket.id().value()).copied(),
-                    attention: SILENT,
+                    attention: raised
+                        .get(&(ticket.project().value(), ticket.id().value()))
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
                 };
                 if !admits(&domain_filter, &card) {
                     continue;
@@ -339,6 +365,29 @@ fn domain_state(state: TicketState) -> DomainState {
         TicketState::Done => DomainState::Done,
         TicketState::Cancelled => DomainState::Cancelled,
         TicketState::Superseded => DomainState::Superseded,
+    }
+}
+
+fn attention_targets(
+    item: &kanban_dto::AttentionItemRecord,
+    ticket: &kanban_domain::Ticket,
+) -> bool {
+    use kanban_dto::AttentionSubjectKind;
+    match item.subject_kind {
+        AttentionSubjectKind::Ticket => item.subject_id == ticket.id().value().to_string(),
+        AttentionSubjectKind::Project => !matches!(
+            ticket.state(),
+            DomainState::Done | DomainState::Cancelled | DomainState::Superseded
+        ),
+        _ => item.detail["sources"].as_array().is_some_and(|sources| {
+            sources.iter().any(|source| {
+                source["ticket_id"].as_u64() == Some(ticket.id().value())
+                    || source["ticket_ids"].as_array().is_some_and(|ids| {
+                        ids.iter()
+                            .any(|id| id.as_u64() == Some(ticket.id().value()))
+                    })
+            })
+        }),
     }
 }
 
@@ -555,6 +604,7 @@ mod tests {
             tickets.clone(),
             lanes,
             profiles,
+            None,
         )
         .expect("the board operations register");
         BoardHarness { tickets, core }

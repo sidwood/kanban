@@ -98,11 +98,19 @@ fn run_pass(
         }
     }
     match recurrence.tick(&now, events) {
-        Ok(report) if !report.minted.is_empty() => {
+        Ok(report) if !report.minted.is_empty() || report.failed > 0 => {
             let _ = log.append(&LogRecord::new(
-                LogLevel::Info,
+                if report.failed > 0 {
+                    LogLevel::Error
+                } else {
+                    LogLevel::Info
+                },
                 "scheduler",
-                format!("recurrence pass minted {} occurrences", report.minted.len()),
+                format!(
+                    "recurrence pass minted {} occurrences and failed {}",
+                    report.minted.len(),
+                    report.failed
+                ),
             ));
         }
         Ok(_) => {}
@@ -120,7 +128,7 @@ fn run_pass(
 /// schedule compares through. A reading that cannot render matches no
 /// stored activation, so a failing render skips the pass instead of
 /// firing the wrong moment.
-fn now_stored() -> String {
+pub(crate) fn now_stored() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("the system clock reads after the epoch")

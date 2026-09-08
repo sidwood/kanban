@@ -35,10 +35,10 @@ impl DeferralStore for SqliteDeferralStore {
     fn insert(&self, draft: &DeferralDraft, facts: TimelineFacts) -> Result<Deferral, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
-        if let Some(supersedes) = draft.supersedes {
-            if has_successor(&span, draft.project_id, supersedes)? {
-                return Err(already_superseded_deferral_error(supersedes.value()));
-            }
+        if let Some(supersedes) = draft.supersedes
+            && has_successor(&span, draft.project_id, supersedes)?
+        {
+            return Err(already_superseded_deferral_error(supersedes.value()));
         }
         span.execute(
             "INSERT INTO deferrals (project_id, finding_id, reason, supersedes_id)

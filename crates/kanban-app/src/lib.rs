@@ -1,6 +1,7 @@
 //! Named application commands and queries shared by the UI and every
 //! other client, with the ports they call through.
 
+pub mod attention;
 pub mod board_query;
 pub mod capability;
 pub mod capacity;
@@ -28,6 +29,7 @@ pub mod landing;
 pub mod lane;
 pub mod lifecycle;
 pub mod mutation;
+pub mod notifications;
 pub mod plan;
 pub mod profile;
 pub mod project;

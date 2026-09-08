@@ -524,6 +524,18 @@ fn sample_request(schema: &str) -> Value {
         "SchedulePreviewQuery" => {
             json!({"cron":"0 9 * * *","timezone":"UTC","after":"2026-09-08T00:00:00Z","count":5})
         }
+        "AttentionAcknowledgeRequest" => {
+            json!({"mutation":mutation,"item_id":"attention-1","who":"Operator"})
+        }
+        "NotificationPermissionQuery" => json!({}),
+        "NotificationPermissionRequest" => json!({"mutation":mutation}),
+        "NotificationDeliveriesQuery" => json!({"project_id":1}),
+        "NotificationRetryRequest" => json!({"mutation":mutation,"delivery_id":1}),
+        "NotificationSettingsQuery" => json!({"project_id":1}),
+        "NotificationSettingsUpdateRequest" => {
+            json!({"mutation":mutation,"project_id":1,"local_enabled":false,"mirror_role":null})
+        }
+        "AttentionListQuery" => json!({"include_acknowledged":false,"include_inactive":false}),
         "SpecIntegrationClaimRequest" => {
             json!({"mutation":mutation,"spec_id":1,"branch":"kan-s1","workspace_path":"/workspaces/kanban.kan-s1"})
         }
@@ -821,6 +833,30 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ScheduleGetQuery" => decode_invoke_args::<kanban_dto::ScheduleGetQuery>(request).is_err(),
         "SchedulePreviewQuery" => {
             decode_invoke_args::<kanban_dto::SchedulePreviewQuery>(request).is_err()
+        }
+        "AttentionAcknowledgeRequest" => {
+            decode_invoke_args::<kanban_dto::AttentionAcknowledgeRequest>(request).is_err()
+        }
+        "NotificationPermissionQuery" => {
+            decode_invoke_args::<kanban_dto::NotificationPermissionQuery>(request).is_err()
+        }
+        "NotificationPermissionRequest" => {
+            decode_invoke_args::<kanban_dto::NotificationPermissionRequest>(request).is_err()
+        }
+        "NotificationDeliveriesQuery" => {
+            decode_invoke_args::<kanban_dto::NotificationDeliveriesQuery>(request).is_err()
+        }
+        "NotificationRetryRequest" => {
+            decode_invoke_args::<kanban_dto::NotificationRetryRequest>(request).is_err()
+        }
+        "NotificationSettingsQuery" => {
+            decode_invoke_args::<kanban_dto::NotificationSettingsQuery>(request).is_err()
+        }
+        "NotificationSettingsUpdateRequest" => {
+            decode_invoke_args::<kanban_dto::NotificationSettingsUpdateRequest>(request).is_err()
+        }
+        "AttentionListQuery" => {
+            decode_invoke_args::<kanban_dto::AttentionListQuery>(request).is_err()
         }
         "SpecIntegrationClaimRequest" => {
             decode_invoke_args::<kanban_dto::SpecIntegrationClaimRequest>(request).is_err()

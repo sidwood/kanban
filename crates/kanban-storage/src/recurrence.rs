@@ -25,6 +25,22 @@ impl SqliteRecurrenceStore {
 }
 
 impl RecurrenceStore for SqliteRecurrenceStore {
+    fn record_failure(&self, id: ScheduleId, at: &str, error: &ApiError) -> Result<(), ApiError> {
+        let conn = self.conn.lock();
+        let code = serde_json::to_value(error.code)
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let code = code
+            .as_str()
+            .ok_or_else(|| ApiError::internal("invalid error code"))?;
+        conn.execute("INSERT INTO schedule_failures (schedule_id,project_id,ticket_id,error_code,failed_at,last_seen_at)
+            SELECT s.id,t.project_id,t.id,?2,?3,?3 FROM schedules s JOIN tickets t ON t.id=s.ticket_id
+            JOIN projects p ON p.id=t.project_id WHERE s.id=?1 AND p.archived=0
+            ON CONFLICT(schedule_id) DO UPDATE SET
+                failed_at=CASE WHEN schedule_failures.error_code<>excluded.error_code THEN excluded.failed_at ELSE schedule_failures.failed_at END,
+                error_code=excluded.error_code,last_seen_at=excluded.last_seen_at",params![id.value() as i64,code,at]).map_err(internal)?;
+        Ok(())
+    }
+
     fn due(&self, now: &str) -> Result<Vec<ScheduleId>, ApiError> {
         let conn = self.conn.lock();
         let mut query = conn
@@ -118,6 +134,11 @@ impl RecurrenceStore for SqliteRecurrenceStore {
         for envelope in recurrence_envelopes(&due.activation, &decision, ticket.as_ref()) {
             insert_event(&span, &envelope).map_err(|e| ApiError::internal(&e.to_string()))?;
         }
+        span.execute(
+            "DELETE FROM schedule_failures WHERE schedule_id=?1",
+            [id.value() as i64],
+        )
+        .map_err(internal)?;
         span.commit().map_err(internal)?;
         Ok(Some(CommittedRecurrence {
             activation: due.activation,

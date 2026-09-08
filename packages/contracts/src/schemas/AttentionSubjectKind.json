@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "enum": [
+    "ticket",
+    "run",
+    "spec",
+    "project",
+    "deferral",
+    "graph",
+    "schedule",
+    "role"
+  ],
+  "title": "AttentionSubjectKind",
+  "type": "string"
+}

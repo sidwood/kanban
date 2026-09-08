@@ -17,7 +17,8 @@
         "comment",
         "workspace",
         "lane",
-        "profile"
+        "profile",
+        "attention_item"
       ],
       "type": "string"
     },

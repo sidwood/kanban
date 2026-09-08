@@ -525,7 +525,7 @@ fn recurrence_outcome_failure_rolls_back_the_whole_window() {
             BEGIN SELECT RAISE(ABORT,'fixture rejects recurrence receipt'); END;",
         )
         .unwrap();
-        assert!(pass.tick(now, &NoopEventSink).is_err());
+        assert_eq!(pass.tick(now, &NoopEventSink).unwrap().failed, 1);
         for table in ["task_occurrences", "schedule_attention"] {
             assert_eq!(
                 conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r

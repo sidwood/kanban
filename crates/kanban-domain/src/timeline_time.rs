@@ -132,13 +132,12 @@ pub fn validate_timeline_time_window(
         .transpose()?;
     if let (Some((since_raw, since_instant)), Some((until_raw, until_instant))) =
         (&since_utc, &until_utc)
+        && since_instant > until_instant
     {
-        if since_instant > until_instant {
-            return Err(TimelineTimeError::ReversedWindow {
-                since: render_stored("since", since_raw, *since_instant)?,
-                until: render_stored("until", until_raw, *until_instant)?,
-            });
-        }
+        return Err(TimelineTimeError::ReversedWindow {
+            since: render_stored("since", since_raw, *since_instant)?,
+            until: render_stored("until", until_raw, *until_instant)?,
+        });
     }
     let since = since_utc
         .map(|(raw, instant)| align_since_up("since", raw, instant))

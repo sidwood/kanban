@@ -1,6 +1,15 @@
 //! Authoritative command, query, event, and error payload definitions
 //! with schema derivation. Depends on nothing internal.
 
+pub mod attention;
+pub mod notification;
+pub use notification::{
+    NotificationChannel, NotificationDeliveriesQuery, NotificationDeliveriesResponse,
+    NotificationDeliveryRecord, NotificationDeliveryStatus, NotificationPermissionQuery,
+    NotificationPermissionRecord, NotificationPermissionRequest, NotificationPermissionResponse,
+    NotificationPermissionState, NotificationRetryRequest, NotificationSettingsQuery,
+    NotificationSettingsRecord, NotificationSettingsUpdateRequest, NotificationTarget,
+};
 pub mod board;
 pub mod capability;
 pub mod capacity;
@@ -26,6 +35,10 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod recurrence;
+pub use attention::{
+    AttentionAcknowledgeRequest, AttentionItemRecord, AttentionListQuery, AttentionListResponse,
+    AttentionSubjectKind,
+};
 pub mod schedule_preview;
 pub use recurrence::{
     ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord, ProjectSchedulePolicySetRequest,
@@ -541,6 +554,26 @@ mod tests {
                 "ScheduleGetQuery",
                 "ScheduleGetResponse",
                 "ScheduleRecord",
+                "AttentionSubjectKind",
+                "AttentionItemRecord",
+                "AttentionListQuery",
+                "AttentionListResponse",
+                "AttentionAcknowledgeRequest",
+                "NotificationSettingsQuery",
+                "NotificationSettingsRecord",
+                "NotificationSettingsUpdateRequest",
+                "NotificationPermissionState",
+                "NotificationPermissionRecord",
+                "NotificationPermissionQuery",
+                "NotificationPermissionRequest",
+                "NotificationPermissionResponse",
+                "NotificationChannel",
+                "NotificationTarget",
+                "NotificationDeliveryStatus",
+                "NotificationDeliveryRecord",
+                "NotificationDeliveriesQuery",
+                "NotificationDeliveriesResponse",
+                "NotificationRetryRequest",
                 "LandingBugRequest",
                 "LandingLaneRequest",
                 "LandingRecord",

@@ -73,6 +73,13 @@ const eventStream = computed(() =>
     </p>
     <div class="flex items-center gap-6">
       <RouterLink
+        to="/attention"
+        data-testid="attention-link"
+        class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        Attention Inbox
+      </RouterLink>
+      <RouterLink
         to="/board"
         class="text-sm text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline"
       >

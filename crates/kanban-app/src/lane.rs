@@ -331,13 +331,12 @@ impl CommandHandler for AssignLaneWorkspace {
             .0
             .lanes
             .find_by_workspace(lane.project(), workspace.id())?
+            && let Some(conflict) = workspace_lane_conflict(Some(holder.id()), lane.id())
         {
-            if let Some(conflict) = workspace_lane_conflict(Some(holder.id()), lane.id()) {
-                return Err(refuse(format!(
-                    "Workspace {} already belongs to Lane {conflict}",
-                    workspace.id().value()
-                )));
-            }
+            return Err(refuse(format!(
+                "Workspace {} already belongs to Lane {conflict}",
+                workspace.id().value()
+            )));
         }
         if lane.version() == lane_before && workspace.lane_id() == Some(lane.id().value()) {
             // Claiming what is already claimed is the same state.

@@ -44,10 +44,7 @@ pub fn missing_submission_signal(
     if event.get("kind").and_then(Value::as_str) != Some("role.settled") {
         return Ok(None);
     }
-    let Some(run_id) = event
-        .get("run")
-        .and_then(|run| run.as_u64().or_else(|| run.as_str()?.parse::<u64>().ok()))
-    else {
+    let Some(run_id) = event.get("run").and_then(crate::telemetry::observed_run_id) else {
         return Ok(None);
     };
     let context = match store.context(run_id) {

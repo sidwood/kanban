@@ -31,10 +31,10 @@ impl RulingStore for SqliteRulingStore {
     fn insert(&self, draft: &RulingDraft, facts: TimelineFacts) -> Result<Ruling, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
-        if let Some(supersedes) = draft.supersedes {
-            if has_successor(&span, draft.project_id, supersedes)? {
-                return Err(already_superseded_ruling_error(supersedes.value()));
-            }
+        if let Some(supersedes) = draft.supersedes
+            && has_successor(&span, draft.project_id, supersedes)?
+        {
+            return Err(already_superseded_ruling_error(supersedes.value()));
         }
         let (entity_kind, entity_id) = entity_parts(&draft.entity);
         span.execute(

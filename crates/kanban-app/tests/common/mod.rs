@@ -43,6 +43,7 @@ pub struct DispatchHarness {
     pub core: Core,
     pub wake: Arc<RecordingWake>,
     pub database_path: std::path::PathBuf,
+    pub database: Database,
 }
 
 pub fn harness() -> DispatchHarness {
@@ -122,6 +123,7 @@ pub fn harness() -> DispatchHarness {
         core,
         wake,
         database_path,
+        database,
     }
 }
 

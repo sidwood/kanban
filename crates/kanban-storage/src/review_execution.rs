@@ -295,7 +295,7 @@ pub(crate) fn reviewer_for_request(
     .transpose()
 }
 
-fn load(conn: &Connection, id: u64) -> Result<Option<ReviewExecutionRecord>, ApiError> {
+pub(crate) fn load(conn: &Connection, id: u64) -> Result<Option<ReviewExecutionRecord>, ApiError> {
     let row=conn.query_row("SELECT project_id,ticket_id,submission_id,tip,configuration_version,version,status FROM review_executions WHERE id=?1",params![id as i64],
         |r|Ok((r.get::<_,i64>(0)? as u64,r.get::<_,i64>(1)? as u64,r.get::<_,i64>(2)? as u64,r.get::<_,String>(3)?,r.get::<_,i64>(4)? as u64,r.get::<_,i64>(5)? as u64,r.get::<_,String>(6)?))).optional().map_err(internal)?;
     let Some((project_id, ticket_id, submission_id, tip, configuration_version, version, status)) =

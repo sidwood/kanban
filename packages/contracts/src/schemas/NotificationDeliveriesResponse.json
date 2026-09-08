@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "NotificationChannel": {
+      "enum": [
+        "local",
+        "herdr_mirror"
+      ],
+      "type": "string"
+    },
+    "NotificationDeliveryRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotificationChannel"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "item_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "receipt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/NotificationDeliveryStatus"
+        },
+        "target": {
+          "$ref": "#/definitions/NotificationTarget"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channel",
+        "created_at",
+        "id",
+        "item_id",
+        "item_version",
+        "project_id",
+        "status",
+        "target",
+        "updated_at",
+        "version"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryStatus": {
+      "enum": [
+        "queued",
+        "prepared",
+        "submitted",
+        "failed",
+        "uncertain"
+      ],
+      "type": "string"
+    },
+    "NotificationTarget": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "local"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "herdr_workspace": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "herdr_mirror"
+              ],
+              "type": "string"
+            },
+            "product_workspace": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "session_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "herdr_workspace",
+            "kind",
+            "product_workspace",
+            "role"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "deliveries": {
+      "items": {
+        "$ref": "#/definitions/NotificationDeliveryRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "deliveries"
+  ],
+  "title": "NotificationDeliveriesResponse",
+  "type": "object"
+}

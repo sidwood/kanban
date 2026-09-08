@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "local"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "herdr_workspace": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "herdr_mirror"
+          ],
+          "type": "string"
+        },
+        "product_workspace": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "session_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "herdr_workspace",
+        "kind",
+        "product_workspace",
+        "role"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "NotificationTarget"
+}

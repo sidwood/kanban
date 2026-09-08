@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AttentionItemRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledged_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acknowledged_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "detail": true,
+        "first_seen_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/AttentionState"
+        },
+        "last_seen_at": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "subject_id": {
+          "type": "string"
+        },
+        "subject_kind": {
+          "$ref": "#/definitions/AttentionSubjectKind"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "detail",
+        "first_seen_at",
+        "id",
+        "kind",
+        "last_seen_at",
+        "project_id",
+        "subject_id",
+        "subject_kind",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    },
+    "AttentionState": {
+      "description": "Why one Ticket demands operator attention: the closed Attention Item classes from CONTEXT.md. The per-Ticket projection that raises them lands with the attention inbox (KAN-S11); the vocabulary is fixed here so the filter surface is complete first.",
+      "oneOf": [
+        {
+          "description": "A registered dependency or external blocker holds the work.",
+          "enum": [
+            "blocker"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A settled run finished without its required submission.",
+          "enum": [
+            "missing_result"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The work waits on a human decision.",
+          "enum": [
+            "human_decision"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A review asks the operator in.",
+          "enum": [
+            "review_request"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A schedule failed to activate or mint its occurrence.",
+          "enum": [
+            "failed_schedule"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An approval no longer validates.",
+          "enum": [
+            "invalid_approval"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The session observing the work disconnected.",
+          "enum": [
+            "disconnected_session"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A run passed its stall deadline.",
+          "enum": [
+            "stale_run"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AttentionSubjectKind": {
+      "enum": [
+        "ticket",
+        "run",
+        "spec",
+        "project",
+        "deferral",
+        "graph",
+        "schedule",
+        "role"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/definitions/AttentionItemRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "AttentionListResponse",
+  "type": "object"
+}

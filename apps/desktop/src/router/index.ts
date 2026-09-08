@@ -13,6 +13,7 @@ import HealthDashboardView from '../views/HealthDashboardView.vue'
 import SpecEditorView from '../views/SpecEditorView.vue'
 import TicketEditorView from '../views/TicketEditorView.vue'
 import DependencyEditorView from '../views/DependencyEditorView.vue'
+import AttentionInboxView from '../views/AttentionInboxView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -34,6 +35,7 @@ const router = createRouter({
     { path: '/board', name: 'global-board', component: GlobalBoardView },
     { path: '/projects/:projectId/board', name: 'board', component: BoardView },
     { path: '/projects/:projectId/workspaces', name: 'workspaces', component: WorkspacesView },
+    { path: '/attention', name: 'attention-inbox', component: AttentionInboxView },
     { path: '/health', name: 'health', component: HealthDashboardView },
   ],
 })

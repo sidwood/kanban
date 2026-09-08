@@ -32,6 +32,13 @@ pub struct AttentionSignal {
     pub detail: Value,
 }
 
+/// Read observed Run metadata without treating it as authority.
+pub(crate) fn observed_run_id(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str()?.parse::<u64>().ok())
+}
+
 /// The metadata a role tab carries (DR-HB-03): Project, Ticket,
 /// Lane, reviewer slot, run, harness, and model.
 const ROLE_TAB_FIELDS: [&str; 7] = [

@@ -552,6 +552,12 @@ pub struct TicketUnparkRequest {
 #[serde(deny_unknown_fields)]
 pub struct TicketScheduleRequest {
     pub mutation: super::MutationContext,
+    /// A recurring five-field cron expression, mutually exclusive with activation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cron: Option<String>,
+    /// The earliest scheduling boundary; the first recurring window is after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
     /// The Ticket being scheduled.
     pub ticket_id: u64,
     /// The one-time activation instant, RFC 3339.

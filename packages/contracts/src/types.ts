@@ -786,6 +786,19 @@ export type ProjectRegisterRequest = {
   repository: string;
   seed_workspace: string;
 };
+export type ProjectSchedulePolicyQuery = {
+  project_id: number;
+};
+export type ProjectSchedulePolicyRecord = {
+  catch_up_one: boolean;
+  project_id: number;
+  version: number;
+};
+export type ProjectSchedulePolicySetRequest = {
+  catch_up_one: boolean;
+  mutation: MutationContext;
+  project_id: number;
+};
 export type RefusedCriterion = {
   outcome: string;
   reason: CriterionRefusal;
@@ -960,6 +973,24 @@ export type SavedViewRecord = {
   scope: ViewScope;
   sorting: ViewSorting;
   version: number;
+};
+export type ScheduleAttentionListQuery = {
+  project_id: number;
+};
+export type ScheduleAttentionListResponse = {
+  signals: ScheduleAttentionRecord[];
+};
+export type ScheduleAttentionReason = 'missed_window' | 'overlap' | 'blocked';
+export type ScheduleAttentionRecord = {
+  first_window: string;
+  id: number;
+  last_window: string;
+  next_activation: string;
+  project_id: number;
+  reason: ScheduleAttentionReason;
+  schedule_id: number;
+  template_ticket_id: number;
+  updated_at: string;
 };
 export type SchedulerHealth = {
   last_backup_success_at?: string | null;
@@ -1418,6 +1449,8 @@ export type TicketReviewStage = {
 };
 export type TicketScheduleRequest = {
   activation?: string | null;
+  after?: string | null;
+  cron?: string | null;
   mutation: MutationContext;
   profile?: string | null;
   ticket_id: number;

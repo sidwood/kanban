@@ -515,6 +515,11 @@ fn sample_request(schema: &str) -> Value {
         "ReviewExpireRequest" => json!({"mutation":mutation,"review_id":1}),
         "ReviewGetQuery" => json!({"review_id":1}),
         "ReviewHistoryQuery" => json!({"ticket_id":1}),
+        "ProjectSchedulePolicyQuery" => json!({"project_id":1}),
+        "ProjectSchedulePolicySetRequest" => {
+            json!({"mutation":mutation,"project_id":1,"catch_up_one":false})
+        }
+        "ScheduleAttentionListQuery" => json!({"project_id":1}),
         "SpecIntegrationClaimRequest" => {
             json!({"mutation":mutation,"spec_id":1,"branch":"kan-s1","workspace_path":"/workspaces/kanban.kan-s1"})
         }
@@ -799,6 +804,15 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ReviewGetQuery" => decode_invoke_args::<kanban_dto::ReviewGetQuery>(request).is_err(),
         "ReviewHistoryQuery" => {
             decode_invoke_args::<kanban_dto::ReviewHistoryQuery>(request).is_err()
+        }
+        "ProjectSchedulePolicyQuery" => {
+            decode_invoke_args::<kanban_dto::ProjectSchedulePolicyQuery>(request).is_err()
+        }
+        "ProjectSchedulePolicySetRequest" => {
+            decode_invoke_args::<kanban_dto::ProjectSchedulePolicySetRequest>(request).is_err()
+        }
+        "ScheduleAttentionListQuery" => {
+            decode_invoke_args::<kanban_dto::ScheduleAttentionListQuery>(request).is_err()
         }
         "SpecIntegrationClaimRequest" => {
             decode_invoke_args::<kanban_dto::SpecIntegrationClaimRequest>(request).is_err()

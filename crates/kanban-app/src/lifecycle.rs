@@ -432,8 +432,14 @@ impl CommandHandler for ScheduleTicket {
     ) -> Result<Value, ApiError> {
         let request: TicketScheduleRequest = parse_payload(&command.payload)?;
         let (project, mut ticket) = self.0.open(request.ticket_id)?;
-        match (request.activation, request.timezone, request.profile) {
-            (None, None, None) => self.0.land(
+        match (
+            request.activation,
+            request.cron,
+            request.after,
+            request.timezone,
+            request.profile,
+        ) {
+            (None, None, None, None, None) => self.0.land(
                 &project,
                 &mut ticket,
                 Landing {
@@ -444,10 +450,26 @@ impl CommandHandler for ScheduleTicket {
                 |ticket, readiness| apply_command(ticket, HumanCommand::Schedule, readiness),
                 effects,
             ),
-            (Some(activation), Some(timezone), Some(profile)) => {
+            (Some(activation), None, None, Some(timezone), Some(profile)) => {
                 let schedule =
                     kanban_domain::Schedule::one_time(ticket.id(), activation, &timezone, &profile)
                         .map_err(refuse)?;
+                kanban_domain::accepts(ticket.kind(), schedule.trigger()).map_err(refuse)?;
+                self.0
+                    .land_scheduled(&project, &mut ticket, &schedule, effects)
+            }
+            (None, Some(expression), Some(after), Some(timezone), Some(profile)) => {
+                let next =
+                    kanban_domain::recurrence::next_activation(&expression, &timezone, &after)
+                        .map_err(refuse)?;
+                let schedule = kanban_domain::Schedule::recurring(
+                    ticket.id(),
+                    &expression,
+                    &timezone,
+                    &profile,
+                    next,
+                )
+                .map_err(refuse)?;
                 kanban_domain::accepts(ticket.kind(), schedule.trigger()).map_err(refuse)?;
                 self.0
                     .land_scheduled(&project, &mut ticket, &schedule, effects)

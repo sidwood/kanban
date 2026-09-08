@@ -8,6 +8,7 @@
     "pnpm-lock.yaml"
   ],
   "words": [
+    "Behavior",
     "Deque",
     "Herdr",
     "Pinia",
@@ -27,9 +28,11 @@
     "bündlé",
     "cdylib",
     "chacha",
+    "chrono",
     "clippy",
     "codegen",
     "conn",
+    "croner",
     "deserialise",
     "deserialises",
     "dialog",

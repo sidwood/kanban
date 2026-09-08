@@ -32,6 +32,7 @@ pub mod plan;
 pub mod profile;
 pub mod project;
 pub mod reassignment;
+pub mod recurrence;
 pub mod review_config;
 pub mod review_execution;
 pub mod rulings;

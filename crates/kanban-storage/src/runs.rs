@@ -56,6 +56,7 @@ impl RunStore for SqliteRunStore {
                 draft.request.id().value()
             )));
         }
+        crate::recurrence::guard_occurrence_dispatch(&span, draft.request.ticket())?;
         let outcome = span.execute(
             "INSERT INTO runs
                  (project_id, ticket_id, dispatch_request_id, status,

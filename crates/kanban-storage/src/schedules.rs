@@ -23,7 +23,7 @@ use crate::timeline::insert_event;
 
 /// Every stored column of one Schedule row after the joined Ticket
 /// and Project columns, in select order.
-const SCHEDULE_COLUMNS: &str = "s.id, s.trigger_kind, s.activation_at, s.cron_expression, \
+pub(crate) const SCHEDULE_COLUMNS: &str = "s.id, s.trigger_kind, s.activation_at, s.cron_expression, \
                                 s.timezone, s.profile, s.next_activation, s.state";
 
 /// The Schedule port over the authoritative database.
@@ -169,7 +169,7 @@ fn timeline_failed(error: crate::error::StorageError) -> ApiError {
 /// beside it, the Schedule last. Every stored value passed domain
 /// validation on the way in, so a row that fails to rehydrate is
 /// corruption the caller must hear about.
-fn load_due_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DueActivation> {
+pub(crate) fn load_due_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DueActivation> {
     let ticket = load_ticket_row(row)?.rehydrate()?;
     let project = decode_row_at(row, 23)?;
     let id = row.get::<_, i64>(37)?.unsigned_abs();
@@ -233,7 +233,7 @@ impl std::fmt::Display for CorruptRow {
 impl std::error::Error for CorruptRow {}
 
 /// One column list qualified with `alias`, for the joined reads.
-fn qualified(columns: &str, alias: &str) -> String {
+pub(crate) fn qualified(columns: &str, alias: &str) -> String {
     columns
         .split(", ")
         .map(|column| format!("{alias}.{column}"))

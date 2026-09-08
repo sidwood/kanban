@@ -99,6 +99,27 @@ define_exposed_catalogue! {
         mcp: "project_register",
         description: "Register a Project with one Git repository, Seed Workspace, default branch, and exclusive Herdr session.",
     },
+    "schedule.attention.list" => {
+        kind: Query,
+        request: "ScheduleAttentionListQuery",
+        response: "ScheduleAttentionListResponse",
+        mcp: "schedule_attention_list",
+        description: "Read consolidated missed-window and overlap attention for a Project.",
+    },
+    "project.schedule_policy.get" => {
+        kind: Query,
+        request: "ProjectSchedulePolicyQuery",
+        response: "ProjectSchedulePolicyRecord",
+        mcp: "project_schedule_policy_get",
+        description: "Read a Project's recurring missed-window policy. Skipping is the default.",
+    },
+    "project.schedule_policy.set" => {
+        kind: Command,
+        request: "ProjectSchedulePolicySetRequest",
+        response: "ProjectSchedulePolicyRecord",
+        mcp: "project_schedule_policy_set",
+        description: "Opt a Project into one catch-up occurrence, or restore skipped-history behaviour.",
+    },
     "project.archive" => {
         kind: Command,
         request: "ProjectArchiveRequest",

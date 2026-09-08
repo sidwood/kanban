@@ -31,6 +31,20 @@
         "null"
       ]
     },
+    "after": {
+      "description": "The earliest scheduling boundary; the first recurring window is after it.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cron": {
+      "description": "A recurring five-field cron expression, mutually exclusive with activation.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },

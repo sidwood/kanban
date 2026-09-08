@@ -39,9 +39,11 @@ use kanban_dto::{
     PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
     ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord, ProfileRetireRequest,
     ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
-    ProjectRecord, ProjectRegisterRequest, RulingListQuery, RulingListResponse, RulingRecord,
+    ProjectRecord, ProjectRegisterRequest, ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord,
+    ProjectSchedulePolicySetRequest, RulingListQuery, RulingListResponse, RulingRecord,
     RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
-    RunListResponse, RunRecord, SavedViewRecord, SearchGlobalQuery, SearchGlobalResponse,
+    RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
+    ScheduleAttentionListResponse, SearchGlobalQuery, SearchGlobalResponse,
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageCheckResponse,
     SpecCoverageMatrixQuery, SpecCoverageMatrixResponse, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse, SpecIntegrationApproveRequest,
@@ -203,6 +205,60 @@ async fn project_register(
     let request = decode_invoke_args::<ProjectRegisterRequest>(request)?;
     run_blocking(shell, "project register", |shell| {
         forward_command(shell, "project.register", "registered Project", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_schedule_policy_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProjectSchedulePolicyRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectSchedulePolicyQuery>(request)?;
+    run_blocking(shell, "project schedule policy get", |shell| {
+        forward_query(
+            shell,
+            "project.schedule_policy.get",
+            "project schedule policy get",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_schedule_policy_set(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProjectSchedulePolicyRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectSchedulePolicySetRequest>(request)?;
+    run_blocking(shell, "project schedule policy set", |shell| {
+        forward_command(
+            shell,
+            "project.schedule_policy.set",
+            "project schedule policy set",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn schedule_attention_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ScheduleAttentionListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ScheduleAttentionListQuery>(request)?;
+    run_blocking(shell, "schedule attention list", |shell| {
+        forward_query(
+            shell,
+            "schedule.attention.list",
+            "schedule attention list",
+            request,
+        )
     })
     .await
 }
@@ -2024,6 +2080,9 @@ shell_handlers::shell_handler_catalogue! {
     initiative_archive,
     initiative_list,
     project_register,
+    schedule_attention_list,
+    project_schedule_policy_get,
+    project_schedule_policy_set,
     project_archive,
     project_list,
     plan_create,

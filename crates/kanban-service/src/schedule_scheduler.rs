@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use kanban_app::recurrence::RecurrencePass;
 use kanban_app::{ActivationPass, EventSink};
 
 use crate::logs::{LogLevel, LogRecord, LogWriter};
@@ -27,18 +28,25 @@ pub(crate) struct ActivationScheduler {
 impl ActivationScheduler {
     /// Spawn the activation loop for `pass`, announcing every Ticket
     /// it makes ready on `events` and recording outcomes in `log`.
-    pub fn spawn(pass: ActivationPass, events: Arc<dyn EventSink>, log: Arc<LogWriter>) -> Self {
-        Self::spawn_with_interval(pass, events, log, ACTIVATION_TICK)
+    pub fn spawn(
+        pass: ActivationPass,
+        recurrence: RecurrencePass,
+        events: Arc<dyn EventSink>,
+        log: Arc<LogWriter>,
+    ) -> Self {
+        Self::spawn_with_interval(pass, recurrence, events, log, ACTIVATION_TICK)
     }
 
     /// Spawn a scheduler with a testable interval.
     pub fn spawn_with_interval(
         pass: ActivationPass,
+        recurrence: RecurrencePass,
         events: Arc<dyn EventSink>,
         log: Arc<LogWriter>,
         interval: Duration,
     ) -> Self {
-        let handle = thread::spawn(move || scheduler_loop(&pass, &*events, &log, interval));
+        let handle =
+            thread::spawn(move || scheduler_loop(&pass, &recurrence, &*events, &log, interval));
         Self { _handle: handle }
     }
 }
@@ -48,12 +56,13 @@ impl ActivationScheduler {
 /// (DR-SA-06).
 fn scheduler_loop(
     pass: &ActivationPass,
+    recurrence: &RecurrencePass,
     events: &dyn EventSink,
     log: &LogWriter,
     interval: Duration,
 ) {
     loop {
-        run_pass(pass, events, log);
+        run_pass(pass, recurrence, events, log);
         thread::sleep(interval);
     }
 }
@@ -61,8 +70,14 @@ fn scheduler_loop(
 /// Fire every due activation at the clock's current reading, logging
 /// the outcomes the operator's health view wants: what fired, what
 /// stayed held back, and any refusal the pass could not apply.
-fn run_pass(pass: &ActivationPass, events: &dyn EventSink, log: &LogWriter) {
-    match pass.fire_due(&now_stored(), events) {
+fn run_pass(
+    pass: &ActivationPass,
+    recurrence: &RecurrencePass,
+    events: &dyn EventSink,
+    log: &LogWriter,
+) {
+    let now = now_stored();
+    match pass.fire_due(&now, events) {
         Ok(report) if report.fired > 0 || report.skipped > 0 => {
             let _ = log.append(&LogRecord::new(
                 LogLevel::Info,
@@ -79,6 +94,23 @@ fn run_pass(pass: &ActivationPass, events: &dyn EventSink, log: &LogWriter) {
                 LogLevel::Error,
                 "scheduler",
                 format!("activation pass failed: {}", error.message),
+            ));
+        }
+    }
+    match recurrence.tick(&now, events) {
+        Ok(report) if !report.minted.is_empty() => {
+            let _ = log.append(&LogRecord::new(
+                LogLevel::Info,
+                "scheduler",
+                format!("recurrence pass minted {} occurrences", report.minted.len()),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = log.append(&LogRecord::new(
+                LogLevel::Error,
+                "scheduler",
+                format!("recurrence pass failed: {}", error.message),
             ));
         }
     }
@@ -233,6 +265,40 @@ mod scheduler_restart {
             row.get(0)
         })
         .expect("the schedule row reads")
+    }
+
+    #[test]
+    fn scheduler_recurring_advances_history_in_the_running_service() {
+        let dir = TempDir::new().unwrap();
+        let repository = scratch_repository(&dir, "recurring");
+        let core = boot(&dir);
+        let (mut client, ticket) = project_and_task(core.socket_path(), &repository);
+        client.command(
+            "ticket.schedule",
+            json!({
+                "mutation": {"optimistic_version": 1, "idempotency_key":"recurring-start"},
+                "ticket_id":ticket, "cron":"0 0 1 1 *", "after":"1971-01-01T00:00:00Z",
+                "timezone":"UTC", "profile":"standard",
+            }),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let timeline = client.query_with("timeline.query", json!({"scope":{"project":1}}));
+            if timeline["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["detail"]["action"] == "recurrence_advanced")
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the real scheduler ignored the recurring Schedule"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        core.shutdown();
     }
 
     #[test]

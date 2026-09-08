@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ScheduleAttentionReason": {
+      "enum": [
+        "missed_window",
+        "overlap",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "ScheduleAttentionRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "first_window": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "last_window": {
+          "type": "string"
+        },
+        "next_activation": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/definitions/ScheduleAttentionReason"
+        },
+        "schedule_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "template_ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "first_window",
+        "id",
+        "last_window",
+        "next_activation",
+        "project_id",
+        "reason",
+        "schedule_id",
+        "template_ticket_id",
+        "updated_at"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "signals": {
+      "items": {
+        "$ref": "#/definitions/ScheduleAttentionRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "signals"
+  ],
+  "title": "ScheduleAttentionListResponse",
+  "type": "object"
+}

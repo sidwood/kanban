@@ -682,6 +682,34 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("LandingRecord", schema_for!(LandingRecord)),
         ("LandingSeedRequest", schema_for!(LandingSeedRequest)),
         (
+            "ScheduleAttentionListQuery",
+            schema_for!(crate::recurrence::ScheduleAttentionListQuery),
+        ),
+        (
+            "ScheduleAttentionListResponse",
+            schema_for!(crate::recurrence::ScheduleAttentionListResponse),
+        ),
+        (
+            "ScheduleAttentionRecord",
+            schema_for!(crate::recurrence::ScheduleAttentionRecord),
+        ),
+        (
+            "ScheduleAttentionReason",
+            schema_for!(crate::recurrence::ScheduleAttentionReason),
+        ),
+        (
+            "ProjectSchedulePolicyQuery",
+            schema_for!(crate::ProjectSchedulePolicyQuery),
+        ),
+        (
+            "ProjectSchedulePolicyRecord",
+            schema_for!(crate::ProjectSchedulePolicyRecord),
+        ),
+        (
+            "ProjectSchedulePolicySetRequest",
+            schema_for!(crate::ProjectSchedulePolicySetRequest),
+        ),
+        (
             "SpecIntegrationApproveRequest",
             schema_for!(SpecIntegrationApproveRequest),
         ),

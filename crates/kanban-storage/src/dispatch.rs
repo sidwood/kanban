@@ -59,6 +59,7 @@ impl DispatchStore for SqliteDispatchStore {
                 .to_string(),
             ));
         }
+        crate::recurrence::guard_occurrence_dispatch(&span, draft.ticket)?;
         let outcome = span.execute(
             "INSERT INTO dispatch_requests
                  (project_id, ticket_id, status, priority, ready,
@@ -155,6 +156,7 @@ impl DispatchStore for SqliteDispatchStore {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let mut capability = None;
         if matches!(decision, ClaimDecision::Claim) {
+            crate::recurrence::guard_occurrence_dispatch(&span, request.ticket())?;
             let changed = span
                 .execute(
                     "UPDATE dispatch_requests

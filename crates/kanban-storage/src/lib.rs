@@ -27,6 +27,7 @@ pub mod profiles;
 pub mod projects;
 pub mod review_config;
 pub use findings::SqliteFindingStore;
+pub mod recurrence;
 pub mod review_execution;
 pub mod rulings;
 pub mod runs;

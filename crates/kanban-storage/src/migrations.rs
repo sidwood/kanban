@@ -269,6 +269,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "landings",
         sql: include_str!("../migrations/0043_landings.sql"),
     },
+    Migration {
+        version: 44,
+        name: "recurrence",
+        sql: include_str!("../migrations/0044_recurrence.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1832,6 +1837,10 @@ mod tests {
                 PendingMigration {
                     version: 43,
                     name: "landings"
+                },
+                PendingMigration {
+                    version: 44,
+                    name: "recurrence"
                 },
             ]]
         );

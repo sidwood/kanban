@@ -372,6 +372,12 @@ fn assemble_core(
         lane_store.clone(),
         Arc::new(git_landing::LocalGitLanding),
     )?;
+    core.register_scheduling_policy(
+        Arc::new(kanban_storage::recurrence::SqliteRecurrenceStore::new(
+            &database,
+        )),
+        project_store.clone(),
+    )?;
     core.register_query(
         "timeline.query",
         Arc::new(TimelineQueryHandler::new(timeline_store)),
@@ -424,7 +430,11 @@ fn serve_configured(
         Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
     let backup_scheduler =
         BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
-    let activation_scheduler = ActivationScheduler::spawn(activation_pass, broker, logs.clone());
+    let recurrence_pass = kanban_app::recurrence::RecurrencePass::new(Arc::new(
+        kanban_storage::recurrence::SqliteRecurrenceStore::new(&database),
+    ));
+    let activation_scheduler =
+        ActivationScheduler::spawn(activation_pass, recurrence_pass, broker, logs.clone());
     let server = server.serve(Arc::new(core))?;
     let socket_path = server.socket_path().to_path_buf();
     // The startup record names the live socket, which is the fact a

@@ -834,6 +834,226 @@
     }
   },
   {
+    "description": "Read consolidated missed-window and overlap attention for a Project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ScheduleAttentionListQuery",
+      "type": "object"
+    },
+    "name": "schedule_attention_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "ScheduleAttentionReason": {
+          "enum": [
+            "missed_window",
+            "overlap",
+            "blocked"
+          ],
+          "type": "string"
+        },
+        "ScheduleAttentionRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "first_window": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "last_window": {
+              "type": "string"
+            },
+            "next_activation": {
+              "type": "string"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "reason": {
+              "$ref": "#/definitions/ScheduleAttentionReason"
+            },
+            "schedule_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "template_ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "updated_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "first_window",
+            "id",
+            "last_window",
+            "next_activation",
+            "project_id",
+            "reason",
+            "schedule_id",
+            "template_ticket_id",
+            "updated_at"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "signals": {
+          "items": {
+            "$ref": "#/definitions/ScheduleAttentionRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "signals"
+      ],
+      "title": "ScheduleAttentionListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read a Project's recurring missed-window policy. Skipping is the default.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "ProjectSchedulePolicyQuery",
+      "type": "object"
+    },
+    "name": "project_schedule_policy_get",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "catch_up_one": {
+          "type": "boolean"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "catch_up_one",
+        "project_id",
+        "version"
+      ],
+      "title": "ProjectSchedulePolicyRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Opt a Project into one catch-up occurrence, or restore skipped-history behaviour.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "catch_up_one": {
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "catch_up_one",
+        "mutation",
+        "project_id"
+      ],
+      "title": "ProjectSchedulePolicySetRequest",
+      "type": "object"
+    },
+    "name": "project_schedule_policy_set",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "catch_up_one": {
+          "type": "boolean"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "catch_up_one",
+        "project_id",
+        "version"
+      ],
+      "title": "ProjectSchedulePolicyRecord",
+      "type": "object"
+    }
+  },
+  {
     "description": "Archive a Project. Archiving is terminal and preserves every recorded fact.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -14900,6 +15120,20 @@
       "properties": {
         "activation": {
           "description": "The one-time activation instant, RFC 3339.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "after": {
+          "description": "The earliest scheduling boundary; the first recurring window is after it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cron": {
+          "description": "A recurring five-field cron expression, mutually exclusive with activation.",
           "type": [
             "string",
             "null"

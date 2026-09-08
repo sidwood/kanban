@@ -25,6 +25,12 @@ pub mod mutation;
 pub mod plan;
 pub mod profile;
 pub mod project;
+pub mod recurrence;
+pub use recurrence::{
+    ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord, ProjectSchedulePolicySetRequest,
+    ScheduleAttentionListQuery, ScheduleAttentionListResponse, ScheduleAttentionReason,
+    ScheduleAttentionRecord,
+};
 pub mod review;
 pub use finding::{
     FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord, FindingSeverity,
@@ -526,6 +532,13 @@ mod tests {
                 "LandingLaneRequest",
                 "LandingRecord",
                 "LandingSeedRequest",
+                "ScheduleAttentionListQuery",
+                "ScheduleAttentionListResponse",
+                "ScheduleAttentionRecord",
+                "ScheduleAttentionReason",
+                "ProjectSchedulePolicyQuery",
+                "ProjectSchedulePolicyRecord",
+                "ProjectSchedulePolicySetRequest",
                 "SpecIntegrationApproveRequest",
                 "SpecIntegrationClaimRequest",
                 "SpecIntegrationRecord",

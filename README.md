@@ -19,6 +19,37 @@ Requires Rust, Node.js, pnpm, `just`, and `pre-commit` on `PATH`.
 - `just build` — debug builds of the core and the desktop app.
 - `just dev` — run the core and the desktop app.
 
+## Local MCP clients
+
+Build the service and adapter together with `just build` or `just dev`.
+While the service is running, configure a local MCP client to launch the
+`kanban-mcp` executable beside `kanban-service` with these arguments:
+
+```text
+--socket /absolute/path/to/Kanban/core.sock --capability DISPATCH_CAPABILITY_ID
+```
+
+Use the absolute managed socket path (normally under
+`~/Library/Application Support/Kanban/`) and the numeric capability ID
+returned by dispatch. The run must already be acknowledged and executing.
+This ID selects a grant; it is not an installation credential.
+
+The client process only relays stdio. The service launches the actual
+adapter with an inherited, run-bound channel and a cleared environment.
+Generated tools expose only that grant's operations; calls still check
+scope and expiry, including before replay and mutation. Ending the client
+connection or stopping the service cleans up its adapter.
+
+The Unix socket trusts the current macOS user, like the native UI. This
+is not an OS sandbox against another process running as that same user.
+MCP tool arguments cannot replace the service-selected grant.
+
+Managed startup keeps installation credentials in macOS Keychain under
+service `dev.kanban.desktop.installation`, account `installation`.
+Credentials never belong in client configuration, prompts, SQLite, or
+environment variables. Keychain failure refuses managed startup; there
+is no plaintext fallback. HTTP is not enabled by this stdio integration.
+
 ## Continuous integration
 
 GitHub Actions runs the repository gates (`just check`) on every pull

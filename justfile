@@ -136,7 +136,7 @@ check-ci-matrix:
 dev: need-rust need-web
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build -p kanban-service
+    cargo build -p kanban-service -p kanban-mcp
     pnpm --filter desktop dev
 
 # Development helper: stop a core a dev session left running. The

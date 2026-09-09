@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 time = { workspace = true }
 base64 = "0.22.1"
 sha2 = "0.10.9"
+zeroize = "1.9.0"
 
 [[bin]]
 name = "kanban-contracts-gen"

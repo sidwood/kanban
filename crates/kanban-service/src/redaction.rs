@@ -63,13 +63,22 @@ impl RedactionSourceError {
 }
 
 /// Scrubs a fixed set of secret values from text and JSON.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Redactor {
     secret_values: Vec<String>,
     /// Every form the secrets take on disk, ordered so the form that
     /// carries more escaping replaces first: substituting a raw form
     /// inside an escaped occurrence would leave broken halves behind.
     scrub_forms: Vec<String>,
+}
+
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Redactor")
+            .field("secret_count", &self.secret_count())
+            .finish()
+    }
 }
 
 impl Redactor {

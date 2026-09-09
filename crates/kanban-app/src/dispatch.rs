@@ -57,9 +57,70 @@ pub struct Core {
     /// Serialises the guard's check-and-record span so one idempotency
     /// key can never apply twice, even across transport threads.
     command_gate: Mutex<()>,
+    installation_secret: Option<Arc<crate::secrets::InstallationSecret>>,
+    pub(crate) agent_authority: Option<Arc<crate::agent_authorization::RunAuthority>>,
 }
 
 impl Core {
+    pub fn protect_installation_secret(&mut self, secret: Arc<crate::secrets::InstallationSecret>) {
+        self.installation_secret = Some(secret);
+    }
+
+    fn exclude_secret(&self, name: &str, payload: &Value) -> Result<(), ApiError> {
+        if let Some(secret) = &self.installation_secret
+            && (name.contains(secret.expose())
+                || payload.to_string().contains(secret.expose())
+                || (name == "evidence.attach"
+                    && payload
+                        .get("content_base64")
+                        .and_then(Value::as_str)
+                        .is_some_and(|encoded| {
+                            use base64::{Engine, engine::general_purpose::STANDARD};
+                            STANDARD.decode(encoded).ok().is_some_and(|bytes| {
+                                bytes
+                                    .windows(secret.expose().len())
+                                    .any(|window| window == secret.expose().as_bytes())
+                            })
+                        })))
+        {
+            return Err(ApiError::invalid_request(
+                "installation credentials are not application data",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Agent authorization is checked under the mutation gate, before replay.
+    pub fn agent_command(
+        &self,
+        capability: kanban_domain::CapabilityId,
+        name: &str,
+        payload: &Value,
+    ) -> Result<Value, ApiError> {
+        self.command_authorized(Some(capability), name, payload)
+    }
+    pub fn agent_query(
+        &self,
+        capability: kanban_domain::CapabilityId,
+        name: &str,
+        payload: &Value,
+    ) -> Result<Value, ApiError> {
+        self.exclude_secret(name, payload)?;
+        let _gate = self
+            .command_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.agent_authority
+            .as_ref()
+            .ok_or_else(|| ApiError::invalid_request("agent access is unavailable"))?
+            .authorize(capability, name, payload)?;
+        let value = self.query(name, payload)?;
+        self.agent_authority
+            .as_ref()
+            .expect("authority was checked")
+            .project_response(capability, name, value)
+    }
+
     /// An empty core serving operations from `catalog`.
     pub fn new(
         catalog: &'static [OperationDescriptor],
@@ -73,6 +134,8 @@ impl Core {
             idempotency,
             events,
             command_gate: Mutex::new(()),
+            agent_authority: None,
+            installation_secret: None,
         }
     }
 
@@ -128,6 +191,7 @@ impl Core {
 
     /// Serve a named query.
     pub fn query(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
+        self.exclude_secret(name, payload)?;
         let handler = self
             .queries
             .get(name)
@@ -146,6 +210,16 @@ impl Core {
     /// refuses the retry closed, preserving the row for audit, and
     /// never replays or guesses on its behalf (KAN-T135).
     pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
+        self.command_authorized(None, name, payload)
+    }
+
+    fn command_authorized(
+        &self,
+        capability: Option<kanban_domain::CapabilityId>,
+        name: &str,
+        payload: &Value,
+    ) -> Result<Value, ApiError> {
+        self.exclude_secret(name, payload)?;
         let handler = self
             .commands
             .get(name)
@@ -162,6 +236,12 @@ impl Core {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
+        if let Some(capability) = capability {
+            self.agent_authority
+                .as_ref()
+                .ok_or_else(|| ApiError::invalid_request("agent access is unavailable"))?
+                .authorize(capability, name, payload)?;
+        }
         if let Some(recorded) = self.idempotency.recorded(&command.idempotency_key)? {
             if recorded.replays(&fingerprint) {
                 return Ok(recorded.response);
@@ -190,6 +270,14 @@ impl Core {
         // an outcome that cannot be recorded, discards both together.
         handler.prepare(&command)?;
         let span = self.idempotency.begin()?;
+        // Observers can expire grants outside the command gate. Recheck while
+        // holding the database write span, before any agent mutation applies.
+        if let Some(capability) = capability {
+            self.agent_authority
+                .as_ref()
+                .expect("authority was checked")
+                .authorize(capability, name, payload)?;
+        }
         let announced = PendingEffects::default();
         let applied = handler.apply(&command, &announced);
         let response = match applied {

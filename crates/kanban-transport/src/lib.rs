@@ -2,6 +2,7 @@
 //! loopback HTTP server, frame encoding, and the ordered event
 //! stream.
 
+pub mod agent;
 pub mod broker;
 pub mod error;
 pub mod frame;

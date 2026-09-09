@@ -97,6 +97,14 @@ impl SocketServer {
     /// [`ServerHandle::shutdown`] is called. Fails, without starting,
     /// when the accept thread cannot be spawned.
     pub fn serve(self, core: Arc<kanban_app::Core>) -> Result<ServerHandle, TransportError> {
+        self.serve_with_agents(core, None)
+    }
+
+    pub fn serve_with_agents(
+        self,
+        core: Arc<kanban_app::Core>,
+        agents: Option<Arc<dyn crate::agent::AgentLauncher>>,
+    ) -> Result<ServerHandle, TransportError> {
         let Self {
             listener,
             socket_path,
@@ -121,6 +129,7 @@ impl SocketServer {
                             &broker,
                             &accept_connections,
                             &next_connection_id,
+                            agents.clone(),
                         ),
                         Err(_) => continue,
                     }
@@ -247,6 +256,7 @@ fn spawn_connection(
     broker: &Arc<EventBroker>,
     connections: &Arc<Mutex<Vec<ConnectionEntry>>>,
     next_connection_id: &Arc<AtomicU64>,
+    agents: Option<Arc<dyn crate::agent::AgentLauncher>>,
 ) {
     let Ok(read_half) = stream.try_clone() else {
         return;
@@ -265,7 +275,7 @@ fn spawn_connection(
             let shared_write = shared_write.clone();
             let connections = connections.clone();
             move || {
-                serve_connection(read_half, shared_write, &core, &broker);
+                serve_connection(read_half, shared_write, &core, &broker, agents);
                 // Forget the connection so its socket closes for the
                 // client instead of lingering until server shutdown.
                 forget_connection(&connections, id);
@@ -310,6 +320,7 @@ fn serve_connection(
     shared_write: Arc<Mutex<UnixStream>>,
     core: &Arc<kanban_app::Core>,
     broker: &Arc<EventBroker>,
+    agents: Option<Arc<dyn crate::agent::AgentLauncher>>,
 ) {
     let mut reader = BufReader::new(read_half);
     let mut subscription: Option<ActiveSubscription> = None;
@@ -327,13 +338,13 @@ fn serve_connection(
 
         let request: RequestFrame = match serde_json::from_str(trimmed) {
             Ok(request) => request,
-            Err(error) => {
+            Err(_) => {
                 // A line that is not a frame is a protocol breach:
                 // answer it, then close the connection.
                 let _ = write_frame(
                     &shared_write,
                     &ResponseFrame::Error {
-                        error: ApiError::invalid_request(&format!("malformed frame: {error}")),
+                        error: ApiError::invalid_request("malformed frame"),
                     },
                 );
                 break;
@@ -341,6 +352,29 @@ fn serve_connection(
         };
 
         match request.kind {
+            FrameKind::Agent => {
+                if let Some(previous) = subscription.take() {
+                    end_subscription(previous, broker);
+                }
+                let attachment = request.payload.and_then(|payload| {
+                    serde_json::from_value::<crate::agent::AgentAttachment>(payload).ok()
+                });
+                let outcome = match (agents.as_ref(), attachment, request.operation) {
+                    (Some(agents), Some(attachment), None) => {
+                        agents.serve(attachment.capability_id, reader)
+                    }
+                    _ => Err(std::io::Error::other("agent attachment is unavailable")),
+                };
+                if outcome.is_err() {
+                    let _ = write_frame(
+                        &shared_write,
+                        &ResponseFrame::Error {
+                            error: ApiError::invalid_request("agent attachment is unavailable"),
+                        },
+                    );
+                }
+                break;
+            }
             FrameKind::Subscribe => {
                 // Retire any previous subscription and wait for its
                 // writer to finish before starting the replacement:
@@ -393,6 +427,7 @@ fn serve_connection(
                                     FrameKind::Query => "query",
                                     FrameKind::Command => "command",
                                     FrameKind::Subscribe => "subscribe",
+                                    FrameKind::Agent => "agent",
                                 }
                             )),
                         },
@@ -405,7 +440,7 @@ fn serve_connection(
                 let outcome = match request.kind {
                     FrameKind::Query => core.query(operation, &payload),
                     FrameKind::Command => core.command(operation, &payload),
-                    FrameKind::Subscribe => continue,
+                    FrameKind::Subscribe | FrameKind::Agent => continue,
                 };
                 let frame = match outcome {
                     Ok(payload) => ResponseFrame::Response { payload },

@@ -14,6 +14,8 @@ pub enum FrameKind {
     Command,
     /// Start receiving the ordered event stream on this connection.
     Subscribe,
+    /// Replace this connection with one service-owned, run-bound MCP stream.
+    Agent,
 }
 
 /// One request line from a client. `operation` and `payload` are

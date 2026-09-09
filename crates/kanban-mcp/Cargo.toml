@@ -5,3 +5,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+kanban-app = { workspace = true }
+kanban-domain = { workspace = true }
+kanban-transport = { workspace = true }
+libc = "0.2"
+kanban-dto = { workspace = true }
+serde_json = { workspace = true }
+rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "time", "fs"] }
+
+[dev-dependencies]
+kanban-storage = { workspace = true }
+kanban-service = { workspace = true }
+rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-child-process"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tempfile = "3.27.0"

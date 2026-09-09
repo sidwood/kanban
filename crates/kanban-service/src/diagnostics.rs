@@ -58,6 +58,14 @@ pub fn export_diagnostic_bundle(
     data_dir: &Path,
     health: &Value,
 ) -> Result<PathBuf, DiagnosticsError> {
+    export_with_redactor(data_dir, health, &Redactor::default())
+}
+
+fn export_with_redactor(
+    data_dir: &Path,
+    health: &Value,
+    installed: &Redactor,
+) -> Result<PathBuf, DiagnosticsError> {
     // Fail closed first: a configuration that cannot feed the
     // redactor must refuse the export before any bundle directory
     // exists to hold unredacted data.
@@ -67,6 +75,7 @@ pub fn export_diagnostic_bundle(
         Some(value) => Redactor::from_config_json(value),
         None => Redactor::default(),
     };
+    let redactor = redactor.union(installed);
 
     let bundle = diagnostics_dir(data_dir).join(unix_millis().to_string());
     fs::create_dir_all(&bundle).map_err(|source| DiagnosticsError::Io {
@@ -127,15 +136,27 @@ pub fn export_diagnostic_bundle(
 pub struct DiagnosticsExportHandler {
     data_dir: PathBuf,
     health: Arc<ComponentHealthHandler>,
+    installed: Redactor,
 }
 
 impl DiagnosticsExportHandler {
+    pub fn with_installation_secret(
+        mut self,
+        secret: Option<&kanban_app::secrets::InstallationSecret>,
+    ) -> Self {
+        if let Some(secret) = secret {
+            self.installed = Redactor::new(vec![secret.expose().to_owned()]);
+        }
+        self
+    }
+
     /// A handler exporting from `data_dir`, answering health through
     /// the same probe the core serves under `health.get`.
     pub fn new(data_dir: &Path, health: Arc<ComponentHealthHandler>) -> Self {
         Self {
             data_dir: data_dir.to_path_buf(),
             health,
+            installed: Redactor::default(),
         }
     }
 }
@@ -145,7 +166,7 @@ impl QueryHandler for DiagnosticsExportHandler {
         kanban_app::parse_payload::<DiagnosticsExportQuery>(payload)?;
         let health = serde_json::to_value(self.health.current()?)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let bundle = export_diagnostic_bundle(&self.data_dir, &health)
+        let bundle = export_with_redactor(&self.data_dir, &health, &self.installed)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let response = DiagnosticsExportResponse {
             bundle_dir: bundle.to_string_lossy().into_owned(),

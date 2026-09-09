@@ -17,9 +17,11 @@ libc = "0.2"
 serde_json = { workspace = true }
 thiserror = "2.0.20"
 time = { workspace = true }
+zeroize = "1.9.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-usernotifications = "0.3.1"
+security-framework = { version = "3.7.0", default-features = false, features = ["OSX_10_14"] }
 
 [dev-dependencies]
 # The herdr fixture reaches this crate only through this dev-dependency

@@ -132,6 +132,20 @@ pub struct LogWriter {
 }
 
 impl LogWriter {
+    pub fn with_installation_secret(
+        self,
+        secret: Option<&kanban_app::secrets::InstallationSecret>,
+    ) -> Self {
+        if let Some(secret) = secret {
+            let mut held = self
+                .redaction
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *held = held.union(&Redactor::new(vec![secret.expose().to_owned()]));
+        }
+        self
+    }
+
     /// Opens the managed logs directory with the product rotation and
     /// the secrets planted in the managed configuration.
     pub fn open(data_dir: &Path) -> std::io::Result<Self> {
@@ -186,7 +200,7 @@ impl LogWriter {
             Ok(redactor) => json!({
                 "ts": unix_millis(),
                 "level": record.level.as_str(),
-                "component": record.component,
+                "component": redactor.redact_text(&record.component),
                 "message": redactor.redact_text(&record.message),
                 "fields": redactor.redact_json(&record.fields),
             }),

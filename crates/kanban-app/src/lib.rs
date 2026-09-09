@@ -1,6 +1,7 @@
 //! Named application commands and queries shared by the UI and every
 //! other client, with the ports they call through.
 
+pub mod agent_authorization;
 pub mod attention;
 pub mod board_query;
 pub mod capability;
@@ -43,6 +44,7 @@ pub mod saved_views;
 pub mod schedule;
 pub mod schedule_preview;
 pub mod search;
+pub mod secrets;
 pub mod spec;
 pub mod submission;
 pub mod telemetry;

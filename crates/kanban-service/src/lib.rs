@@ -12,9 +12,11 @@ pub mod git_observer;
 pub mod health;
 pub mod herdr;
 pub mod logs;
+pub mod mcp;
 mod notifications;
 pub mod redaction;
 mod schedule_scheduler;
+pub mod secrets;
 pub mod timeline;
 
 #[cfg(test)]
@@ -153,13 +155,14 @@ fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
 /// Wire the production application core around a prepared database,
 /// the event sink owned by its transport, and `fleet_tool` serving
 /// the guarded clone commands. Observation follows `observation`.
-fn assemble_core(
+fn assemble_core_with_secret(
     data_dir: &Path,
     database: Database,
     events: Arc<dyn EventSink>,
     herdr_socket_root: PathBuf,
     observation: ObservationTuning,
     fleet_tool: Arc<dyn FleetCloneTool>,
+    secret: Option<&kanban_app::secrets::InstallationSecret>,
 ) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
@@ -412,7 +415,7 @@ fn assemble_core(
     )?;
     core.register_query(
         "diagnostics.export",
-        Arc::new(DiagnosticsExportHandler::new(data_dir, health)),
+        Arc::new(DiagnosticsExportHandler::new(data_dir, health).with_installation_secret(secret)),
     )?;
     let projects = project_store
         .list()
@@ -420,6 +423,26 @@ fn assemble_core(
     herdr.observe_projects(&projects);
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
     Ok((database, core, herdr, activation_pass))
+}
+
+#[cfg(test)]
+fn assemble_core(
+    data_dir: &Path,
+    database: Database,
+    events: Arc<dyn EventSink>,
+    herdr_socket_root: PathBuf,
+    observation: ObservationTuning,
+    fleet_tool: Arc<dyn FleetCloneTool>,
+) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
+    assemble_core_with_secret(
+        data_dir,
+        database,
+        events,
+        herdr_socket_root,
+        observation,
+        fleet_tool,
+        None,
+    )
 }
 
 /// Open (creating if needed) the database inside `data_dir`, bring
@@ -434,6 +457,27 @@ pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     )
 }
 
+/// Use an explicitly located bundled adapter, without searching PATH.
+pub struct ServiceRuntime {
+    pub mcp_executable: PathBuf,
+    pub herdr_socket_root: PathBuf,
+    pub installation_secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
+}
+
+pub fn serve_with_runtime(
+    data_dir: &Path,
+    runtime: ServiceRuntime,
+) -> Result<CoreProcess, ServiceError> {
+    serve_configured_with_mcp(
+        data_dir,
+        runtime.herdr_socket_root,
+        ObservationTuning::PRODUCTION,
+        Arc::new(LocalFleetCloneTool::new(data_dir.to_path_buf())),
+        runtime.mcp_executable,
+        runtime.installation_secret,
+    )
+}
+
 /// Open the database, bind the socket, and serve a core wired for
 /// `herdr_socket_root`, `observation`, and `fleet_tool` until
 /// shutdown.
@@ -443,20 +487,55 @@ fn serve_configured(
     observation: ObservationTuning,
     fleet_tool: Arc<dyn FleetCloneTool>,
 ) -> Result<CoreProcess, ServiceError> {
+    let adapter = std::env::current_exe()
+        .map_err(|source| ServiceError::DataDir { source })?
+        .with_file_name("kanban-mcp");
+    serve_configured_with_mcp(
+        data_dir,
+        herdr_socket_root,
+        observation,
+        fleet_tool,
+        adapter,
+        None,
+    )
+}
+
+fn serve_configured_with_mcp(
+    data_dir: &Path,
+    herdr_socket_root: PathBuf,
+    observation: ObservationTuning,
+    fleet_tool: Arc<dyn FleetCloneTool>,
+    adapter: PathBuf,
+    secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
+) -> Result<CoreProcess, ServiceError> {
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
     let mirror_socket_root = herdr_socket_root.clone();
-    let (database, core, herdr, activation_pass) = assemble_core(
+    let (database, mut core, herdr, activation_pass) = assemble_core_with_secret(
         data_dir,
         database,
         broker.clone(),
         herdr_socket_root,
         observation,
         fleet_tool,
+        secret.as_deref(),
     )?;
-    let logs =
-        Arc::new(LogWriter::open(data_dir).map_err(|source| ServiceError::LogOpen { source })?);
+    core.register_agent_authority(Arc::new(
+        kanban_app::agent_authorization::RunAuthority::new(
+            Arc::new(kanban_storage::SqliteCapabilityStore::new(&database)),
+            Arc::new(SqliteTicketStore::new(&database)),
+            Arc::new(SqliteRunStore::new(&database)),
+        ),
+    ));
+    if let Some(secret) = &secret {
+        core.protect_installation_secret(secret.clone());
+    }
+    let logs = Arc::new(
+        LogWriter::open(data_dir)
+            .map_err(|source| ServiceError::LogOpen { source })?
+            .with_installation_secret(secret.as_deref()),
+    );
     let backup_scheduler =
         BackupScheduler::spawn(data_dir.to_path_buf(), database.clone(), logs.clone());
     let recurrence_pass = kanban_app::recurrence::RecurrencePass::new(Arc::new(
@@ -494,7 +573,9 @@ fn serve_configured(
     );
     let notification_scheduler =
         notifications::NotificationScheduler::spawn(dispatcher, logs.clone());
-    let server = server.serve(Arc::new(core))?;
+    let core = Arc::new(core);
+    let agents = Arc::new(mcp::ManagedAdapters::new(core.clone(), adapter, secret));
+    let server = server.serve_with_agents(core, Some(agents))?;
     let socket_path = server.socket_path().to_path_buf();
     // The startup record names the live socket, which is the fact a
     // support session wants first; a failing write never blocks serve.
@@ -553,6 +634,8 @@ fn fast_observation() -> ObservationTuning {
 /// Why the core process could not start.
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("installation Keychain access is unavailable")]
+    InstallationSecret,
     /// The data directory could not be created.
     #[error("the data directory could not be created: {source}")]
     DataDir {
@@ -586,8 +669,20 @@ pub enum ServiceError {
 /// Another core already serving the managed socket is not a failure:
 /// the caller's goal, a serving core, is already met.
 pub fn run_managed() -> Result<(), ServiceError> {
+    use kanban_app::secrets::InstallationSecretStore;
     let data_dir = kanban_storage::paths::managed_data_dir()?;
-    match serve(&data_dir) {
+    let secret = secrets::NativeKeychain::default()
+        .load_or_create()
+        .map_err(|_| ServiceError::InstallationSecret)?;
+    let adapter = std::env::current_exe()
+        .map_err(|source| ServiceError::DataDir { source })?
+        .with_file_name("kanban-mcp");
+    let runtime = ServiceRuntime {
+        mcp_executable: adapter,
+        herdr_socket_root: production_socket_root(),
+        installation_secret: Some(Arc::new(secret)),
+    };
+    match serve_with_runtime(&data_dir, runtime) {
         Ok(core) => {
             eprintln!("kanban core serving {}", core.socket_path().display());
             // The core has no stop path of its own yet; explicit

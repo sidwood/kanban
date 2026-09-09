@@ -82,6 +82,22 @@ fn wait_ready(socket: &Path, child: &mut Child, detached: bool) {
     );
 }
 
+fn wait_for_startup_backup(socket: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let health = request(socket, "query", "health.get", json!({}));
+        if health["scheduler"]["last_backup_success_at"].is_string() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "startup backup did not complete: {}",
+            health["scheduler"]
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn wait_exit(child: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -158,6 +174,7 @@ fn process_start_and_stop(enabled: bool, detached: bool, explicit_data: bool) {
     wait_ready(&socket, &mut child.0, detached);
     assert!(data.join("kanban.sqlite").exists());
     assert!(!dir.path().join("unused-home").exists());
+    wait_for_startup_backup(&socket);
     let mut pending = None;
     if enabled {
         assert_auth(address, false);
@@ -174,6 +191,12 @@ fn process_start_and_stop(enabled: bool, detached: bool, explicit_data: bool) {
             "environment must not enable HTTP"
         );
     }
+    let idle_health = request(&socket, "query", "health.get", json!({}));
+    assert!(
+        idle_health["scheduler"]["last_backup_success_at"].is_string(),
+        "timed explicit stop requires a completed startup backup: {}",
+        idle_health["scheduler"]
+    );
     stop(&socket);
     wait_exit(&mut child.0);
     let deadline = Instant::now() + Duration::from_secs(3);

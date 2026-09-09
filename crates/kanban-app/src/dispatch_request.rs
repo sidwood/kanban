@@ -44,6 +44,8 @@ pub struct CoordinatorWakeRequest {
     pub project_id: u64,
     /// The Dispatch Request that just entered the queue.
     pub dispatch_request_id: u64,
+    /// Resume this existing run instead of announcing a new queued request.
+    pub resume_run_id: Option<u64>,
     /// The Project's Seed Workspace, the product workspace the
     /// session maps to.
     pub seed_workspace: String,
@@ -287,6 +289,7 @@ impl CommandHandler for CreateDispatchRequest {
         let wake = CoordinatorWakeRequest {
             project_id: project.id().value(),
             dispatch_request_id: queued.id().value(),
+            resume_run_id: None,
             seed_workspace: project.registration().seed_workspace().to_owned(),
             herdr_workspace: project.registration().herdr_workspace().to_owned(),
             herdr_session: project.registration().herdr_session().map(str::to_owned),

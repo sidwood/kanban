@@ -24,7 +24,7 @@ use kanban_app::deadlines::{DeadlineConfig, DeadlineMonitor};
 use kanban_app::telemetry::{AttentionSignal, TelemetryProjection, project_herdr_event};
 use kanban_app::{
     CoordinatorWake, CoordinatorWakeRequest, HerdrDiagnostics, HerdrProjectObserver,
-    HerdrSettingsStore, TimelineEnvelope,
+    HerdrSettingsStore, RunRecoveryStore, TimelineEnvelope,
 };
 use kanban_domain::{HerdrSession, Project};
 use kanban_dto::{HerdrConnectionDiagnostics, TimelineEventKind};
@@ -491,6 +491,12 @@ impl CoordinatorWake for HerdrObserver {
         let Some(observation) = sessions.get(&request.project_id) else {
             return;
         };
+        if request.resume_run_id.is_some() {
+            // Resume is a durable intent, not a disposable queue hint.
+            // Reconciliation reads it even when this nudge is lost.
+            observation.nudge();
+            return;
+        }
         if observation.offer_wake(WakeDelivery {
             mapping,
             dispatch_request_id: request.dispatch_request_id,
@@ -573,6 +579,7 @@ impl HerdrObserverHandle {
     /// dispatch back.
     fn deliver_wakes(&self, live: Option<&mut SessionClient>) {
         let mut live = live;
+        self.deliver_resumes(live.as_deref_mut());
         loop {
             if self.stopped() {
                 return;
@@ -593,11 +600,15 @@ impl HerdrObserverHandle {
     /// dead or lying session can neither stall the worker
     /// indefinitely nor be woken under the wrong identity.
     fn deliver_wake(&self, delivery: &WakeDelivery, live: Option<&mut SessionClient>) {
-        let wake = WakeRequest {
-            dispatch_request_id: delivery.dispatch_request_id,
+        let send = |client: &mut SessionClient| {
+            client
+                .wake_coordinator(WakeRequest {
+                    dispatch_request_id: delivery.dispatch_request_id,
+                })
+                .map(|_| ())
         };
         let delivered = match live {
-            Some(client) => client.wake_coordinator(wake).map(|_| ()),
+            Some(client) => send(client),
             None => SessionClient::open_with_io_timeout(
                 delivery.mapping.clone(),
                 &self.socket_root,
@@ -606,10 +617,74 @@ impl HerdrObserverHandle {
             .and_then(|mut client| {
                 let snapshot = client.snapshot()?;
                 client.mapping().verify_snapshot(&snapshot)?;
-                client.wake_coordinator(wake).map(|_| ())
+                send(&mut client)
             }),
         };
         let _ = delivered;
+    }
+
+    /// Delivery is at least once across an ambiguous socket failure or crash.
+    /// The stable recovery identity asks the Coordinator to reconcile, never
+    /// mint a new run. Acknowledgement means prompt acceptance, not execution.
+    fn deliver_resumes(&self, live: Option<&mut SessionClient>) {
+        let store = kanban_storage::SqliteRunRecoveryStore::new(&self.database);
+        let ids = match store.pending_resume_ids(kanban_domain::ProjectId::new(self.project_id)) {
+            Ok(ids) if !ids.is_empty() => ids,
+            Ok(_) => return,
+            Err(_) => {
+                self.mark_error(ObservationError::Timeline(
+                    "resume delivery storage unavailable".to_owned(),
+                ));
+                return;
+            }
+        };
+        let send = |client: &mut SessionClient| {
+            for id in ids {
+                if self.stopped() {
+                    break;
+                }
+                let delivery = match store.prepare_resume_delivery(id) {
+                    Ok(Some(delivery)) => delivery,
+                    Ok(None) => continue,
+                    Err(_) => {
+                        self.mark_error(ObservationError::Timeline(
+                            "resume delivery storage unavailable".to_owned(),
+                        ));
+                        break;
+                    }
+                };
+                let outcome = client.prompt(kanban_herdr::PromptRequest {
+                    role: kanban_herdr::COORDINATOR_ROLE.to_owned(),
+                    message: format!("Reconcile Recovery {} once: Resume existing Run {} for Dispatch Request {} only if its current custody still allows resume. Reuse its frozen context and existing authority. Do not restart an already resumed attempt, acknowledge or mint a replacement run. If it cannot resume, request operator recovery; never infer a verdict.", delivery.recovery_id, delivery.run_id, delivery.dispatch_request_id),
+                });
+                match outcome {
+                    Ok(true) => {
+                        if store.acknowledge_resume_delivery(id).is_err() {
+                            self.mark_error(ObservationError::Timeline(
+                                "resume delivery acknowledgement unavailable".to_owned(),
+                            ));
+                            break;
+                        }
+                    }
+                    Ok(_) => {} // Explicit rejection remains pending for bounded retry.
+                    Err(_) => break,
+                }
+            }
+        };
+        match live {
+            Some(client) => send(client),
+            None => {
+                if let Ok(mut client) = SessionClient::open_with_io_timeout(
+                    self.mapping.clone(),
+                    &self.socket_root,
+                    self.io_timeout,
+                ) && let Ok(snapshot) = client.snapshot()
+                    && client.mapping().verify_snapshot(&snapshot).is_ok()
+                {
+                    send(&mut client);
+                }
+            }
+        }
     }
 
     /// Connect, subscribe, and observe the live subscription. Returns
@@ -2489,6 +2564,49 @@ mod tests {
     /// gate without socket I/O and deliver through the observation
     /// worker, in commit order, over the settled session connection.
     #[test]
+    fn recovery_resume_hint_cannot_execute_without_a_durable_intent() {
+        let dir = TempDir::new().unwrap();
+        let socket_root = dir.path().join("sessions");
+        let fixture = ScriptedSession::bind(
+            &socket_root,
+            "kanban-main",
+            "/workspaces/kanban.seed",
+            SessionScript::default()
+                .with_prompt_accepted(true)
+                .with_wake_accepted(true),
+        );
+        let database = migrated_database(&dir);
+        let observer =
+            HerdrObserver::with_observation(database.clone(), socket_root, fast_observation());
+        observer.observe_projects(&[project(Some("kanban-main"), "/workspaces/kanban.seed")]);
+        assert!(soon_enough(Duration::from_secs(5), || !telemetry_details(
+            &database
+        )
+        .is_empty()));
+        observer.wake(CoordinatorWakeRequest {
+            project_id: 1,
+            dispatch_request_id: 8,
+            resume_run_id: Some(7),
+            seed_workspace: "/workspaces/kanban.seed".into(),
+            herdr_workspace: "kanban.seed".into(),
+            herdr_session: Some("kanban-main".into()),
+        });
+        assert!(
+            observer.pending_wakes(1).is_empty(),
+            "resume does not enter the disposable wake inbox"
+        );
+        observer.shutdown();
+        assert!(
+            !fixture
+                .recorded_requests()
+                .iter()
+                .any(|request| matches!(request, HerdrRequest::Prompt { .. })),
+            "an arbitrary wake hint is not durable recovery authority"
+        );
+        assert!(delivered_wake_ids(&fixture).is_empty());
+    }
+
+    #[test]
     fn coordinator_wakes_deliver_through_the_worker_in_commit_order() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let socket_root = dir.path().join("sessions");
@@ -2516,6 +2634,7 @@ mod tests {
                 CoordinatorWakeRequest {
                     project_id: 1,
                     dispatch_request_id: id,
+                    resume_run_id: None,
                     seed_workspace: "/workspaces/kanban.seed".to_owned(),
                     herdr_workspace: "kanban.seed".to_owned(),
                     herdr_session: Some("kanban-main".to_owned()),
@@ -2566,6 +2685,7 @@ mod tests {
                         CoordinatorWakeRequest {
                             project_id: 1,
                             dispatch_request_id: id,
+                            resume_run_id: None,
                             seed_workspace: "/workspaces/kanban.seed".to_owned(),
                             herdr_workspace: "kanban.seed".to_owned(),
                             herdr_session: Some("kanban-main".to_owned()),
@@ -2579,6 +2699,7 @@ mod tests {
                     CoordinatorWakeRequest {
                         project_id: 9,
                         dispatch_request_id: 99,
+                        resume_run_id: None,
                         seed_workspace: "/workspaces/kanban.seed".to_owned(),
                         herdr_workspace: "kanban.seed".to_owned(),
                         herdr_session: None,

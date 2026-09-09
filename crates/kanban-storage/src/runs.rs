@@ -10,7 +10,10 @@ use rusqlite::params;
 use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 
-const RUN_COLUMNS: &str = "id, project_id, ticket_id, dispatch_request_id, status,
+const RUN_COLUMNS: &str = "id, project_id, ticket_id, dispatch_request_id,
+                          CASE WHEN EXISTS(SELECT 1 FROM run_recoveries recovery WHERE recovery.run_id=runs.id AND recovery.action='retry')
+                            THEN 'superseded' WHEN EXISTS(SELECT 1 FROM submissions WHERE run_id=runs.id)
+                            THEN 'submitted' ELSE status END,
                           requested_name, requested_harness, requested_model,
                           requested_effort, requested_usage_pool,
                           effective_name, effective_harness, effective_model,
@@ -57,6 +60,7 @@ impl RunStore for SqliteRunStore {
             )));
         }
         crate::recurrence::guard_occurrence_dispatch(&span, draft.request.ticket())?;
+        crate::review_execution::guard_active_request(&span, draft.request.id().value())?;
         let outcome = span.execute(
             "INSERT INTO runs
                  (project_id, ticket_id, dispatch_request_id, status,
@@ -146,7 +150,9 @@ fn executing_for_request(
     match conn.query_row(
         &format!(
             "SELECT {RUN_COLUMNS} FROM runs
-             WHERE dispatch_request_id = ?1 AND status = 'executing'"
+             WHERE dispatch_request_id = ?1 AND status = 'executing'
+               AND NOT EXISTS(SELECT 1 FROM run_recoveries recovery WHERE recovery.run_id=runs.id AND recovery.action='retry')
+               AND NOT EXISTS(SELECT 1 FROM submissions WHERE run_id=runs.id)"
         ),
         params![request.value() as i64],
         decode_run,

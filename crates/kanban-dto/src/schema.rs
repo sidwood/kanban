@@ -1,3 +1,8 @@
+use crate::run_recovery::RunRecoveryResumeRequest;
+use crate::run_recovery::{
+    RunRecoveryAction, RunRecoveryListQuery, RunRecoveryListResponse, RunRecoveryRecord,
+    RunRecoveryRetryRequest, RunRecoveryRuleRequest,
+};
 use crate::submission::{
     SubmissionListQuery, SubmissionListResponse, SubmissionRecord, SubmissionResult,
     SubmissionSubmitRequest,
@@ -840,6 +845,25 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("RunAcknowledgeRequest", schema_for!(RunAcknowledgeRequest)),
         ("RunListQuery", schema_for!(RunListQuery)),
         ("RunListResponse", schema_for!(RunListResponse)),
+        ("RunRecoveryAction", schema_for!(RunRecoveryAction)),
+        (
+            "RunRecoveryRuleRequest",
+            schema_for!(RunRecoveryRuleRequest),
+        ),
+        ("RunRecoveryRecord", schema_for!(RunRecoveryRecord)),
+        (
+            "RunRecoveryResumeRequest",
+            schema_for!(RunRecoveryResumeRequest),
+        ),
+        (
+            "RunRecoveryRetryRequest",
+            schema_for!(RunRecoveryRetryRequest),
+        ),
+        ("RunRecoveryListQuery", schema_for!(RunRecoveryListQuery)),
+        (
+            "RunRecoveryListResponse",
+            schema_for!(RunRecoveryListResponse),
+        ),
         ("ViewScope", schema_for!(ViewScope)),
         ("ViewMode", schema_for!(ViewMode)),
         ("DonePlacement", schema_for!(DonePlacement)),

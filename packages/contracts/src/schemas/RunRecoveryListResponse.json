@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "RunRecoveryAction": {
+      "enum": [
+        "operator_ruling",
+        "retry",
+        "resume"
+      ],
+      "type": "string"
+    },
+    "RunRecoveryRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/RunRecoveryAction"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "replacement_dispatch_request_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ruling_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "created_at",
+        "id",
+        "project_id",
+        "ruling_id",
+        "run_id",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "can_resume": {
+      "type": "boolean"
+    },
+    "can_retry": {
+      "type": "boolean"
+    },
+    "pending_resume": {
+      "default": false,
+      "type": "boolean"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/definitions/RunRecoveryRecord"
+      },
+      "type": "array"
+    },
+    "run_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "can_resume",
+    "can_retry",
+    "records",
+    "run_id",
+    "version"
+  ],
+  "title": "RunRecoveryListResponse",
+  "type": "object"
+}

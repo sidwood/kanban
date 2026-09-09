@@ -502,6 +502,10 @@ fn sample_request(schema: &str) -> Value {
             "dispatch_request_id": 1,
         }),
         "RunListQuery" | "SubmissionListQuery" => json!({ "project_id": 1 }),
+        "RunRecoveryRuleRequest" | "RunRecoveryRetryRequest" | "RunRecoveryResumeRequest" => {
+            json!({ "mutation": mutation, "run_id": 1, "summary": "Keep the original verdict pending" })
+        }
+        "RunRecoveryListQuery" => json!({ "run_id": 1 }),
         "DeferralPromoteRequest" => {
             json!({"mutation":mutation,"project_id":1,"deferral_id":1,"priority":"normal","target":{"kind":"bug"}})
         }
@@ -797,6 +801,18 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "DispatchQueueQuery" => decode_invoke_args::<DispatchQueueQuery>(request).is_err(),
         "RunAcknowledgeRequest" => decode_invoke_args::<RunAcknowledgeRequest>(request).is_err(),
         "RunListQuery" => decode_invoke_args::<RunListQuery>(request).is_err(),
+        "RunRecoveryRuleRequest" => {
+            decode_invoke_args::<kanban_dto::RunRecoveryRuleRequest>(request).is_err()
+        }
+        "RunRecoveryRetryRequest" => {
+            decode_invoke_args::<kanban_dto::RunRecoveryRetryRequest>(request).is_err()
+        }
+        "RunRecoveryResumeRequest" => {
+            decode_invoke_args::<kanban_dto::RunRecoveryResumeRequest>(request).is_err()
+        }
+        "RunRecoveryListQuery" => {
+            decode_invoke_args::<kanban_dto::RunRecoveryListQuery>(request).is_err()
+        }
         "SubmissionListQuery" => {
             decode_invoke_args::<kanban_dto::submission::SubmissionListQuery>(request).is_err()
         }

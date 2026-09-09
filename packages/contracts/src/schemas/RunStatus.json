@@ -1,11 +1,24 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+  "description": "Execution custody is not a Ticket verdict, including after submission.",
   "oneOf": [
+    {
+      "enum": [
+        "submitted"
+      ],
+      "type": "string"
+    },
     {
       "description": "Minted from a claimed request and occupying its execution.",
       "enum": [
         "executing"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Replaced explicitly; this status is not a Ticket verdict.",
+      "enum": [
+        "superseded"
       ],
       "type": "string"
     }

@@ -1845,6 +1845,58 @@ async fn run_list(
 }
 
 #[tauri::command]
+async fn run_recovery_rule(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::RunRecoveryRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::RunRecoveryRuleRequest>(request)?;
+    run_blocking(shell, "record recovery ruling", move |shell| {
+        forward_command(shell, "run.recovery.rule", "recovery ruling", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_recovery_retry(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::RunRecoveryRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::RunRecoveryRetryRequest>(request)?;
+    run_blocking(shell, "retry run", move |shell| {
+        forward_command(shell, "run.recovery.retry", "run retry", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_recovery_resume(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::RunRecoveryRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::RunRecoveryResumeRequest>(request)?;
+    run_blocking(shell, "resume run", move |shell| {
+        forward_command(shell, "run.recovery.resume", "run resume", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_recovery_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::RunRecoveryListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::RunRecoveryListQuery>(request)?;
+    run_blocking(shell, "list recovery history", move |shell| {
+        forward_query(shell, "run.recovery.list", "recovery history", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn workspace_retire(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2356,6 +2408,10 @@ shell_handlers::shell_handler_catalogue! {
     submission_submit,
     submission_list,
     run_list,
+    run_recovery_rule,
+    run_recovery_retry,
+    run_recovery_resume,
+    run_recovery_list,
     workspace_register,
     workspace_observe,
     workspace_retire,

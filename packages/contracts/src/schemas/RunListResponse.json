@@ -97,7 +97,7 @@
               "$ref": "#/definitions/RunStatus"
             }
           ],
-          "description": "Executing."
+          "description": "Execution status, not a Ticket verdict."
         },
         "ticket_id": {
           "description": "The Ticket the run executes.",
@@ -128,12 +128,25 @@
       "type": "object"
     },
     "RunStatus": {
-      "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+      "description": "Execution custody is not a Ticket verdict, including after submission.",
       "oneOf": [
+        {
+          "enum": [
+            "submitted"
+          ],
+          "type": "string"
+        },
         {
           "description": "Minted from a claimed request and occupying its execution.",
           "enum": [
             "executing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Replaced explicitly; this status is not a Ticket verdict.",
+          "enum": [
+            "superseded"
           ],
           "type": "string"
         }

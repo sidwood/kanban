@@ -40,6 +40,8 @@ pub mod review_config;
 pub mod review_execution;
 pub mod rulings;
 pub mod run;
+pub mod run_recovery;
+pub use run_recovery::{RunRecoveryContext, RunRecoveryStore};
 pub mod saved_views;
 pub mod schedule;
 pub mod schedule_preview;

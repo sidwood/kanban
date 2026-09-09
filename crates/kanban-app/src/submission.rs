@@ -26,6 +26,8 @@ pub struct SubmissionContext {
 pub trait SubmissionStore: Send + Sync {
     fn list(&self, project_id: u64) -> Result<Vec<SubmissionRecord>, ApiError>;
     fn context(&self, run: u64) -> Result<SubmissionContext, ApiError>;
+    /// Commit the accepted result, review effects, and retirement of its
+    /// authority and capacity together. Observations cannot use this path.
     fn append(
         &self,
         record: SubmissionRecord,

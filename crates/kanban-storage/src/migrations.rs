@@ -279,6 +279,21 @@ const MIGRATIONS: &[Migration] = &[
         name: "attention inbox",
         sql: include_str!("../migrations/0045_attention.sql"),
     },
+    Migration {
+        version: 46,
+        name: "run recovery",
+        sql: include_str!("../migrations/0046_run_recovery.sql"),
+    },
+    Migration {
+        version: 47,
+        name: "submitted run settlement",
+        sql: include_str!("../migrations/0047_submitted_run_settlement.sql"),
+    },
+    Migration {
+        version: 48,
+        name: "resume delivery",
+        sql: include_str!("../migrations/0048_resume_delivery.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1850,6 +1865,18 @@ mod tests {
                 PendingMigration {
                     version: 45,
                     name: "attention inbox"
+                },
+                PendingMigration {
+                    version: 46,
+                    name: "run recovery"
+                },
+                PendingMigration {
+                    version: 47,
+                    name: "submitted run settlement"
+                },
+                PendingMigration {
+                    version: 48,
+                    name: "resume delivery"
                 },
             ]]
         );

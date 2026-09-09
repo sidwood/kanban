@@ -8,13 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use super::mutation::MutationContext;
 
-/// The closed run status on the wire. A run mints executing;
-/// settlement vocabulary arrives with the submissions that own it.
+/// Execution custody is not a Ticket verdict, including after submission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     /// Minted from a claimed request and occupying its execution.
     Executing,
+    /// Replaced explicitly; this status is not a Ticket verdict.
+    Superseded,
+    Submitted,
 }
 
 /// One frozen profile snapshot as every client sees it: the entry's
@@ -48,7 +50,7 @@ pub struct RunRecord {
     pub ticket_id: u64,
     /// The claimed Dispatch Request this run executes.
     pub dispatch_request_id: u64,
-    /// Executing.
+    /// Execution status, not a Ticket verdict.
     pub status: RunStatus,
     /// The requested profile snapshot: what the assignment named.
     pub requested: ProfileSnapshotRecord,

@@ -85,6 +85,19 @@ impl SubmissionStore for SqliteSubmissionStore {
         )
         .map_err(internal)?;
         crate::review_execution::accept_submission(&span, &record, reviewed)?;
+        let settled = span.execute(
+            "UPDATE capabilities SET status='settled', settled_at=?2 WHERE id=?1 AND status='active' AND settled_at IS NULL",
+            params![record.capability_id as i64,record.created_at as i64],
+        ).map_err(internal)?;
+        let completed = span.execute(
+            "UPDATE dispatch_requests SET completed_at=?2,version=version+1 WHERE id=(SELECT dispatch_request_id FROM runs WHERE id=?1) AND completed_at IS NULL",
+            params![record.run_id as i64,record.created_at as i64],
+        ).map_err(internal)?;
+        if settled != 1 || completed != 1 {
+            return Err(ApiError::invalid_request(
+                "the submission no longer owns an open attempt",
+            ));
+        }
         insert_event(&span, &envelope(&record)).map_err(internal)?;
         span.commit().map_err(internal)?;
         Ok(record)

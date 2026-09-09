@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { RunRecord } from '@kanban/contracts'
+import RunRecoveryPanel from './RunRecoveryPanel.vue'
 
 defineProps<{
   attempts: readonly RunRecord[]
 }>()
+const emit = defineEmits<{ recovered: [runId: number] }>()
 </script>
 
 <template>
@@ -39,6 +41,12 @@ defineProps<{
             class="text-ink-muted"
           > (fallback)</span>
         </p>
+        <RunRecoveryPanel
+          :run-id="attempt.id"
+          :run-status="attempt.status"
+          :run-version="attempt.version"
+          @recovered="emit('recovered', $event)"
+        />
       </li>
     </ol>
     <p

@@ -276,6 +276,8 @@ fn encode_run(run: &Run) -> RunRecord {
         dispatch_request_id: run.dispatch_request().value(),
         status: match run.status() {
             RunStatus::Executing => WireStatus::Executing,
+            RunStatus::Superseded => WireStatus::Superseded,
+            RunStatus::Submitted => WireStatus::Submitted,
         },
         requested: encode_snapshot(run.requested()),
         effective: encode_snapshot(run.effective()),

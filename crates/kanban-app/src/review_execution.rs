@@ -492,6 +492,7 @@ pub fn schedule_review_dispatches(
         let request = crate::CoordinatorWakeRequest {
             project_id: project.id().value(),
             dispatch_request_id: id,
+            resume_run_id: None,
             seed_workspace: project.registration().seed_workspace().to_owned(),
             herdr_workspace: project.registration().herdr_workspace().to_owned(),
             herdr_session: project.registration().herdr_session().map(str::to_owned),

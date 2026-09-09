@@ -370,6 +370,11 @@ fn assemble_core_with_secret(
     )?;
     core.register_comments(comment_store, project_store.clone())?;
     core.register_rulings(ruling_store, project_store.clone())?;
+    core.register_run_recovery(
+        Arc::new(kanban_storage::SqliteRunRecoveryStore::new(&database)),
+        project_store.clone(),
+        herdr.clone(),
+    )?;
     core.register_deferrals(deferral_store, project_store.clone())?;
     core.register_evidence(evidence_store.clone(), project_store.clone())?;
     core.register_criterion_bindings(

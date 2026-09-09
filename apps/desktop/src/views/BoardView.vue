@@ -465,6 +465,10 @@ const drawerAttempts = computed(() =>
   drawerTicket.value ? runs.attemptsFor(drawerTicket.value.id) : [],
 )
 
+async function refreshAttempts(): Promise<void> {
+  if (transport) await runs.load(transport, projectId.value)
+}
+
 const drawerTimelineId = computed(() =>
   drawerTicket.value ? ticketTimelineId(drawerTicket.value.id) : '',
 )
@@ -962,6 +966,7 @@ const drawerFacts = computed(() => {
         <AttemptHistory
           class="mt-6"
           :attempts="drawerAttempts"
+          @recovered="refreshAttempts"
         />
 
         <div

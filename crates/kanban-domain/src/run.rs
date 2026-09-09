@@ -73,13 +73,15 @@ impl fmt::Display for RunError {
 
 impl std::error::Error for RunError {}
 
-/// The closed run status vocabulary. A run mints executing and stays
-/// executing for this slice; settlement vocabulary arrives with the
-/// authoritative submissions that own it.
+/// Execution custody is separate from a Ticket verdict. Only an explicit
+/// retry supersedes an attempt; observations never choose a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RunStatus {
     /// Minted from a claimed request and occupying its execution.
     Executing,
+    /// Retained for audit after an operator requested a replacement run.
+    Superseded,
+    Submitted,
 }
 
 impl RunStatus {
@@ -87,6 +89,8 @@ impl RunStatus {
     pub fn wire_name(self) -> &'static str {
         match self {
             Self::Executing => "executing",
+            Self::Superseded => "superseded",
+            Self::Submitted => "submitted",
         }
     }
 
@@ -95,6 +99,8 @@ impl RunStatus {
     pub fn parse(stored: &str) -> Option<Self> {
         match stored {
             "executing" => Some(Self::Executing),
+            "superseded" => Some(Self::Superseded),
+            "submitted" => Some(Self::Submitted),
             _ => None,
         }
     }

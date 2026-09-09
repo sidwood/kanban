@@ -23939,12 +23939,25 @@
           "type": "object"
         },
         "RunStatus": {
-          "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+          "description": "Execution custody is not a Ticket verdict, including after submission.",
           "oneOf": [
+            {
+              "enum": [
+                "submitted"
+              ],
+              "type": "string"
+            },
             {
               "description": "Minted from a claimed request and occupying its execution.",
               "enum": [
                 "executing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Replaced explicitly; this status is not a Ticket verdict.",
+              "enum": [
+                "superseded"
               ],
               "type": "string"
             }
@@ -24010,7 +24023,7 @@
               "$ref": "#/definitions/RunStatus"
             }
           ],
-          "description": "Executing."
+          "description": "Execution status, not a Ticket verdict."
         },
         "ticket_id": {
           "description": "The Ticket the run executes.",
@@ -24039,6 +24052,500 @@
         "version"
       ],
       "title": "RunRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Record an explicit operator ruling for a run without changing the Ticket verdict.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "run_id",
+        "summary"
+      ],
+      "title": "RunRecoveryRuleRequest",
+      "type": "object"
+    },
+    "name": "run_recovery_rule",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "RunRecoveryAction": {
+          "enum": [
+            "operator_ruling",
+            "retry",
+            "resume"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/RunRecoveryAction"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "replacement_dispatch_request_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ruling_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "created_at",
+        "id",
+        "project_id",
+        "ruling_id",
+        "run_id",
+        "summary",
+        "version"
+      ],
+      "title": "RunRecoveryRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read the immutable recovery history for one run.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunRecoveryListQuery",
+      "type": "object"
+    },
+    "name": "run_recovery_list",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "RunRecoveryAction": {
+          "enum": [
+            "operator_ruling",
+            "retry",
+            "resume"
+          ],
+          "type": "string"
+        },
+        "RunRecoveryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "$ref": "#/definitions/RunRecoveryAction"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "replacement_dispatch_request_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ruling_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "run_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "created_at",
+            "id",
+            "project_id",
+            "ruling_id",
+            "run_id",
+            "summary",
+            "version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "can_resume": {
+          "type": "boolean"
+        },
+        "can_retry": {
+          "type": "boolean"
+        },
+        "pending_resume": {
+          "default": false,
+          "type": "boolean"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/definitions/RunRecoveryRecord"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "can_resume",
+        "can_retry",
+        "records",
+        "run_id",
+        "version"
+      ],
+      "title": "RunRecoveryListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Request a replacement attempt while preserving the original run and its verdict state.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "run_id",
+        "summary"
+      ],
+      "title": "RunRecoveryRetryRequest",
+      "type": "object"
+    },
+    "name": "run_recovery_retry",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "RunRecoveryAction": {
+          "enum": [
+            "operator_ruling",
+            "retry",
+            "resume"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/RunRecoveryAction"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "replacement_dispatch_request_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ruling_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "created_at",
+        "id",
+        "project_id",
+        "ruling_id",
+        "run_id",
+        "summary",
+        "version"
+      ],
+      "title": "RunRecoveryRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Request that the Coordinator resume the existing run without minting another run or granting new authority.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mutation",
+        "run_id",
+        "summary"
+      ],
+      "title": "RunRecoveryResumeRequest",
+      "type": "object"
+    },
+    "name": "run_recovery_resume",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "RunRecoveryAction": {
+          "enum": [
+            "operator_ruling",
+            "retry",
+            "resume"
+          ],
+          "type": "string"
+        }
+      },
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/RunRecoveryAction"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "replacement_dispatch_request_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ruling_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "created_at",
+        "id",
+        "project_id",
+        "ruling_id",
+        "run_id",
+        "summary",
+        "version"
+      ],
+      "title": "RunRecoveryRecord",
       "type": "object"
     }
   },
@@ -26808,7 +27315,7 @@
                   "$ref": "#/definitions/RunStatus"
                 }
               ],
-              "description": "Executing."
+              "description": "Execution status, not a Ticket verdict."
             },
             "ticket_id": {
               "description": "The Ticket the run executes.",
@@ -26839,12 +27346,25 @@
           "type": "object"
         },
         "RunStatus": {
-          "description": "The closed run status on the wire. A run mints executing; settlement vocabulary arrives with the submissions that own it.",
+          "description": "Execution custody is not a Ticket verdict, including after submission.",
           "oneOf": [
+            {
+              "enum": [
+                "submitted"
+              ],
+              "type": "string"
+            },
             {
               "description": "Minted from a claimed request and occupying its execution.",
               "enum": [
                 "executing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Replaced explicitly; this status is not a Ticket verdict.",
+              "enum": [
+                "superseded"
               ],
               "type": "string"
             }

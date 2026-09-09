@@ -257,6 +257,37 @@ pub(crate) fn accept_submission(
     Ok(())
 }
 
+/// Consult the same application policy as verdict intake before granting
+/// another attempt. Historical queue projections remain readable after expiry.
+pub(crate) fn request_is_active(conn: &Connection, id: u64) -> Result<bool, ApiError> {
+    let (slot, current, review): (Option<i64>, Option<i64>, Option<i64>) = conn.query_row(
+        "SELECT d.reviewer_slot_id,s.dispatch_request_id,s.review_id
+         FROM dispatch_requests d LEFT JOIN review_slots s ON s.id=d.reviewer_slot_id WHERE d.id=?1",
+        params![id as i64], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+    ).map_err(internal)?;
+    let Some(slot) = slot else {
+        return Ok(true);
+    };
+    if current != Some(id as i64) {
+        return Ok(false);
+    }
+    let review = load(
+        conn,
+        review.ok_or_else(|| ApiError::not_found("review"))? as u64,
+    )?
+    .ok_or_else(|| ApiError::not_found("review"))?;
+    Ok(active_slot(&review, slot as u64).is_ok())
+}
+
+pub(crate) fn guard_active_request(conn: &Connection, id: u64) -> Result<(), ApiError> {
+    if !request_is_active(conn, id)? {
+        return Err(ApiError::invalid_request(
+            "the review slot no longer accepts results; revalidate the review instead",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn reviewer_for_request(
     conn: &Connection,
     id: u64,

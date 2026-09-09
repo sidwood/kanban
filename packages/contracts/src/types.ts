@@ -1051,7 +1051,45 @@ export type RunRecord = {
   ticket_id: number;
   version: number;
 };
-export type RunStatus = 'executing';
+export type RunRecoveryAction = 'operator_ruling' | 'retry' | 'resume';
+export type RunRecoveryListQuery = {
+  run_id: number;
+};
+export type RunRecoveryListResponse = {
+  can_resume: boolean;
+  can_retry: boolean;
+  pending_resume?: boolean;
+  records: RunRecoveryRecord[];
+  run_id: number;
+  version: number;
+};
+export type RunRecoveryRecord = {
+  action: RunRecoveryAction;
+  created_at: number;
+  id: number;
+  project_id: number;
+  replacement_dispatch_request_id?: number | null;
+  ruling_id: number;
+  run_id: number;
+  summary: string;
+  version: number;
+};
+export type RunRecoveryResumeRequest = {
+  mutation: MutationContext;
+  run_id: number;
+  summary: string;
+};
+export type RunRecoveryRetryRequest = {
+  mutation: MutationContext;
+  run_id: number;
+  summary: string;
+};
+export type RunRecoveryRuleRequest = {
+  mutation: MutationContext;
+  run_id: number;
+  summary: string;
+};
+export type RunStatus = 'submitted' | 'executing' | 'superseded';
 export type SavedViewRecord = {
   done_placement: DonePlacement;
   expanded_groups: BoardGroup[];

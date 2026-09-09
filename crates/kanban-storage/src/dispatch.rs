@@ -156,6 +156,7 @@ impl DispatchStore for SqliteDispatchStore {
             .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
         let mut capability = None;
         if matches!(decision, ClaimDecision::Claim) {
+            crate::review_execution::guard_active_request(&span, id.value())?;
             crate::recurrence::guard_occurrence_dispatch(&span, request.ticket())?;
             let changed = span
                 .execute(
@@ -187,7 +188,7 @@ impl DispatchStore for SqliteDispatchStore {
         let mut statement = conn
             .prepare(&format!(
                 "SELECT {REQUEST_COLUMNS} FROM dispatch_requests
-                 WHERE project_id = ?1 AND status = 'queued'"
+                 WHERE project_id = ?1 AND status = 'queued' AND completed_at IS NULL"
             ))
             .map_err(internal)?;
         let rows = statement
@@ -204,7 +205,7 @@ impl DispatchStore for SqliteDispatchStore {
 fn listed_claimed(conn: &rusqlite::Connection) -> Result<Vec<DispatchRequest>, ApiError> {
     let mut statement = conn
         .prepare(&format!(
-            "SELECT {REQUEST_COLUMNS} FROM dispatch_requests WHERE status = 'claimed'"
+            "SELECT {REQUEST_COLUMNS} FROM dispatch_requests WHERE status = 'claimed' AND completed_at IS NULL"
         ))
         .map_err(internal)?;
     let rows = statement.query_map([], decode_request).map_err(internal)?;
@@ -221,7 +222,7 @@ fn open_status(
 ) -> Result<Option<DispatchStatus>, ApiError> {
     match conn.query_row(
         "SELECT status FROM dispatch_requests
-         WHERE ticket_id = ?1 AND status IN ('queued', 'claimed') AND reviewer_slot_id IS NULL",
+         WHERE ticket_id = ?1 AND status IN ('queued', 'claimed') AND reviewer_slot_id IS NULL AND completed_at IS NULL",
         params![ticket.value() as i64],
         |row| row.get::<_, String>(0),
     ) {

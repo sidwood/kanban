@@ -64,6 +64,12 @@ pub use review_execution::{
     ReviewerDispatchRecord,
 };
 pub mod run;
+pub mod run_recovery;
+pub use run_recovery::{
+    RunRecoveryAction, RunRecoveryListQuery, RunRecoveryListResponse, RunRecoveryRecord,
+    RunRecoveryRuleRequest,
+};
+pub use run_recovery::{RunRecoveryResumeRequest, RunRecoveryRetryRequest};
 pub mod schema;
 pub mod search;
 pub mod spec;
@@ -610,6 +616,13 @@ mod tests {
                 "RunAcknowledgeRequest",
                 "RunListQuery",
                 "RunListResponse",
+                "RunRecoveryAction",
+                "RunRecoveryRuleRequest",
+                "RunRecoveryRecord",
+                "RunRecoveryResumeRequest",
+                "RunRecoveryRetryRequest",
+                "RunRecoveryListQuery",
+                "RunRecoveryListResponse",
                 "ViewScope",
                 "ViewMode",
                 "DonePlacement",

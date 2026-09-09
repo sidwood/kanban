@@ -11,14 +11,21 @@ pub mod git_landing;
 pub mod git_observer;
 pub mod health;
 pub mod herdr;
+pub mod login_launch;
 pub mod logs;
 pub mod mcp;
 mod notifications;
 pub mod redaction;
 mod schedule_scheduler;
 pub mod secrets;
+mod startup;
 pub mod timeline;
+pub use startup::{ServiceOptions, launch_detached, run_with_runtime};
 
+#[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
+mod login_launch_tests;
 #[cfg(test)]
 mod test_client;
 
@@ -99,10 +106,12 @@ pub struct CoreProcess {
     server: ServerHandle,
     herdr: Arc<HerdrObserver>,
     logs: Arc<LogWriter>,
+    stop: Arc<kanban_app::service_lifecycle::StopControl>,
     _backup_scheduler: BackupScheduler,
     _activation_scheduler: ActivationScheduler,
     _attention_scheduler: attention::AttentionScheduler,
     _notification_scheduler: notifications::NotificationScheduler,
+    ownership: startup::StartupOwner,
 }
 
 impl CoreProcess {
@@ -117,8 +126,15 @@ impl CoreProcess {
         self.herdr.socket_root()
     }
 
-    /// Stop serving, stop every Herdr observer, and close the
-    /// database.
+    /// Wait for an explicit stop request, then shut down every owned worker.
+    pub fn wait_for_stop(self) {
+        while !self.stop.requested() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.shutdown();
+    }
+
+    /// Join owned workers and close storage before releasing installation ownership.
     pub fn shutdown(self) {
         let Self {
             database,
@@ -129,14 +145,21 @@ impl CoreProcess {
             _activation_scheduler,
             _attention_scheduler,
             _notification_scheduler,
+            stop: _,
+            ownership,
         } = self;
         server.shutdown();
         drop(_notification_scheduler);
         drop(_attention_scheduler);
         herdr.shutdown();
+        drop(herdr);
+        drop(_activation_scheduler);
+        drop(_backup_scheduler);
         // A failing log write must never fail the shutdown it records.
         let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));
         drop(database);
+        drop(logs);
+        drop(ownership);
     }
 }
 
@@ -155,6 +178,13 @@ fn prepare_database(data_dir: &Path) -> Result<Database, ServiceError> {
 /// Wire the production application core around a prepared database,
 /// the event sink owned by its transport, and `fleet_tool` serving
 /// the guarded clone commands. Observation follows `observation`.
+type AssembledCore = (
+    Arc<Database>,
+    Core,
+    Arc<HerdrObserver>,
+    ActivationPass,
+    Arc<kanban_app::service_lifecycle::StopControl>,
+);
 fn assemble_core_with_secret(
     data_dir: &Path,
     database: Database,
@@ -163,7 +193,7 @@ fn assemble_core_with_secret(
     observation: ObservationTuning,
     fleet_tool: Arc<dyn FleetCloneTool>,
     secret: Option<&kanban_app::secrets::InstallationSecret>,
-) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
+) -> Result<AssembledCore, ServiceError> {
     let initiative_store = Arc::new(SqliteInitiativeStore::new(&database));
     let project_store = Arc::new(SqliteProjectStore::new(&database));
     let herdr_settings_store = Arc::new(SqliteHerdrSettingsStore::new(&database));
@@ -204,6 +234,24 @@ fn assemble_core_with_secret(
         workspace_store.clone(),
     ));
     let mut core = Core::with_health(health.clone(), idempotency_store, events)?;
+    let stop = Arc::new(kanban_app::service_lifecycle::StopControl::default());
+    let lifecycle = Arc::new(kanban_app::service_lifecycle::StopWarningHandler {
+        health: health.clone(),
+        control: stop.clone(),
+    });
+    core.register_query("service.stop_warning", lifecycle.clone())?;
+    core.register_command("service.stop", lifecycle)?;
+    core.register_login_launch(
+        Arc::new(
+            login_launch::NativeLoginLaunch::production(data_dir.to_path_buf())
+                .map_err(|cause| ServiceError::ProjectLoad { cause })?,
+        ),
+        health
+            .current()
+            .map_err(|cause| ServiceError::ProjectLoad { cause })?
+            .service
+            .started_at,
+    )?;
     core.register_initiatives(initiative_store.clone())?;
     let projects = project_store.clone();
     core.register_projects(
@@ -427,7 +475,7 @@ fn assemble_core_with_secret(
         .map_err(|cause| ServiceError::ProjectLoad { cause })?;
     herdr.observe_projects(&projects);
     core.register_herdr(herdr_settings_store, diagnostics, project_store)?;
-    Ok((database, core, herdr, activation_pass))
+    Ok((database, core, herdr, activation_pass, stop))
 }
 
 #[cfg(test)]
@@ -438,7 +486,7 @@ fn assemble_core(
     herdr_socket_root: PathBuf,
     observation: ObservationTuning,
     fleet_tool: Arc<dyn FleetCloneTool>,
-) -> Result<(Arc<Database>, Core, Arc<HerdrObserver>, ActivationPass), ServiceError> {
+) -> Result<AssembledCore, ServiceError> {
     assemble_core_with_secret(
         data_dir,
         database,
@@ -450,9 +498,7 @@ fn assemble_core(
     )
 }
 
-/// Open (creating if needed) the database inside `data_dir`, bring
-/// its schema up to date, and serve the application core on
-/// `core.sock` inside the same directory.
+/// Acquire installation ownership and serve, or report a healthy existing core.
 pub fn serve(data_dir: &Path) -> Result<CoreProcess, ServiceError> {
     serve_configured(
         data_dir,
@@ -469,15 +515,25 @@ pub struct ServiceRuntime {
     pub installation_secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
 }
 
+/// Serve with supplied adapters under the same installation ownership as native startup.
 pub fn serve_with_runtime(
     data_dir: &Path,
     runtime: ServiceRuntime,
 ) -> Result<CoreProcess, ServiceError> {
-    serve_configured_with_mcp(
-        data_dir,
+    let owner = startup::StartupOwner::acquire(data_dir)?;
+    serve_owned_with_runtime(owner, runtime)
+}
+
+fn serve_owned_with_runtime(
+    owner: startup::StartupOwner,
+    runtime: ServiceRuntime,
+) -> Result<CoreProcess, ServiceError> {
+    let fleet_tool = Arc::new(LocalFleetCloneTool::new(owner.data_dir.clone()));
+    serve_owned_with_mcp(
+        owner,
         runtime.herdr_socket_root,
         ObservationTuning::PRODUCTION,
-        Arc::new(LocalFleetCloneTool::new(data_dir.to_path_buf())),
+        fleet_tool,
         runtime.mcp_executable,
         runtime.installation_secret,
     )
@@ -513,11 +569,31 @@ fn serve_configured_with_mcp(
     adapter: PathBuf,
     secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
 ) -> Result<CoreProcess, ServiceError> {
+    let owner = startup::StartupOwner::acquire(data_dir)?;
+    serve_owned_with_mcp(
+        owner,
+        herdr_socket_root,
+        observation,
+        fleet_tool,
+        adapter,
+        secret,
+    )
+}
+
+fn serve_owned_with_mcp(
+    ownership: startup::StartupOwner,
+    herdr_socket_root: PathBuf,
+    observation: ObservationTuning,
+    fleet_tool: Arc<dyn FleetCloneTool>,
+    adapter: PathBuf,
+    secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
+) -> Result<CoreProcess, ServiceError> {
+    let data_dir = &ownership.data_dir;
     let database = prepare_database(data_dir)?;
     let server = SocketServer::bind(data_dir)?;
     let broker = server.broker();
     let mirror_socket_root = herdr_socket_root.clone();
-    let (database, mut core, herdr, activation_pass) = assemble_core_with_secret(
+    let (database, mut core, herdr, activation_pass, stop) = assemble_core_with_secret(
         data_dir,
         database,
         broker.clone(),
@@ -594,10 +670,12 @@ fn serve_configured_with_mcp(
         server,
         herdr,
         logs,
+        stop,
         _backup_scheduler: backup_scheduler,
         _activation_scheduler: activation_scheduler,
         _attention_scheduler: attention_scheduler,
         _notification_scheduler: notification_scheduler,
+        ownership,
     })
 }
 
@@ -639,6 +717,14 @@ fn fast_observation() -> ObservationTuning {
 /// Why the core process could not start.
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
+    #[error("a healthy core is already serving {}", path.display())]
+    AlreadyRunning { path: PathBuf },
+    #[error("the core did not become healthy before the startup deadline: {}", path.display())]
+    StartupTimeout { path: PathBuf },
+    #[error("startup ownership or readiness failed: {source}")]
+    StartupIo { source: std::io::Error },
+    #[error("usage: kanban-service [--launch-once] [--data-dir /absolute/path]")]
+    Arguments,
     #[error("installation Keychain access is unavailable")]
     InstallationSecret,
     /// The data directory could not be created.
@@ -670,38 +756,32 @@ pub enum ServiceError {
     },
 }
 
-/// Serve from the managed application data directory until killed.
-/// Another core already serving the managed socket is not a failure:
-/// the caller's goal, a serving core, is already met.
+/// Serve until explicit stop, or reuse an existing core after a bounded health check.
 pub fn run_managed() -> Result<(), ServiceError> {
     use kanban_app::secrets::InstallationSecretStore;
-    let data_dir = kanban_storage::paths::managed_data_dir()?;
-    let secret = secrets::NativeKeychain::default()
-        .load_or_create()
-        .map_err(|_| ServiceError::InstallationSecret)?;
-    let adapter = std::env::current_exe()
-        .map_err(|source| ServiceError::DataDir { source })?
-        .with_file_name("kanban-mcp");
-    let runtime = ServiceRuntime {
-        mcp_executable: adapter,
-        herdr_socket_root: production_socket_root(),
-        installation_secret: Some(Arc::new(secret)),
-    };
-    match serve_with_runtime(&data_dir, runtime) {
-        Ok(core) => {
-            eprintln!("kanban core serving {}", core.socket_path().display());
-            // The core has no stop path of its own yet; explicit
-            // stop with capability warnings lands in KAN-T63.
-            loop {
-                std::thread::park();
-            }
-        }
-        Err(ServiceError::Transport(TransportError::SocketInUse { path })) => {
-            eprintln!("another kanban core is already serving {}", path.display());
-            Ok(())
-        }
-        Err(failure) => Err(failure),
+    let options = ServiceOptions::parse(std::env::args_os().skip(1))?;
+    let data_dir = options.data_dir;
+    if options.launch_once {
+        let executable =
+            std::env::current_exe().map_err(|source| ServiceError::DataDir { source })?;
+        launch_detached(&executable, &data_dir)
+            .map_err(|source| ServiceError::DataDir { source })?;
+        return Ok(());
     }
+    startup::run_with_runtime_factory(&data_dir, |data_dir| {
+        let secret = secrets::NativeKeychain::for_data_dir(data_dir)
+            .map_err(|_| ServiceError::InstallationSecret)?
+            .load_or_create()
+            .map_err(|_| ServiceError::InstallationSecret)?;
+        let adapter = std::env::current_exe()
+            .map_err(|source| ServiceError::DataDir { source })?
+            .with_file_name("kanban-mcp");
+        Ok(ServiceRuntime {
+            mcp_executable: adapter,
+            herdr_socket_root: production_socket_root(),
+            installation_secret: Some(Arc::new(secret)),
+        })
+    })
 }
 
 #[cfg(test)]
@@ -786,7 +866,7 @@ mod tests {
     fn registered_catalogue_matches_the_exposed_catalogue() {
         let dir = TempDir::new().expect("a scratch directory is available");
         let database = prepare_database(dir.path()).expect("the production database prepares");
-        let (_, core, _, _) = assemble_core(
+        let (_, core, _, _, _) = assemble_core(
             dir.path(),
             database,
             Arc::new(NoopEventSink),
@@ -866,12 +946,7 @@ mod tests {
 
         let refusal = serve_with_herdr_sessions(dir.path(), dir.path().join("herdr-sessions"));
         assert!(
-            matches!(
-                refusal,
-                Err(ServiceError::Transport(
-                    kanban_transport::TransportError::SocketInUse { .. }
-                ))
-            ),
+            matches!(refusal, Err(ServiceError::AlreadyRunning { .. })),
             "two cores must never share one socket"
         );
 

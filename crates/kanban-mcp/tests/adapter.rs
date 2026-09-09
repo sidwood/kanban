@@ -30,7 +30,7 @@ async fn adapter_stdio_launcher_reaches_the_running_service() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn adapter_stdio_launcher_exits_when_the_service_stops() {
+async fn lifecycle_explicit_stop_closes_managed_adapters_with_live_input() {
     exercise_service(ServiceExercise::Stop).await;
 }
 
@@ -163,7 +163,43 @@ async fn exercise_service(exercise: ServiceExercise) {
             .await;
             excluded = matches!(result, Ok(Ok(_))) && !response.contains(secret.expose());
         }
-        service.shutdown();
+        if matches!(exercise, ServiceExercise::Stop) {
+            use std::io::{BufRead, Write};
+            let socket = service.socket_path().to_path_buf();
+            let owner = std::thread::spawn(move || service.wait_for_stop());
+            let request = |kind: &str, operation: &str, payload: Value| {
+                let mut stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({"kind":kind,"operation":operation,"payload":payload})
+                )
+                .unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(stream)
+                    .read_line(&mut line)
+                    .unwrap();
+                let frame: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(frame["kind"], "response");
+                frame["payload"].clone()
+            };
+            let warning = request("query", "service.stop_warning", json!({}));
+            assert_eq!(
+                request(
+                    "command",
+                    "service.stop",
+                    json!({"mutation":common::mutation(0,"lifecycle-stop"),"instance_id":warning["instance_id"],"warning_id":warning["warning_id"],"confirmed":true})
+                )["status"],
+                "stop_requested"
+            );
+            owner.join().unwrap();
+            assert!(!socket.exists());
+        } else {
+            service.shutdown();
+        }
         let exited = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
         if exited.is_err() {
             child.kill().await.unwrap();
@@ -376,6 +412,25 @@ async fn exercise(mode: AdapterExercise) {
     }
     assert!(tools.iter().any(|tool| tool.name == "ticket_get"));
     assert!(!tools.iter().any(|tool| tool.name == "dispatch_claim"));
+    for name in [
+        "service_stop",
+        "service_stop_warning",
+        "service_login_launch_get",
+        "service_login_launch_set",
+    ] {
+        assert!(
+            !tools.iter().any(|tool| tool.name == name),
+            "agent authority never includes lifecycle controls"
+        );
+        assert_eq!(
+            client
+                .call_tool(CallToolRequestParams::new(name))
+                .await
+                .unwrap()
+                .is_error,
+            Some(true)
+        );
+    }
     let call = |ticket| {
         CallToolRequestParams::new("ticket_get")
             .with_arguments(json!({"ticket_id":ticket}).as_object().unwrap().clone())

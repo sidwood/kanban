@@ -14,6 +14,10 @@ import type { EventEnvelope } from './types.js'
 describe('generated client', () => {
   it('maps every operation to its typed Tauri command', () => {
     expect(KANBAN_OPERATION_COMMANDS).toStrictEqual({
+      'service.login_launch.set': 'service_login_launch_set',
+      'service.login_launch.get': 'service_login_launch_get',
+      'service.stop': 'service_stop',
+      'service.stop_warning': 'service_stop_warning',
       'health.get': 'health_get',
       'diagnostics.export': 'diagnostics_export',
       'initiative.create': 'initiative_create',
@@ -173,6 +177,10 @@ describe('generated client', () => {
 
   it('lists only application-layer operations', () => {
     expect(KANBAN_CLIENT_OPERATIONS).toStrictEqual([
+      'service.login_launch.set',
+      'service.login_launch.get',
+      'service.stop',
+      'service.stop_warning',
       'health.get',
       'diagnostics.export',
       'initiative.create',

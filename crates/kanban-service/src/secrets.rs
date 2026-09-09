@@ -12,6 +12,20 @@ impl Default for NativeKeychain {
         }
     }
 }
+impl NativeKeychain {
+    pub fn for_data_dir(data_dir: &std::path::Path) -> Result<Self, ApiError> {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::ffi::OsStrExt;
+        let data = data_dir.canonicalize().map_err(|_| unavailable())?;
+        let default = kanban_storage::paths::managed_data_dir().map_err(|_| unavailable())?;
+        if data == default.canonicalize().unwrap_or(default) {
+            return Ok(Self::default());
+        }
+        Ok(Self {
+            account: format!("data-{:x}", Sha256::digest(data.as_os_str().as_bytes())),
+        })
+    }
+}
 impl InstallationSecretStore for NativeKeychain {
     #[cfg(target_os = "macos")]
     fn load_or_create(&self) -> Result<InstallationSecret, ApiError> {
@@ -60,6 +74,25 @@ mod tests {
     use security_framework::passwords::{
         PasswordOptions, delete_generic_password, generic_password,
     };
+
+    #[test]
+    fn lifecycle_keychain_custom_data_directory_uses_an_isolated_native_account() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        assert_ne!(store.account, "installation");
+        let repeated = NativeKeychain::for_data_dir(&dir.path().canonicalize().unwrap()).unwrap();
+        assert_eq!(store.account, repeated.account);
+        let other = tempfile::TempDir::new().unwrap();
+        assert_ne!(
+            store.account,
+            NativeKeychain::for_data_dir(other.path()).unwrap().account
+        );
+        let _fixture = Fixture(store.account.clone());
+        let first = store
+            .load_or_create()
+            .expect("native disposable account is usable");
+        assert_eq!(first.expose(), repeated.load_or_create().unwrap().expose());
+    }
     const SERVICE: &str = "dev.kanban.desktop.installation";
     struct Fixture(String);
     impl Drop for Fixture {

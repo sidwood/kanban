@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "instance_id": {
+      "type": "string"
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "instance_id",
+    "version"
+  ],
+  "title": "LoginLaunchState",
+  "type": "object"
+}

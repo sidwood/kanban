@@ -2289,7 +2289,78 @@ async fn search_global(
     .await
 }
 
+#[tauri::command]
+async fn service_stop_warning(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ServiceStopWarning, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ServiceStopWarningQuery>(request)?;
+    run_blocking(shell, "service.stop_warning", move |shell| {
+        forward_query(
+            shell,
+            "service.stop_warning",
+            "service.stop_warning",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn service_stop(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ServiceStopResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ServiceStopRequest>(request)?;
+    run_blocking(shell, "service.stop", move |shell| {
+        forward_command(shell, "service.stop", "service.stop", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn service_login_launch_get(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::LoginLaunchState, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::LoginLaunchQuery>(request)?;
+    run_blocking(shell, "service.login_launch.get", move |shell| {
+        forward_query(
+            shell,
+            "service.login_launch.get",
+            "service.login_launch.get",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn service_login_launch_set(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::LoginLaunchSetResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::LoginLaunchSetRequest>(request)?;
+    run_blocking(shell, "service.login_launch.set", move |shell| {
+        forward_command(
+            shell,
+            "service.login_launch.set",
+            "service.login_launch.set",
+            request,
+        )
+    })
+    .await
+}
+
 shell_handlers::shell_handler_catalogue! {
+    service_login_launch_set,
+    service_login_launch_get,
+    service_stop,
+    service_stop_warning,
     health_get,
     diagnostics_export,
     initiative_create,
@@ -2511,7 +2582,11 @@ fn supervise(socket_path: PathBuf, shell: Arc<Shell>, app: AppHandle) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
     if let Some(mut child) = spawned {
-        let _ = child.try_wait();
+        let _ = std::thread::Builder::new()
+            .name("kanban-core-reaper".into())
+            .spawn(move || {
+                let _ = child.wait();
+            });
     }
 }
 
@@ -2538,7 +2613,7 @@ pub fn ensure_core_running(socket_path: &Path) -> Result<Option<Child>, String> 
     }
     let binary = locate_core_binary()?;
     let data_dir = socket_path.parent().unwrap_or_else(|| Path::new("."));
-    let child = Command::new(&binary)
+    let mut child = Command::new(&binary)
         .arg(data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -2558,8 +2633,25 @@ pub fn ensure_core_running(socket_path: &Path) -> Result<Option<Child>, String> 
         if socket_serving(socket_path) {
             return Ok(Some(child));
         }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|failure| format!("could not inspect the starting core: {failure}"))?
+        {
+            if socket_serving(socket_path) {
+                return Ok(None);
+            }
+            return Err(format!(
+                "the core at {} exited before readiness: {status}",
+                binary.display()
+            ));
+        }
         std::thread::sleep(CORE_START_POLL);
     }
+    if socket_serving(socket_path) {
+        return Ok(Some(child));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
     Err(format!(
         "the core at {} did not serve its socket within {} seconds",
         binary.display(),

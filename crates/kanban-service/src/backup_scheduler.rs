@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,7 +25,8 @@ struct SchedulerState {
 
 /// The production backup scheduler owned by a running core.
 pub(crate) struct BackupScheduler {
-    _handle: JoinHandle<()>,
+    stop: Sender<()>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl BackupScheduler {
@@ -41,8 +43,14 @@ impl BackupScheduler {
         interval: Duration,
         log: Arc<LogWriter>,
     ) -> Self {
-        let handle = thread::spawn(move || scheduler_loop(&data_dir, &database, interval, &log));
-        Self { _handle: handle }
+        let (stop, stopping) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            scheduler_loop(&data_dir, &database, interval, &log, stopping);
+        });
+        Self {
+            stop,
+            worker: Some(worker),
+        }
     }
 }
 
@@ -125,16 +133,30 @@ pub(crate) fn scheduler_loop_sleep(
     }
 }
 
-fn scheduler_loop(data_dir: &Path, database: &Database, interval: Duration, log: &LogWriter) {
-    let mut last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
-    loop {
+fn scheduler_loop(
+    data_dir: &Path,
+    database: &Database,
+    interval: Duration,
+    log: &LogWriter,
+    stopping: Receiver<()>,
+) {
+    while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+        let last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
         let last_success = load_scheduler_state(data_dir);
         let now = SystemTime::now();
         let sleep_for = scheduler_loop_sleep(last_success, interval, now, last_attempt_failed);
-        if !sleep_for.is_zero() {
-            thread::sleep(sleep_for);
+        if stopping.recv_timeout(sleep_for) != Err(mpsc::RecvTimeoutError::Timeout) {
+            break;
         }
-        last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
+    }
+}
+
+impl Drop for BackupScheduler {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

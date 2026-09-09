@@ -618,6 +618,22 @@ export type LaneWorkspaceReleaseRequest = {
   mutation: MutationContext;
 };
 export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'ticket.review.configured' | 'ticket.spec.moved' | 'ticket.pinned' | 'ticket.graph.approved' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
+export type LoginLaunchChangeStatus = 'change_requested';
+export type LoginLaunchQuery = Record<string, never>;
+export type LoginLaunchSetRequest = {
+  enabled: boolean;
+  instance_id: string;
+  mutation: MutationContext;
+};
+export type LoginLaunchSetResponse = {
+  status: LoginLaunchChangeStatus;
+};
+export type LoginLaunchState = {
+  enabled?: boolean | null;
+  error?: string | null;
+  instance_id: string;
+  version: number;
+};
 export type McpHealth = {
   exposed_tools: number;
 };
@@ -1177,6 +1193,24 @@ export type SearchHitKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket
 export type ServiceHealth = {
   started_at: string;
 };
+export type ServiceStopRequest = {
+  confirmed: boolean;
+  instance_id: string;
+  mutation: MutationContext;
+  warning_id: string;
+};
+export type ServiceStopResponse = {
+  instance_id: string;
+  status: ServiceStopStatus;
+};
+export type ServiceStopStatus = 'stop_requested';
+export type ServiceStopWarning = {
+  capabilities: string[];
+  instance_id: string;
+  version: number;
+  warning_id: string;
+};
+export type ServiceStopWarningQuery = Record<string, never>;
 export type SpecContent = {
   further_notes: string;
   implementation_decisions: string;

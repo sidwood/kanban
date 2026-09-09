@@ -633,6 +633,13 @@ fn sample_request(schema: &str) -> Value {
         }),
         "ViewRenameRequest" => json!({ "mutation": mutation, "view_id": 1, "name": "Deep work" }),
         "ViewRemoveRequest" => json!({ "mutation": mutation, "view_id": 1 }),
+        "ServiceStopWarningQuery" | "LoginLaunchQuery" => json!({}),
+        "ServiceStopRequest" => {
+            json!({ "mutation": mutation, "instance_id": "fixture", "warning_id": "current-warning", "confirmed": true })
+        }
+        "LoginLaunchSetRequest" => {
+            json!({ "mutation": mutation, "instance_id": "fixture", "enabled": true })
+        }
         "SearchGlobalQuery" => json!({ "q": "core-t1" }),
         other => panic!("no sample request fixture for {other}"),
     }
@@ -713,6 +720,16 @@ fn commands_forward_catalogued_requests_unchanged() {
 
 fn assert_unknown_fields_refused(schema: &str, request: Value) {
     let refused = match schema {
+        "ServiceStopWarningQuery" => {
+            decode_invoke_args::<kanban_dto::ServiceStopWarningQuery>(request).is_err()
+        }
+        "ServiceStopRequest" => {
+            decode_invoke_args::<kanban_dto::ServiceStopRequest>(request).is_err()
+        }
+        "LoginLaunchQuery" => decode_invoke_args::<kanban_dto::LoginLaunchQuery>(request).is_err(),
+        "LoginLaunchSetRequest" => {
+            decode_invoke_args::<kanban_dto::LoginLaunchSetRequest>(request).is_err()
+        }
         "HealthQuery" => decode_invoke_args::<HealthQuery>(request).is_err(),
         "DiagnosticsExportQuery" => decode_invoke_args::<DiagnosticsExportQuery>(request).is_err(),
         "InitiativeCreateRequest" => {

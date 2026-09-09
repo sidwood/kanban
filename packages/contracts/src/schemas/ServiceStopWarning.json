@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "instance_id": {
+      "type": "string"
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "warning_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capabilities",
+    "instance_id",
+    "version",
+    "warning_id"
+  ],
+  "title": "ServiceStopWarning",
+  "type": "object"
+}

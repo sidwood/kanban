@@ -6,7 +6,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
+use std::time::{Duration, Instant};
 
 use crate::broker::EventBroker;
 use crate::error::TransportError;
@@ -36,8 +37,57 @@ pub struct SocketServer {
 
 struct ConnectionEntry {
     id: u64,
-    stream: Arc<UnixStream>,
+    write: Arc<ConnectionWriter>,
     reader: std::thread::JoinHandle<()>,
+    response: Arc<Mutex<()>>,
+}
+
+struct ConnectionWriter {
+    socket: UnixStream,
+    stream: Mutex<UnixStream>,
+    closed: AtomicBool,
+    stopping: Arc<AtomicBool>,
+}
+
+impl ConnectionWriter {
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
+
+    fn write_line(&self, line: &str) -> std::io::Result<()> {
+        let interrupted = || std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let mut stream = loop {
+            if self.closed.load(Ordering::Acquire) {
+                return Err(interrupted());
+            }
+            match self.stream.try_lock() {
+                Ok(stream) => break stream,
+                Err(TryLockError::Poisoned(error)) => break error.into_inner(),
+                Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(5)),
+            }
+        };
+        for mut bytes in [line.as_bytes(), b"\n"] {
+            while !bytes.is_empty() {
+                if self.closed.load(Ordering::Acquire) {
+                    return Err(interrupted());
+                }
+                match stream.write(bytes) {
+                    Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                    Ok(written) => bytes = &bytes[written..],
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock
+                                | std::io::ErrorKind::TimedOut
+                                | std::io::ErrorKind::Interrupted
+                        ) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Forget one connection's registry entry, closing its socket when
@@ -119,7 +169,7 @@ impl SocketServer {
             .name("kanban-transport-accept".to_owned())
             .spawn(move || {
                 for connection in listener.incoming() {
-                    if accept_shutdown.load(Ordering::Relaxed) {
+                    if accept_shutdown.load(Ordering::Acquire) {
                         break;
                     }
                     match connection {
@@ -130,6 +180,7 @@ impl SocketServer {
                             &accept_connections,
                             &next_connection_id,
                             agents.clone(),
+                            accept_shutdown.clone(),
                         ),
                         Err(_) => continue,
                     }
@@ -144,8 +195,8 @@ impl SocketServer {
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     entries.drain(..).collect()
                 };
+                close_connections(&entries);
                 for entry in entries {
-                    let _ = entry.stream.shutdown(std::net::Shutdown::Both);
                     let _ = entry.reader.join();
                 }
             })
@@ -161,6 +212,34 @@ impl SocketServer {
     }
 }
 
+const RESPONSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+const WRITE_POLL_TIMEOUT: Duration = Duration::from_millis(50);
+
+fn close_connections(entries: &[ConnectionEntry]) {
+    let deadline = Instant::now() + RESPONSE_DRAIN_TIMEOUT;
+    let mut draining: Vec<_> = entries.iter().collect();
+    while !draining.is_empty() {
+        draining.retain(|entry| match entry.response.try_lock() {
+            Err(TryLockError::WouldBlock) => true,
+            _ => {
+                entry.write.close();
+                false
+            }
+        });
+        if Instant::now() >= deadline {
+            break;
+        }
+        if !draining.is_empty() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    // One shared deadline lets a stop response flush without letting stalled
+    // clients extend teardown; closing every socket must precede any join.
+    for entry in draining {
+        entry.write.close();
+    }
+}
+
 impl ServerHandle {
     /// The socket path this server holds.
     pub fn socket_path(&self) -> &Path {
@@ -170,11 +249,12 @@ impl ServerHandle {
     /// Stop serving: unblock the accept loop, end every connection,
     /// and wait for the server's threads to finish.
     pub fn shutdown(self) {
-        self.shutdown.store(true, Ordering::Relaxed);
+        self.shutdown.store(true, Ordering::Release);
         // Wake the accept loop; the extra connection is dropped
         // unread on purpose.
         let _ = UnixStream::connect(&self.socket_path);
         let _ = self.accept.join();
+        let _ = std::fs::remove_file(&self.socket_path);
     }
 }
 
@@ -257,6 +337,7 @@ fn spawn_connection(
     connections: &Arc<Mutex<Vec<ConnectionEntry>>>,
     next_connection_id: &Arc<AtomicU64>,
     agents: Option<Arc<dyn crate::agent::AgentLauncher>>,
+    stopping: Arc<AtomicBool>,
 ) {
     let Ok(read_half) = stream.try_clone() else {
         return;
@@ -264,9 +345,21 @@ fn spawn_connection(
     let Ok(write_half) = stream.try_clone() else {
         return;
     };
-    let shared_write = Arc::new(Mutex::new(write_half));
-    let stream = Arc::new(stream);
+    // A half-closed Unix peer may not wake a blocked send on shutdown alone.
+    if write_half
+        .set_write_timeout(Some(WRITE_POLL_TIMEOUT))
+        .is_err()
+    {
+        return;
+    }
+    let shared_write = Arc::new(ConnectionWriter {
+        socket: stream,
+        stream: Mutex::new(write_half),
+        closed: AtomicBool::new(false),
+        stopping,
+    });
     let id = next_connection_id.fetch_add(1, Ordering::Relaxed);
+    let response = Arc::new(Mutex::new(()));
     let reader = match std::thread::Builder::new()
         .name("kanban-transport-connection".to_owned())
         .spawn({
@@ -274,8 +367,9 @@ fn spawn_connection(
             let broker = broker.clone();
             let shared_write = shared_write.clone();
             let connections = connections.clone();
+            let response = response.clone();
             move || {
-                serve_connection(read_half, shared_write, &core, &broker, agents);
+                serve_connection(read_half, shared_write, &core, &broker, agents, response);
                 // Forget the connection so its socket closes for the
                 // client instead of lingering until server shutdown.
                 forget_connection(&connections, id);
@@ -289,7 +383,12 @@ fn spawn_connection(
     connections
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push(ConnectionEntry { id, stream, reader });
+        .push(ConnectionEntry {
+            id,
+            write: shared_write,
+            reader,
+            response,
+        });
 }
 
 /// One connection's live event subscription: the broker-side id,
@@ -317,10 +416,11 @@ fn end_subscription(active: ActiveSubscription, broker: &EventBroker) {
 /// server shuts down.
 fn serve_connection(
     read_half: UnixStream,
-    shared_write: Arc<Mutex<UnixStream>>,
+    shared_write: Arc<ConnectionWriter>,
     core: &Arc<kanban_app::Core>,
     broker: &Arc<EventBroker>,
     agents: Option<Arc<dyn crate::agent::AgentLauncher>>,
+    response: Arc<Mutex<()>>,
 ) {
     let mut reader = BufReader::new(read_half);
     let mut subscription: Option<ActiveSubscription> = None;
@@ -330,6 +430,11 @@ fn serve_connection(
         match reader.read_line(&mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
+        }
+        if shared_write.stopping.load(Ordering::Acquire)
+            || shared_write.closed.load(Ordering::Acquire)
+        {
+            break;
         }
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
@@ -417,6 +522,12 @@ fn serve_connection(
                 }
             }
             FrameKind::Query | FrameKind::Command => {
+                let _response = response.lock().unwrap_or_else(|p| p.into_inner());
+                if shared_write.stopping.load(Ordering::Acquire)
+                    || shared_write.closed.load(Ordering::Acquire)
+                {
+                    break;
+                }
                 let Some(operation) = request.operation.as_deref() else {
                     let _ = write_frame(
                         &shared_write,
@@ -452,6 +563,7 @@ fn serve_connection(
             }
         }
     }
+    shared_write.close();
     if let Some(active) = subscription.take() {
         end_subscription(active, broker);
     }
@@ -460,16 +572,9 @@ fn serve_connection(
 /// Write one frame as one line. The shared lock keeps lines whole
 /// when a subscription's writer thread is writing alongside this
 /// one.
-fn write_frame(
-    shared_write: &Arc<Mutex<UnixStream>>,
-    frame: &ResponseFrame,
-) -> std::io::Result<()> {
+fn write_frame(shared_write: &Arc<ConnectionWriter>, frame: &ResponseFrame) -> std::io::Result<()> {
     let line = serde_json::to_string(frame).expect("a response frame encodes");
-    let mut stream = shared_write
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    writeln!(stream, "{line}")?;
-    stream.flush()
+    shared_write.write_line(&line)
 }
 
 /// Drain one subscriber's event lines onto its connection until the
@@ -480,7 +585,7 @@ fn write_frame(
 /// announced so the client can subscribe again.
 fn spawn_event_writer(
     events: Receiver<String>,
-    shared_write: Arc<Mutex<UnixStream>>,
+    shared_write: Arc<ConnectionWriter>,
     end_quietly: Arc<AtomicBool>,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
@@ -490,13 +595,8 @@ fn spawn_event_writer(
                 if end_quietly.load(Ordering::Acquire) {
                     continue;
                 }
-                let mut stream = shared_write
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if writeln!(stream, "{line}")
-                    .and_then(|_| stream.flush())
-                    .is_err()
-                {
+                if shared_write.write_line(&line).is_err() {
+                    shared_write.close();
                     return;
                 }
             }
@@ -791,6 +891,317 @@ mod tests {
         assert_eq!(mode_of(&socket_dir), 0o700, "the directory is owner-only");
         assert_eq!(mode_of(&socket_path), 0o600, "the socket is owner-only");
         assert_eq!(socket_path.file_name(), Some(SOCKET_FILE_NAME.as_ref()));
+    }
+
+    struct LargeResponse(std::sync::mpsc::Sender<()>);
+
+    impl LargeResponse {
+        fn reply(&self) -> Value {
+            let payload = json!({ "pad": "x".repeat(2 * 1024 * 1024) });
+            self.0.send(()).unwrap();
+            payload
+        }
+    }
+
+    impl kanban_app::QueryHandler for LargeResponse {
+        fn handle(&self, _: &Value) -> Result<Value, ApiError> {
+            Ok(self.reply())
+        }
+    }
+
+    impl CommandHandler for LargeResponse {
+        fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+            ParsedCommand::lift("large", payload)
+        }
+
+        fn current_version(&self, _: &ParsedCommand) -> Result<u64, ApiError> {
+            Ok(0)
+        }
+
+        fn apply(&self, _: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+            Ok(self.reply())
+        }
+    }
+
+    fn shutdown_with_non_reading_clients(kind: FrameKind) {
+        let dir = TempDir::new().unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
+        let socket_path = server.socket_path().to_owned();
+        let (entered, requests) = std::sync::mpsc::channel();
+        let handler = Arc::new(LargeResponse(entered));
+        let mut core = Core::new(
+            &[
+                OperationDescriptor {
+                    name: "large.get",
+                    kind: OperationKind::Query,
+                    request_schema: "HealthQuery",
+                    response_schema: "HealthResponse",
+                    mcp_tool_name: "large_get",
+                    description: "Test fixture: a response larger than the socket buffer.",
+                },
+                OperationDescriptor {
+                    name: "large.command",
+                    kind: OperationKind::Command,
+                    request_schema: "MutationContext",
+                    response_schema: "HealthResponse",
+                    mcp_tool_name: "large_command",
+                    description: "Test fixture: a response larger than the socket buffer.",
+                },
+            ],
+            Arc::new(MemoryIdempotencyStore::new()),
+            server.broker(),
+        );
+        core.register_query("large.get", handler.clone()).unwrap();
+        core.register_command("large.command", handler).unwrap();
+        let handle = server.serve(Arc::new(core)).unwrap();
+        let mut clients = Vec::new();
+        for index in 0..6 {
+            let mut client = TestClient::connect(&socket_path);
+            client.send(&RequestFrame {
+                kind,
+                operation: Some(match kind {
+                    FrameKind::Query => "large.get",
+                    FrameKind::Command => "large.command",
+                    _ => unreachable!(),
+                }.to_owned()),
+                payload: Some(json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": format!("large-{index}") }
+                })),
+            });
+            requests.recv_timeout(Duration::from_secs(2)).unwrap();
+            clients.push(client);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let (finished, completion) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            handle.shutdown();
+            let _ = finished.send(());
+        });
+        let bounded = completion.recv_timeout(Duration::from_secs(1)).is_ok();
+        for client in clients {
+            let _ = client.stream.shutdown(std::net::Shutdown::Both);
+        }
+        if !bounded {
+            completion
+                .recv_timeout(Duration::from_secs(2))
+                .expect("closing owned clients releases teardown");
+        }
+        shutdown.join().unwrap();
+        assert!(
+            bounded,
+            "shutdown must not wait for non-reading {kind:?} clients"
+        );
+        assert!(!socket_path.exists());
+    }
+
+    #[test]
+    fn shutdown_bounds_non_reading_query_clients() {
+        shutdown_with_non_reading_clients(FrameKind::Query);
+    }
+
+    #[test]
+    fn shutdown_bounds_non_reading_command_clients() {
+        shutdown_with_non_reading_clients(FrameKind::Command);
+    }
+
+    #[test]
+    fn a_disconnected_non_reading_subscriber_releases_its_writer() {
+        use kanban_app::EventSink;
+        let dir = TempDir::new().unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
+        let connections = server.connections.clone();
+        let broker = server.broker();
+        let core = Core::new(
+            TEST_CATALOG,
+            Arc::new(MemoryIdempotencyStore::new()),
+            broker.clone(),
+        );
+        let handle = server.serve(Arc::new(core)).unwrap();
+        let mut client = TestClient::connect(handle.socket_path());
+        client.subscribe();
+        broker.emit(
+            "counter.padded",
+            json!({ "pad": "x".repeat(2 * 1024 * 1024) }),
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        client.stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(1);
+        while !connections.lock().unwrap().is_empty() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let released = connections.lock().unwrap().is_empty();
+        drop(client);
+        handle.shutdown();
+        assert!(
+            released,
+            "input EOF must release a blocked subscription writer without server shutdown"
+        );
+    }
+
+    struct DelayedStop {
+        requested: std::sync::mpsc::Sender<()>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl CommandHandler for DelayedStop {
+        fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+            ParsedCommand::lift("stop", payload)
+        }
+
+        fn current_version(&self, _: &ParsedCommand) -> Result<u64, ApiError> {
+            Ok(0)
+        }
+
+        fn apply(&self, _: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+            self.requested.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+            Ok(json!({ "status": "stop_requested" }))
+        }
+    }
+
+    fn shutdown_with_delayed_stop_response(within_grace: bool) {
+        let dir = TempDir::new().unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
+        let stopping = server.shutdown.clone();
+        let (requested, stop_request) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let counter = Arc::new(Counter::default());
+        let mut core = Core::new(
+            TEST_CATALOG,
+            Arc::new(MemoryIdempotencyStore::new()),
+            server.broker(),
+        );
+        core.register_command("counter.bump", counter.clone())
+            .unwrap();
+        core.register_command(
+            "counter.pad",
+            Arc::new(DelayedStop {
+                requested,
+                release: std::sync::Mutex::new(released),
+            }),
+        )
+        .unwrap();
+        let handle = server.serve(Arc::new(core)).unwrap();
+        let mut client = TestClient::connect(handle.socket_path());
+        let stop = serde_json::to_string(&RequestFrame {
+            kind: FrameKind::Command,
+            operation: Some("counter.pad".into()),
+            payload: Some(pad(0, "stop")),
+        })
+        .unwrap();
+        let queued = serde_json::to_string(&RequestFrame {
+            kind: FrameKind::Command,
+            operation: Some("counter.bump".into()),
+            payload: Some(bump(1, "after-stop", 0)),
+        })
+        .unwrap();
+        client.send_raw(&format!("{stop}\n{queued}"));
+        stop_request.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (finished, completion) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            handle.shutdown();
+            let _ = finished.send(());
+        });
+        let until = std::time::Instant::now() + Duration::from_secs(1);
+        while !stopping.load(std::sync::atomic::Ordering::Relaxed) {
+            assert!(std::time::Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if within_grace {
+            std::thread::sleep(Duration::from_millis(50));
+            release.send(()).unwrap();
+            assert_eq!(
+                client.recv(),
+                ResponseFrame::Response {
+                    payload: json!({ "status": "stop_requested" })
+                }
+            );
+        } else {
+            client
+                .stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let closed = client.try_recv().is_none();
+            release.send(()).unwrap();
+            assert!(
+                closed,
+                "the socket closes even while its response guard is held"
+            );
+        }
+        completion.recv_timeout(Duration::from_secs(1)).unwrap();
+        shutdown.join().unwrap();
+        assert_eq!(
+            *counter.value.lock().unwrap(),
+            0,
+            "buffered commands must not begin after shutdown starts"
+        );
+        assert!(client.try_recv().is_none());
+    }
+
+    #[test]
+    fn shutdown_flushes_the_stop_response_without_running_buffered_commands() {
+        shutdown_with_delayed_stop_response(true);
+    }
+
+    #[test]
+    fn shutdown_closes_the_socket_when_the_stop_response_misses_its_deadline() {
+        shutdown_with_delayed_stop_response(false);
+    }
+
+    fn shutdown_with_blocked_event_writer(kind: FrameKind) {
+        let dir = TempDir::new().unwrap();
+        let handle = served(dir.path());
+        let socket_path = handle.socket_path().to_owned();
+        let mut subscriber = TestClient::connect(&socket_path);
+        subscriber.subscribe();
+        let mut caller = TestClient::connect(&socket_path);
+        caller.pad(pad(2 * 1024 * 1024, "blocked-event"));
+        subscriber.send(&RequestFrame {
+            kind,
+            operation: match kind {
+                FrameKind::Query => Some("health.get".into()),
+                FrameKind::Command => Some("counter.bump".into()),
+                _ => None,
+            },
+            payload: Some(bump(1, "behind-event", 0)),
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let (finished, completion) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            handle.shutdown();
+            let _ = finished.send(());
+        });
+        let bounded = completion.recv_timeout(Duration::from_secs(1)).is_ok();
+        drop(subscriber);
+        drop(caller);
+        if !bounded {
+            completion.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        shutdown.join().unwrap();
+        assert!(
+            bounded,
+            "a blocked event writer must not prevent {kind:?} teardown"
+        );
+        assert!(!socket_path.exists());
+    }
+
+    #[test]
+    fn shutdown_bounds_a_query_waiting_for_an_event_writer() {
+        shutdown_with_blocked_event_writer(FrameKind::Query);
+    }
+
+    #[test]
+    fn shutdown_bounds_a_command_waiting_for_an_event_writer() {
+        shutdown_with_blocked_event_writer(FrameKind::Command);
+    }
+
+    #[test]
+    fn shutdown_bounds_resubscription_waiting_for_an_event_writer() {
+        shutdown_with_blocked_event_writer(FrameKind::Subscribe);
     }
 
     #[test]

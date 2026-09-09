@@ -3,6 +3,7 @@ use crate::run_recovery::{
     RunRecoveryAction, RunRecoveryListQuery, RunRecoveryListResponse, RunRecoveryRecord,
     RunRecoveryRetryRequest, RunRecoveryRuleRequest,
 };
+use crate::service_lifecycle::*;
 use crate::submission::{
     SubmissionListQuery, SubmissionListResponse, SubmissionRecord, SubmissionResult,
     SubmissionSubmitRequest,
@@ -156,6 +157,17 @@ use crate::workspace::{
 /// Every DTO schema exported to `packages/contracts`.
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
+        (
+            "LoginLaunchChangeStatus",
+            schema_for!(LoginLaunchChangeStatus),
+        ),
+        (
+            "LoginLaunchSetResponse",
+            schema_for!(LoginLaunchSetResponse),
+        ),
+        ("LoginLaunchSetRequest", schema_for!(LoginLaunchSetRequest)),
+        ("LoginLaunchState", schema_for!(LoginLaunchState)),
+        ("LoginLaunchQuery", schema_for!(LoginLaunchQuery)),
         ("ApiError", schema_for!(ApiError)),
         (
             "DeferralPromoteRequest",
@@ -338,6 +350,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("EvidenceReviewDto", schema_for!(EvidenceReviewDto)),
         ("LiveEventName", schema_for!(LiveEventName)),
         ("HealthQuery", schema_for!(HealthQuery)),
+        (
+            "ServiceStopWarningQuery",
+            schema_for!(ServiceStopWarningQuery),
+        ),
+        ("ServiceStopWarning", schema_for!(ServiceStopWarning)),
+        ("ServiceStopRequest", schema_for!(ServiceStopRequest)),
+        ("ServiceStopResponse", schema_for!(ServiceStopResponse)),
+        ("ServiceStopStatus", schema_for!(ServiceStopStatus)),
         ("HealthResponse", schema_for!(HealthResponse)),
         (
             "HerdrConnectionDiagnostics",

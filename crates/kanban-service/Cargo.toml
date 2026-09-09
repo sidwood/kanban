@@ -14,6 +14,8 @@ kanban-herdr = { path = "../kanban-herdr" }
 kanban-storage = { workspace = true }
 kanban-transport = { workspace = true }
 libc = "0.2"
+sha2 = "0.10.9"
+socket2 = "0.6.5"
 serde_json = { workspace = true }
 thiserror = "2.0.20"
 time = { workspace = true }
@@ -32,6 +34,21 @@ kanban-herdr = { path = "../kanban-herdr", features = ["test-support"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde_json = { workspace = true }
 tempfile = "3.27.0"
+
+[[test]]
+name = "lifecycle_startup"
+path = "tests/lifecycle_startup.rs"
+harness = false
+
+[[test]]
+name = "lifecycle_workers"
+path = "tests/lifecycle_workers.rs"
+harness = false
+
+[[test]]
+name = "lifecycle_process"
+path = "tests/lifecycle_process.rs"
+harness = false
 
 [[test]]
 name = "git_observer_failed_status"

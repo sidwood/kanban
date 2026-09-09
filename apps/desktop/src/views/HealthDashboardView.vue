@@ -2,6 +2,7 @@
 // The health dashboard surface: per-component detail and
 // last-change times from the one health query (KAN-S13-US5).
 import HealthDashboard from '../components/HealthDashboard.vue'
+import ServiceLifecycle from '../components/ServiceLifecycle.vue'
 </script>
 
 <template>
@@ -22,5 +23,6 @@ import HealthDashboard from '../components/HealthDashboard.vue'
     </h1>
 
     <HealthDashboard />
+    <ServiceLifecycle />
   </main>
 </template>

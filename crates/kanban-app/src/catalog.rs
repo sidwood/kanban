@@ -50,6 +50,34 @@ macro_rules! define_exposed_catalogue {
 }
 
 define_exposed_catalogue! {
+    "service.login_launch.set" => {
+        kind: Command,
+        request: "LoginLaunchSetRequest",
+        response: "LoginLaunchSetResponse",
+        mcp: "service_login_launch_set",
+        description: "Request an opt-in or removal of native launch-at-login registration.",
+    },
+    "service.login_launch.get" => {
+        kind: Query,
+        request: "LoginLaunchQuery",
+        response: "LoginLaunchState",
+        mcp: "service_login_launch_get",
+        description: "Read native launch-at-login registration and the last requested change.",
+    },
+    "service.stop" => {
+        kind: Command,
+        request: "ServiceStopRequest",
+        response: "ServiceStopResponse",
+        mcp: "service_stop",
+        description: "Request a clean stop after confirming a current capability warning.",
+    },
+    "service.stop_warning" => {
+        kind: Query,
+        request: "ServiceStopWarningQuery",
+        response: "ServiceStopWarning",
+        mcp: "service_stop_warning",
+        description: "Preview the capabilities that stopping this core would interrupt.",
+    },
     "health.get" => {
         kind: Query,
         request: "HealthQuery",

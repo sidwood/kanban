@@ -177,8 +177,10 @@ pub use run::{
     ProfileSnapshotRecord, RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord,
     RunStatus,
 };
+pub mod service_lifecycle;
 pub use schema::schema_definitions;
 pub use search::{SearchGlobalHit, SearchGlobalQuery, SearchGlobalResponse, SearchHitKind};
+pub use service_lifecycle::*;
 pub use spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -281,6 +283,11 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "LoginLaunchChangeStatus",
+                "LoginLaunchSetResponse",
+                "LoginLaunchSetRequest",
+                "LoginLaunchState",
+                "LoginLaunchQuery",
                 "ApiError",
                 "DeferralPromoteRequest",
                 "DeferralPromoteResponse",
@@ -373,6 +380,11 @@ mod tests {
                 "EvidenceReviewDto",
                 "LiveEventName",
                 "HealthQuery",
+                "ServiceStopWarningQuery",
+                "ServiceStopWarning",
+                "ServiceStopRequest",
+                "ServiceStopResponse",
+                "ServiceStopStatus",
                 "HealthResponse",
                 "HerdrConnectionDiagnostics",
                 "HerdrDefaultsGetQuery",

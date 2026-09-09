@@ -6,6 +6,7 @@
 //! owns the clock; the pass and the domain rules never do.
 
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,7 +23,8 @@ const ACTIVATION_TICK: Duration = Duration::from_secs(1);
 
 /// The activation scheduler owned by a running core.
 pub(crate) struct ActivationScheduler {
-    _handle: JoinHandle<()>,
+    stop: Sender<()>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl ActivationScheduler {
@@ -45,9 +47,14 @@ impl ActivationScheduler {
         log: Arc<LogWriter>,
         interval: Duration,
     ) -> Self {
-        let handle =
-            thread::spawn(move || scheduler_loop(&pass, &recurrence, &*events, &log, interval));
-        Self { _handle: handle }
+        let (stop, stopping) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            scheduler_loop(&pass, &recurrence, &*events, &log, interval, stopping);
+        });
+        Self {
+            stop,
+            worker: Some(worker),
+        }
     }
 }
 
@@ -60,10 +67,22 @@ fn scheduler_loop(
     events: &dyn EventSink,
     log: &LogWriter,
     interval: Duration,
+    stopping: Receiver<()>,
 ) {
-    loop {
+    while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
         run_pass(pass, recurrence, events, log);
-        thread::sleep(interval);
+        if stopping.recv_timeout(interval) != Err(mpsc::RecvTimeoutError::Timeout) {
+            break;
+        }
+    }
+}
+
+impl Drop for ActivationScheduler {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

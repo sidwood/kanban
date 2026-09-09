@@ -139,7 +139,12 @@ fn a_core_that_never_serves_fails_the_start_loudly() {
     // this binary.
     unsafe { std::env::set_var("KANBAN_CORE_BIN", "/usr/bin/true") };
 
+    let started = std::time::Instant::now();
     let refused = ensure_core_running(&socket_path);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "an exited child is detected promptly and reaped"
+    );
 
     assert!(
         refused.is_err(),

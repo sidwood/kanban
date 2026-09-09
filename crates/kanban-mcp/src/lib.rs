@@ -44,6 +44,11 @@ impl Adapter {
             )),
         }
     }
+    pub fn from_session(session: kanban_app::agent_authorization::AgentSession) -> Self {
+        Self {
+            backend: Arc::new(Backend::Direct(session)),
+        }
+    }
     pub fn from_channel(channel: std::os::unix::net::UnixStream) -> Self {
         Self {
             backend: Arc::new(Backend::Channel(kanban_transport::agent::AgentClient::new(

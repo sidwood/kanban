@@ -69,6 +69,10 @@ fn unavailable() -> ApiError {
 }
 
 #[cfg(all(test, target_os = "macos"))]
+#[path = "../../kanban-transport/tests/common/http_response.rs"]
+mod http_response;
+
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use security_framework::passwords::{
@@ -91,7 +95,10 @@ mod tests {
         let first = store
             .load_or_create()
             .expect("native disposable account is usable");
-        assert_eq!(first.expose(), repeated.load_or_create().unwrap().expose());
+        assert!(
+            first.expose() == repeated.load_or_create().unwrap().expose(),
+            "reopening must not rotate credentials"
+        );
     }
     const SERVICE: &str = "dev.kanban.desktop.installation";
     struct Fixture(String);
@@ -101,7 +108,7 @@ mod tests {
         }
     }
     #[test]
-    fn native_keychain_secret_exclusion_round_trip() {
+    fn native_keychain_loopback_auth_secret_exclusion_round_trip() {
         let _no_prompt =
             security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
                 .unwrap();
@@ -130,6 +137,34 @@ mod tests {
             "reopening must not rotate credentials"
         );
         assert!(!format!("{first:?}").contains(first.expose()));
+        let dir = tempfile::TempDir::new().unwrap();
+        let credential = std::sync::Arc::new(second);
+        let service = crate::serve_with_http(
+            dir.path(),
+            crate::ServiceRuntime {
+                mcp_executable: dir.path().join("unused-adapter"),
+                herdr_socket_root: dir.path().join("herdr"),
+                installation_secret: Some(credential.clone()),
+            },
+            kanban_transport::loopback::LoopbackHttpConfig {
+                bind: Some("127.0.0.1:0".parse().unwrap()),
+            },
+        )
+        .unwrap();
+        let address = service.http_address().unwrap();
+        use std::io::Write;
+        for (token, status) in [("invalid", "401"), (credential.expose(), "403")] {
+            let mut client = std::net::TcpStream::connect(address).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            write!(client, "POST /mcp HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nX-Kanban-Capability: 1\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
+            let response = http_response::read_response(&mut client).unwrap();
+            assert!(response.starts_with(&format!("HTTP/1.1 {status}")));
+            assert!(!response.contains(credential.expose()));
+        }
+        service.shutdown();
+        assert!(std::net::TcpStream::connect(address).is_err());
         let raw =
             generic_password(PasswordOptions::new_generic_password(SERVICE, &fixture.0)).unwrap();
         assert_eq!(raw.len(), 32);

@@ -11,8 +11,17 @@ kanban-app = { workspace = true }
 kanban-dto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }
+tokio-util = "0.7"
+subtle = "2.6"
 thiserror = "2.0.20"
+rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 
 [dev-dependencies]
+# cspell:ignore httparse
+httparse = "1.10.1"
 kanban-app = { workspace = true, features = ["test-support"] }
 tempfile = "3.27.0"

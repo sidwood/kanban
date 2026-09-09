@@ -6,6 +6,7 @@ pub mod agent;
 pub mod broker;
 pub mod error;
 pub mod frame;
+pub mod loopback;
 pub mod server;
 
 pub use broker::EventBroker;

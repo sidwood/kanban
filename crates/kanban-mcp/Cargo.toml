@@ -17,8 +17,10 @@ rmcp = { version = "3.2.0", default-features = false, features = ["server", "tra
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "time", "fs"] }
 
 [dev-dependencies]
+base64 = "0.22"
+reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
 kanban-storage = { workspace = true }
 kanban-service = { workspace = true }
-rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tempfile = "3.27.0"

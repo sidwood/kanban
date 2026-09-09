@@ -16,17 +16,27 @@ mod tests;
 pub struct ServiceOptions {
     pub data_dir: PathBuf,
     pub launch_once: bool,
+    pub http: kanban_transport::loopback::LoopbackHttpConfig,
 }
 impl ServiceOptions {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, ServiceError> {
         let mut args = args.into_iter();
         let mut data_dir = None;
         let mut launch_once = false;
+        let mut http = kanban_transport::loopback::LoopbackHttpConfig::default();
         while let Some(arg) = args.next() {
             if arg == "--launch-once" && !launch_once {
                 launch_once = true;
             } else if arg == "--data-dir" && data_dir.is_none() {
                 data_dir = Some(PathBuf::from(args.next().ok_or(ServiceError::Arguments)?));
+            } else if arg == "--loopback-http" && http.bind.is_none() {
+                let address = args.next().ok_or(ServiceError::Arguments)?;
+                let address = address
+                    .to_str()
+                    .and_then(|value| value.parse::<std::net::SocketAddr>().ok())
+                    .filter(|address| address.ip().is_loopback())
+                    .ok_or(ServiceError::Arguments)?;
+                http.bind = Some(address);
             } else if data_dir.is_none() && !arg.to_string_lossy().starts_with('-') {
                 data_dir = Some(PathBuf::from(arg));
             } else {
@@ -43,19 +53,46 @@ impl ServiceOptions {
         Ok(Self {
             data_dir,
             launch_once,
+            http,
         })
     }
 }
 
 pub fn launch_detached(executable: &Path, data_dir: &Path) -> std::io::Result<Child> {
-    Command::new(executable)
-        .arg("--data-dir")
-        .arg(data_dir)
+    launch_detached_with_http(executable, data_dir, Default::default())
+}
+
+fn launch_detached_with_http(
+    executable: &Path,
+    data_dir: &Path,
+    http: kanban_transport::loopback::LoopbackHttpConfig,
+) -> std::io::Result<Child> {
+    let mut command = Command::new(executable);
+    command.arg("--data-dir").arg(data_dir);
+    if let Some(address) = http.bind {
+        command.arg("--loopback-http").arg(address.to_string());
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .process_group(0)
         .spawn()
+}
+
+/// Run production argument orchestration with an installation-owned runtime factory.
+pub fn run_with_args(
+    args: impl IntoIterator<Item = OsString>,
+    executable: &Path,
+    runtime: impl FnOnce(&Path) -> Result<ServiceRuntime, ServiceError>,
+) -> Result<(), ServiceError> {
+    let options = ServiceOptions::parse(args)?;
+    if options.launch_once {
+        launch_detached_with_http(executable, &options.data_dir, options.http)
+            .map_err(|source| ServiceError::DataDir { source })?;
+        return Ok(());
+    }
+    run_with_http_runtime_factory(&options.data_dir, options.http, runtime)
 }
 
 pub fn run_with_runtime(data_dir: &Path, runtime: ServiceRuntime) -> Result<(), ServiceError> {
@@ -66,13 +103,21 @@ pub(crate) fn run_with_runtime_factory(
     data_dir: &Path,
     runtime: impl FnOnce(&Path) -> Result<ServiceRuntime, ServiceError>,
 ) -> Result<(), ServiceError> {
+    run_with_http_runtime_factory(data_dir, Default::default(), runtime)
+}
+
+fn run_with_http_runtime_factory(
+    data_dir: &Path,
+    http: kanban_transport::loopback::LoopbackHttpConfig,
+    runtime: impl FnOnce(&Path) -> Result<ServiceRuntime, ServiceError>,
+) -> Result<(), ServiceError> {
     let owner = match StartupOwner::acquire(data_dir) {
         Ok(owner) => owner,
         Err(ServiceError::AlreadyRunning { .. }) => return Ok(()),
         Err(error) => return Err(error),
     };
     let runtime = runtime(&owner.canonical_dir)?;
-    crate::serve_owned_with_runtime(owner, runtime)?.wait_for_stop();
+    crate::serve_owned_with_http(owner, runtime, http)?.wait_for_stop();
     Ok(())
 }
 

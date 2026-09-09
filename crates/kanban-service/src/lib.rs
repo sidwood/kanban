@@ -11,6 +11,8 @@ pub mod git_landing;
 pub mod git_observer;
 pub mod health;
 pub mod herdr;
+#[cfg(test)]
+mod http_config;
 pub mod login_launch;
 pub mod logs;
 pub mod mcp;
@@ -20,7 +22,7 @@ mod schedule_scheduler;
 pub mod secrets;
 mod startup;
 pub mod timeline;
-pub use startup::{ServiceOptions, launch_detached, run_with_runtime};
+pub use startup::{ServiceOptions, launch_detached, run_with_args, run_with_runtime};
 
 #[cfg(test)]
 mod lifecycle_tests;
@@ -48,6 +50,7 @@ use kanban_storage::{
     SqliteRunStore, SqliteSavedViewStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
     SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
+use kanban_transport::loopback::{LoopbackHttp, LoopbackHttpConfig};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use herdr::{HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, production_socket_root};
@@ -104,6 +107,7 @@ impl CloneTargetProbe for LocalCloneTargetProbe {
 pub struct CoreProcess {
     database: Arc<Database>,
     server: ServerHandle,
+    http: LoopbackHttp,
     herdr: Arc<HerdrObserver>,
     logs: Arc<LogWriter>,
     stop: Arc<kanban_app::service_lifecycle::StopControl>,
@@ -118,6 +122,10 @@ impl CoreProcess {
     /// The path clients connect on.
     pub fn socket_path(&self) -> &Path {
         self.server.socket_path()
+    }
+
+    pub fn http_address(&self) -> Option<std::net::SocketAddr> {
+        self.http.local_addr()
     }
 
     /// The Herdr socket root this core dials.
@@ -139,6 +147,7 @@ impl CoreProcess {
         let Self {
             database,
             server,
+            http,
             herdr,
             logs,
             _backup_scheduler,
@@ -148,6 +157,7 @@ impl CoreProcess {
             stop: _,
             ownership,
         } = self;
+        let _ = http.shutdown();
         server.shutdown();
         drop(_notification_scheduler);
         drop(_attention_scheduler);
@@ -520,13 +530,21 @@ pub fn serve_with_runtime(
     data_dir: &Path,
     runtime: ServiceRuntime,
 ) -> Result<CoreProcess, ServiceError> {
-    let owner = startup::StartupOwner::acquire(data_dir)?;
-    serve_owned_with_runtime(owner, runtime)
+    serve_with_http(data_dir, runtime, LoopbackHttpConfig::default())
 }
 
+#[cfg(test)]
 fn serve_owned_with_runtime(
     owner: startup::StartupOwner,
     runtime: ServiceRuntime,
+) -> Result<CoreProcess, ServiceError> {
+    serve_owned_with_http(owner, runtime, LoopbackHttpConfig::default())
+}
+
+fn serve_owned_with_http(
+    owner: startup::StartupOwner,
+    runtime: ServiceRuntime,
+    http: LoopbackHttpConfig,
 ) -> Result<CoreProcess, ServiceError> {
     let fleet_tool = Arc::new(LocalFleetCloneTool::new(owner.data_dir.clone()));
     serve_owned_with_mcp(
@@ -536,7 +554,17 @@ fn serve_owned_with_runtime(
         fleet_tool,
         runtime.mcp_executable,
         runtime.installation_secret,
+        http,
     )
+}
+
+pub fn serve_with_http(
+    data_dir: &Path,
+    runtime: ServiceRuntime,
+    http: LoopbackHttpConfig,
+) -> Result<CoreProcess, ServiceError> {
+    let owner = startup::StartupOwner::acquire(data_dir)?;
+    serve_owned_with_http(owner, runtime, http)
 }
 
 /// Open the database, bind the socket, and serve a core wired for
@@ -558,6 +586,7 @@ fn serve_configured(
         fleet_tool,
         adapter,
         None,
+        LoopbackHttpConfig::default(),
     )
 }
 
@@ -568,6 +597,7 @@ fn serve_configured_with_mcp(
     fleet_tool: Arc<dyn FleetCloneTool>,
     adapter: PathBuf,
     secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
+    http: LoopbackHttpConfig,
 ) -> Result<CoreProcess, ServiceError> {
     let owner = startup::StartupOwner::acquire(data_dir)?;
     serve_owned_with_mcp(
@@ -577,6 +607,7 @@ fn serve_configured_with_mcp(
         fleet_tool,
         adapter,
         secret,
+        http,
     )
 }
 
@@ -587,6 +618,7 @@ fn serve_owned_with_mcp(
     fleet_tool: Arc<dyn FleetCloneTool>,
     adapter: PathBuf,
     secret: Option<Arc<kanban_app::secrets::InstallationSecret>>,
+    http: LoopbackHttpConfig,
 ) -> Result<CoreProcess, ServiceError> {
     let data_dir = &ownership.data_dir;
     let database = prepare_database(data_dir)?;
@@ -655,6 +687,18 @@ fn serve_owned_with_mcp(
     let notification_scheduler =
         notifications::NotificationScheduler::spawn(dispatcher, logs.clone());
     let core = Arc::new(core);
+    let http_core = core.clone();
+    let http = LoopbackHttp::start(http, secret.clone(), move |capability| {
+        kanban_app::agent_authorization::AgentSession::new(
+            http_core.clone(),
+            kanban_domain::CapabilityId::new(capability),
+        )
+        .map(kanban_mcp::Adapter::from_session)
+    })
+    .map_err(|_| {
+        herdr.shutdown();
+        ServiceError::LoopbackHttp
+    })?;
     let agents = Arc::new(mcp::ManagedAdapters::new(core.clone(), adapter, secret));
     let server = server.serve_with_agents(core, Some(agents))?;
     let socket_path = server.socket_path().to_path_buf();
@@ -668,6 +712,7 @@ fn serve_owned_with_mcp(
     Ok(CoreProcess {
         database,
         server,
+        http,
         herdr,
         logs,
         stop,
@@ -723,8 +768,12 @@ pub enum ServiceError {
     StartupTimeout { path: PathBuf },
     #[error("startup ownership or readiness failed: {source}")]
     StartupIo { source: std::io::Error },
-    #[error("usage: kanban-service [--launch-once] [--data-dir /absolute/path]")]
+    #[error(
+        "usage: kanban-service [--launch-once] [--data-dir /absolute/path | /absolute/path] [--loopback-http numeric-loopback:port]"
+    )]
     Arguments,
+    #[error("loopback HTTP could not start")]
+    LoopbackHttp,
     #[error("installation Keychain access is unavailable")]
     InstallationSecret,
     /// The data directory could not be created.
@@ -756,19 +805,11 @@ pub enum ServiceError {
     },
 }
 
-/// Serve until explicit stop, or reuse an existing core after a bounded health check.
+/// Serve managed application data with native credentials and explicit HTTP opt-in.
 pub fn run_managed() -> Result<(), ServiceError> {
     use kanban_app::secrets::InstallationSecretStore;
-    let options = ServiceOptions::parse(std::env::args_os().skip(1))?;
-    let data_dir = options.data_dir;
-    if options.launch_once {
-        let executable =
-            std::env::current_exe().map_err(|source| ServiceError::DataDir { source })?;
-        launch_detached(&executable, &data_dir)
-            .map_err(|source| ServiceError::DataDir { source })?;
-        return Ok(());
-    }
-    startup::run_with_runtime_factory(&data_dir, |data_dir| {
+    let executable = std::env::current_exe().map_err(|source| ServiceError::DataDir { source })?;
+    run_with_args(std::env::args_os().skip(1), &executable, |data_dir| {
         let secret = secrets::NativeKeychain::for_data_dir(data_dir)
             .map_err(|_| ServiceError::InstallationSecret)?
             .load_or_create()

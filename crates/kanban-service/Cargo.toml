@@ -13,6 +13,7 @@ kanban-dto = { workspace = true }
 kanban-herdr = { path = "../kanban-herdr" }
 kanban-storage = { workspace = true }
 kanban-transport = { workspace = true }
+kanban-mcp = { path = "../kanban-mcp" }
 libc = "0.2"
 sha2 = "0.10.9"
 socket2 = "0.6.5"
@@ -26,6 +27,8 @@ mac-usernotifications = "0.3.1"
 security-framework = { version = "3.7.0", default-features = false, features = ["OSX_10_14"] }
 
 [dev-dependencies]
+# cspell:ignore httparse
+httparse = "1.10.1"
 # The herdr fixture reaches this crate only through this dev-dependency
 # edge: production builds of kanban-service never enable it.
 kanban-herdr = { path = "../kanban-herdr", features = ["test-support"] }
@@ -48,6 +51,11 @@ harness = false
 [[test]]
 name = "lifecycle_process"
 path = "tests/lifecycle_process.rs"
+harness = false
+
+[[test]]
+name = "loopback_process"
+path = "tests/loopback_process.rs"
 harness = false
 
 [[test]]

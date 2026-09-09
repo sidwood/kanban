@@ -75,6 +75,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub mod commands;
 pub mod core_link;
+pub mod package_smoke;
 mod shell_handlers;
 
 use commands::{decode_invoke_args, forward_command, forward_query};
@@ -2695,7 +2696,7 @@ pub fn locate_core_binary() -> Result<PathBuf, String> {
     #[cfg(not(debug_assertions))]
     {
         Err(
-            "no kanban-service binary found; build it with `cargo build -p kanban-service`"
+            "no kanban-service binary found beside the installed shell; reinstall Kanban from an intact application bundle"
                 .to_owned(),
         )
     }

@@ -27,7 +27,7 @@ fn release_probe_exe() -> PathBuf {
         .args([
             "build",
             "--release",
-            "--bin",
+            "--example",
             "core-binary-probe",
             "--manifest-path",
         ])
@@ -36,7 +36,7 @@ fn release_probe_exe() -> PathBuf {
         .status()
         .expect("the release probe builds");
     assert!(status.success(), "the release probe must compile");
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/core-binary-probe")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/examples/core-binary-probe")
 }
 
 /// Lay out a shell directory with no packaged core beside the probe.
@@ -128,6 +128,11 @@ fn core_binary_release_fails_without_packaged_core() {
         "release builds must not fall back to the workspace debug core"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("reinstall Kanban"), "{stderr}");
+    assert!(
+        !stderr.contains("cargo build"),
+        "an installed app needs no toolchain: {stderr}"
+    );
     assert!(
         stderr.contains("no kanban-service binary found"),
         "expected a locate failure, got: {stderr}"

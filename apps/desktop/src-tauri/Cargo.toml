@@ -18,9 +18,9 @@ name = "kanban_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # Release-profile probe for core-binary path-resolution tests.
-[[bin]]
+[[example]]
 name = "core-binary-probe"
-path = "src/bin/core_binary_probe.rs"
+path = "examples/core_binary_probe.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

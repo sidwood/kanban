@@ -71,6 +71,8 @@ impl ComponentHealthHandler {
             service_version: env!("CARGO_PKG_VERSION").to_owned(),
             service: ServiceHealth {
                 started_at: self.started_at.clone(),
+                source_revision: kanban_dto::build_identity::SOURCE_REVISION.to_owned(),
+                source_epoch: kanban_dto::build_identity::SOURCE_EPOCH,
             },
             database: DatabaseHealth {
                 journal_mode: self.database.journal_mode().map_err(internal)?,
@@ -83,7 +85,11 @@ impl ComponentHealthHandler {
             mcp: McpHealth {
                 exposed_tools: EXPOSED_MCP_TOOL_NAMES.len() as u32,
             },
-            herdr: HerdrHealth { sessions },
+            herdr: HerdrHealth {
+                connection_diagnostic: (!sessions.iter().any(|session| session.diagnostics.connected))
+                    .then(|| "No Project has a connected Herdr session. Herdr is an external prerequisite and is not bundled; configure a Project and start its selected session.".to_owned()),
+                sessions,
+            },
             workspaces: WorkspacesHealth {
                 by_health,
                 last_change_at: self.database.last_workspace_change_at().map_err(internal)?,
@@ -169,6 +175,29 @@ mod tests {
 
     use crate::serve_with_herdr_sessions;
     use crate::test_client::{Client, boot};
+
+    #[test]
+    fn health_reports_embedded_source_identity_without_a_checkout() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+        let health = client.query("health.get");
+        assert!(health["service"]["source_revision"].is_string());
+        assert!(health["service"]["source_epoch"].is_u64());
+    }
+
+    #[test]
+    fn installed_health_explains_the_unavailable_herdr_prerequisite() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let core = boot(&dir);
+        let mut client = Client::connect(core.socket_path());
+        let health = client.query("health.get");
+        let diagnostic = health["herdr"]["connection_diagnostic"]
+            .as_str()
+            .unwrap_or("");
+        assert!(diagnostic.contains("external prerequisite"), "{health}");
+        assert!(diagnostic.contains("not bundled"), "{health}");
+    }
 
     /// A scratch directory standing in for a Git repository the
     /// service's own observation accepts.

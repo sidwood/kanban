@@ -493,6 +493,7 @@ export type HerdrGlobalDefaults = {
   version: number;
 };
 export type HerdrHealth = {
+  connection_diagnostic?: string | null;
   sessions: HerdrSessionHealth[];
 };
 export type HerdrProjectSettings = {
@@ -1191,6 +1192,8 @@ export type SearchGlobalResponse = {
 };
 export type SearchHitKind = 'initiative' | 'project' | 'plan' | 'spec' | 'ticket';
 export type ServiceHealth = {
+  source_epoch?: number;
+  source_revision?: string;
   started_at: string;
 };
 export type ServiceStopRequest = {

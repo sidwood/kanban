@@ -18,6 +18,12 @@ pub struct ServiceHealth {
     /// When this core process started serving; its state last
     /// changed by coming into being.
     pub started_at: String,
+    /// Full source revision embedded by the packaging hook.
+    #[serde(default)]
+    pub source_revision: String,
+    /// Reproducible source timestamp, not the time the build ran.
+    #[serde(default)]
+    pub source_epoch: u64,
 }
 
 /// The database component: the one authoritative SQLite file.
@@ -69,6 +75,9 @@ pub struct HerdrSessionHealth {
 pub struct HerdrHealth {
     /// One entry per observed Project, in Project identity order.
     pub sessions: Vec<HerdrSessionHealth>,
+    /// Explains unavailable coordination without implying Herdr ships in the app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_diagnostic: Option<String>,
 }
 
 /// The Workspace census across every Project, one count per health

@@ -78,6 +78,13 @@
       "additionalProperties": false,
       "description": "The Herdr component: every session the core is observing.",
       "properties": {
+        "connection_diagnostic": {
+          "description": "Explains unavailable coordination without implying Herdr ships in the app.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "sessions": {
           "description": "One entry per observed Project, in Project identity order.",
           "items": {
@@ -150,6 +157,18 @@
       "additionalProperties": false,
       "description": "The service component: the core process answering the query.",
       "properties": {
+        "source_epoch": {
+          "default": 0,
+          "description": "Reproducible source timestamp, not the time the build ran.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "source_revision": {
+          "default": "",
+          "description": "Full source revision embedded by the packaging hook.",
+          "type": "string"
+        },
         "started_at": {
           "description": "When this core process started serving; its state last changed by coming into being.",
           "type": "string"

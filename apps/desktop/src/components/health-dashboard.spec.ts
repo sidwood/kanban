@@ -105,6 +105,25 @@ describe('health dashboard', () => {
     expect(wrapper.find('[data-testid="health-service-version"]').text()).toBe('0.1.0')
   })
 
+  it('renders embedded source identity from the service', async () => {
+    const revision = 'a'.repeat(40)
+    const { transport } = harness(healthAnswer({
+      service: { started_at: '2026-09-07T09:00:00Z', source_revision: revision, source_epoch: 1788973035 },
+    }))
+    const wrapper = await mounted(transport)
+    expect(wrapper.find('[data-testid="health-service-source"]').text()).toBe(revision)
+    expect(wrapper.find('[data-testid="health-service-source-epoch"]').text()).toBe('1788973035')
+  })
+
+  it('renders the unavailable Herdr prerequisite diagnostic from Core', async () => {
+    const diagnostic = 'Herdr is an external prerequisite and is not bundled.'
+    const { transport } = harness(healthAnswer({
+      herdr: { sessions: [], connection_diagnostic: diagnostic },
+    }))
+    const wrapper = await mounted(transport)
+    expect(wrapper.find('[data-testid="health-herdr-prerequisite"]').text()).toBe(diagnostic)
+  })
+
   it('renders per-component detail with the last-change times', async () => {
     const { transport } = harness()
 

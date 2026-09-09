@@ -57,6 +57,7 @@ check: need-rust need-web
     just check-gates
     just check-spelling
     just check-workflows
+    just check-packaging
     pnpm -r run lint
     pnpm -r run typecheck
     pnpm -r run test
@@ -143,6 +144,27 @@ dev: need-rust need-web
 # product's own stop path with warnings lands in KAN-T63.
 stop-core:
     pkill -x kanban-service || true
+
+# Personal macOS artifacts; native packaging is deliberately outside CI.
+[positional-arguments]
+package *args:
+    python3 scripts/package.py build "$@"
+
+check-packaging:
+    python3 -m unittest scripts/test_packaging.py -v
+    python3 scripts/test_package_inputs.py
+    python3 scripts/test_packaging_path_dependencies.py
+    python3 -m unittest scripts.test_package_smoke -v
+
+[positional-arguments]
+package-smoke *args:
+    python3 scripts/package_smoke.py "$@"
+
+check-packaging-native:
+    python3 scripts/test_packaging_native.py
+
+check-packaging-build: need-rust need-web
+    python3 scripts/test_packaging_build.py
 
 # Point this repository at the tracked hooks in .githooks. The hooks are
 # never copied into .git/hooks; that directory stays Git's own.

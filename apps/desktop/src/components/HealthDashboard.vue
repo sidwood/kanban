@@ -102,6 +102,28 @@ const census = computed(() => {
             {{ health.service.started_at }}
           </dd>
         </div>
+        <div class="sm:col-span-2">
+          <dt class="text-sm text-slate-500">
+            Source revision
+          </dt>
+          <dd
+            data-testid="health-service-source"
+            class="break-all text-sm text-slate-900"
+          >
+            {{ health.service.source_revision || 'unavailable' }}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-sm text-slate-500">
+            Source epoch
+          </dt>
+          <dd
+            data-testid="health-service-source-epoch"
+            class="text-sm text-slate-900"
+          >
+            {{ health.service.source_epoch ?? 'unavailable' }}
+          </dd>
+        </div>
       </dl>
     </section>
 
@@ -200,6 +222,13 @@ const census = computed(() => {
       <h2 class="text-lg font-semibold text-slate-900">
         Herdr
       </h2>
+      <p
+        v-if="health.herdr.connection_diagnostic"
+        data-testid="health-herdr-prerequisite"
+        class="mt-2 text-sm text-amber-800"
+      >
+        {{ health.herdr.connection_diagnostic }}
+      </p>
       <p
         v-if="health.herdr.sessions.length === 0"
         class="mt-2 text-sm text-slate-500"

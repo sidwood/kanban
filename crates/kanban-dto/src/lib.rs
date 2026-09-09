@@ -11,6 +11,7 @@ pub use notification::{
     NotificationSettingsRecord, NotificationSettingsUpdateRequest, NotificationTarget,
 };
 pub mod board;
+pub mod build_identity;
 pub mod capability;
 pub mod capacity;
 pub mod chip;

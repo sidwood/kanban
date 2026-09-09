@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "python3 ../../scripts/package.py prepare"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "externalBin": ["binaries/kanban-service", "binaries/kanban-mcp"],
+    "resources": ["resources/build-identity.json"],
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
+    }
+  }
+}

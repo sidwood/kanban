@@ -75,6 +75,13 @@
   },
   "description": "The Herdr component: every session the core is observing.",
   "properties": {
+    "connection_diagnostic": {
+      "description": "Explains unavailable coordination without implying Herdr ships in the app.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "sessions": {
       "description": "One entry per observed Project, in Project identity order.",
       "items": {

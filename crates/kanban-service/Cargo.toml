@@ -29,6 +29,8 @@ security-framework = { version = "3.7.0", default-features = false, features = [
 [dev-dependencies]
 # cspell:ignore httparse
 httparse = "1.10.1"
+# Snapshot coordination is absent from normal production builds.
+kanban-storage = { workspace = true, features = ["test-support"] }
 # The herdr fixture reaches this crate only through this dev-dependency
 # edge: production builds of kanban-service never enable it.
 kanban-herdr = { path = "../kanban-herdr", features = ["test-support"] }

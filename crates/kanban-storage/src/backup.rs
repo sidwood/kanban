@@ -764,6 +764,8 @@ fn copy_in_bounded_steps(
     destination: &mut Connection,
     target: &Path,
 ) -> Result<(), StorageError> {
+    #[cfg(feature = "test-support")]
+    snapshot_step_test_hooks::adopt_for_database(source.path());
     let backup = Backup::new(source, destination).map_err(|source| StorageError::BackupOpen {
         path: target.to_path_buf(),
         source,
@@ -1085,7 +1087,11 @@ mod validation_temp_test_hooks {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use snapshot_step_test_hooks::StepGate as SnapshotStepGate;
+
+#[cfg(any(test, feature = "test-support"))]
 mod snapshot_step_test_hooks {
     //! Test-only coordination with the bounded snapshot step loop:
     //! a test parks the copying snapshot at a step boundary and
@@ -1135,6 +1141,21 @@ mod snapshot_step_test_hooks {
     static ARMED_GATES: LazyLock<Mutex<HashMap<GateKey, StepChannel>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
+    #[cfg(feature = "test-support")]
+    static DATABASE_GATES: LazyLock<Mutex<HashMap<std::path::PathBuf, GateKey>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    #[cfg(feature = "test-support")]
+    pub(super) fn adopt_for_database(path: Option<&str>) {
+        let Some(path) = path.and_then(|path| std::path::Path::new(path).canonicalize().ok())
+        else {
+            return;
+        };
+        if let Some(key) = DATABASE_GATES.lock().unwrap().remove(&path) {
+            CopyToken { key }.adopt();
+        }
+    }
+
     fn armed_gates() -> MutexGuard<'static, HashMap<GateKey, StepChannel>> {
         ARMED_GATES
             .lock()
@@ -1169,6 +1190,23 @@ mod snapshot_step_test_hooks {
     }
 
     impl StepGate {
+        /// Arm a single snapshot of this existing database, including on another thread.
+        #[cfg(feature = "test-support")]
+        pub fn arm_for_database(
+            path: &std::path::Path,
+        ) -> (Receiver<(usize, bool)>, Sender<()>, Self) {
+            let path = path.canonicalize().expect("the fixture database exists");
+            let (events, release, gate) = Self::arm();
+            assert!(
+                DATABASE_GATES
+                    .lock()
+                    .unwrap()
+                    .insert(path, gate.key)
+                    .is_none()
+            );
+            (events, release, gate)
+        }
+
         /// Park every bounded step boundary of the copy that adopts
         /// this gate's token. The receiver reports `(step, done)`
         /// pairs, where `done` marks the boundary that completed the
@@ -1201,6 +1239,11 @@ mod snapshot_step_test_hooks {
             // release sender; removing the entry here drops any
             // channel still waiting for the copy's next step.
             armed_gates().remove(&self.key);
+            #[cfg(feature = "test-support")]
+            DATABASE_GATES
+                .lock()
+                .unwrap()
+                .retain(|_, key| *key != self.key);
         }
     }
 
@@ -1227,7 +1270,7 @@ mod snapshot_step_test_hooks {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 mod snapshot_step_test_hooks {
     pub fn on_step(_index: usize, _done: bool) {}
 }
@@ -2054,6 +2097,55 @@ mod backup_restore {
         assert!(paths.iter().any(|path| path.starts_with("attachments/")));
         assert!(paths.iter().any(|path| *path == config_file_name()));
         assert_eq!(manifest.schema_version, LATEST_SCHEMA_VERSION);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn database_snapshot_gate_ignores_foreign_copies_and_releases_on_disconnect() {
+        let (dir, database, store) = managed_fixture();
+        let (_foreign_dir, foreign_database, foreign_store) = managed_fixture();
+        let (events, release, gate) =
+            super::SnapshotStepGate::arm_for_database(&dir.path().join(database_file_name()));
+        let (finished, results) = std::sync::mpsc::channel();
+        let foreign = thread::spawn(move || {
+            let bundle = foreign_store
+                .create(&foreign_database, &overlap_options())
+                .unwrap();
+            foreign_store.validate(&bundle, None).unwrap();
+            finished.send(()).unwrap();
+        });
+        results
+            .recv_timeout(Duration::from_secs(5))
+            .expect("foreign copy must not adopt this gate");
+        foreign.join().unwrap();
+        assert!(matches!(
+            events.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        let (finished, results) = std::sync::mpsc::channel();
+        let owned = thread::spawn(move || {
+            finished
+                .send(store.create(&database, &overlap_options()).unwrap())
+                .unwrap();
+        });
+        assert_eq!(
+            events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            (1, false)
+        );
+        assert!(matches!(
+            results.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        drop(release);
+        drop(gate);
+        let bundle = results
+            .recv_timeout(Duration::from_secs(5))
+            .expect("disconnect must release the real copy");
+        owned.join().unwrap();
+        BackupStore::new(dir.path().to_path_buf())
+            .validate(&bundle, None)
+            .unwrap();
     }
 
     #[test]

@@ -1,7 +1,8 @@
+// cspell:ignore nonblocking
 use kanban_service::{ServiceRuntime, run_with_runtime};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -16,6 +17,14 @@ impl Children {
         if Instant::now() < deadline {
             return;
         }
+        #[cfg(target_os = "macos")]
+        if let Some(child) = self
+            .processes
+            .iter_mut()
+            .find_map(|child| matches!(child.try_wait(), Ok(None)).then_some(child))
+        {
+            sample_owned_child(child, &self.data);
+        }
         let statuses: Vec<_> = self
             .processes
             .iter_mut()
@@ -29,6 +38,45 @@ impl Children {
             self.data.join("core.sock").exists()
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+fn sample_owned_child(child: &mut Child, data: &Path) {
+    let path = data.join("owned-child-sample.txt");
+    let started = Instant::now();
+    let result = Command::new("/usr/bin/sample")
+        .arg(child.id().to_string())
+        .args(["1", "10", "-file"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let status = match result {
+        Ok(mut sampler) => loop {
+            match sampler.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if started.elapsed() < Duration::from_secs(3) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                result => {
+                    let _ = sampler.kill();
+                    let _ = sampler.wait();
+                    break Err(format!("sample deadline or wait failure: {result:?}"));
+                }
+            }
+        },
+        Err(error) => Err(error.to_string()),
+    };
+    let mut trace = Vec::new();
+    let read =
+        std::fs::File::open(&path).and_then(|file| file.take(24 * 1024).read_to_end(&mut trace));
+    eprintln!(
+        "owned_child_sample pid={} sample_status={status:?} sample_seconds={} read={read:?}\n{}",
+        child.id(),
+        started.elapsed().as_secs_f64(),
+        String::from_utf8_lossy(&trace)
+    );
 }
 
 impl Drop for Children {
@@ -73,6 +121,9 @@ fn main() {
     if let Some(data) = std::env::args_os().nth(1) {
         let data = Path::new(&data);
         std::io::stdin().read_exact(&mut [0]).unwrap();
+        let backup_gate = std::env::args_os()
+            .nth(2)
+            .map(|gate_socket| coordinate_backup(data, Path::new(&gate_socket)));
         let result = run_with_runtime(
             data,
             ServiceRuntime {
@@ -84,6 +135,13 @@ fn main() {
         if let Err(error) = result {
             eprintln!("startup refused: {error:?}");
             std::process::exit(1);
+        }
+        if let Some(backup_gate) = backup_gate {
+            assert!(
+                data.join(".backup-scheduler.json").exists(),
+                "shutdown returned before publishing the gated backup"
+            );
+            backup_gate.join().unwrap();
         }
         return;
     }
@@ -205,18 +263,27 @@ fn stop_joins_an_in_flight_backup(root: &Path) {
     database.migrate(&AllowAllMigrations).unwrap();
     drop(database);
     let connection = rusqlite::Connection::open(&database_path).unwrap();
-    // A real multi-step snapshot keeps this case independent of idle teardown.
-    // cspell:ignore zeroblob
+    let payload: Vec<u8> = (0..4096).map(|index| (index % 251) as u8).collect();
     connection
-        .execute_batch(
-            "CREATE TABLE lifecycle_backup_fixture (payload BLOB NOT NULL);
-             INSERT INTO lifecycle_backup_fixture VALUES (zeroblob(4194304));",
+        .execute_batch("CREATE TABLE lifecycle_backup_fixture (payload BLOB NOT NULL);")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO lifecycle_backup_fixture VALUES (?1)",
+            [&payload],
         )
+        .unwrap();
+    let pages: i64 = connection
+        .query_row("PRAGMA page_count", [], |row| row.get(0))
         .unwrap();
     drop(connection);
     let socket = data.join("core.sock");
+    let gate_socket = data.join("gate.sock");
+    let gate_listener = UnixListener::bind(&gate_socket).unwrap();
+    gate_listener.set_nonblocking(true).unwrap();
     let child = Command::new(std::env::current_exe().unwrap())
         .arg(&data)
+        .arg(&gate_socket)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -233,10 +300,37 @@ fn stop_joins_an_in_flight_backup(root: &Path) {
         .write_all(&[1])
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
+    let mut gate = loop {
+        match gate_listener.accept() {
+            Ok((gate, _)) => break gate,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("backup gate accept failed: {error}"),
+        }
+        children.require_time(deadline, "busy-backup child did not connect its gate");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    gate.set_nonblocking(true).unwrap();
+    let mut event = [255];
+    loop {
+        match gate.read(&mut event) {
+            Ok(1) => break,
+            Ok(_) => panic!("backup gate closed before a real snapshot step"),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("backup gate read failed: {error}"),
+        }
+        children.require_time(deadline, "backup never reached its first real step");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(event, [0], "the real snapshot must still be incomplete");
+    let bundles: Vec<_> = std::fs::read_dir(data.join("backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(bundles.len(), 1);
+    let in_flight_bundle = &bundles[0];
+    let deadline = Instant::now() + Duration::from_secs(15);
     let warning = loop {
-        if data.join("backups").exists()
-            && let Some(warning) = request(&socket, "query", "service.stop_warning", json!({}))
-        {
+        if let Some(warning) = request(&socket, "query", "service.stop_warning", json!({})) {
             break warning;
         }
         children.require_time(deadline, "busy-backup service did not become ready");
@@ -254,8 +348,27 @@ fn stop_joins_an_in_flight_backup(root: &Path) {
         children.require_time(deadline, "busy shutdown did not close transport");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(children.processes[0].try_wait().unwrap().is_none());
-    // This bound contains the fixture workload, not the product's OS work.
+    let store = BackupStore::new(data.clone());
+    // Hold the real copy across the idle-exit budget; overlap no longer depends on disk speed.
+    let held_until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < held_until {
+        assert!(
+            children.processes[0].try_wait().unwrap().is_none(),
+            "owner exited while its real backup was held"
+        );
+        assert!(!data.join(".backup-scheduler.json").exists());
+        assert!(!in_flight_bundle.join("manifest.json").exists());
+        assert!(!in_flight_bundle.join("verified.json").exists());
+        assert!(
+            store
+                .verified_record_for(LATEST_SCHEMA_VERSION)
+                .unwrap()
+                .is_none()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    gate.write_all(&[1]).unwrap();
+    let released = Instant::now();
     let deadline = started + Duration::from_secs(30);
     while children.processes[0].try_wait().unwrap().is_none() {
         children.require_time(deadline, "busy shutdown did not finish its backup");
@@ -263,24 +376,49 @@ fn stop_joins_an_in_flight_backup(root: &Path) {
     }
     assert!(children.processes[0].wait().unwrap().success());
     assert!(data.join(".backup-scheduler.json").exists());
-    let store = BackupStore::new(data.clone());
     let record = store
         .verified_record_for(LATEST_SCHEMA_VERSION)
         .unwrap()
         .expect("shutdown must publish the in-flight backup before exiting");
     let bundle = data.join("backups").join(record.bundle_id);
+    assert_eq!(&bundle, in_flight_bundle);
     store.validate(&bundle, None).unwrap();
     let snapshot = rusqlite::Connection::open(bundle.join("kanban.sqlite")).unwrap();
-    let bytes: i64 = snapshot
-        .query_row(
-            "SELECT length(payload) FROM lifecycle_backup_fixture",
-            [],
-            |row| row.get(0),
-        )
+    let copied: Vec<u8> = snapshot
+        .query_row("SELECT payload FROM lifecycle_backup_fixture", [], |row| {
+            row.get(0)
+        })
         .unwrap();
-    assert_eq!(bytes, 4_194_304);
+    assert_eq!(copied, payload);
     println!(
-        "busy_backup: joined and verified {bytes} bytes in {:?}",
+        "busy_backup: joined and verified {} bytes, {pages} source pages; release-to-exit {:?}, total {:?}",
+        copied.len(),
+        released.elapsed(),
         started.elapsed()
     );
+}
+
+fn coordinate_backup(data: &Path, gate_socket: &Path) -> std::thread::JoinHandle<()> {
+    let (events, release, gate) =
+        kanban_storage::backup::SnapshotStepGate::arm_for_database(&data.join("kanban.sqlite"));
+    let mut control = UnixStream::connect(gate_socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    control
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    std::thread::spawn(move || {
+        let (step, done) = events
+            .recv_timeout(Duration::from_secs(15))
+            .expect("real snapshot step");
+        assert_eq!(step, 1);
+        assert!(!done);
+        control.write_all(&[u8::from(done)]).unwrap();
+        let mut command = [0];
+        control.read_exact(&mut command).unwrap();
+        assert_eq!(command, [1]);
+        drop(release);
+        drop(gate);
+    })
 }

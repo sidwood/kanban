@@ -132,6 +132,25 @@ const NESTED_STATE_COLUMNS = {
 
 export type BoardColumnId = BoardGroupId | keyof typeof NESTED_STATE_COLUMNS
 
+/** The width a collapsed column keeps: a rail wide enough for its
+ * name on end and its live count, and nothing else. */
+export const COLLAPSED_COLUMN_WIDTH_PX = 48
+
+/** The height a collapsed column keeps where the board stacks: the
+ * same rail laid across the width, so its name reads along the line
+ * rather than on end and needs less room than the upright one. */
+export const COLLAPSED_ROW_HEIGHT_PX = 38
+
+/** How many of the columns on show stand collapsed. The collapsed
+ * set is the core's record of the operator's arrangement; the Saved
+ * View owns which columns are hidden, not this. */
+export function collapsedCount(
+  collapsed: readonly BoardColumnId[],
+  visible: readonly BoardColumnId[],
+): number {
+  return visible.filter((column) => collapsed.includes(column)).length
+}
+
 export type BoardColumnGroup = Readonly<{
   /** The axis, or the group itself when the group belongs to no axis. */
   id: string
@@ -175,10 +194,32 @@ function axisOfGroup(id: BoardGroupId): BoardLayoutAxis | undefined {
   return AXIS_DEFINITIONS.find((entry) => entry.group === id)?.axis
 }
 
-function boardGroupForState(state: TicketState): BoardGroupId | undefined {
+/** The fixed group one state maps to; terminal states map to none. */
+export function boardGroupForState(state: TicketState): BoardGroupId | undefined {
   return BOARD_GROUPS.find((group) =>
     (group.states as readonly TicketState[]).includes(state),
   )?.id
+}
+
+/** The group one collapsible axis opens. */
+export function axisGroupId(axis: BoardLayoutAxis): BoardGroupId {
+  return AXIS_GROUP_IDS[axis]
+}
+
+/**
+ * The columns one group shows under the current layout: itself while
+ * it is aggregated or belongs to no axis, its state columns once its
+ * axis opens. A control that speaks for a group speaks for these.
+ */
+export function columnsOfGroup(
+  group: BoardGroupId,
+  layouts: BoardLayoutState,
+): readonly BoardColumnId[] {
+  const axis = axisOfGroup(group)
+  if (axis === undefined || layouts[axis] === 'collapsed') return [group]
+  return ((groupOf(group)?.states ?? []).filter(
+    (state: TicketState) => state in NESTED_STATE_COLUMNS,
+  ) as readonly BoardColumnId[])
 }
 
 /** Where a state sits in the register, which never demotes Done. */
@@ -187,6 +228,37 @@ export function registerColumnFor(
   layouts: BoardLayoutState = DEFAULT_BOARD_LAYOUTS,
 ): BoardColumnId | undefined {
   return columnForCard(state, layouts)
+}
+
+/** Groups in the fixed board order, each at most once: the canonical
+ * form the domain stores, so toggling a group off and on again is
+ * not a change. */
+export function canonicalGroups(groups: readonly BoardGroupId[]): BoardGroupId[] {
+  return BOARD_GROUPS.map((group) => group.id).filter((id) => groups.includes(id))
+}
+
+/** What the Draft control says and does. `hidden_columns` naming
+ * Draft means auto: hidden while empty, shown while it holds cards;
+ * not naming it means always shown. A populated auto Draft cannot be
+ * hidden — the flat record has no word for that — so the control
+ * says so instead of pretending. */
+export function draftControl(
+  hidden: readonly BoardGroupId[],
+  draftColumnCardCount: number,
+): Readonly<{ label: string; disabled: boolean; next: BoardGroupId[]; shown: boolean }> {
+  const auto = hidden.includes('draft')
+  if (!auto) {
+    return { label: 'Hide Draft', disabled: false, next: canonicalGroups([...hidden, 'draft']), shown: true }
+  }
+  if (draftColumnCardCount > 0) {
+    return { label: 'Draft (auto)', disabled: true, next: [...hidden], shown: true }
+  }
+  return {
+    label: 'Show Draft',
+    disabled: false,
+    next: hidden.filter((group) => group !== 'draft'),
+    shown: false,
+  }
 }
 
 /**
@@ -267,6 +339,34 @@ export function columnForCard(
     return state as BoardColumnId
   }
   return group
+}
+
+/**
+ * Where a card the core already grouped sits under the current
+ * layout: its group while the axis is aggregated, its own state
+ * column once the axis opens. The group is the core's word; the
+ * state only refines it.
+ */
+export function columnForGroupedCard(
+  group: BoardGroupId,
+  state: TicketState,
+  layouts: BoardLayoutState,
+): BoardColumnId {
+  const axis = axisOfGroup(group)
+  if (axis !== undefined && layouts[axis] === 'expanded' && state in NESTED_STATE_COLUMNS) {
+    return state as BoardColumnId
+  }
+  return group
+}
+
+/** The register's table name: a nested state under its group. */
+export function registerTableLabel(column: BoardColumnId): string {
+  const nested = nestedStateColumn(column)
+  if (nested === undefined) return boardColumnLabel(column)
+  const group = BOARD_GROUPS.find((entry) =>
+    (entry.states as readonly TicketState[]).includes(column as TicketState),
+  )
+  return group ? `${group.label} · ${nested.label}` : nested.label
 }
 
 export function boardColumnLabel(column: BoardColumnId): string {

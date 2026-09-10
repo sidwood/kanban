@@ -4,45 +4,23 @@
 // ties, so no manual ordering exists and relative order is stable
 // under reload (DR-LC-11).
 import { mount, flushPromises } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type {
-  LaneListResponse,
-  ProjectListResponse,
-  SpecListResponse,
-  TicketListResponse,
-  TicketReadinessResponse,
-  TicketRecord,
-} from '@kanban/contracts'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { BoardGlobalCard, TicketRecord, ViewSorting } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
-import type { ShellTransport } from '../core/transport'
+import { defaultViews, harness, projection, ticket as record } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
-import { orderCards } from './board-ordering'
+import { orderCards, orderGlobalCards } from './board-ordering'
 
-const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
-  id: 1,
-  project_id: 1,
-  number: 1,
-  kind: 'task',
-  priority: 'normal',
-  state: 'ready',
-  spec_id: null,
-  title: 'Archive the old exports',
-  slice: null,
-  criteria: [],
-  bug: null,
-  subtype: 'operational',
-  mode: 'human',
-  completion: ['The old exports are archived.'],
-  scheduled_for: null,
-  due: null,
-  profile: null,
-  version: 1,
-  ...overrides,
-})
+const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
+  record({ id: 1, number: 1, version: 1, ...overrides })
 
 const ids = (cards: readonly TicketRecord[]): number[] => cards.map((card) => card.id)
+
+const cardIds = (cards: readonly BoardGlobalCard[]): number[] =>
+  cards.map((card) => card.ticket.id)
 
 describe('deterministic card ordering', () => {
   it('orders by priority first, whatever arrives however', () => {
@@ -127,114 +105,34 @@ describe('deterministic card ordering', () => {
     // only breaking ties beneath it — both orders deterministic.
     expect(ids(orderCards(cards, 'readiness'))).toEqual([2, 3, 1])
   })
+
+  it('re-keys the core\'s projection by readiness and leaves the canonical key untouched', () => {
+    const cards = projection([
+      ticket({ id: 1, number: 1, state: 'parked' }),
+      ticket({ id: 2, number: 2, state: 'ready', priority: 'low' }),
+      ticket({ id: 3, number: 3, state: 'blocked', priority: 'urgent' }),
+    ])
+
+    // The core's order is the priority order: the same array, as it
+    // arrived.
+    expect(cardIds(cards)).toEqual([3, 1, 2])
+    expect(orderGlobalCards(cards)).toBe(cards)
+    expect(orderGlobalCards(cards, 'priority')).toBe(cards)
+    // Readiness first re-keys it the way orderCards would.
+    expect(cardIds(orderGlobalCards(cards, 'readiness'))).toEqual([2, 3, 1])
+  })
+
+  it('leaves every readiness tie where the core put it', () => {
+    const cards = projection([
+      ticket({ id: 1, number: 9, state: 'ready' }),
+      ticket({ id: 2, number: 4, state: 'ready' }),
+      ticket({ id: 3, number: 6, state: 'ready', priority: 'high' }),
+    ])
+
+    expect(cardIds(cards)).toEqual([3, 2, 1])
+    expect(cardIds(orderGlobalCards(cards, 'readiness'))).toEqual([3, 2, 1])
+  })
 })
-
-// One saved view for each scope the board loads: the generated
-// defaults, the Project one carrying the sorting key a test names.
-function viewList(sorting: 'priority' | 'readiness') {
-  return {
-    views: [
-      {
-        id: 1,
-        name: 'All work',
-        scope: 'global',
-        filter: {},
-        expanded_groups: [],
-        hidden_columns: ['draft'],
-        mode: 'board',
-        done_placement: 'column',
-        sorting: 'priority',
-        is_default: true,
-        version: 1,
-      },
-      {
-        id: 2,
-        name: 'All work',
-        scope: { project: 1 },
-        filter: { projects: [1] },
-        expanded_groups: [],
-        hidden_columns: ['draft'],
-        mode: 'board',
-        done_placement: 'column',
-        sorting,
-        is_default: true,
-        version: 1,
-      },
-    ],
-  }
-}
-
-// The board itself, ordered end to end: the columns the operator
-// scans hold the deterministic order, and a reload holds the same
-// relative order from a different arrival order.
-function harness(ticketsForLoad: () => TicketRecord[], sorting: 'priority' | 'readiness' = 'priority') {
-  const query = vi.fn((name: string, request: unknown) => {
-    if (name === 'view.list') {
-      return Promise.resolve(viewList(sorting))
-    }
-    if (name === 'project.list') {
-      return Promise.resolve({
-        projects: [
-          {
-            id: 1,
-            code: 'KAN',
-            name: 'Control plane',
-            repository: '/repositories/kanban',
-            seed_workspace: '/workspaces/kanban.seed',
-            default_branch: 'main',
-            herdr_session: 'kanban-main',
-            herdr_workspace: 'kanban.seed',
-            initiative_id: null,
-            archived: false,
-            counters: { plan: 0, spec: 0, ticket: 0 },
-            version: 1,
-          },
-        ],
-      } satisfies ProjectListResponse)
-    }
-    // BoardView loads Lanes and runs beside Tickets (KAN-T26); an
-    // unanswered lane.list or run.list leaves the store's list
-    // undefined and card render throws before the ordered columns can
-    // appear. The Specs answer the same way (KAN-T126): the board
-    // carries them for the Spec identities its cards render.
-    if (name === 'lane.list') {
-      return Promise.resolve({ lanes: [] } satisfies LaneListResponse)
-    }
-    if (name === 'run.list') {
-      return Promise.resolve({ project_id: 1, runs: [] })
-    }
-    if (name === 'spec.list') {
-      return Promise.resolve({ specs: [] } satisfies SpecListResponse)
-    }
-    if (name === 'ticket.readiness') {
-      const { ticket_id } = request as { ticket_id: number }
-      return Promise.resolve({
-        blocked_by: [],
-        ready: true,
-        state: 'ready',
-        ticket_id,
-      } satisfies TicketReadinessResponse)
-    }
-    return Promise.resolve({
-      tickets: ticketsForLoad(),
-    } satisfies TicketListResponse)
-  })
-  const command = vi.fn((name: string, request: unknown) => {
-    if (name === 'view.update') {
-      const body = request as { view_id: number } & Record<string, unknown>
-      const standing = viewList('priority').views.find((view) => view.id === body.view_id)
-      return Promise.resolve({ ...standing, ...body, version: 2 })
-    }
-    return Promise.resolve({})
-  })
-  const transport = {
-    query,
-    command,
-    subscribe: () => () => undefined,
-    onConnectionChange: () => () => undefined,
-  } as unknown as ShellTransport
-  return transport
-}
 
 function backlogCards(): TicketRecord[] {
   return [
@@ -246,29 +144,32 @@ function backlogCards(): TicketRecord[] {
   ]
 }
 
-async function mountedBoard(
-  tickets: TicketRecord[],
-  sorting: 'priority' | 'readiness' = 'priority',
-) {
-  document.documentElement.classList.remove('dark')
-  localStorage.clear()
-  const transport = harness(() => tickets, sorting)
-  router.push('/projects/1/board')
+const mountedBoards: VueWrapper[] = []
+
+// The board itself, ordered end to end over the shared harness: the
+// columns the operator scans hold the deterministic order, and a
+// reload holds the same relative order from a different arrival
+// order. The Project's default view carries the sorting key a test
+// names.
+async function mountedBoard(tickets: TicketRecord[], sorting: ViewSorting = 'priority') {
+  const shell = harness({
+    tickets,
+    views: defaultViews().map((view) => ({ ...view, sorting })),
+  })
+  await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
     global: {
       plugins: [createPinia(), router],
-      provide: { [kanbanTransportKey as symbol]: transport },
+      provide: { [kanbanTransportKey as symbol]: shell.transport },
     },
   })
+  mountedBoards.push(wrapper)
   await flushPromises()
   return wrapper
 }
 
-function columnCardIds(
-  wrapper: Awaited<ReturnType<typeof mountedBoard>>,
-  column: string,
-): number[] {
+function columnCardIds(wrapper: VueWrapper, column: string): number[] {
   return wrapper
     .findAll(`[data-testid="kanban-column-${column}"] [data-testid^="kanban-card-"]`)
     .map((card) =>
@@ -276,9 +177,14 @@ function columnCardIds(
     )
 }
 
-afterEach(() => {
-  document.documentElement.classList.remove('dark')
+beforeEach(() => {
   localStorage.clear()
+  document.documentElement.classList.remove('dark')
+})
+
+afterEach(() => {
+  for (const wrapper of mountedBoards.splice(0)) wrapper.unmount()
+  document.body.innerHTML = ''
 })
 
 describe('the ordered board', () => {
@@ -295,10 +201,14 @@ describe('the ordered board', () => {
 
   it('holds the same relative order across a reload', async () => {
     const first = await mountedBoard([...backlogCards()])
+    const firstOrder = columnCardIds(first, 'backlog')
+    first.unmount()
+    mountedBoards.splice(mountedBoards.indexOf(first), 1)
+
     const second = await mountedBoard([...backlogCards().reverse()])
 
-    expect(columnCardIds(second, 'backlog')).toEqual(columnCardIds(first, 'backlog'))
-    expect(columnCardIds(first, 'backlog')).toEqual([5, 4, 2, 3, 1])
+    expect(columnCardIds(second, 'backlog')).toEqual(firstOrder)
+    expect(firstOrder).toEqual([5, 4, 2, 3, 1])
   })
 
   it('renders under the sorting key the active view owns', async () => {
@@ -306,6 +216,7 @@ describe('the ordered board', () => {
 
     // Readiness leads: ready, scheduled, blocked, then the parked
     // pair by priority beneath it.
+    expect(wrapper.get('[data-testid="sort-readiness"]').attributes('aria-pressed')).toBe('true')
     expect(columnCardIds(wrapper, 'backlog')).toEqual([2, 4, 3, 5, 1])
   })
 })

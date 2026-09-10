@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TicketState": {
+      "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+      "oneOf": [
+        {
+          "description": "Newly created; not yet qualified or planned.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Deliberately set aside.",
+          "enum": [
+            "parked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Waiting on something outside the Ticket.",
+          "enum": [
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Qualified but unavailable until activation.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Free to execute when capacity allows.",
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Executing.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Under review.",
+          "enum": [
+            "in_review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Review approved, waiting to land.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landing through the Seed Workspace.",
+          "enum": [
+            "landing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Landed in full.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: will not execute.",
+          "enum": [
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Terminal: replaced by a reassignment Ticket.",
+          "enum": [
+            "superseded"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Response payload for the `ticket.transitions` query: every state a human drag would move this Ticket to now (DR-LC-06 to DR-LC-08). The canonical lifecycle, the kind's ownership, and the Ticket's own gates are the core's to judge; a surface that offers moves offers exactly these and computes none of its own.",
+  "properties": {
+    "state": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TicketState"
+        }
+      ],
+      "description": "The Ticket's own lifecycle state, for context."
+    },
+    "targets": {
+      "description": "The states a human drag may reach now, in lifecycle order; empty for an agent-owned kind and for a Ticket that has landed or ended.",
+      "items": {
+        "$ref": "#/definitions/TicketState"
+      },
+      "type": "array"
+    },
+    "ticket_id": {
+      "description": "The Ticket the moves were read for.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "state",
+    "targets",
+    "ticket_id"
+  ],
+  "title": "TicketTransitionsResponse",
+  "type": "object"
+}

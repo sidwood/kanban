@@ -49,7 +49,8 @@ use kanban_dto::{
     RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
     RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
     ScheduleAttentionListResponse, ScheduleGetQuery, ScheduleGetResponse, SchedulePreviewQuery,
-    SchedulePreviewResponse, SearchGlobalQuery, SearchGlobalResponse, SpecContentUpdateRequest,
+    SchedulePreviewResponse, SearchGlobalQuery, SearchGlobalResponse, ShellPreferencesQuery,
+    ShellPreferencesRecord, ShellPreferencesUpdateRequest, SpecContentUpdateRequest,
     SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCoverageMatrixQuery,
     SpecCoverageMatrixResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
     SpecGetResponse, SpecIntegrationApproveRequest, SpecIntegrationClaimRequest,
@@ -64,11 +65,11 @@ use kanban_dto::{
     TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
     TicketReassignRequest, TicketRecord, TicketReviewConfigQuery, TicketReviewConfigRecord,
     TicketReviewConfigResponse, TicketReviewConfigureRequest, TicketReviewRequest,
-    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest,
-    TimelineQuery, TimelineQueryResponse, ViewCreateRequest, ViewListQuery, ViewListResponse,
-    ViewRemoveRequest, ViewRemovedRecord, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
-    WorkspaceListResponse, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
-    WorkspaceRetireRequest,
+    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketTransitionsQuery,
+    TicketTransitionsResponse, TicketUnparkRequest, TimelineQuery, TimelineQueryResponse,
+    ViewCreateRequest, ViewListQuery, ViewListResponse, ViewRemoveRequest, ViewRemovedRecord,
+    ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery, WorkspaceListResponse,
+    WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1031,6 +1032,18 @@ async fn ticket_readiness(
     let shell = shell.inner().clone();
     run_blocking(shell, "ticket readiness", |shell| {
         forward_query(shell, "ticket.readiness", "ticket readiness", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ticket_transitions(
+    shell: State<'_, Arc<Shell>>,
+    request: TicketTransitionsQuery,
+) -> Result<TicketTransitionsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "ticket transitions", |shell| {
+        forward_query(shell, "ticket.transitions", "ticket transitions", request)
     })
     .await
 }
@@ -2279,6 +2292,35 @@ async fn view_remove(
 }
 
 #[tauri::command]
+async fn shell_preferences(
+    shell: State<'_, Arc<Shell>>,
+    request: ShellPreferencesQuery,
+) -> Result<ShellPreferencesRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "shell preferences", move |shell| {
+        forward_query(shell, "shell.preferences", "shell preferences", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn shell_preferences_update(
+    shell: State<'_, Arc<Shell>>,
+    request: ShellPreferencesUpdateRequest,
+) -> Result<ShellPreferencesRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "shell preferences update", |shell| {
+        forward_command(
+            shell,
+            "shell.preferences.update",
+            "arranged the shell",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn search_global(
     shell: State<'_, Arc<Shell>>,
     request: SearchGlobalQuery,
@@ -2425,6 +2467,7 @@ shell_handlers::shell_handler_catalogue! {
     ticket_blocker_remove,
     ticket_dependencies,
     ticket_readiness,
+    ticket_transitions,
     ticket_assign,
     ticket_transition,
     ticket_park,
@@ -2515,6 +2558,8 @@ shell_handlers::shell_handler_catalogue! {
     view_update,
     view_rename,
     view_remove,
+    shell_preferences,
+    shell_preferences_update,
     search_global,
 }
 

@@ -31,8 +31,28 @@ function harness(answer: (request: unknown) => Promise<SearchGlobalResponse>) {
 
 describe('palette navigation', () => {
   it('filters navigation rows by label', () => {
-    expect(filterNavigation('board').map((item) => item.id)).toEqual(['nav-board'])
+    expect(filterNavigation('boards').map((item) => item.id)).toEqual(['nav-boards'])
     expect(filterNavigation('')).toEqual([...PALETTE_NAVIGATION])
+  })
+
+  it('offers every operational surface, and none of the scaffolding', () => {
+    const routes = Object.fromEntries(PALETTE_NAVIGATION.map((item) => [item.label, item.route]))
+    expect(routes).toEqual({
+      Boards: '/board',
+      'Attention inbox': '/attention',
+      Planning: '/planning',
+      Activity: '/activity',
+      'Workspaces & Lanes': '/workspaces',
+      'Execution profiles': '/settings/profiles',
+      Projects: '/register',
+      Initiatives: '/initiatives',
+      'Herdr settings': '/settings/herdr',
+      'Capacity settings': '/settings/capacity',
+      Health: '/health',
+      'Author Specs': '/planning/specs',
+      'Create Tickets': '/planning/tickets',
+      'Wire Dependencies': '/planning/dependencies',
+    })
   })
 
   it('maps every search kind to a route', () => {
@@ -42,7 +62,13 @@ describe('palette navigation', () => {
       identifier: 'CORE-T2',
       label: 'Archive the register',
       project_id: 1,
-    })).toBe('/projects/1/board')
+    })).toBe('/projects/1/board?ticket=2')
+    expect(routeForSearchHit({
+      kind: 'ticket',
+      id: 9,
+      identifier: 'CORE-T9',
+      label: 'Orphaned',
+    })).toBe('/board')
     expect(paletteItemFromHit({
       kind: 'spec',
       id: 3,

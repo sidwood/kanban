@@ -50,6 +50,11 @@
   --color-critical: var(--critical);
   --color-info: var(--info);
   --color-cta-ink: #12200a;
+  /* The shell's quieter surfaces: the rail's ground and the tint an
+     expanded group wears behind its sibling columns. */
+  --color-rail: var(--rail);
+  --color-tint: var(--tint);
+  --color-tint-line: var(--tint-line);
 
   --radius-control: 0.5rem;
   --radius-panel: 0.875rem;
@@ -83,6 +88,9 @@
   --info: #1c6690;
   --shadow-tint: rgb(20 26 17 / 0.05);
   --shadow-tint-strong: rgb(20 26 17 / 0.22);
+  --rail: #f1f4ec;
+  --tint: #e4ecda;
+  --tint-line: #d2ddc4;
 }
 
 /* Forest night: near-black canvas, lifted panels, lime accents. */
@@ -105,6 +113,9 @@ html.dark {
   --info: #6ab8e8;
   --shadow-tint: rgb(0 0 0 / 0.4);
   --shadow-tint-strong: rgb(0 0 0 / 0.7);
+  --rail: #0e130d;
+  --tint: #161d14;
+  --tint-line: #2a3526;
 }
 
 /* Deliberately identical in both themes: the primary action is the one

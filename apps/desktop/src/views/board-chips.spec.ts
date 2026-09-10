@@ -3,20 +3,13 @@
 // facts the board holds beside it (KAN-T26-AC2, KAN-T26-AC3).
 import { describe, expect, it } from 'vitest'
 import type {
-  LaneRecord,
-  SpecRecord,
+  CriterionBindingRecord,
   TicketBugQualification,
   TicketRecord,
   TicketReadinessBlocker,
 } from '@kanban/contracts'
 import { CHIP_VOCABULARY } from '@kanban/contracts'
-import {
-  chipsFor,
-  laneFor,
-  specFor,
-  type CardChip,
-  type ChipSources,
-} from './board-chips'
+import { chipsFor, type CardChip, type ChipSources } from './board-chips'
 
 const qualification = (overrides: Partial<TicketBugQualification> = {}): TicketBugQualification => ({
   affected_scope: 'The clone guard',
@@ -62,34 +55,26 @@ const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
 
 const sources = (overrides: Partial<ChipSources> = {}): ChipSources => ({
   projectCode: 'KAN',
-  lane: null,
-  spec: null,
+  laneId: null,
+  specNumber: null,
   blockers: [],
   reviewers: [],
   execution: null,
+  bindings: [],
   ...overrides,
 })
 
-// A Spec as the generated client serves it: the row id the whole
-// store shares and the number this Project minted — different on
-// purpose, so an id rendered as the identity cannot pass.
-const specRecord = (overrides: Partial<SpecRecord> = {}): SpecRecord => ({
-  execution: 'planned',
-  id: 4,
-  name: 'Serve the lifecycle command surface',
-  number: 9,
-  plan_id: null,
-  project_id: 1,
-  version: 2,
-  ...overrides,
-})
-
-const lane = (overrides: Partial<LaneRecord> = {}): LaneRecord => ({
-  id: 3,
-  project_id: 1,
-  workspace_id: 11,
+/** One criterion binding as the core records it: the satisfaction it
+ * reports already answers the review and the void. */
+const binding = (overrides: Partial<CriterionBindingRecord> = {}): CriterionBindingRecord => ({
   ticket_id: 7,
-  version: 2,
+  criterion_index: 0,
+  kind: 'acceptance',
+  evidence_id: 1,
+  tip: 'a1b2c3',
+  review: 'validated',
+  satisfied: true,
+  void: false,
   ...overrides,
 })
 
@@ -166,7 +151,7 @@ describe('board chips', () => {
     const implementation = chipsFor(ticket(), sources())
     expect(chipByKind(implementation, 'progress')).toMatchObject({
       label: 'Progress',
-      value: '3 criteria',
+      value: '0/3 criteria',
     })
 
     const bug = chipsFor(
@@ -187,7 +172,7 @@ describe('board chips', () => {
       }),
       sources(),
     )
-    expect(chipByKind(bug, 'progress')).toMatchObject({ value: '1 criteria' })
+    expect(chipByKind(bug, 'progress')).toMatchObject({ value: '0/1 criteria' })
 
     // An unqualified Bug has no criteria to count yet, so its
     // progress says so plainly — never off the card, never a count
@@ -242,15 +227,88 @@ describe('board chips', () => {
       }),
       sources(),
     )
-    expect(chipByKind(task, 'progress')).toMatchObject({ value: '2 outcomes' })
+    expect(chipByKind(task, 'progress')).toMatchObject({ value: '0/2 outcomes' })
+  })
+
+  it('counts the criteria the core says are satisfied, not how many there are', () => {
+    const implementation = chipsFor(
+      ticket(),
+      sources({
+        bindings: [
+          binding({ criterion_index: 0 }),
+          binding({ criterion_index: 1, review: 'pending', satisfied: false }),
+          // A content change voided this approval: the core already
+          // reports it unsatisfied, and it is not counted.
+          binding({ criterion_index: 2, satisfied: false, void: true }),
+        ],
+      }),
+    )
+    expect(chipByKind(implementation, 'progress')).toMatchObject({
+      label: 'Progress',
+      value: '1/3 criteria',
+    })
+    expect(chipByKind(implementation, 'progress')?.detail).toContain('1 of 3 satisfied')
+    expect(chipByKind(implementation, 'progress')?.detail).toContain('1 awaiting approval')
+    expect(chipByKind(implementation, 'progress')?.detail).toContain('1 voided')
+
+    const finished = chipsFor(
+      ticket(),
+      sources({
+        bindings: [
+          binding({ criterion_index: 0 }),
+          binding({ criterion_index: 1 }),
+          binding({ criterion_index: 2 }),
+        ],
+      }),
+    )
+    expect(chipByKind(finished, 'progress')).toMatchObject({ value: '3/3 criteria' })
+  })
+
+  it('counts a Task by the completion outcomes the core records complete', () => {
+    const task = ticket({
+      kind: 'task',
+      title: 'Archive the old exports',
+      spec_id: null,
+      subtype: 'operational',
+      mode: 'human',
+      completion: ['The old exports are archived.', 'The archive is readable.'],
+      criteria: [],
+      profile: null,
+    })
+    const chips = chipsFor(
+      task,
+      sources({
+        bindings: [
+          binding({ kind: 'task', criterion_index: 0 }),
+          // An acceptance binding belongs to no Task outcome.
+          binding({ kind: 'acceptance', criterion_index: 1 }),
+        ],
+      }),
+    )
+
+    expect(chipByKind(chips, 'progress')).toMatchObject({ value: '1/2 outcomes' })
+  })
+
+  it('counts one criterion once, however many bindings it carries', () => {
+    const chips = chipsFor(
+      ticket(),
+      sources({
+        bindings: [
+          binding({ criterion_index: 0, evidence_id: 1 }),
+          binding({ criterion_index: 0, evidence_id: 2 }),
+        ],
+      }),
+    )
+
+    expect(chipByKind(chips, 'progress')).toMatchObject({ value: '1/3 criteria' })
   })
 
   it('adds the implementation chips: spec, implementer, reviewers, lane, blockers', () => {
     const chips = chipsFor(
       ticket(),
       sources({
-        spec: specRecord(),
-        lane: lane(),
+        specNumber: 9,
+        laneId: 3,
         blockers: [waiting(3), waiting(5)],
         reviewers: ['opus-max', 'sonnet-stage'],
       }),
@@ -280,27 +338,21 @@ describe('board chips', () => {
     expect(kindsOf(chips)).toEqual(['priority', 'progress'])
   })
 
-  it('renders the Spec\'s minted number, never its row id', () => {
-    const chips = chipsFor(
-      ticket({ spec_id: 4 }),
-      sources({ spec: specRecord({ id: 4, number: 9 }) }),
-    )
+  it('renders the Spec number the projection resolved, never the row id', () => {
+    // Row ids run across every Project; numbers restart with each
+    // one, so the Ticket's spec_id and the minted number differ on
+    // purpose here — an id rendered as the identity cannot pass.
+    const chips = chipsFor(ticket({ spec_id: 4 }), sources({ specNumber: 9 }))
     expect(chipByKind(chips, 'spec')).toMatchObject({ value: 'KAN-S9' })
 
-    // Row ids run across every Project; numbers restart with each
-    // one, so a gap another Project's Specs open below this record
-    // still renders the number this Project minted.
-    const gapped = chipsFor(
-      ticket({ spec_id: 6 }),
-      sources({ spec: specRecord({ id: 6, number: 2 }) }),
-    )
+    const gapped = chipsFor(ticket({ spec_id: 6 }), sources({ specNumber: 2 }))
     expect(chipByKind(gapped, 'spec')).toMatchObject({ value: 'KAN-S2' })
   })
 
-  it('omits the Spec chip when the record does not resolve', () => {
-    // The Ticket names a Spec the board did not load; no number may
-    // be invented from the id, so the region stays off the card.
-    const chips = chipsFor(ticket({ spec_id: 4 }), sources({ spec: null }))
+  it('omits the Spec chip when the projection resolved no number', () => {
+    // The Ticket names a Spec the projection did not resolve; no
+    // number may be invented from the id, so the region stays off.
+    const chips = chipsFor(ticket({ spec_id: 4 }), sources({ specNumber: null }))
 
     expect(chipByKind(chips, 'spec')).toBeUndefined()
   })
@@ -317,7 +369,7 @@ describe('board chips', () => {
 
     const chips = chipsFor(
       ticket({ kind: 'bug', title: 'Clone guard misses a dirty tree', criteria: [], bug }),
-      sources({ projectCode: 'KAN', spec: specRecord(), blockers: [waiting(3)] }),
+      sources({ projectCode: 'KAN', specNumber: 9, blockers: [waiting(3)] }),
     )
 
     expect(kindsOf(chips)).toEqual(CHIP_VOCABULARY.sets[1].chips)
@@ -500,22 +552,5 @@ describe('board chips', () => {
     expect(chipByKind(withoutRun, 'implementer')).toMatchObject({
       value: 'glm-implementer',
     })
-  })
-
-  it('finds the Lane holding a Ticket', () => {
-    const lanes = [lane({ id: 2, ticket_id: null }), lane()]
-
-    expect(laneFor(lanes, 7)?.id).toBe(3)
-    expect(laneFor(lanes, 8)).toBeUndefined()
-  })
-
-  it('finds the Spec a Ticket names', () => {
-    const specs = [specRecord({ id: 4, number: 9 }), specRecord({ id: 6, number: 2 })]
-
-    expect(specFor(specs, 6)?.number).toBe(2)
-    expect(specFor(specs, 4)?.number).toBe(9)
-    expect(specFor(specs, 99)).toBeUndefined()
-    // A Ticket attached to no Spec resolves to none.
-    expect(specFor(specs, null)).toBeUndefined()
   })
 })

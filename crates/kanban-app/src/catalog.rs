@@ -541,6 +541,13 @@ define_exposed_catalogue! {
         mcp: "ticket_readiness",
         description: "Compute one Ticket's readiness from its dependencies and external blockers. The projection never mutates state.",
     },
+    "ticket.transitions" => {
+        kind: Query,
+        request: "TicketTransitionsQuery",
+        response: "TicketTransitionsResponse",
+        mcp: "ticket_transitions",
+        description: "Read every state a human drag may move one Ticket to now, judged by the canonical lifecycle, the kind's ownership, and the Ticket's own gates.",
+    },
     "ticket.assign" => {
         kind: Command,
         request: "TicketAssignRequest",
@@ -1052,6 +1059,20 @@ define_exposed_catalogue! {
         response: "ViewRemovedRecord",
         mcp: "view_remove",
         description: "Remove one Saved View. A scope whose default is removed generates it again on the next read.",
+    },
+    "shell.preferences" => {
+        kind: Query,
+        request: "ShellPreferencesQuery",
+        response: "ShellPreferencesRecord",
+        mcp: "shell_preferences",
+        description: "Read how the operator keeps the shell arranged: the navigation rail's collapse and the board columns collapsed to their rail in each scope.",
+    },
+    "shell.preferences.update" => {
+        kind: Command,
+        request: "ShellPreferencesUpdateRequest",
+        response: "ShellPreferencesRecord",
+        mcp: "shell_preferences_update",
+        description: "Replace the operator's whole shell arrangement. Presentation only; no workflow record reads it.",
     },
     "search.global" => {
         kind: Query,

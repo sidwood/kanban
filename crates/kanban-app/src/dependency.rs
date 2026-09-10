@@ -18,14 +18,14 @@ use std::sync::Arc;
 use kanban_domain::{
     BlockerDescription, DependencyState, ExternalBlocker, ExternalBlockerId, Project, ProjectId,
     Readiness, ReadinessBlocker, ReadinessInputs, Ticket, TicketDependency, TicketDependencyGraph,
-    TicketId, TicketState as DomainState, compute_readiness,
+    TicketId, TicketState as DomainState, compute_readiness, human_drag_targets,
 };
 use kanban_dto::{
     ApiError, TicketBlockerAddRequest, TicketBlockerRecord, TicketBlockerRemoveRequest,
     TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
     TicketDependencyRecord, TicketDependencyRemoveRequest, TicketReadinessBlocker,
-    TicketReadinessQuery, TicketReadinessResponse, TicketState, TimelineEntityKind,
-    TimelineEntityRef, TimelineEventKind,
+    TicketReadinessQuery, TicketReadinessResponse, TicketState, TicketTransitionsQuery,
+    TicketTransitionsResponse, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
@@ -294,6 +294,13 @@ impl Core {
                 dependencies: context.dependencies.clone(),
             }),
         )?;
+        self.register_query(
+            "ticket.transitions",
+            Arc::new(GetTransitions {
+                tickets: context.tickets.clone(),
+                dependencies: context.dependencies.clone(),
+            }),
+        )?;
         Ok(())
     }
 }
@@ -538,6 +545,42 @@ struct GetReadiness {
     dependencies: Arc<dyn DependencyStore>,
 }
 
+/// One Ticket's readiness, and the blocking Tickets it was computed
+/// from so a caller can name them. Pairing every dependency with its
+/// blocker and that blocker's state is what the projection reads, and
+/// nothing else (DR-DE-03).
+fn readiness_of(
+    tickets: &Arc<dyn TicketStore>,
+    dependencies: &Arc<dyn DependencyStore>,
+    ticket: &Ticket,
+) -> Result<(Readiness, Vec<(TicketDependency, Ticket)>), ApiError> {
+    let mut waiters = Vec::new();
+    for edge in
+        TicketDependencyGraph::restore(dependencies.list_dependencies()?).required_by(ticket.id())
+    {
+        let blocking = tickets.find(edge.from())?.ok_or_else(|| {
+            ApiError::internal(&format!(
+                "dependency {} names no stored Ticket",
+                edge.from().value()
+            ))
+        })?;
+        waiters.push((edge, blocking));
+    }
+    let blockers = dependencies.blockers_of(ticket.id())?;
+    let states: Vec<DependencyState> = waiters
+        .iter()
+        .map(|(edge, blocking)| DependencyState {
+            dependency: *edge,
+            state: blocking.state(),
+        })
+        .collect();
+    let readiness = compute_readiness(ReadinessInputs {
+        dependencies: &states,
+        blockers: &blockers,
+    });
+    Ok((readiness, waiters))
+}
+
 impl QueryHandler for GetReadiness {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query: TicketReadinessQuery = parse_payload(payload)?;
@@ -545,33 +588,7 @@ impl QueryHandler for GetReadiness {
             .tickets
             .find(TicketId::new(query.ticket_id))?
             .ok_or_else(|| ApiError::not_found(&format!("ticket {}", query.ticket_id)))?;
-        // Pair every dependency the Ticket waits on with its blocker
-        // and that blocker's state; the projection reads exactly
-        // these and nothing else (DR-DE-03).
-        let mut waiters = Vec::new();
-        for edge in TicketDependencyGraph::restore(self.dependencies.list_dependencies()?)
-            .required_by(ticket.id())
-        {
-            let blocking = self.tickets.find(edge.from())?.ok_or_else(|| {
-                ApiError::internal(&format!(
-                    "dependency {} names no stored Ticket",
-                    edge.from().value()
-                ))
-            })?;
-            waiters.push((edge, blocking));
-        }
-        let blockers = self.dependencies.blockers_of(ticket.id())?;
-        let states: Vec<DependencyState> = waiters
-            .iter()
-            .map(|(edge, blocking)| DependencyState {
-                dependency: *edge,
-                state: blocking.state(),
-            })
-            .collect();
-        let readiness: Readiness = compute_readiness(ReadinessInputs {
-            dependencies: &states,
-            blockers: &blockers,
-        });
+        let (readiness, waiters) = readiness_of(&self.tickets, &self.dependencies, &ticket)?;
         let blocked_by = readiness
             .blocked_by()
             .iter()
@@ -600,6 +617,32 @@ impl QueryHandler for GetReadiness {
             state: state_of(ticket.state()),
             ready: readiness.is_ready(),
             blocked_by,
+        };
+        serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
+    }
+}
+
+/// Serves `ticket.transitions`.
+struct GetTransitions {
+    tickets: Arc<dyn TicketStore>,
+    dependencies: Arc<dyn DependencyStore>,
+}
+
+impl QueryHandler for GetTransitions {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let query: TicketTransitionsQuery = parse_payload(payload)?;
+        let ticket = self
+            .tickets
+            .find(TicketId::new(query.ticket_id))?
+            .ok_or_else(|| ApiError::not_found(&format!("ticket {}", query.ticket_id)))?;
+        let (readiness, _) = readiness_of(&self.tickets, &self.dependencies, &ticket)?;
+        let response = TicketTransitionsResponse {
+            ticket_id: ticket.id().value(),
+            state: state_of(ticket.state()),
+            targets: human_drag_targets(&ticket, &readiness)
+                .into_iter()
+                .map(state_of)
+                .collect(),
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -1369,6 +1412,116 @@ mod cross_project_deps {
             2,
             "the projection never mutates the waiting Ticket"
         );
+    }
+
+    /// One Task Ticket in the state a test chooses: the kind a human
+    /// may drag.
+    fn task(
+        id: u64,
+        project: u64,
+        number: u64,
+        state: kanban_domain::TicketState,
+    ) -> kanban_domain::Ticket {
+        kanban_domain::Ticket::restore(
+            kanban_domain::TicketId::new(id),
+            kanban_domain::ProjectId::new(project),
+            kanban_domain::TicketNumber::new(number).expect("the fixture number is positive"),
+            kanban_domain::Priority::Normal,
+            state,
+            kanban_domain::TicketBody::task(
+                "Archive the old register",
+                None,
+                Some(kanban_domain::TaskSubtype::Operational),
+                Some(kanban_domain::TaskMode::Human),
+                vec![
+                    kanban_domain::CompletionCriterion::new("The register is archived.")
+                        .expect("the fixture outcome binds"),
+                ],
+                kanban_domain::TaskTiming::none(),
+            )
+            .expect("the fixture body validates"),
+            None,
+            None,
+            None,
+            1,
+        )
+    }
+
+    #[test]
+    fn the_legal_moves_query_offers_only_what_the_lifecycle_would_accept() {
+        let harness = dependency_harness();
+        harness
+            .rows
+            .replace(task(2, 2, 1, kanban_domain::TicketState::Ready));
+
+        let response = harness
+            .core
+            .query("ticket.transitions", &json!({ "ticket_id": 2 }))
+            .expect("the legal moves serve");
+
+        assert_eq!(
+            response,
+            json!({ "ticket_id": 2, "state": "ready", "targets": ["parked", "active"] })
+        );
+        // A projection never touches the record it reads.
+        let (tickets, _, timeline) = harness.rows.snapshot();
+        assert_eq!(
+            tickets
+                .iter()
+                .find(|ticket| ticket.id().value() == 2)
+                .expect("the Ticket stands")
+                .version(),
+            1,
+        );
+        assert!(timeline.is_empty(), "the projection appended nothing");
+    }
+
+    #[test]
+    fn the_legal_moves_query_offers_nothing_for_an_agent_owned_kind_or_a_landed_ticket() {
+        let harness = dependency_harness();
+
+        // Ticket 2 is a Bug: its transitions belong to the agents.
+        let agent_owned = harness
+            .core
+            .query("ticket.transitions", &json!({ "ticket_id": 2 }))
+            .expect("the legal moves serve");
+        assert_eq!(agent_owned["targets"], json!([]));
+
+        harness
+            .rows
+            .replace(task(3, 2, 2, kanban_domain::TicketState::Done));
+        let landed = harness
+            .core
+            .query("ticket.transitions", &json!({ "ticket_id": 3 }))
+            .expect("the legal moves serve");
+        assert_eq!(landed["targets"], json!([]));
+    }
+
+    #[test]
+    fn the_legal_moves_query_withholds_a_move_the_readiness_gate_would_refuse() {
+        let harness = dependency_harness();
+        harness
+            .rows
+            .replace(task(2, 2, 1, kanban_domain::TicketState::Ready));
+        harness
+            .core
+            .command(
+                "ticket.blocker.add",
+                &command(
+                    json!({ "ticket_id": 2, "description": "The vendor SDK 4 upgrade" }),
+                    1,
+                    "key-gate",
+                ),
+            )
+            .expect("the external blocker records");
+
+        let response = harness
+            .core
+            .query("ticket.transitions", &json!({ "ticket_id": 2 }))
+            .expect("the legal moves serve");
+
+        // Starting work answers the readiness gate; parking does not.
+        assert_eq!(response["targets"], json!(["parked"]));
     }
 
     #[test]

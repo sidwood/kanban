@@ -17,13 +17,31 @@ export interface PaletteItem {
   route: string
 }
 
-/** Surfaces the operator can jump to without searching. */
+/** Surfaces the operator can jump to without searching: the rail's
+ * destinations first, then the planning surfaces the rail reaches
+ * through Planning. */
 export const PALETTE_NAVIGATION: readonly PaletteItem[] = [
-  { id: 'nav-home', kind: 'navigation', label: 'Home', route: '/' },
-  { id: 'nav-board', kind: 'navigation', label: 'Global board', route: '/board' },
-  { id: 'nav-register', kind: 'navigation', label: 'Register a Project', route: '/register' },
-  { id: 'nav-initiatives', kind: 'navigation', label: 'Manage Initiatives', route: '/initiatives' },
-  { id: 'nav-planning', kind: 'navigation', label: 'Plan the Work', route: '/planning' },
+  { id: 'nav-boards', kind: 'navigation', label: 'Boards', route: '/board' },
+  { id: 'nav-attention', kind: 'navigation', label: 'Attention inbox', route: '/attention' },
+  { id: 'nav-planning', kind: 'navigation', label: 'Planning', route: '/planning' },
+  { id: 'nav-activity', kind: 'navigation', label: 'Activity', route: '/activity' },
+  { id: 'nav-workspaces', kind: 'navigation', label: 'Workspaces & Lanes', route: '/workspaces' },
+  {
+    id: 'nav-profiles',
+    kind: 'navigation',
+    label: 'Execution profiles',
+    route: '/settings/profiles',
+  },
+  { id: 'nav-projects', kind: 'navigation', label: 'Projects', route: '/register' },
+  { id: 'nav-initiatives', kind: 'navigation', label: 'Initiatives', route: '/initiatives' },
+  { id: 'nav-herdr', kind: 'navigation', label: 'Herdr settings', route: '/settings/herdr' },
+  {
+    id: 'nav-capacity',
+    kind: 'navigation',
+    label: 'Capacity settings',
+    route: '/settings/capacity',
+  },
+  { id: 'nav-health', kind: 'navigation', label: 'Health', route: '/health' },
   { id: 'nav-specs', kind: 'navigation', label: 'Author Specs', route: '/planning/specs' },
   { id: 'nav-tickets', kind: 'navigation', label: 'Create Tickets', route: '/planning/tickets' },
   {
@@ -31,19 +49,6 @@ export const PALETTE_NAVIGATION: readonly PaletteItem[] = [
     kind: 'navigation',
     label: 'Wire Dependencies',
     route: '/planning/dependencies',
-  },
-  { id: 'nav-herdr', kind: 'navigation', label: 'Herdr settings', route: '/settings/herdr' },
-  {
-    id: 'nav-profiles',
-    kind: 'navigation',
-    label: 'Execution profiles',
-    route: '/settings/profiles',
-  },
-  {
-    id: 'nav-capacity',
-    kind: 'navigation',
-    label: 'Capacity settings',
-    route: '/settings/capacity',
   },
 ]
 
@@ -67,21 +72,23 @@ export function paletteItemFromHit(hit: SearchGlobalHit): PaletteItem {
   }
 }
 
-/** The route one search hit should open. */
+/** The route one search hit should open: a Ticket opens on its
+ * Project's board with its drawer already open, so the hit keeps
+ * the exact object it named. */
 export function routeForSearchHit(hit: SearchGlobalHit): string {
   switch (hit.kind) {
     case 'initiative':
       return '/initiatives'
     case 'project':
-      return hit.project_id === undefined ? '/register' : `/projects/${hit.project_id}/board`
+      return hit.project_id == null ? '/register' : `/projects/${hit.project_id}/board`
     case 'plan':
       return '/planning'
     case 'spec':
       return '/planning/specs'
     case 'ticket':
-      return hit.project_id === undefined ? '/board' : `/projects/${hit.project_id}/board`
+      return hit.project_id == null ? '/board' : `/projects/${hit.project_id}/board?ticket=${hit.id}`
     default:
-      return '/'
+      return '/board'
   }
 }
 

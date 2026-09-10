@@ -866,7 +866,7 @@ fn recovery_upgrade_retires_legacy_submitted_authority_without_rewriting_results
         .query("submission.list", &json!({"project_id":1}))
         .unwrap();
     let connection = rusqlite::Connection::open(&h.database_path).unwrap();
-    connection.execute_batch("UPDATE capabilities SET status='active',settled_at=NULL; UPDATE dispatch_requests SET completed_at=NULL; DROP TABLE run_resume_deliveries; DELETE FROM schema_migrations WHERE version>=47;").unwrap();
+    connection.execute_batch("UPDATE capabilities SET status='active',settled_at=NULL; UPDATE dispatch_requests SET completed_at=NULL; DROP TABLE run_resume_deliveries; DROP TABLE shell_collapsed_columns; DROP TABLE shell_preferences; DELETE FROM schema_migrations WHERE version>=47;").unwrap();
     let mut reopened = kanban_storage::Database::open(&h.database_path).unwrap();
     reopened
         .migrate(&kanban_storage::AllowAllMigrations)

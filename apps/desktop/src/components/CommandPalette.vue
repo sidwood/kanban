@@ -113,7 +113,7 @@ onBeforeUnmount(releaseTrap)
 <template>
   <div
     v-if="palette.open"
-    class="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 px-4 pt-[12vh]"
+    class="fixed inset-0 z-50 flex items-start justify-center bg-ink/40 px-4 pt-[12vh] backdrop-blur-[3px]"
     data-testid="command-palette"
     @mousedown.self="palette.closePalette()"
   >
@@ -122,7 +122,7 @@ onBeforeUnmount(releaseTrap)
       role="dialog"
       aria-modal="true"
       :aria-labelledby="titleId"
-      class="w-full max-w-xl overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+      class="w-full max-w-xl overflow-hidden rounded-panel border border-line-strong bg-surface shadow-panel"
       @mousedown.stop
     >
       <h2
@@ -140,8 +140,8 @@ onBeforeUnmount(releaseTrap)
           type="search"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Search or jump to a surface…"
-          class="w-full border-0 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
+          placeholder="Jump to a ticket, spec, view or setting…"
+          class="w-full border-0 bg-transparent text-base text-ink outline-none placeholder:text-ink-subtle"
         >
       </label>
       <p
@@ -154,7 +154,7 @@ onBeforeUnmount(releaseTrap)
       <p
         v-else-if="search.loading"
         data-testid="palette-loading"
-        class="border-b border-line px-4 py-2 text-sm text-slate-500"
+        class="border-b border-line px-4 py-2 text-sm text-ink-subtle"
       >
         Searching…
       </p>
@@ -171,23 +171,23 @@ onBeforeUnmount(releaseTrap)
             type="button"
             data-testid="palette-item"
             class="flex w-full items-baseline gap-3 px-4 py-2 text-left text-sm"
-            :class="index === palette.selection ? 'bg-slate-100 text-slate-900' : 'text-slate-700'"
+            :class="index === palette.selection ? 'bg-rail text-ink' : 'text-ink-muted'"
             @mouseenter="palette.selection = index"
             @click="choose(item)"
           >
-            <span class="w-20 shrink-0 text-xs uppercase tracking-wide text-slate-400">
+            <span class="w-20 shrink-0 font-mono text-[0.625rem] tracking-[0.08em] text-ink-subtle uppercase">
               {{ kindLabel(item) }}
             </span>
             <span class="min-w-0 flex-1">
               <span
                 v-if="item.identifier"
-                class="font-medium text-slate-900"
+                class="font-medium text-ink"
               >
                 {{ item.identifier }}
               </span>
               <span
                 v-if="item.identifier"
-                class="text-slate-500"
+                class="text-ink-subtle"
               > · </span>
               <span>{{ item.label }}</span>
             </span>
@@ -197,9 +197,12 @@ onBeforeUnmount(releaseTrap)
       <p
         v-else
         data-testid="palette-empty"
-        class="px-4 py-6 text-center text-sm text-slate-500"
+        class="px-4 py-6 text-center text-sm text-ink-subtle"
       >
         No matches.
+      </p>
+      <p class="border-t border-line bg-rail px-4 py-2 text-[0.7rem] text-ink-subtle">
+        Searching and navigating never changes ticket state.
       </p>
     </div>
   </div>

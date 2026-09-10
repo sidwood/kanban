@@ -1,0 +1,196 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "BoardColumn": {
+      "description": "One column a board can show: a fixed group while its axis reads as a single column, or one of the states the two multi-state groups open into. Collapse addresses exactly these.",
+      "oneOf": [
+        {
+          "description": "The Draft group.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Backlog group, aggregated.",
+          "enum": [
+            "backlog"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Backlog opened: work the operator set aside.",
+          "enum": [
+            "parked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Backlog opened: work a dependency or blocker holds.",
+          "enum": [
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Backlog opened: work waiting on a date.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Backlog opened: work anything may claim.",
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Current group.",
+          "enum": [
+            "current"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Review group.",
+          "enum": [
+            "review"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Staged group, aggregated.",
+          "enum": [
+            "staged"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Staged opened: work a review approved.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Staged opened: work on its way to the default branch.",
+          "enum": [
+            "landing"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Done group.",
+          "enum": [
+            "done"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    },
+    "ScopedCollapsedColumns": {
+      "additionalProperties": false,
+      "description": "The columns one scope keeps collapsed, in board order.",
+      "properties": {
+        "columns": {
+          "description": "The collapsed columns, named once each in board order.",
+          "items": {
+            "$ref": "#/definitions/BoardColumn"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ViewScope"
+            }
+          ],
+          "description": "The scope the collapse belongs to: the whole board, or one Project's."
+        }
+      },
+      "required": [
+        "columns",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "ViewScope": {
+      "description": "The scope a view belongs to: the whole board, or one Project's work. The global scope holds exactly one default view; every Project holds exactly one of its own.",
+      "oneOf": [
+        {
+          "description": "Every Project's work on one surface.",
+          "enum": [
+            "global"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One Project's work, named by its numeric identity.",
+          "properties": {
+            "project": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "description": "Request payload for the `shell.preferences.update` command: the whole arrangement, replaced wholesale.",
+  "properties": {
+    "collapsed_columns": {
+      "default": [],
+      "description": "Every scope that keeps columns collapsed, and which. A scope left out keeps nothing collapsed.",
+      "items": {
+        "$ref": "#/definitions/ScopedCollapsedColumns"
+      },
+      "type": "array"
+    },
+    "mutation": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/MutationContext"
+        }
+      ],
+      "description": "The optimistic version and idempotency key of the write."
+    },
+    "rail_open": {
+      "description": "Whether the navigation rail stands open with its labels.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mutation",
+    "rail_open"
+  ],
+  "title": "ShellPreferencesUpdateRequest",
+  "type": "object"
+}

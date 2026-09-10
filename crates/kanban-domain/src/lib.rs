@@ -35,6 +35,7 @@ pub mod saved_view;
 pub mod schedule;
 pub mod schedule_preview;
 pub mod search;
+pub mod shell_preference;
 pub mod spec;
 pub mod ticket;
 pub mod timeline;
@@ -45,7 +46,7 @@ pub mod workspace;
 pub use admission::{
     AdmissionInputs, AdmissionRefusal, AdmissionRole, admit_execution, executable_states,
 };
-pub use board::{BoardGroup, board_group_for};
+pub use board::{BoardColumn, BoardGroup, board_group_for};
 pub use board_query::{AttentionState, BoardCard, BoardFilter, admits, compare_cards, sort_cards};
 pub use capability::{
     Capability, CapabilityError, CapabilityId, CapabilityRefusal, CapabilityRole, CapabilityScope,
@@ -96,7 +97,7 @@ pub use landing::{
 pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
 pub use lifecycle::{
     Actor, HumanCommand, LifecycleError, OverrideJustification, ReviewDecision, apply_command,
-    apply_drag, apply_override, human_may_drag, legal_targets,
+    apply_drag, apply_override, human_drag_targets, human_may_drag, legal_targets,
 };
 pub use plan::{
     DependencyCycle, DependencyEdge, Plan, PlanError, PlanId, PlanShape, PlanState, PlanVersion,
@@ -125,6 +126,7 @@ pub use schedule::{
     ScheduleTrigger, Timezone, accepts, stored_instant_of,
 };
 pub use search::{SearchCandidate, SearchHit, SearchHitKind, matches, search, sort_hits};
+pub use shell_preference::{ScopedCollapse, ShellPreferences};
 pub use spec::{
     ContentChange, Spec, SpecContent, SpecContentState, SpecError, SpecExecutionState, SpecId,
     SpecVersion,

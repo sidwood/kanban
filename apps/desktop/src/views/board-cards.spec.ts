@@ -1,60 +1,20 @@
 // The card regions and their chips, rendered from real Tickets: every
 // card shows number, kind, title, Project code, priority, and
 // progress, and each kind adds its own chips from the closed
-// vocabulary (KAN-T26-AC1, KAN-T26-AC2, KAN-T26-AC3). The Lane chip
-// comes from the KAN-T32 Lane contract the generated client serves.
+// vocabulary (KAN-T26-AC1, KAN-T26-AC2, KAN-T26-AC3). The Spec and
+// Lane chips wear what the board projection resolved beside the
+// Ticket; the reviewers chip wears the slots configured on an
+// Implementation.
 import { mount, flushPromises } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type {
-  LaneListResponse,
-  ProjectListResponse,
-  SpecListResponse,
-  TicketListResponse,
-  TicketReadinessResponse,
-  TicketRecord,
-} from '@kanban/contracts'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { TicketReadinessResponse, TicketRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
-import type { ShellTransport } from '../core/transport'
+import { harness, ticket } from '../test/shell-harness'
+import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
-
-const project = {
-  id: 1,
-  code: 'KAN',
-  name: 'Control plane',
-  repository: '/repositories/kanban',
-  seed_workspace: '/workspaces/kanban.seed',
-  default_branch: 'main',
-  herdr_session: 'kanban-main',
-  herdr_workspace: 'kanban.seed',
-  initiative_id: null,
-  archived: false,
-  counters: { plan: 0, spec: 0, ticket: 0 },
-  version: 1,
-}
-
-const ticket = (overrides: Partial<TicketRecord> = {}): TicketRecord => ({
-  id: 7,
-  project_id: 1,
-  number: 12,
-  kind: 'task',
-  priority: 'normal',
-  state: 'ready',
-  spec_id: null,
-  title: 'Archive the old exports',
-  slice: null,
-  criteria: [],
-  bug: null,
-  subtype: 'operational',
-  mode: 'human',
-  completion: ['The old exports are archived.'],
-  scheduled_for: null,
-  due: null,
-  profile: null,
-  version: 3,
-  ...overrides,
-})
 
 // One card per kind, each carrying the facts its chips resolve.
 function boardTickets(): TicketRecord[] {
@@ -123,125 +83,36 @@ function boardTickets(): TicketRecord[] {
   ]
 }
 
-// The KAN-T32 Lane contract: Lane 3 holds the Implementation.
-function lanes(): LaneListResponse['lanes'] {
-  return [
-    { id: 3, project_id: 1, workspace_id: 11, ticket_id: 8, version: 2 },
-    { id: 4, project_id: 1, workspace_id: null, ticket_id: null, version: 1 },
-  ]
-}
+// What the projection resolved beside the Implementation: Spec 4 is
+// this Project's ninth, and Lane 3 holds the Ticket.
+const boardExtras: HarnessOptions['extras'] = { 8: { spec_number: 9, lane_id: 3 } }
 
-// The Project's Specs: row ids every Project shares, numbers each
-// mints its own — the identity a card renders is the number.
-function specs(): SpecListResponse['specs'] {
-  return [
-    {
-      execution: 'planned',
-      id: 4,
-      name: 'Serve the lifecycle command surface',
-      number: 9,
-      plan_id: null,
-      project_id: 1,
-      version: 2,
-    },
-    {
-      execution: 'ready',
-      id: 6,
-      name: 'Carry the work through review',
-      number: 2,
-      plan_id: null,
-      project_id: 1,
-      version: 3,
-    },
-  ]
-}
+const mountedBoards: VueWrapper[] = []
 
-async function mounted(
-  tickets: TicketRecord[],
-  laneList: LaneListResponse['lanes'] = lanes(),
-  blockers: Record<number, TicketReadinessResponse['blocked_by']> = {},
-  specList: SpecListResponse['specs'] = specs(),
-): Promise<{ wrapper: ReturnType<typeof mount>; query: ReturnType<typeof vi.fn> }> {
-  document.documentElement.classList.remove('dark')
-  localStorage.clear()
-  const query = vi.fn((name: string, request: unknown) => {
-    if (name === 'view.list') {
-      return Promise.resolve({
-        views: [
-          {
-            id: 1,
-            name: 'All work',
-            scope: 'global',
-            filter: {},
-            expanded_groups: [],
-            hidden_columns: ['draft'],
-            mode: 'board',
-            done_placement: 'column',
-            sorting: 'priority',
-            is_default: true,
-            version: 1,
-          },
-          {
-            id: 2,
-            name: 'All work',
-            scope: { project: 1 },
-            filter: { projects: [1] },
-            expanded_groups: [],
-            hidden_columns: ['draft'],
-            mode: 'board',
-            done_placement: 'column',
-            sorting: 'priority',
-            is_default: true,
-            version: 1,
-          },
-        ],
-      })
-    }
-    if (name === 'project.list') {
-      return Promise.resolve({ projects: [project] } satisfies ProjectListResponse)
-    }
-    if (name === 'lane.list') {
-      return Promise.resolve({ lanes: laneList } satisfies LaneListResponse)
-    }
-    if (name === 'run.list') {
-      return Promise.resolve({ project_id: 1, runs: [] })
-    }
-    if (name === 'spec.list') {
-      return Promise.resolve({ specs: specList } satisfies SpecListResponse)
-    }
-    if (name === 'ticket.readiness') {
-      const { ticket_id } = request as { ticket_id: number }
-      const blocked_by = blockers[ticket_id] ?? []
-      return Promise.resolve({
-        blocked_by,
-        ready: blocked_by.length === 0,
-        state: 'ready',
-        ticket_id,
-      } satisfies TicketReadinessResponse)
-    }
-    return Promise.resolve({ tickets } satisfies TicketListResponse)
-  })
-  const transport = {
-    query,
-    command: vi.fn(),
-    subscribe: () => () => undefined,
-    onConnectionChange: () => () => undefined,
-  } as unknown as ShellTransport
-  router.push('/projects/1/board')
+async function mounted(options: HarnessOptions = {}) {
+  const shell = harness({ tickets: boardTickets(), extras: boardExtras, ...options })
+  await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
+    attachTo: document.body,
     global: {
       plugins: [createPinia(), router],
-      provide: { [kanbanTransportKey as symbol]: transport },
+      provide: { [kanbanTransportKey as symbol]: shell.transport },
     },
   })
+  mountedBoards.push(wrapper)
   await flushPromises()
-  return { wrapper, query }
+  return { wrapper, ...shell }
 }
 
-afterEach(() => {
-  document.documentElement.classList.remove('dark')
+beforeEach(() => {
   localStorage.clear()
+  document.documentElement.classList.remove('dark')
+})
+
+afterEach(() => {
+  for (const wrapper of mountedBoards.splice(0)) wrapper.unmount()
+  document.body.innerHTML = ''
 })
 
 const waiting = (from_number: number): TicketReadinessResponse['blocked_by'][number] => ({
@@ -253,17 +124,22 @@ const waiting = (from_number: number): TicketReadinessResponse['blocked_by'][num
   },
 })
 
-const chip = (wrapper: ReturnType<typeof mount>, kind: string, ticketId: number) =>
+const chip = (wrapper: VueWrapper, kind: string, ticketId: number) =>
   wrapper.find(`[data-testid="card-chip-${kind}-${ticketId}"]`)
+
+// A chip renders its label and its value in spans of their own; this
+// reads the value alone.
+const chipValue = (wrapper: VueWrapper, kind: string, ticketId: number) =>
+  chip(wrapper, kind, ticketId).findAll('span')[1]?.text()
 
 describe('board cards', () => {
   it('gives every card the fixed regions: number with Project code, kind, and title', async () => {
-    const { wrapper } = await mounted(boardTickets())
+    const { wrapper } = await mounted()
 
     for (const [id, number, kindLabel, title] of [
-      [7, 'KAN-T12', 'Task Ticket', 'Archive the old exports'],
-      [8, 'KAN-T13', 'Implementation Ticket', 'Serve the lifecycle command surface'],
-      [9, 'KAN-T14', 'Bug Ticket', 'Clone guard misses a dirty tree'],
+      [7, 'CORE-T12', 'Task Ticket', 'Archive the old exports'],
+      [8, 'CORE-T13', 'Implementation Ticket', 'Serve the lifecycle command surface'],
+      [9, 'CORE-T14', 'Bug Ticket', 'Clone guard misses a dirty tree'],
     ] as const) {
       expect(wrapper.find(`[data-testid="card-number-${id}"]`).text()).toBe(number)
       expect(wrapper.find(`[data-testid="card-kind-${id}"]`).text()).toBe(kindLabel)
@@ -272,13 +148,102 @@ describe('board cards', () => {
   })
 
   it('shows the priority and progress chips on every card', async () => {
-    const { wrapper } = await mounted(boardTickets())
+    const { wrapper } = await mounted()
 
     expect(chip(wrapper, 'priority', 7).text()).toBe('PriorityHigh')
-    expect(chip(wrapper, 'progress', 7).text()).toBe('Progress1 outcomes')
+    expect(chip(wrapper, 'progress', 7).text()).toBe('Progress0/1 outcomes')
     expect(chip(wrapper, 'priority', 8).text()).toBe('PriorityUrgent')
-    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress3 criteria')
-    expect(chip(wrapper, 'progress', 9).text()).toBe('Progress2 criteria')
+    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress0/3 criteria')
+    expect(chip(wrapper, 'progress', 9).text()).toBe('Progress0/2 criteria')
+  })
+
+  it('reads the criterion bindings the core holds, so progress is completion and not a total', async () => {
+    const { wrapper, query } = await mounted({
+      override: (name, request) => {
+        if (name !== 'criterion.bindings') return undefined
+        const { ticket_id } = request as { ticket_id: number }
+        if (ticket_id !== 8) return Promise.resolve({ bindings: [] })
+        return Promise.resolve({
+          bindings: [
+            {
+              ticket_id,
+              criterion_index: 0,
+              kind: 'acceptance',
+              evidence_id: 1,
+              tip: 'a1b2c3',
+              review: 'validated',
+              satisfied: true,
+              void: false,
+            },
+            {
+              ticket_id,
+              criterion_index: 1,
+              kind: 'acceptance',
+              evidence_id: 2,
+              tip: 'a1b2c3',
+              review: 'pending',
+              satisfied: false,
+              void: false,
+            },
+          ],
+        })
+      },
+    })
+
+    expect(
+      query.mock.calls.filter(([name]) => name === 'criterion.bindings').map(([, request]) => request),
+    ).toContainEqual({ ticket_id: 8 })
+    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress1/3 criteria')
+    expect(chip(wrapper, 'progress', 8).attributes('title')).toContain('1 awaiting approval')
+    expect(chip(wrapper, 'progress', 9).text()).toBe('Progress0/2 criteria')
+  })
+
+  it('reads the progress again when the core announces a criterion change', async () => {
+    // What the bindings say changes under a mounted board, the way it
+    // does when a reviewer validates or a run completes a criterion
+    // from somewhere else (KAN-T137-AC7).
+    let satisfied = false
+    const { wrapper, emit } = await mounted({
+      override: (name, request) => {
+        if (name !== 'criterion.bindings') return undefined
+        const { ticket_id } = request as { ticket_id: number }
+        if (ticket_id !== 8 || !satisfied) return Promise.resolve({ bindings: [] })
+        return Promise.resolve({
+          bindings: [
+            {
+              ticket_id,
+              criterion_index: 0,
+              kind: 'acceptance',
+              evidence_id: 1,
+              tip: 'a1b2c3',
+              review: 'validated',
+              satisfied: true,
+              void: false,
+            },
+          ],
+        })
+      },
+    })
+    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress0/3 criteria')
+
+    satisfied = true
+    emit({
+      sequence: 7,
+      event_type: 'criterion.binding.changed',
+      payload: {
+        ticket_id: 8,
+        criterion_index: 0,
+        kind: 'acceptance',
+        evidence_id: 1,
+        tip: 'a1b2c3',
+        review: 'validated',
+        satisfied: true,
+        void: false,
+      },
+    })
+    await flushPromises()
+
+    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress1/3 criteria')
   })
 
   it('shows an unqualified Bug a progress that invents nothing', async () => {
@@ -302,7 +267,7 @@ describe('board cards', () => {
       completion: [],
       profile: null,
     })
-    const { wrapper } = await mounted([unqualified])
+    const { wrapper } = await mounted({ tickets: [unqualified], extras: {} })
 
     // Every card carries progress (DR-BP-08): the unqualified Bug's
     // names its state rather than a count it cannot honestly claim.
@@ -315,18 +280,63 @@ describe('board cards', () => {
   })
 
   it('adds the implementation chips: spec, implementer, lane, and blockers', async () => {
-    const { wrapper } = await mounted(boardTickets(), lanes(), { 8: [waiting(3), waiting(5)] })
+    const { wrapper } = await mounted({ blockers: { 8: [waiting(3), waiting(5)] } })
 
-    expect(chip(wrapper, 'spec', 8).text()).toBe('SpecKAN-S9')
+    expect(chip(wrapper, 'spec', 8).text()).toBe('SpecCORE-S9')
     expect(chip(wrapper, 'implementer', 8).text()).toContain('glm-implementer')
+    expect(chip(wrapper, 'lane', 8).text()).toBe('LaneLane 3')
     expect(chip(wrapper, 'blockers', 8).text()).toBe('Blockers2 blockers')
-    // Reviewers populate as KAN-S9 lands; the region stays absent
-    // until one is named.
-    expect(chip(wrapper, 'reviewers', 8).exists()).toBe(false)
+  })
+
+  it('wears the reviewers configured on an Implementation, and none when none are', async () => {
+    const withoutReviewers = ticket({
+      id: 20,
+      number: 21,
+      kind: 'implementation',
+      state: 'ready',
+      title: null,
+      slice: 'Carry the work through review',
+      spec_id: 6,
+      criteria: [],
+      subtype: null,
+      mode: null,
+      completion: [],
+      profile: 'glm-implementer',
+    })
+    const { wrapper } = await mounted({
+      tickets: [...boardTickets(), withoutReviewers],
+      override: (name, request) => {
+        if (name !== 'ticket.review.config') return undefined
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve({
+          config:
+            ticket_id === 8
+              ? {
+                  ticket_id,
+                  version: 1,
+                  stages: [
+                    {
+                      slots: [
+                        { occupant: { kind: 'profile', name: 'review-strict' }, requirement: 'required' },
+                        { occupant: { kind: 'profile', name: 'sonnet-stage' }, requirement: 'required' },
+                        { occupant: { kind: 'human' }, requirement: 'optional' },
+                      ],
+                    },
+                  ],
+                }
+              : null,
+        })
+      },
+    })
+
+    // More than two reviewers collapse to +N (DR-BP-14).
+    expect(chipValue(wrapper, 'reviewers', 8)).toBe('review-strict, sonnet-stage +1')
+    expect(chip(wrapper, 'reviewers', 8).attributes('title')).toBe('review-strict, sonnet-stage, Human')
+    expect(chip(wrapper, 'reviewers', 20).exists()).toBe(false)
   })
 
   it('renders the Spec\'s minted number, never its row id', async () => {
-    // Spec 4 is this Project's ninth: the ids below it belong to
+    // Spec 6 is this Project's second: the ids below it belong to
     // other Projects, and a gap between numbers changes nothing.
     const gapped = ticket({
       id: 11,
@@ -342,14 +352,15 @@ describe('board cards', () => {
       completion: [],
       profile: 'glm-implementer',
     })
-    const { wrapper } = await mounted([gapped])
+    const { wrapper } = await mounted({ tickets: [gapped], extras: { 11: { spec_number: 2 } } })
 
-    expect(chip(wrapper, 'spec', 11).text()).toBe('SpecKAN-S2')
+    expect(chip(wrapper, 'spec', 11).text()).toBe('SpecCORE-S2')
+    expect(wrapper.text()).not.toContain('CORE-S6')
   })
 
-  it('omits the Spec chip when the record does not resolve', async () => {
-    // The Ticket names a Spec the board did not load; the card
-    // invents no identity from the id (KAN-T126-AC2).
+  it('omits the Spec chip when the projection resolved no number', async () => {
+    // The Ticket names a Spec the projection could not resolve; the
+    // card invents no identity from the id (KAN-T126-AC2).
     const orphan = ticket({
       id: 12,
       number: 16,
@@ -364,16 +375,17 @@ describe('board cards', () => {
       completion: [],
       profile: 'glm-implementer',
     })
-    const { wrapper } = await mounted([orphan])
+    const { wrapper } = await mounted({ tickets: [orphan], extras: { 12: { spec_number: null } } })
 
     expect(chip(wrapper, 'spec', 12).exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('CORE-S99')
   })
 
-  it('populates the Lane chip from the KAN-T32 Lane contract', async () => {
-    const { wrapper } = await mounted(boardTickets())
+  it('populates the Lane chip from the Lane the projection resolved', async () => {
+    const { wrapper } = await mounted()
 
-    // The chip comes from `lane.list`, the landed Lane application
-    // contract — not from any local board state.
+    // The chip comes from the projection's `lane_id` — not from any
+    // local board state.
     expect(chip(wrapper, 'lane', 8).text()).toBe('LaneLane 3')
     // A Ticket no Lane holds carries no Lane chip.
     expect(chip(wrapper, 'lane', 7).exists()).toBe(false)
@@ -381,7 +393,7 @@ describe('board cards', () => {
   })
 
   it('adds the bug chips: severity, frequency, origin, and profiles', async () => {
-    const { wrapper } = await mounted(boardTickets())
+    const { wrapper } = await mounted()
 
     expect(chip(wrapper, 'severity', 9).text()).toBe('SeverityHigh')
     expect(chip(wrapper, 'severity', 9).attributes('data-tone')).toBe('caution')
@@ -393,7 +405,7 @@ describe('board cards', () => {
   })
 
   it('adds the task chips: subtype, mode, schedule, and executor', async () => {
-    const { wrapper } = await mounted(boardTickets())
+    const { wrapper } = await mounted()
 
     expect(chip(wrapper, 'subtype', 7).text()).toBe('SubtypeOperational')
     expect(chip(wrapper, 'mode', 7).text()).toBe('ModeHuman')
@@ -405,7 +417,7 @@ describe('board cards', () => {
   })
 
   it('keeps one kind of chip off another kind of card', async () => {
-    const { wrapper } = await mounted(boardTickets())
+    const { wrapper } = await mounted()
 
     // The Task carries no severity; the Bug carries no Lane; the
     // Implementation carries no subtype — the vocabulary decides.

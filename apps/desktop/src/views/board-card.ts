@@ -85,8 +85,19 @@ export interface BoardRegisterRow {
   kindLabel: string
   statusLabel: string
   statusTone: StatusTone
-  /** The columns a register move can name for this row. */
+  /** The Project code the number wears. */
+  projectCode: string
+  /** The Spec's minted identity, or nothing. */
+  spec: string | null
+  priorityLabel: string
+  priorityTone: StatusTone
+  /** The progress the card's chip states. */
+  progress: string
+  /** The columns a register move can name for this row; empty for
+   * the agent-owned kinds. */
   moves: readonly { column: BoardColumnId; label: string }[]
+  /** Implementation and Bug Tickets move only by their agents. */
+  agentOwned: boolean
 }
 
 export interface BoardRegisterColumn {

@@ -37,6 +37,7 @@
     "deferral.superseded",
     "evidence.attached",
     "evidence.listed",
+    "criterion.binding.changed",
     "workspace.registered",
     "workspace.observed",
     "workspace.retired",

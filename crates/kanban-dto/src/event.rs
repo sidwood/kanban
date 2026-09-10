@@ -18,6 +18,7 @@ use crate::review::TicketReviewConfigRecord;
 use crate::run::RunRecord;
 use crate::spec::SpecRecord;
 use crate::ticket::{TicketGraphRecord, TicketRecord};
+use crate::tip_binding::CriterionBindingRecord;
 use crate::workspace::WorkspaceRecord;
 
 macro_rules! define_live_event_catalogue {
@@ -236,6 +237,10 @@ define_live_event_catalogue! {
     EvidenceListed @ "evidence.listed" => {
         payload: "EvidenceListSummary",
         description: "Evidence was listed for a Project.",
+    },
+    CriterionBindingChanged @ "criterion.binding.changed" => {
+        payload: "CriterionBindingRecord",
+        description: "A criterion's binding was written: evidence bound or reviewed, the criterion satisfied or completed, or an approval voided by a content change.",
     },
     WorkspaceRegistered @ "workspace.registered" => {
         payload: "WorkspaceRecord",
@@ -456,6 +461,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: EvidenceListSummary,
     },
+    CriterionBindingChanged {
+        sequence: u64,
+        payload: CriterionBindingRecord,
+    },
     WorkspaceRegistered {
         sequence: u64,
         payload: WorkspaceRecord,
@@ -549,6 +558,7 @@ impl LiveEvent {
             Self::DeferralSuperseded { .. } => LiveEventName::DeferralSuperseded,
             Self::EvidenceAttached { .. } => LiveEventName::EvidenceAttached,
             Self::EvidenceListed { .. } => LiveEventName::EvidenceListed,
+            Self::CriterionBindingChanged { .. } => LiveEventName::CriterionBindingChanged,
             Self::WorkspaceRegistered { .. } => LiveEventName::WorkspaceRegistered,
             Self::WorkspaceObserved { .. } => LiveEventName::WorkspaceObserved,
             Self::WorkspaceRetired { .. } => LiveEventName::WorkspaceRetired,
@@ -603,6 +613,7 @@ impl LiveEvent {
             | Self::DeferralSuperseded { sequence, .. }
             | Self::EvidenceAttached { sequence, .. }
             | Self::EvidenceListed { sequence, .. }
+            | Self::CriterionBindingChanged { sequence, .. }
             | Self::WorkspaceRegistered { sequence, .. }
             | Self::WorkspaceObserved { sequence, .. }
             | Self::WorkspaceRetired { sequence, .. }
@@ -805,6 +816,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::EvidenceListed => LiveEvent::EvidenceListed {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::CriterionBindingChanged => LiveEvent::CriterionBindingChanged {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },
@@ -1147,6 +1162,42 @@ mod tests {
                 payload: EvidenceListSummary {
                     project_id: 1,
                     count: 2,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn catalogued_criterion_events_decode_typed_payloads() {
+        let envelope = EventEnvelope {
+            sequence: 12,
+            event_type: "criterion.binding.changed".to_owned(),
+            payload: json!({
+                "ticket_id": 7,
+                "criterion_index": 1,
+                "kind": "acceptance",
+                "evidence_id": 4,
+                "tip": "a".repeat(40),
+                "review": "validated",
+                "satisfied": true,
+                "void": false,
+            }),
+        };
+
+        let event = decode_live_event(&envelope).expect("the envelope decodes");
+        assert_eq!(
+            event,
+            LiveEvent::CriterionBindingChanged {
+                sequence: 12,
+                payload: CriterionBindingRecord {
+                    ticket_id: 7,
+                    criterion_index: 1,
+                    kind: crate::tip_binding::CriterionKindDto::Acceptance,
+                    evidence_id: 4,
+                    tip: "a".repeat(40),
+                    review: crate::tip_binding::EvidenceReviewDto::Validated,
+                    satisfied: true,
+                    void: false,
                 },
             }
         );

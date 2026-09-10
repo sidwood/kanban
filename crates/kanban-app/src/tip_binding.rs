@@ -13,11 +13,12 @@ use kanban_dto::{
     ApiError, CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
     CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
     CriterionInvalidateRequest, CriterionKindDto, CriterionSatisfyRequest, EvidenceReviewDto,
-    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    LiveEventName, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::events::emit_catalogued;
 use crate::evidence::{EvidenceFilter, EvidenceStore};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::ticket::TicketStore;
@@ -133,6 +134,19 @@ fn encode(ticket_id: u64, binding: &CriterionBinding) -> Result<Value, ApiError>
         .map_err(|error| ApiError::internal(&error.to_string()))
 }
 
+/// Announce one binding this command wrote. The guard holds the
+/// announcement until the mutation commits, so a refused or
+/// rolled-back write says nothing; what lands carries the Ticket and
+/// the criterion, which is what a surface counting progress from these
+/// bindings needs to read them again (KAN-T137-AC7).
+fn announce(effects: &dyn CommandEffects, ticket_id: u64, binding: &CriterionBinding) {
+    emit_catalogued(
+        effects,
+        LiveEventName::CriterionBindingChanged,
+        &record_of(ticket_id, binding),
+    );
+}
+
 struct AttachCriterionEvidence(BindingContext);
 impl CommandHandler for AttachCriterionEvidence {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
@@ -142,7 +156,11 @@ impl CommandHandler for AttachCriterionEvidence {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         Ok(0)
     }
-    fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CriterionEvidenceAttachRequest = parse_payload(&command.payload)?;
         let ticket = self.0.owning(request.ticket_id)?;
         let kind = match ticket.kind() {
@@ -187,6 +205,7 @@ impl CommandHandler for AttachCriterionEvidence {
                 json!({"evidence_id": request.evidence_id}),
             ),
         )?;
+        announce(effects, request.ticket_id, &binding);
         encode(request.ticket_id, &binding)
     }
 }
@@ -200,7 +219,11 @@ impl CommandHandler for ReviewCriterionEvidence {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         Ok(0)
     }
-    fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CriterionEvidenceReviewRequest = parse_payload(&command.payload)?;
         let ticket = self.0.owning(request.ticket_id)?;
         let mut binding = self
@@ -219,6 +242,7 @@ impl CommandHandler for ReviewCriterionEvidence {
             &binding,
             envelope(&ticket, "reviewed", json!({"review": request.review})),
         )?;
+        announce(effects, request.ticket_id, &binding);
         encode(request.ticket_id, &binding)
     }
 }
@@ -232,7 +256,11 @@ impl CommandHandler for SatisfyCriterion {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         Ok(0)
     }
-    fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CriterionSatisfyRequest = parse_payload(&command.payload)?;
         let ticket = self.0.owning(request.ticket_id)?;
         let mut binding = self
@@ -246,6 +274,7 @@ impl CommandHandler for SatisfyCriterion {
             &binding,
             envelope(&ticket, "satisfied", json!({"tip": request.tip})),
         )?;
+        announce(effects, request.ticket_id, &binding);
         encode(request.ticket_id, &binding)
     }
 }
@@ -259,7 +288,11 @@ impl CommandHandler for CompleteCriterion {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         Ok(0)
     }
-    fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CriterionCompleteRequest = parse_payload(&command.payload)?;
         let ticket = self.0.owning(request.ticket_id)?;
         if ticket.kind() != TicketKind::Task {
@@ -276,6 +309,7 @@ impl CommandHandler for CompleteCriterion {
             &binding,
             envelope(&ticket, "completed", json!({})),
         )?;
+        announce(effects, request.ticket_id, &binding);
         encode(request.ticket_id, &binding)
     }
 }
@@ -289,7 +323,11 @@ impl CommandHandler for InvalidateCriteria {
     fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
         Ok(0)
     }
-    fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: CriterionInvalidateRequest = parse_payload(&command.payload)?;
         let ticket = self.0.owning(request.ticket_id)?;
         let mut listed = self.0.bindings.list(request.ticket_id)?;
@@ -304,6 +342,7 @@ impl CommandHandler for InvalidateCriteria {
                     json!({"observed_tip": request.observed_tip}),
                 ),
             )?;
+            announce(effects, request.ticket_id, binding);
         }
         serde_json::to_value(CriterionBindingListResponse {
             bindings: listed

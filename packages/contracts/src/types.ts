@@ -42,6 +42,7 @@ export type AttentionListResponse = {
 };
 export type AttentionState = 'blocker' | 'missing_result' | 'human_decision' | 'review_request' | 'failed_schedule' | 'invalid_approval' | 'disconnected_session' | 'stale_run';
 export type AttentionSubjectKind = 'ticket' | 'run' | 'spec' | 'project' | 'deferral' | 'graph' | 'schedule' | 'role';
+export type BoardColumn = 'draft' | 'backlog' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'current' | 'review' | 'staged' | 'approved' | 'landing' | 'done';
 export type BoardFilter = {
   attention?: AttentionState[];
   initiatives?: number[];
@@ -618,7 +619,7 @@ export type LaneWorkspaceReleaseRequest = {
   lane_id: number;
   mutation: MutationContext;
 };
-export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'ticket.review.configured' | 'ticket.spec.moved' | 'ticket.pinned' | 'ticket.graph.approved' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
+export type LiveEventName = 'initiative.created' | 'initiative.renamed' | 'initiative.archived' | 'project.registered' | 'project.archived' | 'plan.created' | 'plan.activated' | 'plan.replanned' | 'plan.completed' | 'plan.cancelled' | 'plan.archived' | 'spec.created' | 'spec.planned' | 'spec.version.approved' | 'spec.version.superseded' | 'spec.execution.moved' | 'ticket.created' | 'ticket.assigned' | 'ticket.state.changed' | 'ticket.edited' | 'ticket.review.configured' | 'ticket.spec.moved' | 'ticket.pinned' | 'ticket.graph.approved' | 'profile.defined' | 'profile.updated' | 'profile.retired' | 'comment.created' | 'comment.edited' | 'ruling.recorded' | 'ruling.superseded' | 'deferral.recorded' | 'deferral.superseded' | 'evidence.attached' | 'evidence.listed' | 'criterion.binding.changed' | 'workspace.registered' | 'workspace.observed' | 'workspace.retired' | 'lane.created' | 'lane.workspace.assigned' | 'lane.workspace.released' | 'lane.ticket.assigned' | 'lane.ticket.released' | 'clone.created' | 'clone.removed' | 'dispatch.requested' | 'dispatch.claimed' | 'run.acknowledged';
 export type LoginLaunchChangeStatus = 'change_requested';
 export type LoginLaunchQuery = Record<string, never>;
 export type LoginLaunchSetRequest = {
@@ -1177,6 +1178,10 @@ export type ScheduleRecord = {
 export type SchedulerHealth = {
   last_backup_success_at?: string | null;
 };
+export type ScopedCollapsedColumns = {
+  columns: BoardColumn[];
+  scope: ViewScope;
+};
 export type SearchGlobalHit = {
   id: number;
   identifier: string;
@@ -1214,6 +1219,17 @@ export type ServiceStopWarning = {
   warning_id: string;
 };
 export type ServiceStopWarningQuery = Record<string, never>;
+export type ShellPreferencesQuery = Record<string, never>;
+export type ShellPreferencesRecord = {
+  collapsed_columns: ScopedCollapsedColumns[];
+  rail_open: boolean;
+  version: number;
+};
+export type ShellPreferencesUpdateRequest = {
+  collapsed_columns?: ScopedCollapsedColumns[];
+  mutation: MutationContext;
+  rail_open: boolean;
+};
 export type SpecContent = {
   further_notes: string;
   implementation_decisions: string;
@@ -1670,6 +1686,14 @@ export type TicketTransitionRequest = {
   mutation: MutationContext;
   ticket_id: number;
   to: TicketState;
+};
+export type TicketTransitionsQuery = {
+  ticket_id: number;
+};
+export type TicketTransitionsResponse = {
+  state: TicketState;
+  targets: TicketState[];
+  ticket_id: number;
 };
 export type TicketUnparkRequest = {
   mutation: MutationContext;

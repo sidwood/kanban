@@ -82,6 +82,102 @@ impl BoardGroup {
     }
 }
 
+/// The columns a board can show (KAN-S5-US3): one per fixed group
+/// while its axis reads as a single column, and one per state the two
+/// multi-state groups open into. Collapsing a column to its rail
+/// addresses exactly these, so the vocabulary is closed here rather
+/// than invented by whichever surface renders the board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoardColumn {
+    /// The Draft group.
+    Draft,
+    /// The Backlog group, aggregated.
+    Backlog,
+    /// Backlog opened: work the operator set aside.
+    Parked,
+    /// Backlog opened: work a dependency or blocker holds.
+    Blocked,
+    /// Backlog opened: work waiting on a date.
+    Scheduled,
+    /// Backlog opened: work anything may claim.
+    Ready,
+    /// The Current group.
+    Current,
+    /// The Review group.
+    Review,
+    /// The Staged group, aggregated.
+    Staged,
+    /// Staged opened: work a review approved.
+    Approved,
+    /// Staged opened: work on its way to the default branch.
+    Landing,
+    /// The Done group.
+    Done,
+}
+
+impl BoardColumn {
+    /// Every column, in the order a fully opened board reads them:
+    /// each group in the fixed board order, and the states a group
+    /// opens into immediately after it.
+    pub const ALL: &'static [Self] = &[
+        Self::Draft,
+        Self::Backlog,
+        Self::Parked,
+        Self::Blocked,
+        Self::Scheduled,
+        Self::Ready,
+        Self::Current,
+        Self::Review,
+        Self::Staged,
+        Self::Approved,
+        Self::Landing,
+        Self::Done,
+    ];
+
+    /// The stored and wire name of this column.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Backlog => "backlog",
+            Self::Parked => "parked",
+            Self::Blocked => "blocked",
+            Self::Scheduled => "scheduled",
+            Self::Ready => "ready",
+            Self::Current => "current",
+            Self::Review => "review",
+            Self::Staged => "staged",
+            Self::Approved => "approved",
+            Self::Landing => "landing",
+            Self::Done => "done",
+        }
+    }
+
+    /// The column a stored row names, or `None` outside the
+    /// vocabulary.
+    pub fn parse(stored: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|column| column.wire_name() == stored)
+    }
+
+    /// The fixed group this column belongs to: a group column is its
+    /// own group, and a state column belongs to the group holding
+    /// that state.
+    pub fn group(self) -> BoardGroup {
+        match self {
+            Self::Draft => BoardGroup::Draft,
+            Self::Backlog | Self::Parked | Self::Blocked | Self::Scheduled | Self::Ready => {
+                BoardGroup::Backlog
+            }
+            Self::Current => BoardGroup::Current,
+            Self::Review => BoardGroup::Review,
+            Self::Staged | Self::Approved | Self::Landing => BoardGroup::Staged,
+            Self::Done => BoardGroup::Done,
+        }
+    }
+}
+
 /// The group a lifecycle state projects onto (DR-LC-04, DR-LC-05):
 /// every state reaches exactly one group except the terminal states,
 /// which reach none — cancelled and superseded never appear on the
@@ -98,8 +194,33 @@ pub fn board_group_for(state: TicketState) -> Option<BoardGroup> {
 
 #[cfg(test)]
 mod board_projection {
-    use crate::board::{BoardGroup, board_group_for};
+    use crate::board::{BoardColumn, BoardGroup, board_group_for};
     use crate::ticket::TicketState;
+
+    #[test]
+    fn every_column_belongs_to_one_fixed_group_and_names_itself_once() {
+        let mut names: Vec<&str> = BoardColumn::ALL
+            .iter()
+            .map(|column| column.wire_name())
+            .collect();
+        let listed = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), listed, "every column name is its own");
+        for column in BoardColumn::ALL {
+            assert_eq!(BoardColumn::parse(column.wire_name()), Some(*column));
+            assert!(BoardGroup::ALL.contains(&column.group()));
+        }
+        assert_eq!(BoardColumn::parse("prototype"), None);
+    }
+
+    #[test]
+    fn a_state_column_sits_in_the_group_that_holds_its_state() {
+        assert_eq!(BoardColumn::Ready.group(), BoardGroup::Backlog);
+        assert_eq!(BoardColumn::Parked.group(), BoardGroup::Backlog);
+        assert_eq!(BoardColumn::Landing.group(), BoardGroup::Staged);
+        assert_eq!(BoardColumn::Done.group(), BoardGroup::Done);
+    }
 
     #[test]
     fn every_active_state_places_into_its_group() {

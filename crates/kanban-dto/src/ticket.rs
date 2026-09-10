@@ -1059,6 +1059,32 @@ pub struct TicketReadinessQuery {
     pub ticket_id: u64,
 }
 
+/// Request payload for the `ticket.transitions` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketTransitionsQuery {
+    /// The Ticket whose legal moves are read.
+    pub ticket_id: u64,
+}
+
+/// Response payload for the `ticket.transitions` query: every state
+/// a human drag would move this Ticket to now (DR-LC-06 to DR-LC-08).
+/// The canonical lifecycle, the kind's ownership, and the Ticket's own
+/// gates are the core's to judge; a surface that offers moves offers
+/// exactly these and computes none of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TicketTransitionsResponse {
+    /// The Ticket the moves were read for.
+    pub ticket_id: u64,
+    /// The Ticket's own lifecycle state, for context.
+    pub state: TicketState,
+    /// The states a human drag may reach now, in lifecycle order;
+    /// empty for an agent-owned kind and for a Ticket that has landed
+    /// or ended.
+    pub targets: Vec<TicketState>,
+}
+
 /// What still holds one Ticket back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TicketReadinessBlocker {
@@ -1904,6 +1930,8 @@ mod tests {
             "TicketSeverity",
             "TicketState",
             "TicketTransitionRequest",
+            "TicketTransitionsQuery",
+            "TicketTransitionsResponse",
             "TicketUnparkRequest",
             "TicketVerificationStep",
         ] {

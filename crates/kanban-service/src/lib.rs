@@ -371,6 +371,11 @@ fn assemble_core_with_secret(
         Arc::new(SqliteSavedViewStore::new(&database)),
         projects.clone(),
     )?;
+    // How the operator keeps the shell arranged is per-operator data
+    // in this database, never browser state.
+    core.register_shell_preferences(Arc::new(kanban_storage::SqliteShellPreferenceStore::new(
+        &database,
+    )))?;
     core.register_dispatch(
         dispatch_store.clone(),
         ticket_store.clone(),

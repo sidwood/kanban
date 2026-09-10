@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "One column a board can show: a fixed group while its axis reads as a single column, or one of the states the two multi-state groups open into. Collapse addresses exactly these.",
+  "oneOf": [
+    {
+      "description": "The Draft group.",
+      "enum": [
+        "draft"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The Backlog group, aggregated.",
+      "enum": [
+        "backlog"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Backlog opened: work the operator set aside.",
+      "enum": [
+        "parked"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Backlog opened: work a dependency or blocker holds.",
+      "enum": [
+        "blocked"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Backlog opened: work waiting on a date.",
+      "enum": [
+        "scheduled"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Backlog opened: work anything may claim.",
+      "enum": [
+        "ready"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The Current group.",
+      "enum": [
+        "current"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The Review group.",
+      "enum": [
+        "review"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The Staged group, aggregated.",
+      "enum": [
+        "staged"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Staged opened: work a review approved.",
+      "enum": [
+        "approved"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "Staged opened: work on its way to the default branch.",
+      "enum": [
+        "landing"
+      ],
+      "type": "string"
+    },
+    {
+      "description": "The Done group.",
+      "enum": [
+        "done"
+      ],
+      "type": "string"
+    }
+  ],
+  "title": "BoardColumn"
+}

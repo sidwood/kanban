@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Request payload for the `shell.preferences` query.",
+  "title": "ShellPreferencesQuery",
+  "type": "object"
+}

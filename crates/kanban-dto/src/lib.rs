@@ -179,9 +179,14 @@ pub use run::{
     RunStatus,
 };
 pub mod service_lifecycle;
+pub mod shell;
 pub use schema::schema_definitions;
 pub use search::{SearchGlobalHit, SearchGlobalQuery, SearchGlobalResponse, SearchHitKind};
 pub use service_lifecycle::*;
+pub use shell::{
+    BoardColumn, ScopedCollapsedColumns, ShellPreferencesQuery, ShellPreferencesRecord,
+    ShellPreferencesUpdateRequest,
+};
 pub use spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -202,8 +207,8 @@ pub use ticket::{
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
     TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
-    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketUnparkRequest,
-    TicketVerificationStep,
+    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketTransitionsQuery,
+    TicketTransitionsResponse, TicketUnparkRequest, TicketVerificationStep,
 };
 pub use timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -509,6 +514,8 @@ mod tests {
                 "TicketSeverity",
                 "TicketState",
                 "TicketTransitionRequest",
+                "TicketTransitionsQuery",
+                "TicketTransitionsResponse",
                 "TicketUnparkRequest",
                 "TicketBlockerAddRequest",
                 "TicketBlockerRecord",
@@ -652,6 +659,11 @@ mod tests {
                 "SearchGlobalQuery",
                 "SearchGlobalResponse",
                 "SearchHitKind",
+                "BoardColumn",
+                "ScopedCollapsedColumns",
+                "ShellPreferencesQuery",
+                "ShellPreferencesRecord",
+                "ShellPreferencesUpdateRequest",
             ]
         );
     }

@@ -294,6 +294,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "resume delivery",
         sql: include_str!("../migrations/0048_resume_delivery.sql"),
     },
+    Migration {
+        version: 49,
+        name: "shell preferences",
+        sql: include_str!("../migrations/0049_shell_preferences.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1877,6 +1882,10 @@ mod tests {
                 PendingMigration {
                     version: 48,
                     name: "resume delivery"
+                },
+                PendingMigration {
+                    version: 49,
+                    name: "shell preferences"
                 },
             ]]
         );

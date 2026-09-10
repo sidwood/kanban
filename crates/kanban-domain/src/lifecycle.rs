@@ -217,6 +217,25 @@ pub fn human_may_drag(kind: TicketKind) -> bool {
     matches!(kind, TicketKind::Task)
 }
 
+/// Every state a human drag would move this Ticket to now (DR-LC-06
+/// to DR-LC-08): the canonical lifecycle's targets, less the ones
+/// this Ticket's own gates would refuse — an unqualified Bug's seal,
+/// and a readiness projection still holding it back. A kind whose
+/// transitions the agents own answers no drag, so it offers nothing,
+/// and a landed or terminal Ticket offers nothing either. A surface
+/// that offers moves offers exactly these.
+pub fn human_drag_targets(ticket: &Ticket, readiness: &Readiness) -> Vec<TicketState> {
+    if ticket.state().is_terminal() || !human_may_drag(ticket.kind()) {
+        return Vec::new();
+    }
+    let from = ticket.state();
+    legal_targets(from)
+        .iter()
+        .copied()
+        .filter(|to| gate(ticket, from, *to, readiness).is_ok())
+        .collect()
+}
+
 /// Move a Ticket to `to` as `actor` dragged it (DR-LC-06 to
 /// DR-LC-08): a human drag answers the ownership rule first, then
 /// every actor answers the same transition table and the same
@@ -354,7 +373,7 @@ fn gate(
 mod lifecycle_transitions {
     use super::{
         Actor, HumanCommand, LifecycleError, OverrideJustification, ReviewDecision, apply_command,
-        apply_drag, apply_override, human_may_drag, legal_targets,
+        apply_drag, apply_override, human_drag_targets, human_may_drag, legal_targets,
     };
     use crate::coverage::{AcceptanceCriterion, UserStoryRef, VerificationStep};
     use crate::dependency::{
@@ -560,6 +579,67 @@ mod lifecycle_transitions {
         assert_eq!(legal_targets(State::Done), &[]);
         assert_eq!(legal_targets(State::Cancelled), &[]);
         assert_eq!(legal_targets(State::Superseded), &[]);
+    }
+
+    #[test]
+    fn a_human_drag_offers_only_the_moves_the_ticket_would_accept_now() {
+        use TicketState as State;
+        // A Task in Ready may be parked or started; Review, Staged
+        // and Done are not its to reach, whatever a board offers.
+        assert_eq!(
+            human_drag_targets(&task(State::Ready), &clear()),
+            vec![State::Parked, State::Active]
+        );
+        assert_eq!(
+            human_drag_targets(&task(State::Draft), &clear()),
+            vec![
+                State::Parked,
+                State::Blocked,
+                State::Scheduled,
+                State::Ready
+            ]
+        );
+        assert_eq!(
+            human_drag_targets(&task(State::Active), &clear()),
+            vec![State::InReview]
+        );
+        // Done and the terminal states hold no outgoing move at all.
+        for state in [State::Done, State::Cancelled, State::Superseded] {
+            assert!(human_drag_targets(&task(state), &clear()).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_human_drag_offers_nothing_for_an_agent_owned_kind() {
+        for state in [
+            TicketState::Ready,
+            TicketState::Active,
+            TicketState::InReview,
+        ] {
+            assert!(human_drag_targets(&implementation(state), &clear()).is_empty());
+            assert!(human_drag_targets(&bug(true, state), &clear()).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_held_back_ticket_offers_no_move_its_readiness_gate_would_refuse() {
+        let blocked = readiness_of(&[waiting(2, TicketState::Active)], &[]);
+        // Starting work from Ready answers the readiness gate, so it
+        // is not offered while something holds the Ticket back;
+        // parking the Ticket answers no gate and still is.
+        assert_eq!(
+            human_drag_targets(&task(TicketState::Ready), &blocked),
+            vec![TicketState::Parked]
+        );
+        // Becoming ready answers the same gate.
+        assert_eq!(
+            human_drag_targets(&task(TicketState::Parked), &blocked),
+            Vec::<TicketState>::new()
+        );
+        assert_eq!(
+            human_drag_targets(&task(TicketState::Blocked), &blocked),
+            vec![TicketState::Parked]
+        );
     }
 
     #[test]

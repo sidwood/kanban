@@ -13695,6 +13695,154 @@
     }
   },
   {
+    "description": "Read every state a human drag may move one Ticket to now, judged by the canonical lifecycle, the kind's ownership, and the Ticket's own gates.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `ticket.transitions` query.",
+      "properties": {
+        "ticket_id": {
+          "description": "The Ticket whose legal moves are read.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ticket_id"
+      ],
+      "title": "TicketTransitionsQuery",
+      "type": "object"
+    },
+    "name": "ticket_transitions",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TicketState": {
+          "description": "The closed Ticket lifecycle vocabulary on the wire (DR-LC-01): the canonical states in order, with the terminal states after them. Every Ticket is created into draft; the transition rules are the lifecycle slice's.",
+          "oneOf": [
+            {
+              "description": "Newly created; not yet qualified or planned.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Deliberately set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Waiting on something outside the Ticket.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Qualified but unavailable until activation.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Free to execute when capacity allows.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Executing.",
+              "enum": [
+                "active"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Under review.",
+              "enum": [
+                "in_review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Review approved, waiting to land.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landing through the Seed Workspace.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Landed in full.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: will not execute.",
+              "enum": [
+                "cancelled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: replaced by a reassignment Ticket.",
+              "enum": [
+                "superseded"
+              ],
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "description": "Response payload for the `ticket.transitions` query: every state a human drag would move this Ticket to now (DR-LC-06 to DR-LC-08). The canonical lifecycle, the kind's ownership, and the Ticket's own gates are the core's to judge; a surface that offers moves offers exactly these and computes none of its own.",
+      "properties": {
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TicketState"
+            }
+          ],
+          "description": "The Ticket's own lifecycle state, for context."
+        },
+        "targets": {
+          "description": "The states a human drag may reach now, in lifecycle order; empty for an agent-owned kind and for a Ticket that has landed or ended.",
+          "items": {
+            "$ref": "#/definitions/TicketState"
+          },
+          "type": "array"
+        },
+        "ticket_id": {
+          "description": "The Ticket the moves were read for.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "targets",
+        "ticket_id"
+      ],
+      "title": "TicketTransitionsResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Assign a Ticket to an Execution Profile by name; an unknown name is rejected.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -38387,6 +38535,567 @@
         "view_id"
       ],
       "title": "ViewRemovedRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read how the operator keeps the shell arranged: the navigation rail's collapse and the board columns collapsed to their rail in each scope.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "description": "Request payload for the `shell.preferences` query.",
+      "title": "ShellPreferencesQuery",
+      "type": "object"
+    },
+    "name": "shell_preferences",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "BoardColumn": {
+          "description": "One column a board can show: a fixed group while its axis reads as a single column, or one of the states the two multi-state groups open into. Collapse addresses exactly these.",
+          "oneOf": [
+            {
+              "description": "The Draft group.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Backlog group, aggregated.",
+              "enum": [
+                "backlog"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work the operator set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work a dependency or blocker holds.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work waiting on a date.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work anything may claim.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Current group.",
+              "enum": [
+                "current"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Review group.",
+              "enum": [
+                "review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Staged group, aggregated.",
+              "enum": [
+                "staged"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work a review approved.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work on its way to the default branch.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Done group.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "ScopedCollapsedColumns": {
+          "additionalProperties": false,
+          "description": "The columns one scope keeps collapsed, in board order.",
+          "properties": {
+            "columns": {
+              "description": "The collapsed columns, named once each in board order.",
+              "items": {
+                "$ref": "#/definitions/BoardColumn"
+              },
+              "type": "array"
+            },
+            "scope": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ViewScope"
+                }
+              ],
+              "description": "The scope the collapse belongs to: the whole board, or one Project's."
+            }
+          },
+          "required": [
+            "columns",
+            "scope"
+          ],
+          "type": "object"
+        },
+        "ViewScope": {
+          "description": "The scope a view belongs to: the whole board, or one Project's work. The global scope holds exactly one default view; every Project holds exactly one of its own.",
+          "oneOf": [
+            {
+              "description": "Every Project's work on one surface.",
+              "enum": [
+                "global"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "description": "One Project's work, named by its numeric identity.",
+              "properties": {
+                "project": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "project"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "description": "The operator's shell arrangement, whole. A shell nobody has rearranged answers the everyday arrangement at version 0.",
+      "properties": {
+        "collapsed_columns": {
+          "description": "Every scope that keeps columns collapsed, and which.",
+          "items": {
+            "$ref": "#/definitions/ScopedCollapsedColumns"
+          },
+          "type": "array"
+        },
+        "rail_open": {
+          "description": "Whether the navigation rail stands open with its labels.",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "The record's optimistic version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "collapsed_columns",
+        "rail_open",
+        "version"
+      ],
+      "title": "ShellPreferencesRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Replace the operator's whole shell arrangement. Presentation only; no workflow record reads it.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "BoardColumn": {
+          "description": "One column a board can show: a fixed group while its axis reads as a single column, or one of the states the two multi-state groups open into. Collapse addresses exactly these.",
+          "oneOf": [
+            {
+              "description": "The Draft group.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Backlog group, aggregated.",
+              "enum": [
+                "backlog"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work the operator set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work a dependency or blocker holds.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work waiting on a date.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work anything may claim.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Current group.",
+              "enum": [
+                "current"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Review group.",
+              "enum": [
+                "review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Staged group, aggregated.",
+              "enum": [
+                "staged"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work a review approved.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work on its way to the default branch.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Done group.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        },
+        "ScopedCollapsedColumns": {
+          "additionalProperties": false,
+          "description": "The columns one scope keeps collapsed, in board order.",
+          "properties": {
+            "columns": {
+              "description": "The collapsed columns, named once each in board order.",
+              "items": {
+                "$ref": "#/definitions/BoardColumn"
+              },
+              "type": "array"
+            },
+            "scope": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ViewScope"
+                }
+              ],
+              "description": "The scope the collapse belongs to: the whole board, or one Project's."
+            }
+          },
+          "required": [
+            "columns",
+            "scope"
+          ],
+          "type": "object"
+        },
+        "ViewScope": {
+          "description": "The scope a view belongs to: the whole board, or one Project's work. The global scope holds exactly one default view; every Project holds exactly one of its own.",
+          "oneOf": [
+            {
+              "description": "Every Project's work on one surface.",
+              "enum": [
+                "global"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "description": "One Project's work, named by its numeric identity.",
+              "properties": {
+                "project": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "project"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "description": "Request payload for the `shell.preferences.update` command: the whole arrangement, replaced wholesale.",
+      "properties": {
+        "collapsed_columns": {
+          "default": [],
+          "description": "Every scope that keeps columns collapsed, and which. A scope left out keeps nothing collapsed.",
+          "items": {
+            "$ref": "#/definitions/ScopedCollapsedColumns"
+          },
+          "type": "array"
+        },
+        "mutation": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MutationContext"
+            }
+          ],
+          "description": "The optimistic version and idempotency key of the write."
+        },
+        "rail_open": {
+          "description": "Whether the navigation rail stands open with its labels.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mutation",
+        "rail_open"
+      ],
+      "title": "ShellPreferencesUpdateRequest",
+      "type": "object"
+    },
+    "name": "shell_preferences_update",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "BoardColumn": {
+          "description": "One column a board can show: a fixed group while its axis reads as a single column, or one of the states the two multi-state groups open into. Collapse addresses exactly these.",
+          "oneOf": [
+            {
+              "description": "The Draft group.",
+              "enum": [
+                "draft"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Backlog group, aggregated.",
+              "enum": [
+                "backlog"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work the operator set aside.",
+              "enum": [
+                "parked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work a dependency or blocker holds.",
+              "enum": [
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work waiting on a date.",
+              "enum": [
+                "scheduled"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Backlog opened: work anything may claim.",
+              "enum": [
+                "ready"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Current group.",
+              "enum": [
+                "current"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Review group.",
+              "enum": [
+                "review"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Staged group, aggregated.",
+              "enum": [
+                "staged"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work a review approved.",
+              "enum": [
+                "approved"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Staged opened: work on its way to the default branch.",
+              "enum": [
+                "landing"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The Done group.",
+              "enum": [
+                "done"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "ScopedCollapsedColumns": {
+          "additionalProperties": false,
+          "description": "The columns one scope keeps collapsed, in board order.",
+          "properties": {
+            "columns": {
+              "description": "The collapsed columns, named once each in board order.",
+              "items": {
+                "$ref": "#/definitions/BoardColumn"
+              },
+              "type": "array"
+            },
+            "scope": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ViewScope"
+                }
+              ],
+              "description": "The scope the collapse belongs to: the whole board, or one Project's."
+            }
+          },
+          "required": [
+            "columns",
+            "scope"
+          ],
+          "type": "object"
+        },
+        "ViewScope": {
+          "description": "The scope a view belongs to: the whole board, or one Project's work. The global scope holds exactly one default view; every Project holds exactly one of its own.",
+          "oneOf": [
+            {
+              "description": "Every Project's work on one surface.",
+              "enum": [
+                "global"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "description": "One Project's work, named by its numeric identity.",
+              "properties": {
+                "project": {
+                  "format": "uint64",
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "project"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "description": "The operator's shell arrangement, whole. A shell nobody has rearranged answers the everyday arrangement at version 0.",
+      "properties": {
+        "collapsed_columns": {
+          "description": "Every scope that keeps columns collapsed, and which.",
+          "items": {
+            "$ref": "#/definitions/ScopedCollapsedColumns"
+          },
+          "type": "array"
+        },
+        "rail_open": {
+          "description": "Whether the navigation rail stands open with its labels.",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "The record's optimistic version.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "collapsed_columns",
+        "rail_open",
+        "version"
+      ],
+      "title": "ShellPreferencesRecord",
       "type": "object"
     }
   },

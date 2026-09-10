@@ -2,7 +2,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import type { SavedViewRecord, ViewListResponse, ViewScope } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
-import { useGlobalBoardStore } from './global-board'
 import { ownedCopy, useSavedViewsStore } from './saved-views'
 
 // The generated defaults: one global view and one per Project, each
@@ -139,11 +138,10 @@ describe('saved views store', () => {
     const queue = reviewQueue(8)
     const { transport } = harness([...defaults(), queue])
     const views = useSavedViewsStore()
-    const board = useGlobalBoardStore()
     await views.refresh(transport)
 
     // The default opens on the whole board.
-    expect(board.filter).toEqual({
+    expect(views.workingFor('global').filter).toEqual({
       initiatives: [],
       projects: [],
       plans: [],
@@ -156,10 +154,10 @@ describe('saved views store', () => {
       attention: [],
     })
 
-    expect(views.switchGlobalView(queue.id)).toBe(true)
+    expect(views.switchView('global', queue.id)).toBe(true)
 
     // Every axis of the owned filter lands exactly, none merged away.
-    expect(board.filter).toEqual(queue.filter)
+    expect(views.workingFor('global').filter).toEqual(queue.filter)
     // The presentation properties ride the active view, whole.
     expect(ownedCopy(views.activeGlobalView as SavedViewRecord)).toEqual({
       filter: queue.filter,
@@ -172,8 +170,8 @@ describe('saved views store', () => {
 
     // Switching back restores the default's properties exactly — an
     // empty filter included, so no axis of the queue survives.
-    expect(views.switchGlobalView(1)).toBe(true)
-    expect(board.filter).toEqual({
+    expect(views.switchView('global', 1)).toBe(true)
+    expect(views.workingFor('global').filter).toEqual({
       initiatives: [],
       projects: [],
       plans: [],
@@ -198,41 +196,13 @@ describe('saved views store', () => {
     const views = useSavedViewsStore()
     await views.refresh(transport)
 
-    expect(views.switchGlobalView(99)).toBe(false)
+    expect(views.switchView('global', 99)).toBe(false)
     expect(views.activeGlobalView?.id).toBe(1)
 
     // A Project's scope holds only its own views.
-    expect(views.switchProjectView(1, 1)).toBe(false)
+    expect(views.switchView('project:1', 1)).toBe(false)
     expect(views.activeProjectView(1)?.id).toBe(2)
-    expect(views.switchProjectView(1, 2)).toBe(true)
-  })
-
-  it('writing one property through keeps the others it owns', async () => {
-    setActivePinia(createPinia())
-    const queue = reviewQueue(8)
-    const { transport, commands } = harness([...defaults(), queue])
-    const views = useSavedViewsStore()
-    await views.refresh(transport)
-    views.switchProjectView(1, 8 - 8) // project 1 keeps its default
-    expect(views.activeProjectView(1)?.id).toBe(2)
-
-    // Expand Backlog on the global queue: the whole owned set
-    // travels, the untouched properties keeping their values.
-    await views.reviseOwnedSet(transport, queue.id, { expanded_groups: ['backlog'] })
-
-    const update = commands.find((entry) => entry.name === 'view.update')
-    expect(update?.request).toMatchObject({
-      view_id: queue.id,
-      expanded_groups: ['backlog'],
-      hidden_columns: queue.hidden_columns,
-      mode: queue.mode,
-      done_placement: queue.done_placement,
-      sorting: queue.sorting,
-    })
-    expect(
-      (update?.request as { mutation: { optimistic_version: number } }).mutation
-        .optimistic_version,
-    ).toBe(queue.version)
+    expect(views.switchView('project:1', 2)).toBe(true)
   })
 
   it('saving the current perspective names it in its scope', async () => {

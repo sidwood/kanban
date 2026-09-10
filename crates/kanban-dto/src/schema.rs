@@ -117,6 +117,10 @@ use crate::run::{
     RunStatus,
 };
 use crate::search::{SearchGlobalHit, SearchGlobalQuery, SearchGlobalResponse, SearchHitKind};
+use crate::shell::{
+    BoardColumn, ScopedCollapsedColumns, ShellPreferencesQuery, ShellPreferencesRecord,
+    ShellPreferencesUpdateRequest,
+};
 use crate::spec::{
     SpecContent, SpecContentState, SpecContentUpdateRequest, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecExecutionState, SpecGetQuery, SpecGetResponse, SpecListQuery,
@@ -136,8 +140,8 @@ use crate::ticket::{
     TicketParkRequest, TicketPrioritiseRequest, TicketPriority, TicketReadinessBlocker,
     TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
     TicketReviewDecision, TicketReviewRequest, TicketScheduleRequest, TicketSeverity,
-    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketUnparkRequest,
-    TicketVerificationStep,
+    TicketSpecMoveRequest, TicketState, TicketTransitionRequest, TicketTransitionsQuery,
+    TicketTransitionsResponse, TicketUnparkRequest, TicketVerificationStep,
 };
 use crate::timeline::{
     TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineEventRecord, TimelineQuery,
@@ -592,6 +596,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "TicketTransitionRequest",
             schema_for!(TicketTransitionRequest),
         ),
+        (
+            "TicketTransitionsQuery",
+            schema_for!(TicketTransitionsQuery),
+        ),
+        (
+            "TicketTransitionsResponse",
+            schema_for!(TicketTransitionsResponse),
+        ),
         ("TicketUnparkRequest", schema_for!(TicketUnparkRequest)),
         (
             "TicketBlockerAddRequest",
@@ -900,5 +912,19 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("SearchGlobalQuery", schema_for!(SearchGlobalQuery)),
         ("SearchGlobalResponse", schema_for!(SearchGlobalResponse)),
         ("SearchHitKind", schema_for!(SearchHitKind)),
+        ("BoardColumn", schema_for!(BoardColumn)),
+        (
+            "ScopedCollapsedColumns",
+            schema_for!(ScopedCollapsedColumns),
+        ),
+        ("ShellPreferencesQuery", schema_for!(ShellPreferencesQuery)),
+        (
+            "ShellPreferencesRecord",
+            schema_for!(ShellPreferencesRecord),
+        ),
+        (
+            "ShellPreferencesUpdateRequest",
+            schema_for!(ShellPreferencesUpdateRequest),
+        ),
     ]
 }

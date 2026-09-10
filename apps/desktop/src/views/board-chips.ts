@@ -9,8 +9,7 @@
 // dispatch.
 import type {
   ChipKind,
-  LaneRecord,
-  SpecRecord,
+  CriterionBindingRecord,
   TicketPriority,
   TicketRecord,
   TicketReadinessBlocker,
@@ -35,23 +34,26 @@ export interface CardChip {
 }
 
 /** The facts beside the Ticket that feed its chips: the Project code
- * its numbers render with, the Spec its spec_id resolved to, the Lane
- * holding it, what the core's readiness projection says holds it
- * back, and the run executing it. */
+ * its numbers render with, the Spec number and Lane the projection
+ * resolved for it, what the core's readiness projection says holds
+ * it back, and the run executing it. */
 export interface ChipSources {
   projectCode: string
-  /** The Spec this Ticket's spec_id resolved to. Its minted number is
-   * the identity the chip wears; unresolvable, the chip stays off —
-   * the row id is never shown in its place. */
-  spec?: SpecRecord | null
+  /** The minted number of the Spec this Ticket names, as the board
+   * projection resolved it; null or absent leaves the chip off — the
+   * row id is never shown in its place. */
+  specNumber?: number | null
   /** The Lane holding this Ticket, when one does. */
-  lane?: LaneRecord | null
+  laneId?: number | null
   /** The core's readiness projection for this Ticket. */
   blockers?: readonly TicketReadinessBlocker[]
   /** Ordered reviewer names; empty until review dispatch lands. */
   reviewers?: readonly string[]
   /** The run's frozen effective profile; absent before dispatch. */
   execution?: { effective: string; fallback: boolean } | null
+  /** The criterion evidence bindings the core holds for this Ticket:
+   * what its progress is counted from. */
+  bindings?: readonly CriterionBindingRecord[]
 }
 
 const PRIORITY_TONES: Record<TicketPriority, StatusTone> = {
@@ -88,23 +90,77 @@ function dayOf(instant: string): string {
   return instant.slice(0, 10)
 }
 
+/** How far one Ticket's criteria have actually got, as the core's
+ * own bindings record it: satisfaction already answers the evidence
+ * review and the void a content change raised, so a binding the core
+ * reports satisfied is satisfied. One criterion counts once, whatever
+ * evidence it carries. */
+function criteriaProgress(
+  kind: CriterionBindingRecord['kind'],
+  total: number,
+  bindings: readonly CriterionBindingRecord[],
+): Readonly<{ satisfied: number; awaiting: number; voided: number; total: number }> {
+  const owned = bindings.filter(
+    (binding) => binding.kind === kind && binding.criterion_index < total,
+  )
+  const indices = (keep: (binding: CriterionBindingRecord) => boolean): number =>
+    new Set(owned.filter(keep).map((binding) => binding.criterion_index)).size
+  const satisfied = indices((binding) => binding.satisfied)
+  return {
+    satisfied,
+    awaiting: indices((binding) => !binding.satisfied && !binding.void),
+    voided: indices((binding) => binding.void),
+    total,
+  }
+}
+
+/** What the progress chip says beside its count: the same progress
+ * in words, and what is holding the rest back. */
+function progressDetail(
+  progress: ReturnType<typeof criteriaProgress>,
+  noun: string,
+): string {
+  const parts = [`${progress.satisfied} of ${progress.total} satisfied`]
+  if (progress.awaiting > 0) parts.push(`${progress.awaiting} awaiting approval`)
+  if (progress.voided > 0) parts.push(`${progress.voided} voided by a content change`)
+  return `${noun}: ${parts.join(', ')}`
+}
+
+function progressOf(
+  kind: CriterionBindingRecord['kind'],
+  noun: string,
+  total: number,
+  bindings: readonly CriterionBindingRecord[],
+): CardChip {
+  const progress = criteriaProgress(kind, total, bindings)
+  return {
+    kind: 'progress',
+    label: 'Progress',
+    value: `${progress.satisfied}/${progress.total} ${noun}`,
+    detail: progressDetail(progress, noun === 'criteria' ? 'Criteria' : 'Outcomes'),
+  }
+}
+
 /** The progress every card carries, resolved per kind: Acceptance
  * Criteria progress for Implementations and Bugs, completion progress
- * for Tasks (DR-BP-08). A Bug not yet qualified has no criteria to
- * count, so its progress names that state — off the card it would be
- * the only kind without one, and a count would invent criteria the
- * qualification has not defined. */
-function progressChip(ticket: TicketRecord): CardChip | null {
+ * for Tasks (DR-BP-08). Progress is what the core says is satisfied
+ * out of what the Ticket carries, never how many criteria exist. A
+ * Bug not yet qualified has no criteria to count, so its progress
+ * names that state — off the card it would be the only kind without
+ * one, and a count would invent criteria the qualification has not
+ * defined. */
+function progressChip(ticket: TicketRecord, sources: ChipSources): CardChip | null {
+  const bindings = sources.bindings ?? []
   if (ticket.kind === 'implementation') {
-    return chip('progress', 'Progress', `${ticket.criteria.length} criteria`)
+    return progressOf('acceptance', 'criteria', ticket.criteria.length, bindings)
   }
   if (ticket.kind === 'bug') {
     const criteria = ticket.bug?.qualification?.criteria
     return criteria
-      ? chip('progress', 'Progress', `${criteria.length} criteria`)
+      ? progressOf('acceptance', 'criteria', criteria.length, bindings)
       : chip('progress', 'Progress', 'Not yet qualified')
   }
-  return chip('progress', 'Progress', `${ticket.completion.length} outcomes`)
+  return progressOf('task', 'outcomes', ticket.completion.length, bindings)
 }
 
 /** The profile chip every executing kind wears — the Implementer of
@@ -201,16 +257,16 @@ const CHIP_BUILDERS: Record<
 > = {
   priority: (ticket) =>
     chip('priority', 'Priority', sentence(ticket.priority), PRIORITY_TONES[ticket.priority]),
-  progress: (ticket) => progressChip(ticket),
+  progress: (ticket, sources) => progressChip(ticket, sources),
   spec: (_ticket, sources) =>
-    sources.spec
-      ? chip('spec', 'Spec', `${sources.projectCode}-S${sources.spec.number}`)
+    sources.specNumber != null
+      ? chip('spec', 'Spec', `${sources.projectCode}-S${sources.specNumber}`)
       : null,
   implementer: (ticket, sources) =>
     executionProfileChip('implementer', 'Implementer', ticket, sources),
   reviewers: (_ticket, sources) => reviewersChip(sources.reviewers ?? []),
   lane: (_ticket, sources) =>
-    sources.lane ? chip('lane', 'Lane', `Lane ${sources.lane.id}`) : null,
+    sources.laneId != null ? chip('lane', 'Lane', `Lane ${sources.laneId}`) : null,
   blockers: (_ticket, sources) => blockersChip(sources.blockers ?? []),
   severity: (ticket) => {
     const severity = ticket.bug?.qualification?.severity
@@ -250,23 +306,6 @@ export function chipsFor(
     if (built !== null) chips.push(built)
   }
   return chips
-}
-
-/** The Lane holding a Ticket, when one does. */
-export function laneFor(
-  lanes: readonly LaneRecord[],
-  ticketId: number,
-): LaneRecord | undefined {
-  return lanes.find((lane) => lane.ticket_id === ticketId)
-}
-
-/** The Spec a Ticket names, when the board holds it: the record whose
- * minted number is the identity the card renders. */
-export function specFor(
-  specs: readonly SpecRecord[],
-  specId: number | null | undefined,
-): SpecRecord | undefined {
-  return specs.find((spec) => spec.id === specId)
 }
 
 /**

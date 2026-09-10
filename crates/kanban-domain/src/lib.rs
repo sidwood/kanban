@@ -1,6 +1,7 @@
 //! Pure domain rules: entities, closed state vocabularies, transition
 //! rules, and invariants. No I/O, no async, no DTO types, no clock.
 
+pub mod admission;
 pub mod board;
 pub mod board_query;
 pub mod capability;
@@ -41,6 +42,9 @@ pub mod timeline_time;
 pub mod tip_binding;
 pub mod workspace;
 
+pub use admission::{
+    AdmissionInputs, AdmissionRefusal, AdmissionRole, admit_execution, executable_states,
+};
 pub use board::{BoardGroup, board_group_for};
 pub use board_query::{AttentionState, BoardCard, BoardFilter, admits, compare_cards, sort_cards};
 pub use capability::{

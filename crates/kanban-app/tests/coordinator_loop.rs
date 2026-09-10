@@ -7,33 +7,33 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use kanban_app::catalog::exposed_operations;
 use kanban_app::dispatch::Core;
 use kanban_app::events::NoopEventSink;
 use kanban_app::workspace::{WorkspaceGitObserver, WorkspaceGitSnapshot};
 use kanban_app::{
-    CoordinatorHerdr, CoordinatorLoop, CoordinatorLoopRequest, CoordinatorWake,
-    CoordinatorWakeRequest, FleetCloneTool,
+    CloneGuardStore, CoordinatorHerdr, CoordinatorLoop, CoordinatorLoopRequest, CoordinatorWake,
+    CoordinatorWakeRequest, ExecutionAdmission, FleetCloneTool, TimelineEnvelope,
 };
-use kanban_domain::{HerdrSession, WorkspaceCheckout};
-use kanban_dto::ApiError;
+use kanban_domain::{HerdrSession, ProjectId, WorkspaceCheckout, WorkspaceId};
+use kanban_dto::{ApiError, CloneRecoveryRecord};
 use kanban_herdr::fixture::{ScriptedSession, SessionScript};
 use kanban_herdr::{HerdrRequest, PromptRequest, SessionClient, SessionMapping};
 use kanban_service::LocalCloneTargetProbe;
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCapacityStore, SqliteCloneGuardStore,
-    SqliteDependencyStore, SqliteDispatchStore, SqliteIdempotencyStore, SqliteLaneStore,
-    SqliteProfileStore, SqliteProjectStore, SqliteRunStore, SqliteTicketStore,
-    SqliteWorkspaceStore,
+    SqliteDependencyStore, SqliteDispatchStore, SqliteGraphProposalStore, SqliteIdempotencyStore,
+    SqliteLaneStore, SqliteProfileStore, SqliteProjectStore, SqliteRunStore, SqliteScheduleStore,
+    SqliteTicketStore, SqliteWorkspaceStore,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 mod common;
 
-use common::{insert_ticket, mutation, seed_project_profile};
+use common::{insert_ready_ticket, insert_ticket, mutation, seed_project_profile};
 
 #[derive(Default)]
 struct RecordingWake {
@@ -123,6 +123,56 @@ struct CoordinatorHarness {
     core: Arc<Core>,
     loop_: CoordinatorLoop,
     database_path: std::path::PathBuf,
+    step_hook: StepHook,
+}
+
+/// One callback armed against the Coordinator step whose timeline row
+/// releases it.
+type StepHook = Arc<Mutex<Option<(&'static str, Box<dyn FnOnce() + Send>)>>>;
+
+/// A timeline store that releases the armed callback the instant the
+/// named Coordinator step's row lands, so a test can drive a
+/// competing operator command into that exact point of the loop.
+struct HookedCloneGuard {
+    inner: SqliteCloneGuardStore,
+    hook: StepHook,
+}
+
+impl CloneGuardStore for HookedCloneGuard {
+    fn append(&self, envelope: TimelineEnvelope) -> Result<(), ApiError> {
+        let step = envelope.detail()["step"].as_str().map(str::to_owned);
+        self.inner.append(envelope)?;
+        let armed = {
+            let mut hook = self.hook.lock().expect("the hook lock is sound");
+            if hook
+                .as_ref()
+                .is_some_and(|(at, _)| step.as_deref() == Some(*at))
+            {
+                hook.take().map(|(_, callback)| callback)
+            } else {
+                None
+            }
+        };
+        if let Some(callback) = armed {
+            callback();
+        }
+        Ok(())
+    }
+
+    fn prepare_creation(&self, intent: &CloneRecoveryRecord) -> Result<(), ApiError> {
+        self.inner.prepare_creation(intent)
+    }
+
+    fn complete_creation(&self, key: &str, workspace_id: WorkspaceId) -> Result<(), ApiError> {
+        self.inner.complete_creation(key, workspace_id)
+    }
+
+    fn pending_creations(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<CloneRecoveryRecord>, ApiError> {
+        self.inner.pending_creations(project_id)
+    }
 }
 
 fn coordinator_harness(
@@ -154,7 +204,12 @@ fn coordinator_harness_with_clone_tool(
     let requests = Arc::new(SqliteDispatchStore::new(&database));
     let runs = Arc::new(SqliteRunStore::new(&database));
     let workspaces = Arc::new(SqliteWorkspaceStore::new(&database));
-    let clone_guard = Arc::new(SqliteCloneGuardStore::new(&database));
+    let proposals = Arc::new(SqliteGraphProposalStore::new(&database));
+    let step_hook: StepHook = Arc::new(Mutex::new(None));
+    let clone_guard = Arc::new(HookedCloneGuard {
+        inner: SqliteCloneGuardStore::new(&database),
+        hook: step_hook.clone(),
+    });
     let wake = Arc::new(RecordingWake::default());
     let idempotency = Arc::new(SqliteIdempotencyStore::new(
         &database,
@@ -186,7 +241,8 @@ fn coordinator_harness_with_clone_tool(
         projects.clone(),
         capacity,
         lanes.clone(),
-        dependencies,
+        dependencies.clone(),
+        proposals.clone(),
         wake,
     )
     .expect("the dispatch operations register");
@@ -196,10 +252,26 @@ fn coordinator_harness_with_clone_tool(
         tickets.clone(),
         profiles,
         projects.clone(),
+        dependencies.clone(),
+        proposals.clone(),
     )
     .expect("the run operations register");
+    core.register_lifecycle(
+        tickets.clone(),
+        dependencies.clone(),
+        projects.clone(),
+        Arc::new(SqliteScheduleStore::new(&database)),
+        None,
+    )
+    .expect("the lifecycle operations register");
 
     let core = Arc::new(core);
+    let admission = Arc::new(ExecutionAdmission::new(
+        tickets.clone(),
+        projects,
+        dependencies,
+        proposals,
+    ));
     let loop_ = CoordinatorLoop::new(
         core.clone(),
         clone_guard,
@@ -208,6 +280,7 @@ fn coordinator_harness_with_clone_tool(
         lanes,
         workspaces,
         requests,
+        admission,
     );
 
     CoordinatorHarness {
@@ -215,6 +288,7 @@ fn coordinator_harness_with_clone_tool(
         core,
         loop_,
         database_path,
+        step_hook,
     }
 }
 
@@ -273,7 +347,7 @@ fn coordinator_loop_refuses_a_fresh_clone_on_the_wrong_branch() {
         ..RecordingHerdr::default()
     });
     let harness = coordinator_harness(git, herdr.clone());
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     let request = enqueue(&harness.core, ticket, "wrong-branch");
     assert!(
         harness
@@ -295,7 +369,7 @@ fn coordinator_loop_claims_prepares_launches_and_acknowledges() {
         ..RecordingHerdr::default()
     });
     let harness = coordinator_harness(git, herdr.clone());
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     let request_id = enqueue(&harness.core, ticket, "loop-create");
 
     let outcome = harness
@@ -395,7 +469,7 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
         ..RecordingHerdr::default()
     });
     let harness = coordinator_harness_with_clone_tool(git, herdr, clone_tool.clone());
-    let ticket = insert_ticket(&harness.database_path, 2, "high");
+    let ticket = insert_ready_ticket(&harness.database_path, 2, "high");
     let request_id = enqueue(&harness.core, ticket, "reuse-create");
 
     let workspace = harness
@@ -470,7 +544,7 @@ fn coordinator_loop_refuses_reuse_when_observed_branch_mismatches_execution_bran
         ..RecordingHerdr::default()
     });
     let harness = coordinator_harness(git, herdr);
-    let ticket = insert_ticket(&harness.database_path, 5, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 5, "normal");
     let request_id = enqueue(&harness.core, ticket, "branch-mismatch-create");
 
     let workspace = harness
@@ -543,7 +617,7 @@ fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
         ..RecordingHerdr::default()
     });
     let harness = coordinator_harness(git, herdr);
-    let ticket = insert_ticket(&harness.database_path, 4, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 4, "normal");
     let request_id = enqueue(&harness.core, ticket, "seed-skip-create");
 
     let seed = harness
@@ -633,7 +707,7 @@ fn coordinator_loop_launches_through_the_herdr_session_socket() {
         )]),
     });
     let harness = coordinator_harness(git, Arc::new(SessionHerdr { client }));
-    let ticket = insert_ticket(&harness.database_path, 3, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 3, "normal");
     let request_id = enqueue(&harness.core, ticket, "herdr-create");
     let workspace = harness
         .core
@@ -681,4 +755,357 @@ fn coordinator_loop_launches_through_the_herdr_session_socket() {
             .any(|request| matches!(request, HerdrRequest::Wake { .. })),
         "the loop does not wake itself"
     );
+}
+
+/// KAN-T138-AC2: the loop answers the shared admission invariant
+/// before it seats a Lane, so a refusal leaves the Lane table and
+/// the timeline exactly as they stood and launches nothing.
+#[test]
+fn coordinator_loop_refuses_an_ineligible_ticket_before_seating_a_lane() {
+    let git = clean_git();
+    let herdr = Arc::new(RecordingHerdr {
+        accepted: true,
+        ..RecordingHerdr::default()
+    });
+    let harness = coordinator_harness(git, herdr.clone());
+    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let request_id = enqueue(&harness.core, ticket, "ineligible-create");
+
+    let error = harness
+        .loop_
+        .execute(CoordinatorLoopRequest {
+            project_id: 1,
+            dispatch_request_id: request_id,
+        })
+        .expect_err("a draft Task is not executable");
+
+    assert_eq!(
+        error.message,
+        "a draft Ticket is not executable; an implementer run admits a ready or active Ticket"
+    );
+    assert!(
+        herdr
+            .launches
+            .lock()
+            .expect("the launch log is sound")
+            .is_empty(),
+        "nothing launches"
+    );
+    let conn = rusqlite::Connection::open(&harness.database_path).expect("the database reopens");
+    let lanes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM lanes", [], |row| row.get(0))
+        .expect("the count serves");
+    assert_eq!(lanes, 0, "no Lane is seated for a refused Ticket");
+    assert!(
+        coordinator_steps(&harness.database_path).is_empty(),
+        "no Coordinator step is recorded"
+    );
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM dispatch_requests WHERE id = ?1",
+            rusqlite::params![request_id as i64],
+            |row| row.get(0),
+        )
+        .expect("the request row serves");
+    assert_eq!(status, "queued");
+}
+
+/// Every authoritative record one Coordinator pass may write: the
+/// Lanes, the Dispatch Requests, the Capabilities, and the Runs a
+/// refusal must leave exactly as it found them (KAN-T138-AC2).
+#[derive(Debug, PartialEq, Eq)]
+struct Reserved {
+    lanes: Vec<(i64, Option<i64>, Option<i64>, i64)>,
+    requests: Vec<(i64, String, i64)>,
+    capabilities: Vec<(i64, String)>,
+    runs: i64,
+}
+
+fn reserved(database_path: &std::path::Path) -> Reserved {
+    let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
+    let lanes = conn
+        .prepare("SELECT id, ticket_id, workspace_id, version FROM lanes ORDER BY id")
+        .expect("the statement prepares")
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .expect("the rows serve")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("the rows decode");
+    let requests = conn
+        .prepare("SELECT id, status, version FROM dispatch_requests ORDER BY id")
+        .expect("the statement prepares")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("the rows serve")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("the rows decode");
+    let capabilities = conn
+        .prepare("SELECT id, status FROM capabilities ORDER BY id")
+        .expect("the statement prepares")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("the rows serve")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("the rows decode");
+    let runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
+        .expect("the count serves");
+    Reserved {
+        lanes,
+        requests,
+        capabilities,
+        runs,
+    }
+}
+
+/// The timeline as the ordered labels these races read: `step:<name>`
+/// for a Coordinator step and `ticket:<action>` for a Ticket
+/// transition.
+fn timeline_labels(database_path: &std::path::Path) -> Vec<String> {
+    let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
+    conn.prepare(
+        "SELECT entity_kind, json_extract(detail, '$.action'), json_extract(detail, '$.step')
+         FROM timeline_events ORDER BY id",
+    )
+    .expect("the statement prepares")
+    .query_map([], |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })
+    .expect("the rows serve")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("the rows decode")
+    .into_iter()
+    .filter_map(
+        |(entity, action, step)| match (entity.as_deref(), action.as_deref(), step) {
+            (_, Some("coordinator_step"), Some(step)) => Some(format!("step:{step}")),
+            (Some("ticket"), Some(action), _) => Some(format!("ticket:{action}")),
+            _ => None,
+        },
+    )
+    .collect()
+}
+
+fn ticket_version(database_path: &std::path::Path, ticket: u64) -> u64 {
+    rusqlite::Connection::open(database_path)
+        .expect("the database reopens")
+        .query_row(
+            "SELECT version FROM tickets WHERE id = ?1",
+            rusqlite::params![ticket as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("the Ticket row serves")
+        .try_into()
+        .expect("the version fits")
+}
+
+/// Drive `ticket.cancel` through the production command from a second
+/// thread, reporting when the command is about to enter the core. The
+/// competing operator command is a real one on its own thread, so the
+/// loop must order itself against it rather than against a re-entrant
+/// call on its own.
+fn competing_cancel(
+    core: Arc<Core>,
+    ticket: u64,
+    version: u64,
+) -> (
+    mpsc::Receiver<()>,
+    std::thread::JoinHandle<Result<Value, ApiError>>,
+) {
+    let (started, waiting) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        started.send(()).expect("the test still listens");
+        core.command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(version, "competing-cancel"),
+                "ticket_id": ticket,
+            }),
+        )
+    });
+    (waiting, handle)
+}
+
+/// A Coordinator pass that meets a competing cancellation has exactly
+/// two legal outcomes and nothing between them: it was refused and
+/// left every authoritative record as it stood, launching nothing, or
+/// it was admitted and launched once for a Run it went on to
+/// acknowledge (KAN-T138-AC1, KAN-T138-AC2).
+fn assert_no_orphaned_reservation(
+    outcome: &Result<kanban_app::CoordinatorLoopOutcome, ApiError>,
+    before: &Reserved,
+    database_path: &std::path::Path,
+    launches: &[kanban_app::ImplementerLaunch],
+) {
+    let after = reserved(database_path);
+    match outcome {
+        Err(_) => {
+            assert!(
+                launches.is_empty(),
+                "a refused pass launches nothing: {launches:?}"
+            );
+            assert_eq!(
+                &after, before,
+                "a refused pass leaves the Lane, the request, the Capability, and capacity as they stood"
+            );
+        }
+        Ok(admitted) => {
+            assert_eq!(
+                launches.len(),
+                1,
+                "an admitted pass launches exactly once: {launches:?}"
+            );
+            assert_eq!(launches[0].lane_id, admitted.lane_id);
+            assert_eq!(after.runs, before.runs + 1, "the launch has its Run");
+            let labels = timeline_labels(database_path);
+            let launched = labels
+                .iter()
+                .position(|label| label == "step:launch")
+                .expect("the admitted pass recorded its launch");
+            let cancelled = labels
+                .iter()
+                .position(|label| label == "ticket:cancelled")
+                .expect("the competing cancellation landed");
+            assert!(
+                cancelled > launched,
+                "an admitted launch is authorised before the cancellation commits: {labels:?}"
+            );
+        }
+    }
+}
+
+/// KAN-T138-AC1, KAN-T138-AC2 (reviewer race probe, cancellation
+/// before the claim): a cancellation competing with the Coordinator
+/// between its admission and its claim never leaves a Lane seated for
+/// work that never ran.
+#[test]
+fn coordinator_loop_never_seats_a_lane_for_work_a_competing_cancellation_refuses() {
+    assert_cancellation_races_the_loop("seat_lane");
+}
+
+/// KAN-T138-AC1, KAN-T138-AC2 (reviewer race probe, cancellation
+/// after Workspace preparation): a cancellation competing with the
+/// Coordinator after its Workspace assignment never produces a launch
+/// the loop then refuses to acknowledge.
+#[test]
+fn coordinator_loop_never_launches_work_a_competing_cancellation_refuses() {
+    assert_cancellation_races_the_loop("assign_workspace");
+}
+
+fn assert_cancellation_races_the_loop(step: &'static str) {
+    let herdr = Arc::new(RecordingHerdr {
+        accepted: true,
+        ..RecordingHerdr::default()
+    });
+    let harness = coordinator_harness(clean_git(), herdr.clone());
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
+    let request = enqueue(&harness.core, ticket, "race-enqueue");
+    let before = reserved(&harness.database_path);
+    let version = ticket_version(&harness.database_path, ticket);
+
+    let canceller = Arc::new(Mutex::new(None));
+    let slot = canceller.clone();
+    let core = harness.core.clone();
+    *harness.step_hook.lock().expect("the hook lock is sound") = Some((
+        step,
+        Box::new(move || {
+            let (started, handle) = competing_cancel(core, ticket, version);
+            started
+                .recv()
+                .expect("the competing cancel reaches the core");
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            *slot.lock().expect("the canceller slot is sound") = Some(handle);
+        }),
+    ));
+
+    let outcome = harness.loop_.execute(CoordinatorLoopRequest {
+        project_id: 1,
+        dispatch_request_id: request,
+    });
+    let handle = canceller
+        .lock()
+        .expect("the canceller slot is sound")
+        .take()
+        .expect("the hook fired at its step");
+    handle
+        .join()
+        .expect("the competing thread finishes")
+        .expect("the operator's own cancellation commits");
+
+    // The reservation admits no interleaving, so the operator's
+    // cancellation lands after the pass rather than inside it.
+    assert!(
+        outcome.is_ok(),
+        "{step}: the pass ran to completion beside its competing cancellation: {outcome:?}"
+    );
+    let launches = herdr.launches.lock().expect("the launch log is sound");
+    assert_no_orphaned_reservation(&outcome, &before, &harness.database_path, &launches);
+}
+
+/// KAN-T138-AC1, KAN-T138-AC2: work made ineligible before the
+/// Coordinator wakes is refused with nothing reserved — no Lane, no
+/// claim, no Capability, no capacity, and no launch — whichever fact
+/// made it ineligible.
+#[test]
+fn coordinator_loop_reserves_nothing_for_work_made_ineligible_before_the_pass() {
+    for invalidation in ["cancelled", "archived", "blocked"] {
+        let herdr = Arc::new(RecordingHerdr {
+            accepted: true,
+            ..RecordingHerdr::default()
+        });
+        let harness = coordinator_harness(clean_git(), herdr.clone());
+        let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
+        let request = enqueue(&harness.core, ticket, "ineligible-enqueue");
+        match invalidation {
+            "cancelled" => {
+                harness
+                    .core
+                    .command(
+                        "ticket.cancel",
+                        &json!({
+                            "mutation": mutation(
+                                ticket_version(&harness.database_path, ticket),
+                                "ineligible-cancel",
+                            ),
+                            "ticket_id": ticket,
+                        }),
+                    )
+                    .expect("the operator's cancellation commits");
+            }
+            "archived" => {
+                rusqlite::Connection::open(&harness.database_path)
+                    .expect("the database reopens")
+                    .execute("UPDATE projects SET archived = 1 WHERE id = 1", [])
+                    .expect("the fixture Project archives");
+            }
+            _ => common::insert_blocker(&harness.database_path, ticket),
+        }
+        let before = reserved(&harness.database_path);
+
+        let outcome = harness.loop_.execute(CoordinatorLoopRequest {
+            project_id: 1,
+            dispatch_request_id: request,
+        });
+
+        assert!(outcome.is_err(), "{invalidation}: the pass is refused");
+        assert_eq!(
+            reserved(&harness.database_path),
+            before,
+            "{invalidation}: the refused pass reserves nothing"
+        );
+        assert!(
+            herdr
+                .launches
+                .lock()
+                .expect("the launch log is sound")
+                .is_empty(),
+            "{invalidation}: nothing launches"
+        );
+        assert!(
+            coordinator_steps(&harness.database_path).is_empty(),
+            "{invalidation}: no Coordinator step is recorded"
+        );
+    }
 }

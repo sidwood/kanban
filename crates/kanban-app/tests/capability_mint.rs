@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{assign_lane, harness, insert_ticket, mutation};
+use common::{assign_lane, harness, insert_ready_ticket, mutation};
 use kanban_app::{
     AGENT_MCP_OPERATIONS, CapabilityStore as _, DispatchStore as _, agent_surface,
     exposed_operations,
@@ -54,7 +54,7 @@ fn expected_operations() -> Vec<Value> {
 #[test]
 fn capability_mint_binds_the_won_claim_to_ticket_and_lane() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, ticket);
     let id = enqueue(&harness.core, ticket, "key-create");
 
@@ -100,7 +100,7 @@ fn capability_mint_binds_the_won_claim_to_ticket_and_lane() {
 #[test]
 fn capability_mint_refuses_a_ticket_in_no_lane() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     let id = enqueue(&harness.core, ticket, "key-create");
 
     let error = harness
@@ -138,9 +138,9 @@ fn capability_mint_refuses_a_ticket_in_no_lane() {
 fn capability_mint_leaves_capacity_losers_without_a_capability() {
     let harness = harness();
     common::constrain_harness(&harness.database_path, 1);
-    let winner = insert_ticket(&harness.database_path, 1, "normal");
+    let winner = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, winner);
-    let loser = insert_ticket(&harness.database_path, 2, "normal");
+    let loser = insert_ready_ticket(&harness.database_path, 2, "normal");
     assign_lane(&harness.database_path, loser);
 
     let first = claim(
@@ -204,7 +204,7 @@ fn capability_mint_grants_only_operations_under_operator_authority() {
 /// Mint one capability for a fresh seated Ticket and answer the
 /// claim response that minted it.
 fn minted_claim(harness: &common::DispatchHarness, number: u64) -> Value {
-    let ticket = insert_ticket(&harness.database_path, number, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, number, "normal");
     assign_lane(&harness.database_path, ticket);
     claim(
         &harness.core,

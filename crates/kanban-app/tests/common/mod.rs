@@ -15,8 +15,8 @@ use kanban_domain::{ExecutionProfile, ProfileDefinition, ProfileName, ProjectReg
 use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_storage::{
     AllowAllMigrations, Database, RetentionPolicy, SqliteCapacityStore, SqliteDependencyStore,
-    SqliteDispatchStore, SqliteIdempotencyStore, SqliteLaneStore, SqliteProfileStore,
-    SqliteProjectStore, SqliteRunStore, SqliteTicketStore,
+    SqliteDispatchStore, SqliteGraphProposalStore, SqliteIdempotencyStore, SqliteLaneStore,
+    SqliteProfileStore, SqliteProjectStore, SqliteRunStore, SqliteTicketStore,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -54,18 +54,32 @@ pub fn harness() -> DispatchHarness {
         .migrate(&AllowAllMigrations)
         .expect("the migrations apply");
     seed_project_profile(&database);
+    let (core, wake) = core_over(&database);
+    DispatchHarness {
+        _dir: dir,
+        core,
+        wake,
+        database_path,
+        database,
+    }
+}
 
-    let projects = Arc::new(SqliteProjectStore::new(&database));
-    let tickets = Arc::new(SqliteTicketStore::new(&database));
-    let profiles = Arc::new(SqliteProfileStore::new(&database));
-    let capacity = Arc::new(SqliteCapacityStore::new(&database));
-    let lanes = Arc::new(SqliteLaneStore::new(&database));
-    let dependencies = Arc::new(SqliteDependencyStore::new(&database));
-    let requests = Arc::new(SqliteDispatchStore::new(&database));
-    let runs = Arc::new(SqliteRunStore::new(&database));
+/// The dispatch, review, run, and submission operations wired over
+/// one already-migrated database, so a test can reopen the same
+/// file and serve it through a fresh Core.
+pub fn core_over(database: &Database) -> (Core, Arc<RecordingWake>) {
+    let projects = Arc::new(SqliteProjectStore::new(database));
+    let tickets = Arc::new(SqliteTicketStore::new(database));
+    let profiles = Arc::new(SqliteProfileStore::new(database));
+    let capacity = Arc::new(SqliteCapacityStore::new(database));
+    let lanes = Arc::new(SqliteLaneStore::new(database));
+    let dependencies = Arc::new(SqliteDependencyStore::new(database));
+    let requests = Arc::new(SqliteDispatchStore::new(database));
+    let runs = Arc::new(SqliteRunStore::new(database));
+    let proposals = Arc::new(SqliteGraphProposalStore::new(database));
     let wake = Arc::new(RecordingWake::default());
     let idempotency = Arc::new(SqliteIdempotencyStore::new(
-        &database,
+        database,
         RetentionPolicy::keep_most_recent(NonZeroU32::new(100).expect("the bound is not zero")),
     ));
     let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
@@ -76,55 +90,58 @@ pub fn harness() -> DispatchHarness {
         projects.clone(),
         capacity,
         lanes,
-        dependencies,
+        dependencies.clone(),
+        proposals.clone(),
         wake.clone(),
     )
     .expect("the dispatch operations register");
     core.register_deferrals(
-        Arc::new(kanban_storage::SqliteDeferralStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteDeferralStore::new(database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(database)),
     )
     .unwrap();
     core.register_deferral_promotions(
-        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
-        Arc::new(kanban_storage::SqliteDeferralStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
-        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
-        Arc::new(kanban_storage::SqliteSpecStore::new(&database)),
+        Arc::new(kanban_storage::SqliteFindingStore::new(database)),
+        Arc::new(kanban_storage::SqliteDeferralStore::new(database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(database)),
+        Arc::new(kanban_storage::SqliteSpecStore::new(database)),
     )
     .unwrap();
     core.register_findings(
-        Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteFindingStore::new(database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(database)),
     )
     .unwrap();
     core.register_reviews(
-        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
-        Arc::new(kanban_storage::SqliteReviewConfigStore::new(&database)),
-        Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProfileStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
-        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
-        Arc::new(kanban_storage::SqliteRunStore::new(&database)),
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(database)),
+        Arc::new(kanban_storage::SqliteReviewConfigStore::new(database)),
+        Arc::new(kanban_storage::SqliteTicketStore::new(database)),
+        Arc::new(kanban_storage::SqliteProfileStore::new(database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(database)),
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(database)),
+        Arc::new(kanban_storage::SqliteRunStore::new(database)),
         wake.clone(),
     )
     .unwrap();
-    core.register_runs(runs, requests, tickets, profiles, projects)
-        .expect("the run operations register");
+    core.register_runs(
+        runs,
+        requests,
+        tickets,
+        profiles,
+        projects,
+        dependencies,
+        proposals,
+    )
+    .expect("the run operations register");
     core.register_submissions(
-        Arc::new(kanban_storage::SqliteSubmissionStore::new(&database)),
-        Arc::new(kanban_storage::SqliteCapabilityStore::new(&database)),
-        Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
+        Arc::new(kanban_storage::SqliteSubmissionStore::new(database)),
+        Arc::new(kanban_storage::SqliteCapabilityStore::new(database)),
+        Arc::new(kanban_storage::SqliteProjectStore::new(database)),
         wake.clone(),
     )
     .expect("the submission operations register");
-    DispatchHarness {
-        _dir: dir,
-        core,
-        wake,
-        database_path,
-        database,
-    }
+    (core, wake)
 }
 
 pub fn seed_project_profile(database: &Database) {
@@ -175,26 +192,58 @@ pub fn seed_project_profile(database: &Database) {
         .expect("the profile lands");
 }
 
+/// Seat a fixture Task Ticket as quick capture leaves it: draft, so
+/// the lifecycle fixtures can move it themselves. Every fixture Task
+/// is agent-mode: human-mode work is Sid's own and acquires no
+/// implementer authority (KAN-T138).
 pub fn insert_ticket(database_path: &std::path::Path, number: u64, priority: &str) -> u64 {
     insert_ticket_with_profile(database_path, number, priority, "standard")
 }
 
-/// Seat a fixture Ticket under a named profile; the seeded catalogue
-/// carries `standard` and tests define any other entry they name.
+/// Seat a draft fixture Ticket under a named profile; the seeded
+/// catalogue carries `standard` and tests define any other entry they
+/// name.
 pub fn insert_ticket_with_profile(
     database_path: &std::path::Path,
     number: u64,
     priority: &str,
     profile: &str,
 ) -> u64 {
+    insert_ticket_row(database_path, number, priority, profile, "draft")
+}
+
+/// Seat a fixture Task Ticket already ready: the executable state
+/// ordinary admission requires before a claim or an acknowledgement
+/// admits a run (KAN-T138).
+pub fn insert_ready_ticket(database_path: &std::path::Path, number: u64, priority: &str) -> u64 {
+    insert_ready_ticket_with_profile(database_path, number, priority, "standard")
+}
+
+/// Seat a ready fixture Ticket under a named profile.
+pub fn insert_ready_ticket_with_profile(
+    database_path: &std::path::Path,
+    number: u64,
+    priority: &str,
+    profile: &str,
+) -> u64 {
+    insert_ticket_row(database_path, number, priority, profile, "ready")
+}
+
+fn insert_ticket_row(
+    database_path: &std::path::Path,
+    number: u64,
+    priority: &str,
+    profile: &str,
+    state: &str,
+) -> u64 {
     let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
     conn.execute(
         "INSERT INTO tickets
              (project_id, number, kind, priority, state, title, criteria,
               subtype, mode, completion, profile, version)
-         VALUES (1, ?1, 'task', ?2, 'draft', 'One slice', '[]',
-                 'operational', 'human', '[\"done\"]', ?3, 1)",
-        rusqlite::params![number as i64, priority, profile],
+         VALUES (1, ?1, 'task', ?2, ?4, 'One slice', '[]',
+                 'operational', 'agent', '[\"done\"]', ?3, 1)",
+        rusqlite::params![number as i64, priority, profile, state],
     )
     .expect("the fixture Ticket lands");
     conn.last_insert_rowid()

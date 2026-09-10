@@ -1,6 +1,6 @@
 //! Reusable review fixtures through the real SQLite Core.
 
-use super::{assign_lane, harness, insert_ticket, mutation};
+use super::{assign_lane, harness, insert_ready_ticket, mutation};
 use kanban_app::{ProfileStore, ReviewConfigStore, TimelineEnvelope};
 use kanban_domain::{
     ExecutionProfile, ProfileDefinition, ProfileName, ProjectId, ReviewConfiguration, ReviewSlot,
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 pub fn prepared() -> (super::DispatchHarness, u64, Value) {
     let h = harness();
-    let ticket = insert_ticket(&h.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&h.database_path, 1, "normal");
     assign_lane(&h.database_path, ticket);
     rusqlite::Connection::open(&h.database_path).unwrap().execute(
         "UPDATE projects SET ticket_counter=(SELECT COALESCE(MAX(number),0) FROM tickets WHERE project_id=projects.id) WHERE id=1",[],

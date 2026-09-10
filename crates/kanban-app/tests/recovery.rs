@@ -14,7 +14,7 @@ fn running() -> (common::DispatchHarness, u64, u64) {
             h.wake.clone(),
         )
         .unwrap();
-    let ticket = common::insert_ticket(&h.database_path, 1, "normal");
+    let ticket = common::insert_ready_ticket(&h.database_path, 1, "normal");
     common::assign_lane(&h.database_path, ticket);
     let requested = h
         .core
@@ -842,7 +842,7 @@ fn recovery_is_not_needed_to_release_a_run_with_an_authoritative_result() {
         "a result is not displayed as a still-executing attempt"
     );
     common::constrain_global(&h.database_path, "max_active_per_harness", 1);
-    let ticket = common::insert_ticket(&h.database_path, 2, "normal");
+    let ticket = common::insert_ready_ticket(&h.database_path, 2, "normal");
     common::assign_lane(&h.database_path, ticket);
     let queued = h
         .core

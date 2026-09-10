@@ -23,7 +23,7 @@ struct Fixture {
 impl Fixture {
     fn new(enabled: bool) -> Self {
         let h = common::harness();
-        let ticket = common::insert_ticket(&h.database_path, 1, "normal");
+        let ticket = common::insert_ready_ticket(&h.database_path, 1, "normal");
         common::assign_lane(&h.database_path, ticket);
         let request = h
             .core

@@ -97,6 +97,7 @@ impl Core {
         name: &str,
         payload: &Value,
     ) -> Result<Value, ApiError> {
+        let _gate = self.lock_command_gate();
         self.command_authorized(Some(capability), name, payload)
     }
     pub fn agent_query(
@@ -106,10 +107,7 @@ impl Core {
         payload: &Value,
     ) -> Result<Value, ApiError> {
         self.exclude_secret(name, payload)?;
-        let _gate = self
-            .command_gate
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _gate = self.lock_command_gate();
         self.agent_authority
             .as_ref()
             .ok_or_else(|| ApiError::invalid_request("agent access is unavailable"))?
@@ -210,9 +208,39 @@ impl Core {
     /// refuses the retry closed, preserving the row for audit, and
     /// never replays or guesses on its behalf (KAN-T135).
     pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
+        let _gate = self.lock_command_gate();
         self.command_authorized(None, name, payload)
     }
 
+    /// Serve a multi-command sequence and the external effect it
+    /// authorises as one reservation, holding the mutation gate for
+    /// the whole of it (KAN-T138-AC2). Every command passes through
+    /// this gate, so a competing one — an operator's cancellation,
+    /// say — commits wholly before the reservation reads the state
+    /// that authorises it, or wholly after the effect it authorised.
+    /// Nothing lands in between, which is what lets an irreversible
+    /// dispatch side effect answer current eligibility at all. The
+    /// sequence must not call `command` on this core: the gate it
+    /// holds is not reentrant.
+    pub fn reserve<T>(
+        &self,
+        sequence: impl FnOnce(&Reservation<'_>) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        let _gate = self.lock_command_gate();
+        sequence(&Reservation { core: self })
+    }
+
+    /// The gate spans check-and-record so one idempotency key can
+    /// never apply twice. A poisoned gate means a handler panicked
+    /// mid-command; the state it left is the aggregate's problem,
+    /// not a reason to stop serving every other command.
+    fn lock_command_gate(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.command_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Serve one command with the mutation gate already held.
     fn command_authorized(
         &self,
         capability: Option<kanban_domain::CapabilityId>,
@@ -226,15 +254,6 @@ impl Core {
             .ok_or_else(|| ApiError::not_found(&format!("operation `{name}`")))?;
         let command = handler.parse(payload)?;
         let fingerprint = command.fingerprint(name);
-
-        // The gate spans check-and-record so one idempotency key can
-        // never apply twice. A poisoned gate means a handler panicked
-        // mid-command; the state it left is the aggregate's problem,
-        // not a reason to stop serving every other command.
-        let _gate = self
-            .command_gate
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if let Some(capability) = capability {
             self.agent_authority
@@ -322,6 +341,20 @@ impl Core {
             }
             Some(_) => Ok(()),
         }
+    }
+}
+
+/// The open mutation gate one reservation holds: the commands its
+/// sequence issues serve exactly as `Core::command` does, minus the
+/// gate acquisition the reservation already made.
+pub struct Reservation<'a> {
+    core: &'a Core,
+}
+
+impl Reservation<'_> {
+    /// Serve a named command inside the reservation.
+    pub fn command(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
+        self.core.command_authorized(None, name, payload)
     }
 }
 

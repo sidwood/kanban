@@ -25,6 +25,8 @@ pub mod timeline;
 pub use startup::{ServiceOptions, launch_detached, run_with_args, run_with_runtime};
 
 #[cfg(test)]
+mod admission_tests;
+#[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod login_launch_tests;
@@ -341,7 +343,7 @@ fn assemble_core_with_secret(
         ))),
     )?;
     core.register_graph_proposals(
-        graph_proposal_store,
+        graph_proposal_store.clone(),
         dependency_store.clone(),
         ticket_store.clone(),
         spec_store.clone(),
@@ -377,6 +379,7 @@ fn assemble_core_with_secret(
         capacity_store,
         lane_store.clone(),
         dependency_store.clone(),
+        graph_proposal_store.clone(),
         herdr.clone(),
     )?;
     core.register_submissions(
@@ -412,6 +415,8 @@ fn assemble_core_with_secret(
         ticket_store.clone(),
         profile_store.clone(),
         project_store.clone(),
+        dependency_store.clone(),
+        graph_proposal_store,
     )?;
     core.register_review_config(
         Arc::new(SqliteReviewConfigStore::new(&database)),

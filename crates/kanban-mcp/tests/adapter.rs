@@ -50,7 +50,7 @@ async fn adapter_secret_exclusion_covers_protocol_envelopes() {
 
 async fn exercise_service(exercise: ServiceExercise) {
     let h = common::harness();
-    let own = common::insert_ticket(&h.database_path, 1, "normal");
+    let own = common::insert_ready_ticket(&h.database_path, 1, "normal");
     common::assign_lane(&h.database_path, own);
     let request = h
         .core
@@ -301,7 +301,7 @@ async fn exercise(mode: AdapterExercise) {
             Arc::new(SqliteRunStore::new(&h.database)),
         ),
     ));
-    let own = common::insert_ticket(&h.database_path, 1, "normal");
+    let own = common::insert_ready_ticket(&h.database_path, 1, "normal");
     let other = common::insert_ticket(&h.database_path, 2, "normal");
     common::assign_lane(&h.database_path, own);
     let request = h

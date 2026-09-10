@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 mod common;
 
 use common::{
-    assign_lane, cap_project, constrain_global, harness, insert_ticket, insert_ticket_with_profile,
-    mutation,
+    assign_lane, cap_project, constrain_global, harness, insert_ready_ticket,
+    insert_ready_ticket_with_profile, mutation,
 };
 
 /// Queue one Dispatch Request and answer its identity.
@@ -46,9 +46,9 @@ fn claim(core: &Core, dispatch_request_id: u64, key: &str) -> Value {
 /// slot and a second identical candidate is refused naming the one
 /// active run the first became.
 fn exact_limit_pair(harness: &common::DispatchHarness, refusal: &str) {
-    let assigned = insert_ticket(&harness.database_path, 1, "normal");
+    let assigned = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, assigned);
-    let identical = insert_ticket(&harness.database_path, 2, "normal");
+    let identical = insert_ready_ticket(&harness.database_path, 2, "normal");
 
     let first = claim(
         &harness.core,
@@ -125,11 +125,11 @@ fn an_assigned_candidate_at_the_exact_project_limit_claims_per_dimension() {
 fn an_assigned_candidate_at_the_exact_lane_cap_claims() {
     let harness = harness();
     cap_project(&harness.database_path, "max_active_lanes", 2);
-    let assigned = insert_ticket(&harness.database_path, 1, "normal");
+    let assigned = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, assigned);
     // A second Lane holds another Ticket, so the Project's two active
     // Lanes already meet the cap of 2.
-    let other = insert_ticket(&harness.database_path, 2, "normal");
+    let other = insert_ready_ticket(&harness.database_path, 2, "normal");
     assign_lane(&harness.database_path, other);
 
     let claimed = claim(
@@ -149,9 +149,9 @@ fn an_assigned_candidate_at_the_exact_lane_cap_claims() {
 fn a_second_identical_candidate_is_refused_without_double_count_slack() {
     let harness = harness();
     cap_project(&harness.database_path, "max_active_lanes", 1);
-    let assigned = insert_ticket(&harness.database_path, 1, "normal");
+    let assigned = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, assigned);
-    let identical = insert_ticket(&harness.database_path, 2, "normal");
+    let identical = insert_ready_ticket(&harness.database_path, 2, "normal");
 
     let first = claim(
         &harness.core,
@@ -192,9 +192,9 @@ fn the_model_dimension_keys_verbatim_on_the_profile_model_string() {
         rusqlite::params![],
     )
     .expect("the fixture profile lands");
-    let opus = insert_ticket(&harness.database_path, 1, "normal");
+    let opus = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, opus);
-    let nightly = insert_ticket_with_profile(&harness.database_path, 2, "normal", "nightly");
+    let nightly = insert_ready_ticket_with_profile(&harness.database_path, 2, "normal", "nightly");
     assign_lane(&harness.database_path, nightly);
 
     let first = claim(

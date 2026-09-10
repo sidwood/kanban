@@ -2,21 +2,29 @@
 //! Dispatch Request, select capacity, prepare a Workspace under the
 //! reuse rules, launch the implementer through Herdr, and acknowledge
 //! the run. Kanban wakes the Coordinator; only the Coordinator loop
-//! prompts an implementation agent (DR-HB-16).
+//! prompts an implementation agent (DR-HB-16). The whole pass is one
+//! reservation: the loop holds the core's mutation gate from the
+//! execution admission invariant through the launch that invariant
+//! authorises, so a competing command — an operator's cancellation,
+//! an archive, a new blocker — commits wholly before that admission
+//! or wholly after the run is acknowledged. A refused pass therefore
+//! reserves nothing: no Lane, no claim, no Capability, no capacity,
+//! and no launch (KAN-T138).
 
 use std::sync::Arc;
 
 use kanban_domain::{
-    DispatchRequestId, DispatchStatus, LaneId, ProjectId, TicketId, WorkspaceId, execution_branch,
-    execution_workspace_path, select_reusable_workspace,
+    AdmissionRole, DispatchRequestId, DispatchStatus, LaneId, ProjectId, TicketId, WorkspaceId,
+    execution_branch, execution_workspace_path, select_reusable_workspace,
 };
 use kanban_dto::{
     ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceRecord,
 };
 use serde_json::{Value, json};
 
+use crate::admission::ExecutionAdmission;
 use crate::clone::CloneGuardStore;
-use crate::dispatch::Core;
+use crate::dispatch::{Core, Reservation};
 use crate::dispatch_request::DispatchStore;
 use crate::lane::LaneStore;
 use crate::mutation::parse_payload;
@@ -124,10 +132,13 @@ pub struct CoordinatorLoop {
     lanes: Arc<dyn LaneStore>,
     workspaces: Arc<dyn WorkspaceStore>,
     dispatch: Arc<dyn DispatchStore>,
+    admission: Arc<ExecutionAdmission>,
 }
 
 impl CoordinatorLoop {
-    /// Wire the loop over the stores and ports the serving core shares.
+    /// Wire the loop over the stores and ports the serving core
+    /// shares, answering admission through the same `admission` the
+    /// claim and the acknowledgement answer.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         core: Arc<Core>,
@@ -137,6 +148,7 @@ impl CoordinatorLoop {
         lanes: Arc<dyn LaneStore>,
         workspaces: Arc<dyn WorkspaceStore>,
         dispatch: Arc<dyn DispatchStore>,
+        admission: Arc<ExecutionAdmission>,
     ) -> Self {
         Self {
             core,
@@ -146,12 +158,26 @@ impl CoordinatorLoop {
             lanes,
             workspaces,
             dispatch,
+            admission,
         }
     }
 
     /// Execute one wake-prepare-launch-acknowledge pass for `request`.
     pub fn execute(
         &self,
+        request: CoordinatorLoopRequest,
+    ) -> Result<CoordinatorLoopOutcome, ApiError> {
+        self.core
+            .reserve(|reservation| self.reserved_pass(reservation, request))
+    }
+
+    /// The pass itself, with the mutation gate held. Admission is the
+    /// first thing it reads and the launch the last thing it
+    /// authorises, and no competing command lands between them, so
+    /// the Ticket that is eligible here is the Ticket that executes.
+    fn reserved_pass(
+        &self,
+        reservation: &Reservation<'_>,
         request: CoordinatorLoopRequest,
     ) -> Result<CoordinatorLoopOutcome, ApiError> {
         let project = ProjectId::new(request.project_id);
@@ -167,9 +193,15 @@ impl CoordinatorLoop {
                 "the Coordinator loop expects a queued Dispatch Request",
             ));
         }
+        let role = if self.dispatch.reviewer(queued.id())?.is_some() {
+            AdmissionRole::Reviewer
+        } else {
+            AdmissionRole::Implementer
+        };
+        self.admission.admit(queued.ticket(), role)?;
 
         let ticket_id = queued.ticket().value();
-        let lane_id = self.seat_lane(project, queued.ticket(), dispatch_request_id)?;
+        let lane_id = self.seat_lane(reservation, project, queued.ticket(), dispatch_request_id)?;
         self.record_step(
             project,
             CoordinatorStep::SeatLane,
@@ -182,7 +214,7 @@ impl CoordinatorLoop {
             }),
         )?;
 
-        let claimed = self.claim_dispatch(dispatch_request_id, queued.version())?;
+        let claimed = self.claim_dispatch(reservation, dispatch_request_id, queued.version())?;
         if !claimed.claimed {
             return Err(ApiError::invalid_request(
                 "the Dispatch Request stayed queued for capacity",
@@ -204,8 +236,10 @@ impl CoordinatorLoop {
             .tickets
             .find(queued.ticket())?
             .ok_or_else(|| ApiError::not_found(&format!("ticket {ticket_id}")))?;
-        let workspace_id = self.prepare_workspace(project, &ticket, dispatch_request_id)?;
+        let workspace_id =
+            self.prepare_workspace(reservation, project, &ticket, dispatch_request_id)?;
         self.assign_workspace(
+            reservation,
             project,
             lane_id,
             workspace_id,
@@ -239,7 +273,7 @@ impl CoordinatorLoop {
             }),
         )?;
 
-        let run = self.acknowledge_run(dispatch_request_id, claimed.version)?;
+        let run = self.acknowledge_run(reservation, dispatch_request_id, claimed.version)?;
         let run_id = run["id"].as_u64().expect("the run has an identity");
         self.record_step(
             project,
@@ -264,6 +298,7 @@ impl CoordinatorLoop {
 
     fn seat_lane(
         &self,
+        reservation: &Reservation<'_>,
         project: ProjectId,
         ticket: TicketId,
         dispatch_request_id: u64,
@@ -272,7 +307,7 @@ impl CoordinatorLoop {
         if let Some(lane) = lanes.iter().find(|lane| lane.ticket_id() == Some(ticket)) {
             return Ok(lane.id());
         }
-        let created = self.core.command(
+        let created = reservation.command(
             "lane.create",
             &json!({
                 "mutation": {
@@ -283,7 +318,7 @@ impl CoordinatorLoop {
             }),
         )?;
         let lane_id = LaneId::new(created["id"].as_u64().expect("the Lane has an identity"));
-        self.core.command(
+        reservation.command(
             "lane.ticket.assign",
             &json!({
                 "mutation": {
@@ -299,10 +334,11 @@ impl CoordinatorLoop {
 
     fn claim_dispatch(
         &self,
+        reservation: &Reservation<'_>,
         dispatch_request_id: u64,
         version: u64,
     ) -> Result<ClaimedDispatch, ApiError> {
-        let response = self.core.command(
+        let response = reservation.command(
             "dispatch.claim",
             &json!({
                 "mutation": {
@@ -322,6 +358,7 @@ impl CoordinatorLoop {
 
     fn prepare_workspace(
         &self,
+        reservation: &Reservation<'_>,
         project: ProjectId,
         ticket: &kanban_domain::Ticket,
         dispatch_request_id: u64,
@@ -336,7 +373,7 @@ impl CoordinatorLoop {
                 .iter()
                 .find(|workspace| workspace.id() == selected)
                 .expect("the selected Workspace is listed");
-            let observed = self.core.command(
+            let observed = reservation.command(
                 "workspace.observe",
                 &json!({
                     "mutation": {
@@ -374,7 +411,7 @@ impl CoordinatorLoop {
             return Ok(selected);
         }
 
-        let created = self.core.command(
+        let created = reservation.command(
             "clone.create",
             &json!({
                 "mutation": {
@@ -392,7 +429,7 @@ impl CoordinatorLoop {
             .workspaces
             .find(workspace_id)?
             .ok_or_else(|| ApiError::internal("the created clone has no adopted Workspace"))?;
-        let observed = self.core.command(
+        let observed = reservation.command(
             "workspace.observe",
             &json!({
                 "mutation": {
@@ -432,6 +469,7 @@ impl CoordinatorLoop {
 
     fn assign_workspace(
         &self,
+        reservation: &Reservation<'_>,
         project: ProjectId,
         lane: LaneId,
         workspace: WorkspaceId,
@@ -442,7 +480,7 @@ impl CoordinatorLoop {
             .lanes
             .find(lane)?
             .ok_or_else(|| ApiError::not_found(&format!("lane {}", lane.value())))?;
-        self.core.command(
+        reservation.command(
             "lane.workspace.assign",
             &json!({
                 "mutation": {
@@ -467,8 +505,13 @@ impl CoordinatorLoop {
         Ok(())
     }
 
-    fn acknowledge_run(&self, dispatch_request_id: u64, version: u64) -> Result<Value, ApiError> {
-        self.core.command(
+    fn acknowledge_run(
+        &self,
+        reservation: &Reservation<'_>,
+        dispatch_request_id: u64,
+        version: u64,
+    ) -> Result<Value, ApiError> {
+        reservation.command(
             "run.acknowledge",
             &json!({
                 "mutation": {

@@ -4,15 +4,17 @@
 //! is KAN-T37's; the claim writes the decision inside one storage
 //! transaction so concurrent claimants see exactly one winner.
 //! Creating a request wakes the Project Coordinator after the write
-//! commits and never launches an implementation agent.
+//! commits and never launches an implementation agent. Every claim
+//! answers the execution admission invariant on the Ticket's current
+//! state before capacity is read (KAN-T138).
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kanban_domain::{
-    ActiveRun, CapabilityId, CapacityInputs, ClaimDecision, DispatchRequest, DispatchRequestId,
-    DispatchStatus, GlobalCapacity, Lane, Priority, Project, ProjectCapacity, ProjectId, Ticket,
-    TicketId, compute_readiness, decide_claim, evaluate_capacity, refuse_duplicate_open,
+    ActiveRun, AdmissionRole, CapabilityId, CapacityInputs, ClaimDecision, DispatchRequest,
+    DispatchRequestId, DispatchStatus, GlobalCapacity, Lane, Priority, Project, ProjectCapacity,
+    ProjectId, Ticket, TicketId, decide_claim, evaluate_capacity, refuse_duplicate_open,
     sort_queue,
 };
 use kanban_dto::{
@@ -23,11 +25,13 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
+use crate::admission::ExecutionAdmission;
 use crate::capability::{CapabilityMintDraft, encode_capability};
 use crate::capacity::CapacityStore;
 use crate::dependency::DependencyStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
+use crate::graph_proposal::GraphProposalStore;
 use crate::lane::LaneStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::profile::ProfileStore;
@@ -167,7 +171,7 @@ struct DispatchContext {
     projects: Arc<dyn ProjectStore>,
     capacity: Arc<dyn CapacityStore>,
     lanes: Arc<dyn LaneStore>,
-    dependencies: Arc<dyn DependencyStore>,
+    admission: Arc<ExecutionAdmission>,
     wake: Arc<dyn CoordinatorWake>,
 }
 
@@ -180,7 +184,7 @@ impl Clone for DispatchContext {
             projects: self.projects.clone(),
             capacity: self.capacity.clone(),
             lanes: self.lanes.clone(),
-            dependencies: self.dependencies.clone(),
+            admission: self.admission.clone(),
             wake: self.wake.clone(),
         }
     }
@@ -198,8 +202,15 @@ impl Core {
         capacity: Arc<dyn CapacityStore>,
         lanes: Arc<dyn LaneStore>,
         dependencies: Arc<dyn DependencyStore>,
+        proposals: Arc<dyn GraphProposalStore>,
         wake: Arc<dyn CoordinatorWake>,
     ) -> Result<(), RegistrationError> {
+        let admission = Arc::new(ExecutionAdmission::new(
+            tickets.clone(),
+            projects.clone(),
+            dependencies,
+            proposals,
+        ));
         let context = DispatchContext {
             requests,
             tickets,
@@ -207,7 +218,7 @@ impl Core {
             projects,
             capacity,
             lanes,
-            dependencies,
+            admission,
             wake,
         };
         self.register_command(
@@ -335,29 +346,10 @@ impl CreateDispatchRequest {
             .ok_or_else(|| ApiError::not_found(&format!("project {}", project_id.value())))
     }
 
+    /// The readiness snapshotted for queue order; the claim reads
+    /// readiness afresh through the same projection.
     fn ticket_is_ready(&self, ticket: &Ticket) -> Result<bool, ApiError> {
-        use kanban_domain::{DependencyState, ReadinessInputs, TicketDependencyGraph};
-
-        let graph = TicketDependencyGraph::restore(self.0.dependencies.list_dependencies()?);
-        let mut states = Vec::new();
-        for edge in graph.required_by(ticket.id()) {
-            let blocking = self.0.tickets.find(edge.from())?.ok_or_else(|| {
-                ApiError::internal(&format!(
-                    "dependency {} names no stored Ticket",
-                    edge.from().value()
-                ))
-            })?;
-            states.push(DependencyState {
-                dependency: edge,
-                state: blocking.state(),
-            });
-        }
-        let blockers = self.0.dependencies.blockers_of(ticket.id())?;
-        Ok(compute_readiness(ReadinessInputs {
-            dependencies: &states,
-            blockers: &blockers,
-        })
-        .is_ready())
+        Ok(self.0.admission.readiness_of(ticket)?.is_ready())
     }
 }
 
@@ -382,6 +374,17 @@ impl CommandHandler for ClaimDispatchRequest {
     ) -> Result<Value, ApiError> {
         let request: DispatchClaimRequest = parse_payload(&command.payload)?;
         let queued = self.request(request.dispatch_request_id)?;
+        // Admission answers the Ticket as it stands now, not as the
+        // request snapshotted it: a Ticket cancelled, blocked, or
+        // otherwise made ineligible after enqueue is refused before
+        // capacity is read, and the refusal writes nothing.
+        let reviewer = self.0.requests.reviewer(queued.id())?;
+        let role = if reviewer.is_some() {
+            AdmissionRole::Reviewer
+        } else {
+            AdmissionRole::Implementer
+        };
+        self.0.admission.admit(queued.ticket(), role)?;
         let defaults = self.0.capacity.global_defaults()?;
         let caps = self.0.capacity.project_caps(queued.project().value())?;
         let project_caps = project_caps_of(&caps);
@@ -393,7 +396,6 @@ impl CommandHandler for ClaimDispatchRequest {
         // refusal rolls the claim back with it. The draft is built
         // only on a win, so a capacity miss or a lost race never
         // mints and never demands a Lane.
-        let reviewer = self.0.requests.reviewer(queued.id())?;
         let mint = || -> Result<CapabilityMintDraft, ApiError> {
             let lane = lane_holding(&lanes, queued.ticket()).ok_or_else(|| {
                 ApiError::invalid_request(

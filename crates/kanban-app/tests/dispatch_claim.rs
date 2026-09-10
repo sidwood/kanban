@@ -12,12 +12,12 @@ use serde_json::json;
 
 mod common;
 
-use common::{assign_lane, harness, insert_ticket, mutation};
+use common::{assign_lane, harness, insert_ready_ticket, mutation};
 
 #[test]
 fn dispatch_claim_persists_a_request_across_reopen() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, ticket);
 
     let created = harness
@@ -45,7 +45,7 @@ fn dispatch_claim_persists_a_request_across_reopen() {
 #[test]
 fn dispatch_claim_lets_exactly_one_concurrent_claimant_win() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "urgent");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "urgent");
     assign_lane(&harness.database_path, ticket);
     let created = harness
         .core
@@ -99,7 +99,7 @@ fn dispatch_claim_leaves_capacity_losers_queued() {
     common::constrain_harness(&harness.database_path, 1);
     let mut ids = Vec::new();
     for number in 1..=8 {
-        let ticket = insert_ticket(&harness.database_path, number, "normal");
+        let ticket = insert_ready_ticket(&harness.database_path, number, "normal");
         assign_lane(&harness.database_path, ticket);
         let created = harness
             .core

@@ -31,7 +31,7 @@ fn fixture_with_acknowledgement(
             )),
         )
         .unwrap();
-    let first = common::insert_ticket(&h.database_path, 1, "normal");
+    let first = common::insert_ready_ticket(&h.database_path, 1, "normal");
     let other = common::insert_ticket(&h.database_path, 2, "normal");
     common::assign_lane(&h.database_path, first);
     let request = h

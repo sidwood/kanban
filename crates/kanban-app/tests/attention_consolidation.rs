@@ -531,7 +531,7 @@ fn pending_run() -> (
     serde_json::Value,
 ) {
     let h = common::harness();
-    let ticket = common::insert_ticket(&h.database_path, 1, "normal");
+    let ticket = common::insert_ready_ticket(&h.database_path, 1, "normal");
     common::assign_lane(&h.database_path, ticket);
     let queue = h
         .core
@@ -778,7 +778,7 @@ fn attention_consolidation_all_eight_classes_share_one_global_projection() {
         (2, "missing", "role.settled"),
         (3, "stalled", "role.output"),
     ] {
-        let ticket = common::insert_ticket(&h.database_path, number, "normal");
+        let ticket = common::insert_ready_ticket(&h.database_path, number, "normal");
         common::assign_lane(&h.database_path, ticket);
         let queue=h.core.command("dispatch.request",&json!({"mutation":common::mutation(0,format!("all-queue-{number}")),"ticket_id":ticket})).unwrap();
         h.core.command("dispatch.claim",&json!({"mutation":common::mutation(1,format!("all-claim-{number}")),"dispatch_request_id":queue["id"]})).unwrap();

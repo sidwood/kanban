@@ -1,12 +1,12 @@
 mod common;
 
-use common::{assign_lane, harness, insert_ticket, mutation};
+use common::{assign_lane, harness, insert_ready_ticket, insert_ticket, mutation};
 use serde_json::json;
 
 #[test]
 fn submission_intake_records_an_authoritative_result_for_its_run() {
     let h = harness();
-    let ticket = insert_ticket(&h.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&h.database_path, 1, "normal");
     assign_lane(&h.database_path, ticket);
     let queued = h
         .core
@@ -82,7 +82,7 @@ fn submission_intake_records_an_authoritative_result_for_its_run() {
 
 fn ready_result() -> (common::DispatchHarness, serde_json::Value) {
     let h = harness();
-    let ticket = insert_ticket(&h.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&h.database_path, 1, "normal");
     assign_lane(&h.database_path, ticket);
     let queued = h
         .core

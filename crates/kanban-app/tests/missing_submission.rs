@@ -1,5 +1,5 @@
 mod common;
-use common::{assign_lane, harness, insert_ticket, mutation};
+use common::{assign_lane, harness, insert_ready_ticket, mutation};
 use kanban_app::ProjectStore;
 use kanban_domain::ProjectId;
 use kanban_herdr::fixture::{ScriptedSession, SessionScript};
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 #[test]
 fn missing_submission_from_settled_agent_is_not_silenced_by_result_telemetry() {
     let h = harness();
-    let ticket = insert_ticket(&h.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&h.database_path, 1, "normal");
     assign_lane(&h.database_path, ticket);
     let queued = h
         .core

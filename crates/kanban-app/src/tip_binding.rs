@@ -1,9 +1,11 @@
-//! Criterion evidence binding at a reviewed code tip.
+//! Criterion evidence binding at a reviewed code tip. Every event
+//! lands on the owning Ticket's Project timeline, resolved from the
+//! Ticket itself (KAN-T138-AC4, KAN-S2-US1).
 
 use std::sync::Arc;
 
 use kanban_domain::{
-    CriterionBinding, CriterionKind, EvidenceReview, TicketId, TicketKind, TipBindingError,
+    CriterionBinding, CriterionKind, EvidenceReview, Ticket, TicketId, TicketKind, TipBindingError,
     attach_criterion_evidence, complete_task_criterion, invalidate_on_content_change,
     review_criterion_evidence, satisfy_at_approved_tip,
 };
@@ -79,13 +81,24 @@ struct BindingContext {
     evidence: Arc<dyn EvidenceStore>,
 }
 
+impl BindingContext {
+    /// The Ticket a criterion command addresses; its Project owns
+    /// every event the command records.
+    fn owning(&self, ticket_id: u64) -> Result<Ticket, ApiError> {
+        self.tickets
+            .find(TicketId::new(ticket_id))?
+            .ok_or_else(|| ApiError::not_found(&format!("ticket {ticket_id}")))
+    }
+}
+
 fn refuse(error: TipBindingError) -> ApiError {
     ApiError::invalid_request(&error.to_string())
 }
 
-fn envelope(ticket_id: u64, action: &str, facts: Value) -> TimelineEnvelope {
+fn envelope(ticket: &Ticket, action: &str, facts: Value) -> TimelineEnvelope {
+    let ticket_id = ticket.id().value();
     TimelineEnvelope::project(
-        1,
+        ticket.project().value(),
         TimelineEventKind::Evidence,
         Some(TimelineEntityRef {
             kind: TimelineEntityKind::Ticket,
@@ -131,11 +144,7 @@ impl CommandHandler for AttachCriterionEvidence {
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
         let request: CriterionEvidenceAttachRequest = parse_payload(&command.payload)?;
-        let ticket = self
-            .0
-            .tickets
-            .find(TicketId::new(request.ticket_id))?
-            .ok_or_else(|| ApiError::not_found(&format!("ticket {}", request.ticket_id)))?;
+        let ticket = self.0.owning(request.ticket_id)?;
         let kind = match ticket.kind() {
             TicketKind::Task => CriterionKind::Task,
             _ => CriterionKind::Acceptance,
@@ -173,7 +182,7 @@ impl CommandHandler for AttachCriterionEvidence {
             request.ticket_id,
             &binding,
             envelope(
-                request.ticket_id,
+                &ticket,
                 "bound",
                 json!({"evidence_id": request.evidence_id}),
             ),
@@ -193,6 +202,7 @@ impl CommandHandler for ReviewCriterionEvidence {
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
         let request: CriterionEvidenceReviewRequest = parse_payload(&command.payload)?;
+        let ticket = self.0.owning(request.ticket_id)?;
         let mut binding = self
             .0
             .bindings
@@ -207,11 +217,7 @@ impl CommandHandler for ReviewCriterionEvidence {
         self.0.bindings.save(
             request.ticket_id,
             &binding,
-            envelope(
-                request.ticket_id,
-                "reviewed",
-                json!({"review": request.review}),
-            ),
+            envelope(&ticket, "reviewed", json!({"review": request.review})),
         )?;
         encode(request.ticket_id, &binding)
     }
@@ -228,6 +234,7 @@ impl CommandHandler for SatisfyCriterion {
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
         let request: CriterionSatisfyRequest = parse_payload(&command.payload)?;
+        let ticket = self.0.owning(request.ticket_id)?;
         let mut binding = self
             .0
             .bindings
@@ -237,7 +244,7 @@ impl CommandHandler for SatisfyCriterion {
         self.0.bindings.save(
             request.ticket_id,
             &binding,
-            envelope(request.ticket_id, "satisfied", json!({"tip": request.tip})),
+            envelope(&ticket, "satisfied", json!({"tip": request.tip})),
         )?;
         encode(request.ticket_id, &binding)
     }
@@ -254,11 +261,7 @@ impl CommandHandler for CompleteCriterion {
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
         let request: CriterionCompleteRequest = parse_payload(&command.payload)?;
-        let ticket = self
-            .0
-            .tickets
-            .find(TicketId::new(request.ticket_id))?
-            .ok_or_else(|| ApiError::not_found(&format!("ticket {}", request.ticket_id)))?;
+        let ticket = self.0.owning(request.ticket_id)?;
         if ticket.kind() != TicketKind::Task {
             return Err(ApiError::invalid_request(
                 "only humans complete Task criteria directly",
@@ -271,7 +274,7 @@ impl CommandHandler for CompleteCriterion {
         self.0.bindings.save(
             request.ticket_id,
             &binding,
-            envelope(request.ticket_id, "completed", json!({})),
+            envelope(&ticket, "completed", json!({})),
         )?;
         encode(request.ticket_id, &binding)
     }
@@ -288,6 +291,7 @@ impl CommandHandler for InvalidateCriteria {
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
         let request: CriterionInvalidateRequest = parse_payload(&command.payload)?;
+        let ticket = self.0.owning(request.ticket_id)?;
         let mut listed = self.0.bindings.list(request.ticket_id)?;
         for binding in &mut listed {
             invalidate_on_content_change(binding, &request.observed_tip);
@@ -295,7 +299,7 @@ impl CommandHandler for InvalidateCriteria {
                 request.ticket_id,
                 binding,
                 envelope(
-                    request.ticket_id,
+                    &ticket,
                     "invalidated",
                     json!({"observed_tip": request.observed_tip}),
                 ),

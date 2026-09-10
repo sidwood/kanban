@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{assign_lane, harness, insert_ticket, insert_ticket_with_profile, mutation};
+use common::{
+    assign_lane, harness, insert_ready_ticket, insert_ready_ticket_with_profile, mutation,
+};
 
 /// Define one catalogue entry beside the seeded `standard`, naming its
 /// fallback by reference.
@@ -90,7 +92,7 @@ fn run_lifecycle_snapshots_requested_and_effective_profiles() {
     // dispatch, so the run must fall back to run `standard`'s values.
     insert_profile(&harness.database_path, "nightly", "opus", Some("standard"));
     retire_profile(&harness.database_path, "nightly");
-    let ticket = insert_ticket_with_profile(&harness.database_path, 1, "normal", "nightly");
+    let ticket = insert_ready_ticket_with_profile(&harness.database_path, 1, "normal", "nightly");
     assign_lane(&harness.database_path, ticket);
     let claimed = claimed_request(&harness.core, ticket, "key-dispatch");
     assert_eq!(claimed["claimed"], json!(true), "the claim wins");
@@ -143,7 +145,7 @@ fn run_lifecycle_snapshots_requested_and_effective_profiles() {
 #[test]
 fn run_lifecycle_snapshots_an_active_request_without_fallback() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, ticket);
     let claimed = claimed_request(&harness.core, ticket, "key-dispatch");
     let request_id = claimed["request"]["id"].as_u64().expect("the identity");
@@ -160,7 +162,7 @@ fn run_lifecycle_snapshots_an_active_request_without_fallback() {
 #[test]
 fn run_lifecycle_snapshots_survive_catalogue_changes() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, ticket);
     let claimed = claimed_request(&harness.core, ticket, "key-dispatch");
     let request_id = claimed["request"]["id"].as_u64().expect("the identity");
@@ -192,7 +194,7 @@ fn run_lifecycle_snapshots_survive_catalogue_changes() {
 #[test]
 fn run_lifecycle_snapshots_refuse_a_request_that_never_claimed() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     let created = harness
         .core
         .command(
@@ -221,7 +223,7 @@ fn run_lifecycle_snapshots_refuse_a_request_that_never_claimed() {
 #[test]
 fn run_lifecycle_snapshots_refuse_a_second_run_for_one_request() {
     let harness = harness();
-    let ticket = insert_ticket(&harness.database_path, 1, "normal");
+    let ticket = insert_ready_ticket(&harness.database_path, 1, "normal");
     assign_lane(&harness.database_path, ticket);
     let claimed = claimed_request(&harness.core, ticket, "key-dispatch");
     let request_id = claimed["request"]["id"].as_u64().expect("the identity");
@@ -247,7 +249,7 @@ fn run_lifecycle_snapshots_refuse_an_unresolvable_profile() {
     // exists to run.
     insert_profile(&harness.database_path, "bare", "haiku", None);
     retire_profile(&harness.database_path, "bare");
-    let ticket = insert_ticket_with_profile(&harness.database_path, 1, "normal", "bare");
+    let ticket = insert_ready_ticket_with_profile(&harness.database_path, 1, "normal", "bare");
     assign_lane(&harness.database_path, ticket);
     let claimed = claimed_request(&harness.core, ticket, "key-dispatch");
     let request_id = claimed["request"]["id"].as_u64().expect("the identity");

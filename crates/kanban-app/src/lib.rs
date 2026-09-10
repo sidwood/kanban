@@ -1,6 +1,7 @@
 //! Named application commands and queries shared by the UI and every
 //! other client, with the ports they call through.
 
+pub mod admission;
 pub mod agent_authorization;
 pub mod attention;
 pub mod board_query;
@@ -62,6 +63,7 @@ mod profile_validation;
 #[cfg(test)]
 mod project_scope;
 
+pub use admission::ExecutionAdmission;
 pub use capability::{
     AGENT_MCP_OPERATIONS, CapabilityCheckError, CapabilityMintDraft, CapabilityStore,
     agent_surface, encode_capability, enforce_capability,
@@ -85,7 +87,7 @@ pub use deadlines::{
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dependency::DependencyStore;
 pub use diagnostics::StoredProfileCatalogue;
-pub use dispatch::{Core, QueryHandler, RegistrationError};
+pub use dispatch::{Core, QueryHandler, RegistrationError, Reservation};
 pub use dispatch_request::{
     ClaimContext, CoordinatorWake, CoordinatorWakeRequest, DispatchEnqueue, DispatchStore,
     NoopCoordinatorWake, evaluate_dispatch_claim,

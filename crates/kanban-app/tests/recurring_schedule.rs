@@ -56,6 +56,7 @@ fn harness() -> Harness {
         Arc::new(kanban_storage::SqliteCapacityStore::new(&database)),
         Arc::new(kanban_storage::SqliteLaneStore::new(&database)),
         Arc::new(SqliteDependencyStore::new(&database)),
+        Arc::new(kanban_storage::SqliteGraphProposalStore::new(&database)),
         Arc::new(kanban_app::NoopCoordinatorWake),
     )
     .unwrap();
@@ -65,6 +66,8 @@ fn harness() -> Harness {
         Arc::new(SqliteTicketStore::new(&database)),
         Arc::new(kanban_storage::SqliteProfileStore::new(&database)),
         Arc::new(SqliteProjectStore::new(&database)),
+        Arc::new(SqliteDependencyStore::new(&database)),
+        Arc::new(kanban_storage::SqliteGraphProposalStore::new(&database)),
     )
     .unwrap();
     core.register_schedule_reads(
@@ -142,7 +145,7 @@ fn recurrence_mints_a_fresh_task_not_the_template_identity() {
         (
             3,
             "ready".to_owned(),
-            "human".to_owned(),
+            "agent".to_owned(),
             "operational".to_owned(),
             "standard".to_owned()
         )

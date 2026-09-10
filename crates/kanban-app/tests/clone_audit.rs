@@ -259,6 +259,81 @@ fn recorded_rows(database_path: &Path) -> Vec<(String, Value)> {
         .collect()
 }
 
+/// KAN-T132-AC1: a successful clone.create registers its Workspace in
+/// the same mutation and returns its id, proven over the real SQLite
+/// stores. KAN-T132-AC4: the same-key retry replays the recorded
+/// answer, and a different key at the taken target is refused without
+/// a second Workspace or a second skill invocation.
+#[test]
+fn clone_create_registration_returns_one_workspace_and_replays_it() {
+    let scratch = TempDir::new().expect("a scratch directory is available");
+    let wired = wired(scratch.path(), false);
+    create_project(&wired.projects);
+    let request = create(
+        "/workspaces/registered-clone",
+        "registered-clone",
+        "register",
+    );
+    let created = wired
+        .core
+        .command("clone.create", &request)
+        .expect("a successful create registers its Workspace and answers with its id");
+    let workspace_id = created["workspace_id"]
+        .as_u64()
+        .expect("the answer carries the registered Workspace's id");
+    let replayed = wired
+        .core
+        .command("clone.create", &request)
+        .expect("the same key replays the recorded outcome");
+    assert_eq!(created, replayed);
+    let conn = rusqlite::Connection::open(&wired.database_path).expect("the database reopens");
+    let count: i64 = conn
+        .query_row("SELECT count(*) FROM workspaces", [], |row| row.get(0))
+        .expect("the Workspace rows are countable");
+    assert_eq!(count, 1, "one registered Workspace, never two");
+    let path: String = conn
+        .query_row(
+            "SELECT path FROM workspaces WHERE id = ?1",
+            [i64::try_from(workspace_id).expect("the Workspace id fits an i64")],
+            |row| row.get(0),
+        )
+        .expect("the registered Workspace row loads");
+    assert_eq!(path, "/workspaces/registered-clone");
+    assert_eq!(
+        wired
+            .tool
+            .calls
+            .lock()
+            .expect("the tool lock is sound")
+            .len(),
+        1,
+        "the replay invokes the skill no second time"
+    );
+    let fresh = create(
+        "/workspaces/registered-clone",
+        "registered-clone",
+        "different-key",
+    );
+    assert!(
+        wired.core.command("clone.create", &fresh).is_err(),
+        "a different key at the taken target is refused"
+    );
+    assert_eq!(
+        wired
+            .tool
+            .calls
+            .lock()
+            .expect("the tool lock is sound")
+            .len(),
+        1,
+        "the refusal invokes nothing"
+    );
+    let still: i64 = conn
+        .query_row("SELECT count(*) FROM workspaces", [], |row| row.get(0))
+        .expect("the Workspace rows are countable");
+    assert_eq!(still, 1, "the refusal mints no second Workspace");
+}
+
 /// KAN-T128-AC1: a skill failure after invocation lands the truth as
 /// durable rows in order — the invocation, then the failure it
 /// explains — never a lone refusal that hides that the skill ran.

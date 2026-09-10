@@ -45,8 +45,8 @@ use kanban_dto::{
     ProfileListResponse, ProfileRecord, ProfileRetireRequest, ProfileUpdateRequest,
     ProjectArchiveRequest, ProjectListQuery, ProjectListResponse, ProjectRecord,
     ProjectRegisterRequest, ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord,
-    ProjectSchedulePolicySetRequest, RulingListQuery, RulingListResponse, RulingRecord,
-    RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
+    ProjectSchedulePolicySetRequest, ProjectUpdateRequest, RulingListQuery, RulingListResponse,
+    RulingRecord, RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
     RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
     ScheduleAttentionListResponse, ScheduleGetQuery, ScheduleGetResponse, SchedulePreviewQuery,
     SchedulePreviewResponse, SearchGlobalQuery, SearchGlobalResponse, ShellPreferencesQuery,
@@ -426,6 +426,19 @@ async fn schedule_attention_list(
             "schedule attention list",
             request,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn project_update(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<ProjectRecord, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<ProjectUpdateRequest>(request)?;
+    run_blocking(shell, "project update", |shell| {
+        forward_command(shell, "project.update", "updated Project", request)
     })
     .await
 }
@@ -2424,6 +2437,7 @@ shell_handlers::shell_handler_catalogue! {
     schedule_attention_list,
     project_schedule_policy_get,
     project_schedule_policy_set,
+    project_update,
     project_archive,
     project_list,
     plan_create,

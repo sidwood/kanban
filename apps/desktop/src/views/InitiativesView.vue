@@ -3,14 +3,26 @@
 // archive through the initiatives store. Presentation only; every
 // domain call goes through the generated client in the store, and
 // no delete control exists (KAN-S1-US6).
-import { inject, onMounted, reactive, ref } from 'vue'
+import { computed, inject, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { kanbanTransportKey } from '../core/transport'
 import { useInitiativesStore } from '../stores/initiatives'
 
 const transport = inject(kanbanTransportKey)
+const route = useRoute()
 const initiatives = useInitiativesStore()
 const newName = ref('')
 const renameDrafts = reactive<Record<number, string>>({})
+
+// The Initiative a search hit or another surface's link named, so
+// arriving here opens that exact one rather than the list
+// (KAN-T140-AC2).
+const linkedInitiativeId = computed(() => {
+  const raw = route.query.initiative
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const parsed = Number(value)
+  return value && Number.isInteger(parsed) && parsed > 0 ? parsed : null
+})
 
 onMounted(() => {
   if (transport) {
@@ -76,7 +88,9 @@ async function submitArchive(id: number) {
         v-for="initiative in initiatives.initiatives"
         :key="initiative.id"
         :data-testid="`initiative-row-${initiative.id}`"
+        :data-linked="initiative.id === linkedInitiativeId ? 'true' : undefined"
         class="flex flex-wrap items-center gap-3 px-4 py-3"
+        :class="initiative.id === linkedInitiativeId ? 'bg-emerald-50' : ''"
       >
         <span
           :data-testid="`initiative-name-${initiative.id}`"

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { PlanGetResponse, PlanListResponse, ProjectListResponse } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import router from '../router'
 import PlanningView from './PlanningView.vue'
 
 const project = {
@@ -75,6 +76,9 @@ function harness() {
     'project.list': { projects: [project] } satisfies ProjectListResponse,
     'plan.list': { plans: [draft, active, finished] } satisfies PlanListResponse,
     'plan.get': versions satisfies PlanGetResponse,
+    'spec.list': { specs: [] },
+    'ticket.list': { tickets: [] },
+    'ticket.graph.list': { proposals: [] },
   }
   const transport = {
     query: (name: string, request: unknown) => {
@@ -92,9 +96,11 @@ function harness() {
 }
 
 async function mountView(transport: ShellTransport) {
+  await router.push('/planning')
+  await router.isReady()
   const wrapper = mount(PlanningView, {
     global: {
-      plugins: [createPinia()],
+      plugins: [createPinia(), router],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })

@@ -62,6 +62,29 @@ function harness(answerList?: (query: AttentionListQuery, current: AttentionItem
   return { wrapper, operations }
 }
 
+/** A core whose inbox holds one item naming a Ticket graph: a real
+ * subject kind nothing emits yet, and one this application holds no
+ * object surface for. */
+function graphOnlyTransport(): ShellTransport {
+  const items: AttentionItemRecord[] = [{
+    id: 'attention-graph', project_id: 1, kind: 'invalid_approval', subject_kind: 'graph',
+    subject_id: '17', summary: 'A Ticket graph approval is no longer valid.',
+    detail: { source: 'graph_gate', proposal_id: 17 }, version: 1, active: true,
+    acknowledged_by: null, acknowledged_at: null,
+    first_seen_at: '2026-09-08T00:00:00Z', last_seen_at: '2026-09-08T00:00:00Z',
+  }]
+  return {
+    query: (name: string) => {
+      if (name === 'attention.list') return Promise.resolve({ items })
+      if (name === 'project.list') return Promise.resolve({ projects: [project] })
+      return Promise.reject(new Error(`Unexpected query: ${name}`))
+    },
+    command: (name: string) => Promise.reject(new Error(`Unexpected command: ${name}`)),
+    subscribe: () => () => undefined,
+    onConnectionChange: () => () => undefined,
+  } as unknown as ShellTransport
+}
+
 describe('attention-inbox', () => {
   it('renders every source class without acknowledging on read', async () => {
     const { wrapper, operations } = harness()
@@ -154,8 +177,43 @@ describe('attention-inbox', () => {
   })
 
 
+  it('offers each item the exact typed source it names, and navigating acknowledges nothing', async () => {
+    const { wrapper, operations } = harness()
+    await flushPromises()
+    const rows = wrapper.findAll('[data-testid="attention-item"]')
+    expect(rows).toHaveLength(kinds.length)
+    rows.forEach((row, index) => {
+      const open = row.get('[data-testid="attention-open"]')
+      expect(open.attributes('to')).toBe(`/projects/1/board?ticket=${index + 1}`)
+    })
+    expect(wrapper.get('[data-testid="attention-source-attention-0"]').text()).toContain('ticket')
+    // Opening a source is a read: the shell navigates and the item
+    // stays exactly as unacknowledged as it was (DR-SA-12).
+    await wrapper.findAll('[data-testid="attention-open"]')[0]!.trigger('click')
+    await flushPromises()
+    expect(operations.filter((op) => op.kind === 'command')).toEqual([])
+    expect(
+      wrapper.findAll('[data-testid="attention-item"]')[0]!.find('[data-testid="attention-acknowledged"]').exists(),
+    ).toBe(false)
+  })
+
+  it('states a source it holds no surface for instead of sending the operator to a list', async () => {
+    const { wrapper } = harness()
+    await flushPromises()
+    const graph = mount(AttentionInboxView, { global: {
+      stubs: { RouterLink: true },
+      provide: { [kanbanTransportKey as symbol]: graphOnlyTransport() },
+    } })
+    mounted.push(graph)
+    await flushPromises()
+    const row = graph.get('[data-testid="attention-item"]')
+    expect(row.find('[data-testid="attention-open"]').exists()).toBe(false)
+    expect(row.get('[data-testid="attention-no-surface"]').text()).toContain('no surface of its own')
+    expect(wrapper.exists()).toBe(true)
+  })
+
   it('is reachable from the home screen and the application router', () => {
-    const home = mount(HomeView, { global: { plugins: [createPinia()], stubs: { RouterLink: true }, provide: { [kanbanTransportKey as symbol]: undefined } } })
+    const home = mount(HomeView, { global: { plugins: [createPinia(), router], stubs: { RouterLink: true }, provide: { [kanbanTransportKey as symbol]: undefined } } })
     mounted.push(home)
     expect(home.find('[data-testid="attention-link"]').exists()).toBe(true)
     expect(home.get('[data-testid="attention-link"]').attributes('to')).toBe('/attention')

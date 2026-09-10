@@ -12,6 +12,7 @@ import type {
 } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import router from '../router'
 import PlanningView from './PlanningView.vue'
 
 const project = {
@@ -96,6 +97,12 @@ function harness() {
       if (name === 'plan.list') {
         return Promise.resolve({ plans: [] })
       }
+      if (name === 'ticket.list') {
+        return Promise.resolve({ tickets: [] })
+      }
+      if (name === 'ticket.graph.list') {
+        return Promise.resolve({ proposals: [] })
+      }
       if (name === 'spec.coverage.matrix') {
         const query = request as { spec_id: number; version: number | null }
         reads.push(query)
@@ -111,9 +118,11 @@ function harness() {
 }
 
 async function mountView(transport: ShellTransport) {
+  await router.push('/planning')
+  await router.isReady()
   const wrapper = mount(PlanningView, {
     global: {
-      plugins: [createPinia()],
+      plugins: [createPinia(), router],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })
@@ -174,7 +183,9 @@ describe('PlanningView coverage matrix', () => {
               ? { specs: [] }
               : name === 'plan.list'
                 ? { plans: [] }
-                : {},
+                : name === 'ticket.list'
+                  ? { tickets: [] }
+                  : { proposals: [] },
         ),
       command: () => Promise.resolve({}),
       subscribe: () => () => undefined,

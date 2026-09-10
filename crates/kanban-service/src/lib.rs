@@ -27,9 +27,15 @@ pub use startup::{ServiceOptions, launch_detached, run_with_args, run_with_runti
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
+mod assignment_tests;
+#[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod login_launch_tests;
+#[cfg(test)]
+mod planning_tests;
+#[cfg(test)]
+mod project_settings_tests;
 #[cfg(test)]
 mod test_client;
 
@@ -40,7 +46,7 @@ use std::time::Duration;
 
 use kanban_app::{
     ActivationPass, CloneTargetProbe, Core, EventSink, FleetCloneTool, GitObservation,
-    ProjectStore, StoredProfileCatalogue, TimelineQueryHandler,
+    ProjectStore, StoredCoverageClaims, StoredProfileCatalogue, TimelineQueryHandler,
 };
 use kanban_storage::paths::database_file_name;
 use kanban_storage::{
@@ -365,6 +371,7 @@ fn assemble_core_with_secret(
             ticket_store.clone(),
             spec_store.clone(),
         )),
+        Arc::new(StoredCoverageClaims::new(ticket_store.clone())),
     )?;
     core.register_capacity(capacity_store.clone(), projects.clone())?;
     core.register_saved_views(

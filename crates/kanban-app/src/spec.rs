@@ -605,6 +605,7 @@ pub(crate) mod testing {
     use crate::events::EventSink;
     use crate::mutation::MemoryIdempotencyStore;
     use crate::plan::testing::{MemoryPlans, MemoryProjects};
+    use crate::ticket::testing::{MemoryTicketEvidence, MemoryTickets};
     use crate::timeline::TimelineEnvelope;
 
     /// An in-memory Spec store: rows by id, the timeline envelopes it
@@ -734,8 +735,8 @@ pub(crate) mod testing {
         }
     }
 
-    /// A core with the Spec and Plan operations wired to in-memory
-    /// stores over one active Project.
+    /// A core with the Spec, Plan, and Ticket operations wired to
+    /// in-memory stores over one active Project.
     pub(crate) struct SpecHarness {
         pub(crate) specs: Arc<MemorySpecs>,
         pub(crate) projects: Arc<MemoryProjects>,
@@ -776,12 +777,28 @@ pub(crate) mod testing {
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
+        let tickets = Arc::new(MemoryTickets::sharing(projects.clone()));
         core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .expect("the plan operations register");
-        core.register_plan_diagnostics(plans.clone(), projects.clone(), specs.clone(), profiles)
-            .expect("the diagnostics register against the catalogue");
+        core.register_plan_diagnostics(
+            plans.clone(),
+            projects.clone(),
+            specs.clone(),
+            profiles,
+            Arc::new(crate::diagnostics::StoredCoverageClaims::new(
+                tickets.clone(),
+            )),
+        )
+        .expect("the diagnostics register against the catalogue");
         core.register_specs(specs.clone(), projects.clone(), plans.clone())
             .expect("the spec operations register");
+        core.register_tickets(
+            tickets.clone(),
+            projects.clone(),
+            specs.clone(),
+            Arc::new(MemoryTicketEvidence::default()),
+        )
+        .expect("the ticket operations register");
         SpecHarness {
             specs,
             projects,

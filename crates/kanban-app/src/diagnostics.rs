@@ -7,18 +7,27 @@
 //! [`ProfileCatalogue`] seam; the service fills it with the stored
 //! execution profile catalogue ([`StoredProfileCatalogue`], KAN-S7,
 //! T38), while [`AbsentCatalogue`] keeps it empty for the cores no
-//! Ticket store backs.
+//! Ticket store backs. The story claims a member Spec's coverage is
+//! measured against arrive through the [`CoverageClaims`] seam for
+//! the same reason: a story is covered by what the Spec's own
+//! Tickets claim against the content version on display, so a Spec
+//! whose stories are all claimed carries no gap and only a genuinely
+//! uncovered one keeps blocking (T16).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use kanban_domain::{PlanId, Project, ScopeError, SpecId, SpecNumber, StoryScope};
+use kanban_domain::{
+    AcceptanceCriterion, PlanId, Project, ScopeError, Spec, SpecId, SpecNumber, StoryScope,
+    claims_count_for_version,
+};
 use kanban_dto::{
     ApiError, PlanCoverageGap, PlanCycle, PlanDiagnosticsQuery, PlanDiagnosticsResponse,
     PlanInvalidProfile,
 };
 use serde_json::Value;
 
+use crate::coverage::claimed_criteria;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::mutation::parse_payload;
 use crate::plan::PlanStore;
@@ -140,12 +149,74 @@ impl ProfileCatalogue for StoredProfileCatalogue {
     }
 }
 
+/// The story claims behind the coverage-gap diagnostics (DR-PS-18,
+/// DR-PS-14): every story-linked criterion the Tickets attached to
+/// one member Spec claim against the content version the diagnostics
+/// read. A Spec whose scope is fully claimed has no gap; the stories
+/// nothing claims are what blocks.
+pub trait CoverageClaims: Send + Sync {
+    /// The criteria counting toward one member Spec's coverage of the
+    /// content version `version`, which is the Spec's operative read.
+    fn claimed(&self, spec: &Spec, version: u64) -> Result<Vec<AcceptanceCriterion>, ApiError>;
+}
+
+/// The empty claim set: the cores no Ticket store backs install it, so
+/// nothing they can read claims a story and every story in scope is a
+/// gap. The service replaces it through
+/// [`Core::register_plan_diagnostics`] with [`StoredCoverageClaims`].
+pub struct AbsentClaims;
+
+impl CoverageClaims for AbsentClaims {
+    fn claimed(&self, _spec: &Spec, _version: u64) -> Result<Vec<AcceptanceCriterion>, ApiError> {
+        Ok(Vec::new())
+    }
+}
+
+/// The stored claims behind the coverage-gap diagnostics: the criteria
+/// the Spec's own attached Tickets claim, scoped to the content
+/// version on display by the same rule the coverage matrix applies
+/// (`claims_count_for_version`, Sid ruling 5). The version the
+/// diagnostics read is always the Spec's operative one — its approved
+/// version, else its working content — so a pinned Ticket counts while
+/// it stays open and the active unpinned population a new graph
+/// completes over counts beside it. A claim pinned to another version
+/// is that version's, never this one's.
+pub struct StoredCoverageClaims {
+    tickets: Arc<dyn TicketStore>,
+}
+
+impl StoredCoverageClaims {
+    /// Read the claims through the Ticket store the service wires.
+    pub fn new(tickets: Arc<dyn TicketStore>) -> Self {
+        Self { tickets }
+    }
+}
+
+impl CoverageClaims for StoredCoverageClaims {
+    fn claimed(&self, spec: &Spec, version: u64) -> Result<Vec<AcceptanceCriterion>, ApiError> {
+        Ok(self
+            .tickets
+            .list(spec.project())?
+            .into_iter()
+            .filter(|ticket| ticket.spec() == Some(spec.id()))
+            .filter(|ticket| claims_count_for_version(ticket, version, true))
+            .flat_map(|ticket| {
+                claimed_criteria(&ticket)
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect())
+    }
+}
+
 /// Serves `plan.diagnostics`.
 pub(crate) struct DiagnosePlan {
     plans: Arc<dyn PlanStore>,
     projects: Arc<dyn ProjectStore>,
     specs: Arc<dyn SpecStore>,
     profiles: Arc<dyn ProfileCatalogue>,
+    claims: Arc<dyn CoverageClaims>,
 }
 
 impl QueryHandler for DiagnosePlan {
@@ -202,12 +273,13 @@ impl QueryHandler for DiagnosePlan {
 
 impl DiagnosePlan {
     /// One gap entry per member Spec that has one: the stories its
-    /// scope claims with no criterion claiming them yet — no Ticket
-    /// graph is approved for the Plan, and graph approval (T23) is
-    /// what closes gaps — or the fact that its version claims no
-    /// story at all, which no Ticket graph could ever cover. The
-    /// scope reads the still-approved version when one is operative
-    /// and the working content otherwise.
+    /// scope claims that no criterion of its own attached Tickets
+    /// claims against the version on display, or the fact that its
+    /// version claims no story at all, which no Ticket graph could
+    /// ever cover. The scope and the claims both read the
+    /// still-approved version when one is operative and the working
+    /// content otherwise, so the diagnostics measure one version
+    /// against itself (T16).
     fn coverage_gaps(
         &self,
         project: &Project,
@@ -236,9 +308,8 @@ impl DiagnosePlan {
                 operative.content().user_stories(),
             ) {
                 Ok(scope) => {
-                    // No Ticket graph is approved for the Plan yet, so
-                    // no criterion exists to claim a story (DR-PS-14).
-                    let uncovered = scope.uncovered(&[]);
+                    let claimed = self.claims.claimed(&held, operative.number())?;
+                    let uncovered = scope.uncovered(&claimed);
                     if uncovered.is_empty() {
                         continue;
                     }
@@ -264,14 +335,15 @@ impl DiagnosePlan {
 
 impl Core {
     /// Register the planning diagnostics query against the stores the
-    /// Plan commands use and the profile catalogue that resolves
-    /// profile references.
+    /// Plan commands use, the profile catalogue that resolves profile
+    /// references, and the claims that close coverage gaps.
     pub fn register_plan_diagnostics(
         &mut self,
         plans: Arc<dyn PlanStore>,
         projects: Arc<dyn ProjectStore>,
         specs: Arc<dyn SpecStore>,
         profiles: Arc<dyn ProfileCatalogue>,
+        claims: Arc<dyn CoverageClaims>,
     ) -> Result<(), RegistrationError> {
         self.register_query(
             "plan.diagnostics",
@@ -280,6 +352,7 @@ impl Core {
                 projects,
                 specs,
                 profiles,
+                claims,
             }),
         )
     }
@@ -390,6 +463,48 @@ mod planning_diagnostics {
         (id, version)
     }
 
+    /// The stored identity of the Project's Spec numbered `number`.
+    fn spec_id(core: &crate::dispatch::Core, number: u64) -> u64 {
+        core.query("spec.list", &json!({ "project_id": 1 }))
+            .expect("the list serves")["specs"]
+            .as_array()
+            .expect("the listing is an array")
+            .iter()
+            .find(|spec| spec["number"] == json!(number))
+            .expect("the Spec is stored")["id"]
+            .as_u64()
+            .expect("the identity is a number")
+    }
+
+    /// One Implementation Ticket attached to the Spec given, claiming
+    /// the stories named by one criterion each.
+    fn implementation_claiming(
+        core: &crate::dispatch::Core,
+        spec: u64,
+        stories: &[&str],
+        key: &str,
+    ) -> u64 {
+        let criteria: Vec<Value> = stories
+            .iter()
+            .map(|story| json!({ "outcome": format!("{story} is delivered."), "stories": [story] }))
+            .collect();
+        let created = core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": key },
+                    "project_id": 1,
+                    "kind": "implementation",
+                    "priority": "normal",
+                    "spec_id": spec,
+                    "slice": "Deliver the claimed stories end to end.",
+                    "criteria": criteria,
+                }),
+            )
+            .expect("the Implementation creates");
+        created["id"].as_u64().expect("the identity is a number")
+    }
+
     /// The diagnostics of one graph: the working shape when `version`
     /// is None, the frozen version when it is not.
     fn diagnose(core: &crate::dispatch::Core, plan_id: u64, version: Option<u64>) -> Value {
@@ -409,6 +524,11 @@ mod planning_diagnostics {
     /// The story Spec 2 claims.
     const STORIES_TWO: &str = "\
 - CORE-S2-US1: As an operator, I want a gate before execution.
+";
+
+    /// The single story a lone Spec 1 claims.
+    const STORIES_SOLE: &str = "\
+- CORE-S1-US1: As an operator, I want a gate before execution.
 ";
 
     #[test]
@@ -662,6 +782,139 @@ mod planning_diagnostics {
             )
             .expect_err("the unknown version is refused");
         assert_eq!(error.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn a_member_whose_stories_are_all_claimed_reports_no_coverage_gap() {
+        let harness = spec_harness();
+        let only = spec_with_stories(&harness.core, STORIES_ONE, "key-spec-one");
+        let spec = spec_id(&harness.core, only);
+        implementation_claiming(
+            &harness.core,
+            spec,
+            &["CORE-S1-US1", "CORE-S1-US2"],
+            "key-ticket",
+        );
+        let (plan, _) = plan_over(&harness.core, &[only], &[], "key-plan");
+
+        assert_eq!(
+            diagnose(&harness.core, plan, None),
+            json!({
+                "cycles": [],
+                "coverage_gaps": [],
+                "invalid_profiles": [],
+                "blocking": false,
+            }),
+            "every story the member claims is claimed by a criterion of \
+             its own attached Ticket, so the member carries no gap and \
+             the graph does not block"
+        );
+    }
+
+    #[test]
+    fn a_partly_claimed_member_reports_only_its_unclaimed_stories() {
+        let harness = spec_harness();
+        let covered = spec_with_stories(&harness.core, STORIES_ONE, "key-spec-one");
+        let bare = spec_with_stories(&harness.core, STORIES_TWO, "key-spec-two");
+        implementation_claiming(
+            &harness.core,
+            spec_id(&harness.core, covered),
+            &["CORE-S1-US1"],
+            "key-ticket",
+        );
+        let (plan, _) = plan_over(&harness.core, &[covered, bare], &[], "key-plan");
+
+        assert_eq!(
+            diagnose(&harness.core, plan, None)["coverage_gaps"],
+            json!([
+                {
+                    "spec_number": 1,
+                    "uncovered": ["CORE-S1-US2"],
+                    "claims_no_stories": false,
+                },
+                {
+                    "spec_number": 2,
+                    "uncovered": ["CORE-S2-US1"],
+                    "claims_no_stories": false,
+                },
+            ]),
+            "the claimed story leaves the gap; the unclaimed one and the \
+             member nothing is attached to stay blocking"
+        );
+    }
+
+    #[test]
+    fn an_unqualified_bug_claims_nothing_and_its_qualification_closes_the_gap() {
+        let harness = spec_harness();
+        let only = spec_with_stories(&harness.core, STORIES_SOLE, "key-spec-sole");
+        let spec = spec_id(&harness.core, only);
+        let bug = harness
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-bug" },
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "spec_id": spec,
+                    "title": "The gate admits an uncovered graph",
+                    "actual_behaviour": "The graph approves with a story nothing claims.",
+                    "reporter_evidence": "The approval log shows the uncovered story.",
+                }),
+            )
+            .expect("the Bug creates")["id"]
+            .as_u64()
+            .expect("the identity is a number");
+        let (plan, _) = plan_over(&harness.core, &[only], &[], "key-plan");
+
+        assert_eq!(
+            diagnose(&harness.core, plan, None)["coverage_gaps"],
+            json!([{
+                "spec_number": 1,
+                "uncovered": ["CORE-S1-US1"],
+                "claims_no_stories": false,
+            }]),
+            "a Bug claims through its qualification alone (DR-TK-09), so \
+             an unqualified one leaves the story a gap"
+        );
+
+        harness
+            .core
+            .command(
+                "ticket.bug.qualify",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-qualify" },
+                    "ticket_id": bug,
+                    "qualification": {
+                        "affected_scope": "The graph approval gate.",
+                        "environment": "The local control plane.",
+                        "expected_behaviour": "The gate refuses an uncovered graph.",
+                        "frequency": "Every approval of an uncovered graph.",
+                        "reproduction": "Approve a graph leaving CORE-S1-US1 unclaimed.",
+                        "risk": "An unowned story reaches execution.",
+                        "severity": "high",
+                        "criteria": [{
+                            "outcome": "The gate refuses the uncovered graph.",
+                            "stories": ["CORE-S1-US1"],
+                        }],
+                        "verification_steps": [{ "command": "cargo test -p kanban-app" }],
+                    },
+                }),
+            )
+            .expect("the qualification lands");
+
+        assert_eq!(
+            diagnose(&harness.core, plan, None),
+            json!({
+                "cycles": [],
+                "coverage_gaps": [],
+                "invalid_profiles": [],
+                "blocking": false,
+            }),
+            "the qualification's criterion claims the story, so the \
+             member carries no gap"
+        );
     }
 
     #[test]

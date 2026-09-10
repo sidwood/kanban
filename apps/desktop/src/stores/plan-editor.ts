@@ -1,37 +1,40 @@
-// The planning editor state, driven entirely through the generated
-// client: the Plans of one Project, the graph edits (membership,
-// display order, and dependency edges as separate operations), the
-// lifecycle moves, and the version switcher that keeps prior frozen
-// versions visible. Terminal states stay listed but sit off the
-// active surface (KAN-S3-US1, KAN-S3-US2, KAN-S3-US3).
+// The Project list and selected Plan have separate authority: list refreshes do
+// not cancel commands, while Project or Plan navigation does.
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type { MutationContext, PlanRecord, PlanVersionRecord } from '@kanban/contracts'
 import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import {
+  adoptScope,
+  emptyScope,
+  issueCommand,
+  projectScopeKey,
+  releaseScope,
+  scopeHolds,
+} from '../core/scope-authority'
+import type { ScopeClaim } from '../core/scope-authority'
 
-// One mutation's context: a fresh idempotency key per logical
-// request, and the optimistic version the caller believes the
-// aggregate is at.
+// A fresh idempotency key per logical request, so a retried transport
+// cannot apply one intent twice.
 function mutationFor(optimisticVersion: number): MutationContext {
   return { optimistic_version: optimisticVersion, idempotency_key: crypto.randomUUID() }
 }
 
-// The graph one plan or one frozen version carries.
 export interface PlanGraph {
   spec_numbers: number[]
   edges: { from_spec: number; to_spec: number }[]
 }
 
-// Whether a state keeps a Plan on the active surface: draft and
-// active are the working states; complete, cancelled, and archived
-// are terminal.
 function onActiveSurface(state: PlanRecord['state']): boolean {
   return state === 'draft' || state === 'active'
 }
 
 export const usePlanEditorStore = defineStore('plan-editor', {
   state: () => ({
+    ...emptyScope(),
+    planScope: emptyScope(),
+    projectId: null as number | null,
     plans: [] as PlanRecord[],
     versions: [] as PlanVersionRecord[],
     selectedPlanId: null as number | null,
@@ -40,20 +43,20 @@ export const usePlanEditorStore = defineStore('plan-editor', {
     error: null as string | null,
   }),
   getters: {
-    // The Plans still being worked: the active surface.
     activeSurface(state): PlanRecord[] {
       return state.plans.filter((plan) => onActiveSurface(plan.state))
     },
-    // The terminal Plans, queryable but off the active surface.
     finished(state): PlanRecord[] {
       return state.plans.filter((plan) => !onActiveSurface(plan.state))
     },
-    // The Plan the editor has open, if any.
     selectedPlan(state): PlanRecord | null {
       return state.plans.find((plan) => plan.id === state.selectedPlanId) ?? null
     },
-    // The graph on display: the selected frozen version's shape, or
-    // the working shape when no version is selected.
+    openPlan(state): PlanRecord | null {
+      const plan = this.selectedPlan
+      if (!plan) return null
+      return state.projectId === null || plan.project_id === state.projectId ? plan : null
+    },
     displayed(state): PlanGraph | null {
       if (state.selectedVersion !== null) {
         const frozen = state.versions.find((version) => version.number === state.selectedVersion)
@@ -66,24 +69,51 @@ export const usePlanEditorStore = defineStore('plan-editor', {
     },
   },
   actions: {
-    // Load every Plan of one Project, terminal states included.
     async refresh(transport: ShellTransport, projectId: number): Promise<void> {
+      const claim = adoptScope(this, projectScopeKey(projectId))
+      this.projectId = projectId
       try {
         const response = await new KanbanClient(transport).queryPlanList({ project_id: projectId })
+        if (!scopeHolds(this, claim)) return
         this.plans = response.plans
         this.loaded = true
         this.error = null
       } catch (failure) {
+        if (!scopeHolds(this, claim)) return
         this.error = asApiError(failure).message
       }
     },
-    // Open one Plan: select it and load its record and frozen
-    // versions, showing the working shape first.
+    clear(): void {
+      releaseScope(this)
+      releaseScope(this.planScope)
+      this.projectId = null
+      this.plans = []
+      this.versions = []
+      this.selectedPlanId = null
+      this.selectedVersion = null
+      this.loaded = false
+      this.error = null
+    },
+    forgetSelection(): void {
+      releaseScope(this.planScope)
+      this.versions = []
+      this.selectedPlanId = null
+      this.selectedVersion = null
+    },
     async open(transport: ShellTransport, planId: number): Promise<void> {
+      const projectClaim = issueCommand(this)
+      const claim = adoptScope(this.planScope, `plan:${planId}`)
       this.selectedPlanId = planId
       this.selectedVersion = null
       try {
         const response = await new KanbanClient(transport).queryPlanGet({ plan_id: planId })
+        if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, claim)) return
+        if (this.projectId === null) {
+          adoptScope(this, projectScopeKey(response.plan.project_id))
+          this.projectId = response.plan.project_id
+        } else if (this.projectId !== response.plan.project_id) {
+          return
+        }
         this.versions = response.versions
         const known = this.plans.findIndex((plan) => plan.id === response.plan.id)
         if (known === -1) {
@@ -95,159 +125,174 @@ export const usePlanEditorStore = defineStore('plan-editor', {
         }
         this.error = null
       } catch (failure) {
+        if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, claim)) return
         this.error = asApiError(failure).message
       }
     },
-    // Select a Plan from the list without loading its versions.
     select(planId: number): void {
+      adoptScope(this.planScope, `plan:${planId}`)
       this.selectedPlanId = planId
       this.selectedVersion = null
     },
-    // Show one frozen version's shape.
     showVersion(number: number): void {
       this.selectedVersion = number
     },
-    // Show the working shape.
     showDraft(): void {
       this.selectedVersion = null
     },
-    // Create a draft Plan under the Project; a fresh aggregate is
-    // expected at version 0.
     async create(transport: ShellTransport, projectId: number): Promise<void> {
-      await this.mutate(transport, (client) =>
-        client.commandPlanCreate({ mutation: mutationFor(0), project_id: projectId }),
-      )
+      if (this.projectId !== null && this.projectId !== projectId) {
+        this.error = `Project ${projectId} is not the Project on display.`
+        return
+      }
+      if (this.projectId === null) {
+        adoptScope(this, projectScopeKey(projectId))
+        this.projectId = projectId
+      }
+      const projectClaim = issueCommand(this)
+      const selectionClaim = issueCommand(this.planScope)
+      let created: PlanRecord
+      try {
+        created = await new KanbanClient(transport).commandPlanCreate({
+          mutation: mutationFor(0),
+          project_id: projectId,
+        })
+      } catch (failure) {
+        if (!scopeHolds(this, projectClaim)) return
+        this.error = asApiError(failure).message
+        return
+      }
+      if (!scopeHolds(this, projectClaim)) return
+      this.error = null
+      await this.refresh(transport, projectId)
+      if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, selectionClaim)) return
+      await this.open(transport, created.id)
     },
-    // Add a Spec to the membership, appending it to the display
-    // order.
     async addSpec(transport: ShellTransport, specNumber: number): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanSpecAdd({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
           spec_number: specNumber,
         }),
       )
     },
-    // Remove a Spec from the membership and the display order.
     async removeSpec(transport: ShellTransport, specNumber: number): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanSpecRemove({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
           spec_number: specNumber,
         }),
       )
     },
-    // Move a Spec within the display order; the edges stay put.
+    // The edges stay put: order and dependency are separate facts.
     async moveSpec(
       transport: ShellTransport,
       specNumber: number,
       position: number,
     ): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanSpecMove({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
           spec_number: specNumber,
           position,
         }),
       )
     },
-    // Add a dependency edge inside the Plan.
     async addEdge(transport: ShellTransport, fromSpec: number, toSpec: number): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanEdgeAdd({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
           from_spec: fromSpec,
           to_spec: toSpec,
         }),
       )
     },
-    // Remove a dependency edge.
     async removeEdge(transport: ShellTransport, fromSpec: number, toSpec: number): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanEdgeRemove({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
           from_spec: fromSpec,
           to_spec: toSpec,
         }),
       )
     },
-    // Freeze the shape into an immutable version.
     async activate(transport: ShellTransport): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanActivate({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
         }),
       )
     },
-    // Reopen the draft and reserve the replacement version.
     async replan(transport: ShellTransport): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanReplan({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
         }),
       )
     },
-    // Complete the Plan.
     async complete(transport: ShellTransport): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanComplete({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
         }),
       )
     },
-    // Cancel the Plan.
     async cancel(transport: ShellTransport): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanCancel({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
         }),
       )
     },
-    // Archive the Plan; archiving is terminal.
     async archive(transport: ShellTransport): Promise<void> {
-      await this.mutate(transport, (client) =>
+      await this.mutate(transport, (client, plan) =>
         client.commandPlanArchive({
-          mutation: mutationFor(this.versionOfSelected()),
-          plan_id: this.selectedPlanId ?? 0,
+          mutation: mutationFor(plan.version),
+          plan_id: plan.id,
         }),
       )
     },
-    // Run one command; a refusal is reported, and a success refreshes
-    // the collection and opens the returned Plan — creation included,
-    // which lands with nothing yet selected, so no minted Plan can
-    // stay invisible and new frozen versions show at once.
     async mutate(
       transport: ShellTransport,
+      command: (client: KanbanClient, plan: PlanRecord) => Promise<PlanRecord>,
+    ): Promise<void> {
+      const plan = this.openPlan
+      if (!plan) {
+        this.error = 'The Project on display holds no open Plan for this change.'
+        return
+      }
+      adoptScope(this.planScope, `plan:${plan.id}`)
+      const planClaim = issueCommand(this.planScope)
+      await this.submit(transport, planClaim, (client) => command(client, plan))
+    },
+    async submit(
+      transport: ShellTransport,
+      planClaim: ScopeClaim,
       command: (client: KanbanClient) => Promise<PlanRecord>,
     ): Promise<void> {
+      const projectClaim = issueCommand(this)
       let landed: PlanRecord
       try {
         landed = await command(new KanbanClient(transport))
-        this.error = null
       } catch (failure) {
+        if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, planClaim)) return
         this.error = asApiError(failure).message
         return
       }
-      await this.refresh(transport, landed.project_id)
+      if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, planClaim)) return
+      this.error = null
+      await this.refresh(transport, this.projectId ?? landed.project_id)
+      if (!scopeHolds(this, projectClaim) || !scopeHolds(this.planScope, planClaim)) return
       await this.open(transport, landed.id)
-    },
-    // The stored version of the selected Plan, or a reported error
-    // when no Plan is open.
-    versionOfSelected(): number {
-      const plan = this.selectedPlan
-      if (!plan) {
-        throw new Error('no plan is selected')
-      }
-      return plan.version
     },
   },
 })

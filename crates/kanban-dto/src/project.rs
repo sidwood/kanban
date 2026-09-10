@@ -1,7 +1,9 @@
 //! Project payload definitions: the record every client sees and the
-//! register, archive, and list payloads (KAN-S1-US4, KAN-S1-US5,
-//! KAN-S1-US6). There is deliberately no delete payload and no way
-//! to change a code: codes are minted once and never change.
+//! register, update, archive, and list payloads (KAN-S1-US4,
+//! KAN-S1-US5, KAN-S1-US6). There is deliberately no delete payload
+//! and no way to change a code, a target repository, or a Seed
+//! Workspace: codes are minted once and never change, and the
+//! repository and the Seed anchor work a Project already holds.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -66,6 +68,30 @@ pub struct ProjectRegisterRequest {
     pub repository: String,
     /// The Seed Workspace.
     pub seed_workspace: String,
+    /// The default branch.
+    pub default_branch: String,
+    /// The required target Herdr workspace.
+    pub herdr_workspace: String,
+    /// The Herdr session name, if one is selected; absence selects
+    /// Herdr's default session.
+    pub herdr_session: Option<String>,
+    /// The Initiative the Project sits under, if any.
+    pub initiative_id: Option<u64>,
+}
+
+/// Request payload for the `project.update` command: the settings an
+/// operator owns after registration. The code, the target repository,
+/// and the Seed Workspace are absent on purpose — they are not
+/// correctable facts but the anchors every recorded Plan, Spec,
+/// Ticket, Workspace, and landing already hangs from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectUpdateRequest {
+    pub mutation: super::MutationContext,
+    /// The Project whose settings are changing.
+    pub project_id: u64,
+    /// The intended name; blank names are refused.
+    pub name: String,
     /// The default branch.
     pub default_branch: String,
     /// The required target Herdr workspace.

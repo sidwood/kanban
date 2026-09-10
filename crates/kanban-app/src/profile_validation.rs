@@ -12,7 +12,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use crate::catalog::exposed_operations;
-use crate::diagnostics::StoredProfileCatalogue;
+use crate::diagnostics::{StoredCoverageClaims, StoredProfileCatalogue};
 use crate::dispatch::Core;
 use crate::events::NoopEventSink;
 use crate::graph_proposal::testing::{MemoryGraphDependencies, MemoryGraphProposals};
@@ -59,6 +59,7 @@ fn harness() -> Harness {
             tickets.clone(),
             specs.clone(),
         )),
+        Arc::new(StoredCoverageClaims::new(tickets.clone())),
     )
     .expect("the diagnostics read the stored catalogue");
     core.register_specs(specs.clone(), projects.clone(), plans.clone())
@@ -307,18 +308,12 @@ mod invalid_profile_diagnostics {
             diagnose(&harness.core, plan),
             json!({
                 "cycles": [],
-                "coverage_gaps": [
-                    {
-                        "spec_number": 1,
-                        "uncovered": ["CORE-S1-US1"],
-                        "claims_no_stories": false,
-                    }
-                ],
+                "coverage_gaps": [],
                 "invalid_profiles": [],
-                "blocking": true,
+                "blocking": false,
             }),
-            "an assignable reference blocks nothing; the story no approved \
-             graph covers yet still does"
+            "an assignable reference blocks nothing, and the member's \
+             own Ticket claims its only story, so nothing blocks"
         );
     }
 
@@ -338,13 +333,7 @@ mod invalid_profile_diagnostics {
             diagnose(&harness.core, plan),
             json!({
                 "cycles": [],
-                "coverage_gaps": [
-                    {
-                        "spec_number": 1,
-                        "uncovered": ["CORE-S1-US1"],
-                        "claims_no_stories": false,
-                    }
-                ],
+                "coverage_gaps": [],
                 "invalid_profiles": [{ "reference": "standard" }],
                 "blocking": true,
             }),

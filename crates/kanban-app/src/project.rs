@@ -1,5 +1,6 @@
 //! Project commands and the query behind the register surface:
-//! register, archive, and list (KAN-S1-US4, KAN-S1-US5, KAN-S1-US6).
+//! register, update, archive, and list (KAN-S1-US4, KAN-S1-US5,
+//! KAN-S1-US6).
 //! Registration anchors a Project to exactly one Git repository, one
 //! Seed Workspace, one default branch, and one required target Herdr
 //! workspace with an optional Herdr session whose absence selects
@@ -10,11 +11,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use kanban_domain::{InitiativeId, NumberKind, Project, ProjectId, ProjectRegistration};
+use kanban_domain::{
+    InitiativeId, NumberKind, Project, ProjectId, ProjectRegistration, ProjectSettings,
+};
 use kanban_dto::{
     ApiError, LiveEventName, ProjectArchiveRequest, ProjectCounters, ProjectListQuery,
-    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, TimelineEntityKind,
-    TimelineEntityRef, TimelineEventKind,
+    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, ProjectUpdateRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
@@ -92,7 +95,9 @@ pub trait ProjectStore: Send + Sync {
     ) -> Result<Project, ApiError>;
     /// Load one Project, if it exists.
     fn find(&self, id: ProjectId) -> Result<Option<Project>, ApiError>;
-    /// Persist an applied transition and its timeline envelope.
+    /// Persist an applied transition and its timeline envelope. The
+    /// code, the target repository, and the Seed Workspace are never
+    /// written here: they are minted or anchored once.
     fn save(&self, project: &Project, envelope: TimelineEnvelope) -> Result<(), ApiError>;
     /// Every Project in id order, archived included.
     fn list(&self) -> Result<Vec<Project>, ApiError>;
@@ -144,8 +149,16 @@ impl Core {
             Arc::new(RegisterProject {
                 store: projects.clone(),
                 git,
-                initiatives,
+                initiatives: initiatives.clone(),
                 herdr_settings,
+                herdr_observer: herdr_observer.clone(),
+            }),
+        )?;
+        self.register_command(
+            "project.update",
+            Arc::new(UpdateProject {
+                store: projects.clone(),
+                initiatives: initiatives.clone(),
                 herdr_observer: herdr_observer.clone(),
             }),
         )?;
@@ -238,6 +251,118 @@ impl CommandHandler for RegisterProject {
         announce(effects, LiveEventName::ProjectRegistered, &project);
         encode_record(&project)
     }
+}
+
+/// Serves `project.update`.
+struct UpdateProject {
+    store: Arc<dyn ProjectStore>,
+    initiatives: Arc<dyn InitiativeStore>,
+    herdr_observer: Arc<dyn HerdrProjectObserver>,
+}
+
+impl CommandHandler for UpdateProject {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<ProjectUpdateRequest>(payload)?;
+        ParsedCommand::lift("project", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: ProjectUpdateRequest = parse_payload(&command.payload)?;
+        let project = load(&self.store, request.project_id)?;
+        Ok(project.version())
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: ProjectUpdateRequest = parse_payload(&command.payload)?;
+        let mut project = load(&self.store, request.project_id)?;
+        let settings = ProjectSettings::new(
+            &request.name,
+            &request.default_branch,
+            &request.herdr_workspace,
+            request.herdr_session.as_deref(),
+            request.initiative_id.map(InitiativeId::new),
+        )
+        .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        if let Some(initiative) = settings.initiative()
+            && self.initiatives.find(initiative)?.is_none()
+        {
+            return Err(ApiError::not_found(&format!(
+                "initiative {}",
+                initiative.value()
+            )));
+        }
+
+        let before = project.registration().settings();
+        let rebinds_herdr = before.herdr_session() != settings.herdr_session()
+            || before.herdr_workspace() != settings.herdr_workspace();
+        let changed = changed_settings(&before, &settings);
+        project
+            .update_settings(settings)
+            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        self.store.save(
+            &project,
+            transition(project.id(), "updated", json!({ "changed": changed })),
+        )?;
+        // A moved Herdr binding is a new observation: the release and
+        // the restart both wait for the commit, because joining the
+        // observer inside the write span could block on the connection
+        // the span holds, and an update that never commits must leave
+        // the standing observation exactly as it was.
+        if rebinds_herdr {
+            let observed = project.clone();
+            let observer = self.herdr_observer.clone();
+            effects.after_commit(Box::new(move || {
+                observer.stop_observing(observed.id().value());
+                observer.observe(&observed);
+            }));
+        }
+        announce(effects, LiveEventName::ProjectUpdated, &project);
+        encode_record(&project)
+    }
+}
+
+/// Exactly the settings fields the update moved, as `from` and `to`,
+/// so the timeline records the change rather than the whole record.
+fn changed_settings(before: &ProjectSettings, after: &ProjectSettings) -> Value {
+    let mut changed = serde_json::Map::new();
+    if before.name() != after.name() {
+        changed.insert(
+            "name".to_owned(),
+            json!({ "from": before.name(), "to": after.name() }),
+        );
+    }
+    if before.default_branch() != after.default_branch() {
+        changed.insert(
+            "default_branch".to_owned(),
+            json!({ "from": before.default_branch(), "to": after.default_branch() }),
+        );
+    }
+    if before.herdr_workspace() != after.herdr_workspace() {
+        changed.insert(
+            "herdr_workspace".to_owned(),
+            json!({ "from": before.herdr_workspace(), "to": after.herdr_workspace() }),
+        );
+    }
+    if before.herdr_session() != after.herdr_session() {
+        changed.insert(
+            "herdr_session".to_owned(),
+            json!({ "from": before.herdr_session(), "to": after.herdr_session() }),
+        );
+    }
+    if before.initiative() != after.initiative() {
+        changed.insert(
+            "initiative_id".to_owned(),
+            json!({
+                "from": before.initiative().map(InitiativeId::value),
+                "to": after.initiative().map(InitiativeId::value),
+            }),
+        );
+    }
+    Value::Object(changed)
 }
 
 /// Serves `project.archive`.
@@ -835,6 +960,43 @@ pub(crate) mod testing {
             "mutation": { "optimistic_version": version, "idempotency_key": key },
             "project_id": id,
         })
+    }
+
+    /// A settings update against `id`, with the fields tests vary.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn update(
+        id: u64,
+        name: &str,
+        default_branch: &str,
+        herdr_workspace: &str,
+        herdr_session: Option<&str>,
+        initiative_id: Option<u64>,
+        key: &str,
+        version: u64,
+    ) -> Value {
+        json!({
+            "mutation": { "optimistic_version": version, "idempotency_key": key },
+            "project_id": id,
+            "name": name,
+            "default_branch": default_branch,
+            "herdr_workspace": herdr_workspace,
+            "herdr_session": herdr_session,
+            "initiative_id": initiative_id,
+        })
+    }
+
+    /// The standard settings update, with only the name changed.
+    pub(super) fn renaming(id: u64, name: &str, key: &str, version: u64) -> Value {
+        update(
+            id,
+            name,
+            "main",
+            "kanban.seed",
+            Some("kanban-main"),
+            None,
+            key,
+            version,
+        )
     }
 }
 
@@ -1798,5 +1960,355 @@ mod project_lifecycle {
             .expect_err("unknown fields are rejected");
 
         assert_eq!(error.code, ErrorCode::UnknownField);
+    }
+}
+
+#[cfg(test)]
+mod project_settings {
+    use kanban_dto::{
+        ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
+    };
+    use serde_json::json;
+
+    use std::sync::Arc;
+
+    use super::testing::{
+        KnownRepositories, RecordingHerdrObserver, RecordingSink, archive, harness,
+        harness_with_herdr, harness_with_observing, renaming, shared_test_repository,
+        stored_project, update,
+    };
+
+    #[test]
+    fn updating_settings_returns_the_record_at_the_next_version() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let response = harness
+            .core
+            .command(
+                "project.update",
+                &update(
+                    1,
+                    "Recovery control plane",
+                    "trunk",
+                    "kanban.control",
+                    Some("kanban-control"),
+                    None,
+                    "key-1",
+                    1,
+                ),
+            )
+            .expect("the update applies");
+
+        assert_eq!(
+            response,
+            json!({
+                "id": 1,
+                "code": "CORE",
+                "name": "Recovery control plane",
+                "repository": shared_test_repository(),
+                "seed_workspace": "/workspaces/kanban.seed",
+                "default_branch": "trunk",
+                "herdr_session": "kanban-control",
+                "herdr_workspace": "kanban.control",
+                "initiative_id": null,
+                "archived": false,
+                "counters": { "plan": 2, "spec": 0, "ticket": 5 },
+                "version": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn updating_settings_never_moves_the_identity_or_the_anchored_paths() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let refused = harness
+            .core
+            .command(
+                "project.update",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "name": "Recovery control plane",
+                    "default_branch": "main",
+                    "herdr_workspace": "kanban.seed",
+                    "herdr_session": "kanban-main",
+                    "initiative_id": null,
+                    "code": "WAVE",
+                    "repository": "/repositories/elsewhere",
+                    "seed_workspace": "/workspaces/elsewhere.seed",
+                }),
+            )
+            .expect_err("identity and anchored paths are not update fields");
+
+        assert_eq!(refused.code, ErrorCode::UnknownField);
+    }
+
+    #[test]
+    fn a_stale_version_is_refused_and_changes_nothing() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let refused = harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-1", 0))
+            .expect_err("a stale optimistic version is refused");
+
+        assert_eq!(refused.code, ErrorCode::StaleVersion);
+        let (projects, _) = harness.projects.snapshot();
+        assert_eq!(projects[0].registration().name(), "Control plane");
+        assert_eq!(projects[0].version(), 1);
+    }
+
+    #[test]
+    fn replaying_one_key_applies_the_update_once() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let first = harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-1", 1))
+            .expect("the update applies");
+        let replay = harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-1", 1))
+            .expect("the replay returns the recorded outcome");
+
+        assert_eq!(first, replay);
+        let (projects, _) = harness.projects.snapshot();
+        assert_eq!(projects[0].version(), 2, "the replay applied nothing new");
+    }
+
+    #[test]
+    fn an_unknown_project_is_refused() {
+        let harness = harness();
+
+        let refused = harness
+            .core
+            .command("project.update", &renaming(9, "Renamed", "key-1", 1))
+            .expect_err("an unknown Project is refused");
+
+        assert_eq!(refused.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn an_unknown_initiative_is_refused() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let refused = harness
+            .core
+            .command(
+                "project.update",
+                &update(
+                    1,
+                    "Control plane",
+                    "main",
+                    "kanban.seed",
+                    Some("kanban-main"),
+                    Some(7),
+                    "key-1",
+                    1,
+                ),
+            )
+            .expect_err("an Initiative that does not exist is refused");
+
+        assert_eq!(refused.code, ErrorCode::NotFound);
+        let (projects, _) = harness.projects.snapshot();
+        assert_eq!(projects[0].version(), 1, "the refusal changed nothing");
+    }
+
+    #[test]
+    fn a_blank_anchor_is_refused() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        let refused = harness
+            .core
+            .command("project.update", &renaming(1, "   ", "key-1", 1))
+            .expect_err("a blank name is refused");
+
+        assert_eq!(refused.code, ErrorCode::InvalidRequest);
+        assert!(
+            refused.message.contains("name"),
+            "the refusal names the field: {}",
+            refused.message
+        );
+    }
+
+    #[test]
+    fn an_archived_project_refuses_every_settings_change() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+        harness
+            .core
+            .command("project.archive", &archive(1, "key-1", 1))
+            .expect("the archive applies");
+
+        let refused = harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-2", 2))
+            .expect_err("archived is terminal");
+
+        assert_eq!(refused.code, ErrorCode::InvalidRequest);
+        assert!(
+            refused.message.contains("terminal"),
+            "the refusal says archived is terminal: {}",
+            refused.message
+        );
+    }
+
+    #[test]
+    fn an_update_appends_its_own_timeline_row_with_the_fields_it_changed() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        harness
+            .core
+            .command(
+                "project.update",
+                &update(
+                    1,
+                    "Recovery control plane",
+                    "main",
+                    "kanban.seed",
+                    Some("kanban-main"),
+                    None,
+                    "key-1",
+                    1,
+                ),
+            )
+            .expect("the update applies");
+
+        let (_, timeline) = harness.projects.snapshot();
+        let row = timeline.last().expect("the update appended a row");
+        assert_eq!(row.scope(), &TimelineScope::Project(1));
+        assert_eq!(row.kind(), TimelineEventKind::Transition);
+        assert_eq!(
+            row.entity(),
+            Some(&TimelineEntityRef {
+                kind: TimelineEntityKind::Project,
+                id: "1".to_owned(),
+            })
+        );
+        assert_eq!(row.detail()["action"], json!("updated"));
+        assert_eq!(
+            row.detail()["changed"],
+            json!({ "name": { "from": "Control plane", "to": "Recovery control plane" } }),
+            "the audit records exactly what moved"
+        );
+    }
+
+    #[test]
+    fn changing_the_herdr_binding_rebinds_the_observation_after_the_commit() {
+        let observer = Arc::new(RecordingHerdrObserver::default());
+        let harness = harness_with_herdr(observer.clone());
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        harness
+            .core
+            .command(
+                "project.update",
+                &update(
+                    1,
+                    "Control plane",
+                    "main",
+                    "kanban.seed",
+                    Some("kanban-recovery"),
+                    None,
+                    "key-1",
+                    1,
+                ),
+            )
+            .expect("the update applies");
+
+        let calls = observer.calls.lock().expect("the recorder lock is sound");
+        assert_eq!(
+            *calls,
+            vec![("stop", 1), ("observe", 1)],
+            "a moved Herdr binding is released and observed again"
+        );
+    }
+
+    #[test]
+    fn leaving_the_herdr_binding_alone_leaves_the_observation_alone() {
+        let observer = Arc::new(RecordingHerdrObserver::default());
+        let harness = harness_with_herdr(observer.clone());
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-1", 1))
+            .expect("the update applies");
+
+        let calls = observer.calls.lock().expect("the recorder lock is sound");
+        assert!(
+            calls.is_empty(),
+            "a rename never interrupts a live observation: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn an_update_publishes_on_the_event_stream() {
+        let sink = Arc::new(RecordingSink::default());
+        let harness = harness_with_observing(
+            KnownRepositories {
+                repositories: vec![shared_test_repository().to_owned()],
+            },
+            sink.clone(),
+        );
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+
+        harness
+            .core
+            .command("project.update", &renaming(1, "Renamed", "key-1", 1))
+            .expect("the update applies");
+
+        let events = sink.events.lock().expect("the recorder lock is sound");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "project.updated");
+        assert_eq!(events[0].1["name"], json!("Renamed"));
+        assert_eq!(events[0].1["version"], json!(2));
+    }
+
+    #[test]
+    fn the_update_rejects_unknown_fields() {
+        let harness = harness();
+        harness
+            .projects
+            .seed(stored_project(1, "CORE", "kanban-main"));
+        let mut request = renaming(1, "Renamed", "key-1", 1);
+        request["archived"] = json!(true);
+
+        let refused = harness
+            .core
+            .command("project.update", &request)
+            .expect_err("unknown fields are rejected");
+
+        assert_eq!(refused.code, ErrorCode::UnknownField);
     }
 }

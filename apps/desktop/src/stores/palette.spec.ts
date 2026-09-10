@@ -55,7 +55,7 @@ describe('palette navigation', () => {
     })
   })
 
-  it('maps every search kind to a route', () => {
+  it('opens the exact object every search kind names, never its list', () => {
     expect(routeForSearchHit({
       kind: 'ticket',
       id: 2,
@@ -64,18 +64,47 @@ describe('palette navigation', () => {
       project_id: 1,
     })).toBe('/projects/1/board?ticket=2')
     expect(routeForSearchHit({
-      kind: 'ticket',
-      id: 9,
-      identifier: 'CORE-T9',
-      label: 'Orphaned',
-    })).toBe('/board')
+      kind: 'plan',
+      id: 5,
+      identifier: 'CORE-P1',
+      label: 'Plan 1',
+      project_id: 1,
+    })).toBe('/planning?project=1&plan=5')
+    expect(routeForSearchHit({
+      kind: 'project',
+      id: 4,
+      identifier: 'EDGE',
+      label: 'Edge tooling',
+      project_id: 4,
+    })).toBe('/projects/4/board')
+    expect(routeForSearchHit({
+      kind: 'initiative',
+      id: 7,
+      identifier: 'Personal tooling',
+      label: 'Personal tooling',
+    })).toBe('/initiatives?initiative=7')
     expect(paletteItemFromHit({
       kind: 'spec',
       id: 3,
       identifier: 'CORE-S3',
       label: 'Board presentation',
       project_id: 1,
-    }).route).toBe('/planning/specs')
+    }).route).toBe('/planning?project=1&spec=3')
+  })
+
+  it('falls back to the list only when the hit names no Project', () => {
+    expect(routeForSearchHit({
+      kind: 'ticket',
+      id: 9,
+      identifier: 'CORE-T9',
+      label: 'Orphaned',
+    })).toBe('/board')
+    expect(routeForSearchHit({
+      kind: 'spec',
+      id: 9,
+      identifier: 'CORE-S9',
+      label: 'Orphaned',
+    })).toBe('/planning?spec=9')
   })
 
   it('places navigation before search hits', () => {

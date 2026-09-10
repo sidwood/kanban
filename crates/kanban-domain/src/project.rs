@@ -300,6 +300,90 @@ impl ProjectRegistration {
     pub fn initiative(&self) -> Option<InitiativeId> {
         self.initiative
     }
+
+    /// The settings this registration currently carries.
+    pub fn settings(&self) -> ProjectSettings {
+        ProjectSettings {
+            name: self.name.clone(),
+            default_branch: self.default_branch.clone(),
+            herdr_workspace: self.herdr_workspace.clone(),
+            herdr_session: self.herdr_session.clone(),
+            initiative: self.initiative,
+        }
+    }
+
+    /// The same registration carrying `settings`; the anchored fields
+    /// are untouched.
+    fn with_settings(mut self, settings: ProjectSettings) -> Self {
+        self.name = settings.name;
+        self.default_branch = settings.default_branch;
+        self.herdr_workspace = settings.herdr_workspace;
+        self.herdr_session = settings.herdr_session;
+        self.initiative = settings.initiative;
+        self
+    }
+}
+
+/// The half of a registration an operator may correct after the fact.
+/// The code, the target repository, and the Seed Workspace are absent
+/// on purpose — the code is minted once (DR-PH-03), and the repository
+/// and the Seed anchor the Plans, Specs, Tickets, Workspaces, and
+/// landings a Project already holds, so re-pointing them would move
+/// recorded work rather than correct a fact about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSettings {
+    name: String,
+    default_branch: String,
+    herdr_workspace: String,
+    herdr_session: Option<String>,
+    initiative: Option<InitiativeId>,
+}
+
+impl ProjectSettings {
+    /// Validate settings by exactly the rules registration applies to
+    /// the same fields: every anchor carries text, the session name is
+    /// one safe path segment, and a blank session name is absence,
+    /// which selects Herdr's default session (DR-PH-07).
+    pub fn new(
+        name: &str,
+        default_branch: &str,
+        herdr_workspace: &str,
+        herdr_session: Option<&str>,
+        initiative: Option<InitiativeId>,
+    ) -> Result<Self, RegistrationError> {
+        Ok(Self {
+            name: anchored("name", name)?,
+            default_branch: anchored("default branch", default_branch)?,
+            herdr_workspace: anchored("target Herdr workspace", herdr_workspace)?,
+            herdr_session: optional_herdr_session(herdr_session)?,
+            initiative,
+        })
+    }
+
+    /// The display name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The one default branch.
+    pub fn default_branch(&self) -> &str {
+        &self.default_branch
+    }
+
+    /// The one required target Herdr workspace.
+    pub fn herdr_workspace(&self) -> &str {
+        &self.herdr_workspace
+    }
+
+    /// The named Herdr session, if the Project selects one.
+    pub fn herdr_session(&self) -> Option<&str> {
+        self.herdr_session.as_deref()
+    }
+
+    /// The Initiative the Project sits under, if any.
+    pub fn initiative(&self) -> Option<InitiativeId> {
+        self.initiative
+    }
 }
 
 /// The named session the text selects, when it names one: a blank
@@ -455,6 +539,20 @@ impl Project {
         let number = self.counters.next(kind);
         self.version += 1;
         Ok(number)
+    }
+
+    /// Correct the settings an operator owns. Archived is terminal, so
+    /// an archived Project refuses every change, and the code, the
+    /// target repository, the Seed Workspace, and the counters are
+    /// untouched: this corrects facts about a Project, it never moves
+    /// the work one holds.
+    pub fn update_settings(&mut self, settings: ProjectSettings) -> Result<(), ProjectError> {
+        if self.state == ProjectState::Archived {
+            return Err(ProjectError::ArchivedIsTerminal);
+        }
+        self.registration = self.registration.clone().with_settings(settings);
+        self.version += 1;
+        Ok(())
     }
 
     /// Archive an active Project. Archived is terminal, so a second
@@ -869,7 +967,7 @@ mod project_lifecycle {
 
     use super::{
         NumberKind, Project, ProjectCounters, ProjectError, ProjectId, ProjectRegistration,
-        ProjectState,
+        ProjectSettings, ProjectState, RegistrationError,
     };
 
     fn registration(code: &str) -> ProjectRegistration {
@@ -959,6 +1057,123 @@ mod project_lifecycle {
             2,
             "the Ticket counter resumes past the last minted number"
         );
+    }
+
+    #[test]
+    fn settings_change_the_mutable_anchors_and_bump_the_version() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+
+        project
+            .update_settings(
+                ProjectSettings::new(
+                    "Control plane",
+                    "trunk",
+                    "kanban.control",
+                    Some("kanban-control"),
+                    Some(InitiativeId::new(4)),
+                )
+                .expect("well-formed settings are accepted"),
+            )
+            .expect("an active Project takes its settings");
+
+        let registration = project.registration();
+        assert_eq!(registration.name(), "Control plane");
+        assert_eq!(registration.default_branch(), "trunk");
+        assert_eq!(registration.herdr_workspace(), "kanban.control");
+        assert_eq!(registration.herdr_session(), Some("kanban-control"));
+        assert_eq!(registration.initiative(), Some(InitiativeId::new(4)));
+        assert_eq!(project.version(), 2);
+    }
+
+    #[test]
+    fn settings_leave_the_identity_and_the_anchored_paths_alone() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+        project.mint(NumberKind::Ticket).expect("active mints");
+
+        project
+            .update_settings(
+                ProjectSettings::new("Renamed", "trunk", "kanban.seed", None, None)
+                    .expect("well-formed settings are accepted"),
+            )
+            .expect("an active Project takes its settings");
+
+        let registration = project.registration();
+        assert_eq!(
+            registration.code().as_str(),
+            "CORE",
+            "the code is minted once"
+        );
+        assert_eq!(
+            registration.repository(),
+            "/repositories/kanban",
+            "a Project never changes the repository it anchors"
+        );
+        assert_eq!(
+            registration.seed_workspace(),
+            "/workspaces/kanban.seed",
+            "a Project never relocates its Seed Workspace"
+        );
+        assert_eq!(
+            project.counters().last(NumberKind::Ticket),
+            1,
+            "settings never rewind a minted number"
+        );
+    }
+
+    #[test]
+    fn a_blank_setting_is_refused_exactly_as_registration_refuses_it() {
+        assert_eq!(
+            ProjectSettings::new("  ", "main", "kanban.seed", None, None),
+            Err(RegistrationError::Blank("name"))
+        );
+        assert_eq!(
+            ProjectSettings::new("Control plane", " ", "kanban.seed", None, None),
+            Err(RegistrationError::Blank("default branch"))
+        );
+        assert_eq!(
+            ProjectSettings::new("Control plane", "main", "", None, None),
+            Err(RegistrationError::Blank("target Herdr workspace"))
+        );
+        assert_eq!(
+            ProjectSettings::new(
+                "Control plane",
+                "main",
+                "kanban.seed",
+                Some("two/one"),
+                None
+            ),
+            Err(RegistrationError::InvalidHerdrSession)
+        );
+    }
+
+    #[test]
+    fn a_blank_herdr_session_selects_the_default_session() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+
+        project
+            .update_settings(
+                ProjectSettings::new("Control plane", "main", "kanban.seed", Some("  "), None)
+                    .expect("a blank session is absence, not a refusal"),
+            )
+            .expect("an active Project takes its settings");
+
+        assert_eq!(project.registration().herdr_session(), None);
+    }
+
+    #[test]
+    fn settings_on_an_archived_project_are_refused() {
+        let mut project = Project::new(ProjectId::new(1), registration("CORE"));
+        project.archive().expect("active archives");
+
+        assert_eq!(
+            project.update_settings(
+                ProjectSettings::new("Renamed", "main", "kanban.seed", None, None)
+                    .expect("well-formed settings are accepted"),
+            ),
+            Err(ProjectError::ArchivedIsTerminal)
+        );
+        assert_eq!(project.version(), 2, "the refusal changed nothing");
+        assert_eq!(project.registration().name(), "Control plane");
     }
 
     #[test]

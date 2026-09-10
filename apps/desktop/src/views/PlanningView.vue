@@ -1,55 +1,222 @@
 <script setup lang="ts">
-// The planning editor surface: pick a Project, compose its Plans as
-// ordered dependency graphs of Specs, drive the lifecycle, and switch
-// between the working shape and every frozen version. Presentation
-// only; every domain call goes through the generated client in the
-// plan-editor and plan-diagnostics stores, and the terminal states
-// stay listed but sit off the active surface (KAN-S3-US1, KAN-S3-US2,
-// KAN-S3-US3). The blocking diagnostics of the graph on display ride
-// beside it (KAN-S3-US7), and the coverage matrix completes them with
-// the story-to-criterion-to-Ticket view of one Spec version
-// (DR-PS-18).
-import { computed, inject, onMounted, ref, watch } from 'vue'
-import { kanbanTransportKey } from '../core/transport'
+import { computed, inject, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import type { TicketRecord } from '@kanban/contracts'
+import { KanbanClient } from '@kanban/contracts'
+import { asApiError, kanbanTransportKey } from '../core/transport'
+import {
+  adoptScope,
+  emptyScope,
+  issueCommand,
+  releaseScope,
+  scopeHolds,
+} from '../core/scope-authority'
+import type { ScopeClaim } from '../core/scope-authority'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { usePlanEditorStore } from '../stores/plan-editor'
 import { usePlanDiagnosticsStore } from '../stores/plan-diagnostics'
 import { useCoverageMatrixStore } from '../stores/coverage-matrix'
+import { useGraphProposalsStore } from '../stores/graph-proposals'
+import { useProposalCoverageStore } from '../stores/proposal-coverage'
+import AppButton from '../components/AppButton.vue'
+import EmptyState from '../components/EmptyState.vue'
+import InlineAlert from '../components/InlineAlert.vue'
+import SectionHeader from '../components/SectionHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
 
 const transport = inject(kanbanTransportKey)
+const route = useRoute()
 const projects = useProjectRegisterStore()
 const editor = usePlanEditorStore()
 const diagnostics = usePlanDiagnosticsStore()
 const matrix = useCoverageMatrixStore()
+const graphs = useGraphProposalsStore()
+const proposalCoverage = useProposalCoverageStore()
 
 const pickedProjectId = ref<number | null>(null)
 const specDraft = ref('')
 const edgeFrom = ref<number | null>(null)
 const edgeTo = ref<number | null>(null)
+const tickets = ref<TicketRecord[]>([])
+const ticketsError = ref<string | null>(null)
 
-onMounted(() => {
-  if (transport) {
-    void projects.refresh(transport).then(() => {
-      const first = projects.projects.find((project) => !project.archived) ?? projects.projects[0]
-      if (first) {
-        pickedProjectId.value = first.id
-        void editor.refresh(transport, first.id)
-        void matrix.loadSpecs(transport, first.id)
-      }
-    })
+function linked(name: string): number | null {
+  const raw = route.query[name]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const parsed = Number(value)
+  return value && Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+const linkedProjectId = computed(() => linked('project'))
+const linkedPlanId = computed(() => linked('plan'))
+const linkedSpecId = computed(() => linked('spec'))
+
+// Vue Router reuses this component when only the query changes.
+const scope = emptyScope()
+const specScope = emptyScope()
+
+const loadedProjectId = ref<number | null>(null)
+
+watch(
+  () => [linkedProjectId.value, linkedPlanId.value, linkedSpecId.value] as const,
+  () => {
+    void adoptRoute()
+  },
+  { immediate: true },
+)
+
+async function adoptRoute(): Promise<void> {
+  const claim = adoptScope(
+    scope,
+    `planning:${linkedProjectId.value}:${linkedPlanId.value}:${linkedSpecId.value}`,
+  )
+  const intended = enforceRouteScope()
+  if (!transport) return
+  await projects.refresh(transport)
+  if (!scopeHolds(scope, claim)) return
+  const chosen =
+    projects.projects.find((project) => project.id === intended) ??
+    projects.projects.find((project) => !project.archived) ??
+    projects.projects[0]
+  if (!chosen) return
+  const linkedObjects = { plan: linkedPlanId.value, spec: linkedSpecId.value }
+  if (chosen.id === loadedProjectId.value) {
+    pickedProjectId.value = chosen.id
+    await openLinked(claim, linkedObjects)
+    return
   }
-})
+  if (chosen.id !== editor.projectId) {
+    forgetProjectScope()
+  }
+  pickedProjectId.value = chosen.id
+  loadedProjectId.value = chosen.id
+  await openProject(claim, chosen.id, linkedObjects)
+}
 
-// Loading the picked Project's Plans and its coverage matrix.
-async function loadPlans(): Promise<void> {
-  if (transport && pickedProjectId.value !== null) {
-    editor.select(0)
-    await editor.refresh(transport, pickedProjectId.value)
-    await matrix.loadSpecs(transport, pickedProjectId.value)
+// Route authority is applied before any read can yield.
+function enforceRouteScope(): number | null {
+  const named = linkedProjectId.value
+  const held = editor.projectId
+  const intended = named ?? held ?? pickedProjectId.value
+  if (intended !== held) {
+    forgetProjectScope()
+    loadedProjectId.value = null
+  } else {
+    const namedPlan = linkedPlanId.value
+    if (namedPlan !== null && editor.selectedPlanId !== namedPlan) {
+      editor.forgetSelection()
+    }
+    const namedSpec = linkedSpecId.value
+    if (namedSpec !== null && matrix.pickedSpecId !== namedSpec) {
+      releaseScope(specScope)
+      matrix.forgetPick()
+      graphs.clear()
+      proposalCoverage.clear()
+    }
+  }
+  pickedProjectId.value = intended
+  return intended
+}
+
+function forgetProjectScope(): void {
+  specDraft.value = ''
+  edgeFrom.value = null
+  edgeTo.value = null
+  tickets.value = []
+  ticketsError.value = null
+  editor.clear()
+  matrix.clear()
+  graphs.clear()
+  proposalCoverage.clear()
+  diagnostics.clear()
+  releaseScope(specScope)
+}
+
+async function openProject(
+  claim: ScopeClaim,
+  projectId: number,
+  named: { plan: number | null; spec: number | null } = { plan: null, spec: null },
+): Promise<void> {
+  if (!transport) return
+  await Promise.all([
+    editor.refresh(transport, projectId),
+    matrix.loadSpecs(transport, projectId),
+    loadTickets(claim, projectId),
+  ])
+  if (!scopeHolds(scope, claim)) return
+  await openLinked(claim, named)
+}
+
+async function openLinked(
+  claim: ScopeClaim,
+  named: { plan: number | null; spec: number | null },
+): Promise<void> {
+  if (!transport) return
+  if (named.plan !== null && editor.plans.some((plan) => plan.id === named.plan)) {
+    await editor.open(transport, named.plan)
+    if (!scopeHolds(scope, claim)) return
+  }
+  if (named.spec !== null && matrix.specs.some((spec) => spec.id === named.spec)) {
+    await matrix.pick(transport, named.spec)
+    if (!scopeHolds(scope, claim)) return
+  }
+  const specId = matrix.pickedSpecId
+  if (specId === null) {
+    releaseScope(specScope)
+    graphs.clear()
+    proposalCoverage.clear()
+    return
+  }
+  const specClaim = takeSpecAuthority(specId)
+  await loadGraphs(specClaim, specId)
+}
+
+async function loadTickets(
+  claim: ScopeClaim,
+  projectId: number,
+  specClaim: ScopeClaim | null = null,
+): Promise<void> {
+  if (!transport) return
+  try {
+    const response = await new KanbanClient(transport).queryTicketList({ project_id: projectId })
+    if (!scopeHolds(scope, claim) || (specClaim && !scopeHolds(specScope, specClaim))) return
+    tickets.value = response.tickets
+    ticketsError.value = null
+  } catch (failure) {
+    if (!scopeHolds(scope, claim) || (specClaim && !scopeHolds(specScope, specClaim))) return
+    tickets.value = []
+    ticketsError.value = asApiError(failure).message
   }
 }
 
-// The code of the picked Project, for rendering Plan identities.
+function takeSpecAuthority(specId: number): ScopeClaim {
+  const claim = adoptScope(specScope, `planning-spec:${pickedProjectId.value}:${specId}`)
+  graphs.clear()
+  proposalCoverage.clear()
+  return claim
+}
+
+async function loadGraphs(claim: ScopeClaim, specId: number): Promise<void> {
+  if (!transport) return
+  await graphs.load(transport, specId)
+  if (!scopeHolds(specScope, claim) || graphs.specId !== specId) return
+  await proposalCoverage.load(
+    transport,
+    specId,
+    graphs.proposals.map((entry) => entry.spec_version),
+  )
+}
+
+async function loadPlans(): Promise<void> {
+  if (!transport || pickedProjectId.value === null) return
+  const chosen = pickedProjectId.value
+  const claim = adoptScope(scope, `planning:picked:${chosen}`)
+  forgetProjectScope()
+  pickedProjectId.value = chosen
+  loadedProjectId.value = chosen
+  await openProject(claim, chosen)
+}
+
 const projectCode = computed(
   () => projects.projects.find((project) => project.id === pickedProjectId.value)?.code ?? '',
 )
@@ -62,32 +229,62 @@ function specId(spec: number): string {
   return `${projectCode.value}-S${spec}`
 }
 
-// The identity of one Ticket a matrix claim names, for example
-// `CORE-T17`.
 function ticketId(ticket: number): string {
   return `${projectCode.value}-T${ticket}`
 }
 
-// Switching the coverage matrix to one of the picked Project's Specs.
+function memberLabel(id: number): string {
+  const held = tickets.value.find((entry) => entry.id === id)
+  if (!held) return `Ticket ${id}`
+  const identity = ticketId(held.number)
+  return held.pinned_spec_version == null
+    ? identity
+    : `${identity} · pinned v${held.pinned_spec_version}`
+}
+
 async function pickSpec(): Promise<void> {
   if (transport && matrix.pickedSpecId !== null) {
-    await matrix.pick(transport, matrix.pickedSpecId)
+    const specId = matrix.pickedSpecId
+    const claim = takeSpecAuthority(specId)
+    await matrix.pick(transport, specId)
+    if (!scopeHolds(specScope, claim)) return
+    await loadGraphs(claim, specId)
   }
 }
 
-// The Plan the editor has open.
+// Approval coverage is pinned to the proposal's version, not the operative one.
+function proposalBasis(version: number) {
+  return proposalCoverage.coverageOf(version)
+}
+
+async function approveGraph(proposalId: number): Promise<void> {
+  const proposal = graphs.proposals.find((entry) => entry.id === proposalId)
+  const projectId = pickedProjectId.value
+  const specId = matrix.pickedSpecId
+  if (!transport || !proposal || projectId === null || specId !== proposal.spec_id) return
+  const claim = issueCommand(scope)
+  const specClaim = issueCommand(specScope)
+  const landed = await graphs.approve(transport, proposal)
+  if (!scopeHolds(scope, claim) || !scopeHolds(specScope, specClaim) || !landed) return
+  await loadTickets(claim, projectId, specClaim)
+  if (!scopeHolds(scope, claim) || !scopeHolds(specScope, specClaim)) return
+  await proposalCoverage.load(
+    transport,
+    specId,
+    graphs.proposals.map((entry) => entry.spec_version),
+  )
+  if (!scopeHolds(scope, claim) || !scopeHolds(specScope, specClaim)) return
+  await matrix.read(transport, specId)
+}
+
 const selected = computed(() => editor.selectedPlan)
 
-// The graph on display: a frozen version's or the working shape's.
 const displayed = computed(() => editor.displayed)
 
-// Editing is legal only while a draft is on display.
 const editable = computed(
   () => selected.value?.state === 'draft' && editor.selectedVersion === null,
 )
 
-// The version switcher's entries: the working shape plus every frozen
-// version, newest first.
 const switcher = computed(() => [
   { key: 'draft' as const, label: 'Draft' },
   ...[...editor.versions].reverse().map((version) => ({
@@ -174,7 +371,6 @@ watch(
   { immediate: true },
 )
 
-// Whether the graph on display carries a blocking diagnostic.
 const blocking = computed(() => diagnostics.report?.blocking ?? false)
 
 const stateLabels: Record<string, string> = {
@@ -187,60 +383,51 @@ const stateLabels: Record<string, string> = {
 </script>
 
 <template>
-  <main class="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 p-8">
-    <nav class="text-sm text-slate-500">
-      <RouterLink
-        to="/"
-        class="hover:text-slate-900"
-      >
-        Kanban
-      </RouterLink>
-      <span aria-hidden="true"> / </span>
-      <span class="text-slate-900">Planning</span>
-    </nav>
-
-    <h1 class="text-3xl font-semibold tracking-tight">
-      Plan the work
-    </h1>
-
-    <div class="flex items-end gap-3">
-      <label class="flex flex-col gap-1 text-sm text-slate-600">
-        Project
-        <select
-          v-model="pickedProjectId"
-          data-testid="planning-project"
-          aria-label="Project"
-          class="rounded border border-slate-300 px-3 py-2 text-sm"
-          @change="loadPlans"
-        >
-          <option
-            v-for="entry in projects.projects"
-            :key="entry.id"
-            :value="entry.id"
+  <main class="animate-rise flex flex-col gap-6 px-6 py-8 lg:px-8">
+    <SectionHeader
+      eyebrow="Authoring"
+      title="Plan the work"
+      summary="Plans are ordered dependency graphs of Specs. The diagnostics beside a graph say whether it can become executable, and the Ticket graphs proposed against a Spec meet their approval gate here."
+    >
+      <template #actions>
+        <form @submit.prevent="submitCreate">
+          <AppButton
+            type="submit"
+            data-testid="plan-create"
+            size="sm"
+            variant="primary"
           >
-            {{ entry.code }} — {{ entry.name }}{{ entry.archived ? ' (archived)' : '' }}
-          </option>
-        </select>
-      </label>
-      <form @submit.prevent="submitCreate">
-        <button
-          type="submit"
-          data-testid="plan-create"
-          class="rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
-        >
-          New Plan
-        </button>
-      </form>
-    </div>
+            New Plan
+          </AppButton>
+        </form>
+      </template>
+    </SectionHeader>
 
-    <p
+    <label class="flex w-fit max-w-full flex-col gap-1 text-sm text-ink-muted">
+      Project
+      <select
+        v-model="pickedProjectId"
+        data-testid="planning-project"
+        aria-label="Project"
+        class="min-w-0 max-w-full rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
+        @change="loadPlans"
+      >
+        <option
+          v-for="entry in projects.projects"
+          :key="entry.id"
+          :value="entry.id"
+        >
+          {{ entry.code }} — {{ entry.name }}{{ entry.archived ? ' (archived)' : '' }}
+        </option>
+      </select>
+    </label>
+
+    <InlineAlert
       v-if="editor.error"
       data-testid="plan-error"
-      role="alert"
-      class="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
     >
       {{ editor.error }}
-    </p>
+    </InlineAlert>
 
     <section
       v-if="editor.loaded"
@@ -248,28 +435,28 @@ const stateLabels: Record<string, string> = {
       class="flex flex-col gap-4"
     >
       <div>
-        <h2 class="mb-2 text-sm font-semibold text-slate-700">
+        <h2 class="mb-2 text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
           Active surface
         </h2>
         <ul
           data-testid="plan-active"
-          class="flex flex-col divide-y divide-slate-200 rounded border border-slate-200"
+          class="flex flex-col divide-y divide-line overflow-hidden rounded-panel border border-line bg-surface"
         >
           <li
             v-for="plan in editor.activeSurface"
             :key="plan.id"
             :data-testid="`plan-row-${plan.id}`"
-            class="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-slate-50"
+            class="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/6"
             @click="editor.open(transport!, plan.id)"
           >
-            <span class="rounded bg-slate-100 px-2 py-0.5 font-mono text-sm font-medium">
+            <span class="rounded-control bg-rail px-2 py-0.5 font-mono text-sm font-medium text-ink">
               {{ planId(plan) }}
             </span>
             <span
               :data-testid="`plan-state-${plan.id}`"
-              class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+              class="rounded-control bg-rail px-2 py-0.5 text-xs text-ink-muted"
             >{{ stateLabels[plan.state] }}</span>
-            <span class="font-mono text-xs text-slate-500">
+            <span class="font-mono text-xs text-ink-subtle">
               {{ plan.spec_numbers.length }} Specs · {{ plan.edges.length }} edges
             </span>
           </li>
@@ -277,24 +464,24 @@ const stateLabels: Record<string, string> = {
       </div>
 
       <div v-if="editor.finished.length">
-        <h2 class="mb-2 text-sm font-semibold text-slate-500">
+        <h2 class="mb-2 text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
           Finished
         </h2>
         <ul
           data-testid="plan-finished"
-          class="flex flex-col divide-y divide-slate-200 rounded border border-slate-100"
+          class="flex flex-col divide-y divide-line overflow-hidden rounded-panel border border-line bg-surface"
         >
           <li
             v-for="plan in editor.finished"
             :key="plan.id"
             :data-testid="`plan-row-${plan.id}`"
-            class="flex cursor-pointer items-center gap-3 px-4 py-3 text-slate-500 hover:bg-slate-50"
+            class="flex cursor-pointer items-center gap-3 px-4 py-3 text-ink-muted transition-colors hover:bg-accent/6"
             @click="editor.open(transport!, plan.id)"
           >
-            <span class="rounded bg-slate-50 px-2 py-0.5 font-mono text-sm font-medium">
+            <span class="rounded-control bg-rail px-2 py-0.5 font-mono text-sm font-medium">
               {{ planId(plan) }}
             </span>
-            <span class="rounded bg-slate-50 px-2 py-0.5 text-xs">
+            <span class="rounded-control bg-rail px-2 py-0.5 text-xs">
               {{ stateLabels[plan.state] }}
             </span>
             <span class="font-mono text-xs">
@@ -307,24 +494,25 @@ const stateLabels: Record<string, string> = {
     <p
       v-else-if="!editor.error"
       data-testid="plan-loading"
+      class="text-sm text-ink-subtle"
     >
       Loading Plans…
     </p>
 
     <section
       v-if="matrix.specs.length"
-      data-testid="coverage-matrix"
-      class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4"
+      data-testid="planning-specs"
+      class="flex flex-col gap-4 rounded-panel border border-line bg-surface p-4"
     >
       <header class="flex flex-wrap items-center gap-3">
-        <h3 class="text-sm font-semibold text-slate-700">
-          Coverage matrix
+        <h3 class="text-sm font-semibold text-ink">
+          Specs
         </h3>
         <select
           v-model="matrix.pickedSpecId"
           data-testid="coverage-spec"
           aria-label="Spec"
-          class="rounded border border-slate-300 px-3 py-1.5 text-sm"
+          class="min-w-0 max-w-full rounded-control border border-line bg-surface px-3 py-1.5 text-sm text-ink"
           @change="pickSpec"
         >
           <option
@@ -338,78 +526,211 @@ const stateLabels: Record<string, string> = {
         <span
           v-if="matrix.report"
           data-testid="coverage-version"
-          class="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600"
+          class="rounded-control bg-rail px-2 py-0.5 font-mono text-xs text-ink-muted"
         >v{{ matrix.report.version }}</span>
       </header>
 
-      <p
-        v-if="matrix.error"
-        data-testid="coverage-error"
-        role="alert"
-        class="text-sm text-red-700"
-      >
-        {{ matrix.error }}
-      </p>
-
       <ul
-        v-if="matrix.report"
-        data-testid="coverage-rows"
-        class="flex flex-col divide-y divide-slate-200 rounded border border-slate-200"
+        data-testid="planning-spec-list"
+        class="flex flex-wrap gap-2"
       >
         <li
-          v-for="row in matrix.report.stories"
-          :key="row.story"
-          :data-testid="`coverage-row-${row.story}`"
-          class="flex flex-col gap-1 px-3 py-2"
+          v-for="spec in matrix.specs"
+          :key="spec.id"
+          :data-testid="`planning-spec-${spec.id}`"
+          class="rounded-control border px-2.5 py-1 font-mono text-xs"
+          :class="spec.id === matrix.pickedSpecId
+            ? 'border-accent/40 bg-accent/9 text-accent'
+            : 'border-line text-ink-muted'"
         >
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-sm">{{ row.story }}</span>
-            <span
-              v-if="row.claims.length === 0"
-              :data-testid="`coverage-gap-${row.story}`"
-              class="rounded bg-red-50 px-2 py-0.5 text-xs text-red-700"
-            >uncovered</span>
-          </div>
-          <ul
-            v-if="row.claims.length"
-            class="flex flex-col gap-0.5"
-          >
-            <li
-              v-for="claim in row.claims"
-              :key="`${claim.ticket_id}-${claim.outcome}`"
-              :data-testid="`coverage-claim-${row.story}-${claim.ticket_number}`"
-              class="text-sm text-slate-600"
-            >
-              <span class="font-mono">{{ ticketId(claim.ticket_number) }}</span>
-              — {{ claim.outcome }}
-            </li>
-          </ul>
+          {{ specId(spec.number) }} · {{ spec.execution }}
         </li>
       </ul>
-      <p
-        v-else-if="!matrix.error"
-        data-testid="coverage-loading"
-        class="text-sm text-slate-500"
+
+      <div
+        data-testid="coverage-matrix"
+        class="flex flex-col gap-3"
       >
-        Loading the coverage matrix…
-      </p>
+        <h4 class="text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
+          Coverage matrix
+        </h4>
+        <InlineAlert
+          v-if="matrix.error"
+          data-testid="coverage-error"
+        >
+          {{ matrix.error }}
+        </InlineAlert>
+
+        <ul
+          v-if="matrix.report"
+          data-testid="coverage-rows"
+          class="flex flex-col divide-y divide-line overflow-hidden rounded-control border border-line"
+        >
+          <li
+            v-for="row in matrix.report.stories"
+            :key="row.story"
+            :data-testid="`coverage-row-${row.story}`"
+            class="flex flex-col gap-1 px-3 py-2"
+          >
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-sm text-ink">{{ row.story }}</span>
+              <StatusBadge
+                v-if="row.claims.length === 0"
+                :data-testid="`coverage-gap-${row.story}`"
+                tone="critical"
+                density="compact"
+              >
+                uncovered
+              </StatusBadge>
+            </div>
+            <ul
+              v-if="row.claims.length"
+              class="flex flex-col gap-0.5"
+            >
+              <li
+                v-for="claim in row.claims"
+                :key="`${claim.ticket_id}-${claim.outcome}`"
+                :data-testid="`coverage-claim-${row.story}-${claim.ticket_number}`"
+                class="text-sm text-ink-muted"
+              >
+                <span class="font-mono">{{ ticketId(claim.ticket_number) }}</span>
+                — {{ claim.outcome }}
+              </li>
+            </ul>
+          </li>
+        </ul>
+        <p
+          v-else-if="!matrix.error"
+          data-testid="coverage-loading"
+          class="text-sm text-ink-subtle"
+        >
+          Loading the coverage matrix…
+        </p>
+      </div>
+
+      <div
+        data-testid="graph-proposals"
+        class="flex flex-col gap-3"
+      >
+        <h4 class="text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
+          Ticket graph approval
+        </h4>
+        <InlineAlert
+          v-if="graphs.error"
+          data-testid="graph-error"
+        >
+          {{ graphs.error }}
+        </InlineAlert>
+        <InlineAlert
+          v-if="ticketsError"
+          data-testid="graph-tickets-error"
+        >
+          {{ ticketsError }}
+        </InlineAlert>
+        <ul
+          v-if="graphs.proposals.length"
+          class="flex flex-col divide-y divide-line overflow-hidden rounded-control border border-line"
+        >
+          <li
+            v-for="entry in graphs.proposals"
+            :key="entry.id"
+            :data-testid="`graph-proposal-${entry.id}`"
+            class="flex flex-col gap-2 px-3 py-3"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono text-sm text-ink">Graph {{ entry.id }}</span>
+              <span class="rounded-control bg-rail px-2 py-0.5 font-mono text-xs text-ink-muted">
+                v{{ entry.spec_version }}
+              </span>
+              <StatusBadge
+                :data-testid="`graph-state-${entry.id}`"
+                :tone="entry.state === 'approved' ? 'positive' : 'caution'"
+                density="compact"
+              >
+                {{ entry.state }}
+              </StatusBadge>
+              <AppButton
+                v-if="entry.state === 'proposed'"
+                :data-testid="`graph-approve-${entry.id}`"
+                size="sm"
+                variant="primary"
+                class="ml-auto"
+                @click="approveGraph(entry.id)"
+              >
+                Approve graph
+              </AppButton>
+            </div>
+            <p
+              :data-testid="`graph-members-${entry.id}`"
+              class="text-sm text-ink-muted"
+            >
+              {{ entry.tickets.map((member) => memberLabel(member)).join(', ') }}
+            </p>
+            <p
+              :data-testid="`graph-edges-${entry.id}`"
+              class="font-mono text-xs text-ink-subtle"
+            >
+              {{ entry.edges
+                .map((edge) => `${memberLabel(edge.from_ticket).split(' · ')[0]} → ${memberLabel(edge.to_ticket).split(' · ')[0]}`)
+                .join(', ') }}
+            </p>
+            <InlineAlert
+              v-if="proposalBasis(entry.spec_version)?.error"
+              :data-testid="`graph-coverage-error-${entry.id}`"
+            >
+              The coverage of v{{ entry.spec_version }}, which this graph is judged on, could not
+              be read: {{ proposalBasis(entry.spec_version)!.error }}
+            </InlineAlert>
+            <InlineAlert
+              v-else-if="proposalBasis(entry.spec_version)?.uncovered.length"
+              :data-testid="`graph-blocking-${entry.id}`"
+              tone="caution"
+            >
+              The gate refuses a graph that leaves a story unclaimed.
+              {{ proposalBasis(entry.spec_version)!.uncovered.join(', ') }}
+              {{ proposalBasis(entry.spec_version)!.uncovered.length === 1 ? 'is' : 'are' }}
+              claimed by no criterion of v{{ entry.spec_version }}, the version this graph names.
+            </InlineAlert>
+            <p
+              v-else-if="proposalBasis(entry.spec_version)"
+              :data-testid="`graph-covered-${entry.id}`"
+              class="text-xs text-ink-subtle"
+            >
+              Every story of v{{ entry.spec_version }} is claimed by a criterion.
+            </p>
+            <InlineAlert
+              v-if="graphs.refusal?.proposalId === entry.id"
+              :data-testid="`graph-refusal-${entry.id}`"
+            >
+              {{ graphs.refusal.message }}
+            </InlineAlert>
+          </li>
+        </ul>
+        <EmptyState
+          v-else-if="graphs.loaded"
+          compact
+          data-testid="graph-empty"
+          message="No Ticket graph has been proposed against this Spec."
+          hint="An agent records a complete graph against an approved Spec version; the gate here is the human decision on it."
+        />
+      </div>
     </section>
 
     <section
       v-if="selected && displayed"
       data-testid="plan-editor"
-      class="flex flex-col gap-4 rounded-lg border border-slate-200 p-4"
+      class="flex flex-col gap-4 rounded-panel border border-line bg-surface p-4"
     >
       <header class="flex flex-wrap items-center gap-3">
         <h3
           data-testid="plan-title"
-          class="font-mono text-lg font-semibold"
+          class="font-mono text-lg font-semibold text-ink"
         >
           {{ planId(selected) }}
         </h3>
         <span
           data-testid="plan-state"
-          class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+          class="rounded-control bg-rail px-2 py-0.5 text-xs text-ink-muted"
         >{{ stateLabels[selected.state] }}</span>
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <div
@@ -421,10 +742,10 @@ const stateLabels: Record<string, string> = {
               :key="entry.key"
               :data-testid="`plan-version-${entry.key}`"
               type="button"
-              class="rounded border border-slate-300 px-2 py-1 font-mono text-xs hover:bg-slate-50"
+              class="rounded-control border border-line px-2 py-1 font-mono text-xs transition-colors hover:bg-accent/8"
               :class="entry.key === 'draft'
-                ? (editor.selectedVersion === null ? 'bg-slate-900 text-white' : '')
-                : (editor.selectedVersion === entry.key ? 'bg-slate-900 text-white' : '')"
+                ? (editor.selectedVersion === null ? 'bg-accent/12 text-accent' : 'text-ink-muted')
+                : (editor.selectedVersion === entry.key ? 'bg-accent/12 text-accent' : 'text-ink-muted')"
               @click="entry.key === 'draft' ? editor.showDraft() : editor.showVersion(entry.key as number)"
             >
               {{ entry.label }}
@@ -438,68 +759,70 @@ const stateLabels: Record<string, string> = {
           v-if="selected.state === 'draft'"
           @submit.prevent="lifecycle('activate')"
         >
-          <button
+          <AppButton
             type="submit"
             data-testid="plan-activate"
-            class="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+            size="sm"
+            variant="primary"
           >
             Activate
-          </button>
+          </AppButton>
         </form>
         <form
           v-if="selected.state === 'active'"
           @submit.prevent="lifecycle('replan')"
         >
-          <button
+          <AppButton
             type="submit"
             data-testid="plan-replan"
-            class="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+            size="sm"
+            variant="primary"
           >
             Replan
-          </button>
+          </AppButton>
         </form>
         <form
           v-if="selected.state === 'active'"
           @submit.prevent="lifecycle('complete')"
         >
-          <button
+          <AppButton
             type="submit"
             data-testid="plan-complete"
-            class="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            size="sm"
           >
             Complete
-          </button>
+          </AppButton>
         </form>
         <form
           v-if="selected.state === 'draft' || selected.state === 'active'"
           @submit.prevent="lifecycle('cancel')"
         >
-          <button
+          <AppButton
             type="submit"
             data-testid="plan-cancel"
-            class="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            size="sm"
           >
             Cancel
-          </button>
+          </AppButton>
         </form>
         <form
           v-if="selected.state !== 'archived'"
           @submit.prevent="lifecycle('archive')"
         >
-          <button
+          <AppButton
             type="submit"
             data-testid="plan-archive"
-            class="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            size="sm"
           >
             Archive
-          </button>
+          </AppButton>
         </form>
       </div>
 
       <p
         v-if="!editable"
         data-testid="plan-readonly"
-        class="text-xs text-slate-500"
+        class="text-xs text-ink-subtle"
       >
         {{ editor.selectedVersion === null
           ? 'Only a draft Plan accepts shape edits.'
@@ -509,15 +832,15 @@ const stateLabels: Record<string, string> = {
       <section
         v-if="diagnostics.loaded || diagnostics.error"
         data-testid="plan-diagnostics"
-        class="flex flex-col gap-2 rounded-lg border p-4"
-        :class="blocking ? 'border-red-200 bg-red-50' : 'border-slate-200'"
+        class="flex flex-col gap-2 rounded-control border p-4"
+        :class="blocking ? 'border-critical/30 bg-critical/8' : 'border-line'"
         :aria-label="editor.selectedVersion === null
           ? `Diagnostics of the working shape`
           : `Diagnostics of frozen version v${editor.selectedVersion}`"
       >
         <h4
           class="text-sm font-semibold"
-          :class="blocking ? 'text-red-700' : 'text-slate-700'"
+          :class="blocking ? 'text-critical' : 'text-ink'"
         >
           Diagnostics
         </h4>
@@ -525,7 +848,7 @@ const stateLabels: Record<string, string> = {
           v-if="diagnostics.error"
           data-testid="plan-diagnostics-error"
           role="alert"
-          class="text-sm text-red-700"
+          class="text-sm text-critical"
         >
           {{ diagnostics.error }}
         </p>
@@ -533,14 +856,14 @@ const stateLabels: Record<string, string> = {
           <p
             v-if="blocking"
             data-testid="plan-diagnostics-blocking"
-            class="text-sm font-medium text-red-700"
+            class="text-sm font-medium text-critical"
           >
             This graph is blocked: it cannot become executable yet.
           </p>
           <p
             v-else
             data-testid="plan-diagnostics-clear"
-            class="text-sm text-slate-600"
+            class="text-sm text-ink-muted"
           >
             No blocking diagnostics.
           </p>
@@ -553,7 +876,7 @@ const stateLabels: Record<string, string> = {
               v-for="(cycle, index) in diagnostics.report.cycles"
               :key="`cycle-${index}`"
               :data-testid="`plan-diagnostics-cycle-${index}`"
-              class="text-sm text-red-700"
+              class="text-sm text-critical"
             >
               {{ cycle.spec_numbers.map((spec) => specId(spec)).join(' → ') }}
               form a dependency cycle.
@@ -568,7 +891,7 @@ const stateLabels: Record<string, string> = {
               v-for="gap in diagnostics.report.coverage_gaps"
               :key="`gap-${gap.spec_number}`"
               :data-testid="`plan-diagnostics-gap-${gap.spec_number}`"
-              class="text-sm text-red-700"
+              class="text-sm text-critical"
             >
               {{ gap.claims_no_stories
                 ? `${specId(gap.spec_number)} claims no User Stories to cover.`
@@ -584,7 +907,7 @@ const stateLabels: Record<string, string> = {
               v-for="(profile, index) in diagnostics.report.invalid_profiles"
               :key="`profile-${index}`"
               :data-testid="`plan-diagnostics-profile-${index}`"
-              class="text-sm text-red-700"
+              class="text-sm text-critical"
             >
               Profile reference {{ profile.reference }} resolves to no catalogue entry.
             </li>
@@ -594,18 +917,18 @@ const stateLabels: Record<string, string> = {
 
       <div class="grid gap-4 md:grid-cols-2">
         <section class="flex flex-col gap-2">
-          <h4 class="text-sm font-semibold text-slate-700">
+          <h4 class="text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
             Display order
           </h4>
           <ol
             data-testid="plan-specs"
-            class="flex flex-col divide-y divide-slate-200 rounded border border-slate-200"
+            class="flex flex-col divide-y divide-line overflow-hidden rounded-control border border-line"
           >
             <li
               v-for="(spec, position) in displayed.spec_numbers"
               :key="spec"
               :data-testid="`plan-spec-row-${spec}`"
-              class="flex items-center gap-2 px-3 py-2 text-sm"
+              class="flex items-center gap-2 px-3 py-2 text-sm text-ink"
             >
               <span class="font-mono">{{ specId(spec) }}</span>
               <span class="ml-auto flex items-center gap-1">
@@ -613,7 +936,7 @@ const stateLabels: Record<string, string> = {
                   :data-testid="`plan-spec-up-${spec}`"
                   type="button"
                   :disabled="!editable || position === 0"
-                  class="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-30"
+                  class="rounded-control border border-line px-2 py-0.5 text-xs text-ink-muted disabled:opacity-30"
                   @click="moveSpec(spec, position - 1)"
                 >
                   ↑
@@ -622,7 +945,7 @@ const stateLabels: Record<string, string> = {
                   :data-testid="`plan-spec-down-${spec}`"
                   type="button"
                   :disabled="!editable || position === displayed.spec_numbers.length - 1"
-                  class="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-30"
+                  class="rounded-control border border-line px-2 py-0.5 text-xs text-ink-muted disabled:opacity-30"
                   @click="moveSpec(spec, position + 1)"
                 >
                   ↓
@@ -631,7 +954,7 @@ const stateLabels: Record<string, string> = {
                   :data-testid="`plan-spec-remove-${spec}`"
                   type="button"
                   :disabled="!editable"
-                  class="rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-30"
+                  class="rounded-control border border-line px-2 py-0.5 text-xs text-ink-muted disabled:opacity-30"
                   @click="removeSpec(spec)"
                 >
                   Remove
@@ -648,32 +971,32 @@ const stateLabels: Record<string, string> = {
               data-testid="plan-spec-number"
               aria-label="Spec number"
               placeholder="Spec number, for example 4"
-              class="w-52 rounded border border-slate-300 px-3 py-2 text-sm"
+              class="w-52 rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
             >
-            <button
+            <AppButton
               type="submit"
               data-testid="plan-spec-add"
+              size="sm"
               :disabled="!editable"
-              class="rounded border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-30"
             >
               Add Spec
-            </button>
+            </AppButton>
           </form>
         </section>
 
         <section class="flex flex-col gap-2">
-          <h4 class="text-sm font-semibold text-slate-700">
+          <h4 class="text-xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
             Dependency edges
           </h4>
           <ul
             data-testid="plan-edges"
-            class="flex flex-col divide-y divide-slate-200 rounded border border-slate-200"
+            class="flex flex-col divide-y divide-line overflow-hidden rounded-control border border-line"
           >
             <li
               v-for="edge in displayed.edges"
               :key="`${edge.from_spec}-${edge.to_spec}`"
               :data-testid="`plan-edge-row-${edge.from_spec}-${edge.to_spec}`"
-              class="flex items-center gap-2 px-3 py-2 text-sm"
+              class="flex items-center gap-2 px-3 py-2 text-sm text-ink"
             >
               <span class="font-mono">
                 {{ specId(edge.from_spec) }} → {{ specId(edge.to_spec) }}
@@ -682,7 +1005,7 @@ const stateLabels: Record<string, string> = {
                 :data-testid="`plan-edge-remove-${edge.from_spec}-${edge.to_spec}`"
                 type="button"
                 :disabled="!editable"
-                class="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs disabled:opacity-30"
+                class="ml-auto rounded-control border border-line px-2 py-0.5 text-xs text-ink-muted disabled:opacity-30"
                 @click="removeEdge(edge.from_spec, edge.to_spec)"
               >
                 Remove
@@ -697,7 +1020,7 @@ const stateLabels: Record<string, string> = {
               v-model="edgeFrom"
               data-testid="plan-edge-from"
               aria-label="Depends on"
-              class="rounded border border-slate-300 px-2 py-2 text-sm"
+              class="rounded-control border border-line bg-surface px-2 py-2 text-sm text-ink"
             >
               <option :value="null">
                 from
@@ -714,7 +1037,7 @@ const stateLabels: Record<string, string> = {
               v-model="edgeTo"
               data-testid="plan-edge-to"
               aria-label="Waits on"
-              class="rounded border border-slate-300 px-2 py-2 text-sm"
+              class="rounded-control border border-line bg-surface px-2 py-2 text-sm text-ink"
             >
               <option :value="null">
                 to
@@ -727,14 +1050,14 @@ const stateLabels: Record<string, string> = {
                 {{ specId(spec) }}
               </option>
             </select>
-            <button
+            <AppButton
               type="submit"
               data-testid="plan-edge-add"
+              size="sm"
               :disabled="!editable"
-              class="rounded border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-30"
             >
               Add edge
-            </button>
+            </AppButton>
           </form>
         </section>
       </div>

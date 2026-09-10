@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HealthResponse, TimelineQueryResponse } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import router from '../router'
 import HomeView from './HomeView.vue'
 
 // A transport whose health answer and event stream the test steers.
@@ -34,7 +35,7 @@ function harness() {
 function mountView(transport: ShellTransport) {
   return mount(HomeView, {
     global: {
-      plugins: [createPinia()],
+      plugins: [createPinia(), router],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })

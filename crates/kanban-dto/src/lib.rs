@@ -164,7 +164,7 @@ pub use profile::{
 };
 pub use project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
-    ProjectRegisterRequest,
+    ProjectRegisterRequest, ProjectUpdateRequest,
 };
 pub use review::{
     TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
@@ -527,6 +527,7 @@ mod tests {
                 "ProjectListResponse",
                 "ProjectRecord",
                 "ProjectRegisterRequest",
+                "ProjectUpdateRequest",
                 "DeferralListQuery",
                 "DeferralListResponse",
                 "DeferralRecord",

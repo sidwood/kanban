@@ -83,6 +83,34 @@ function harness(options: {
     if (name === 'lane.list') {
       return Promise.resolve({ lanes: options.lanes } satisfies LaneListResponse)
     }
+    if (name === 'ticket.list') {
+      return Promise.resolve({ tickets: [] })
+    }
+    if (name === 'run.list') {
+      return Promise.resolve({ project_id: 1, runs: [] })
+    }
+    if (name === 'capacity.defaults.get') {
+      return Promise.resolve({
+        defaults: {
+          max_active_per_harness: 4,
+          max_active_per_model: 3,
+          max_active_per_usage_pool: 2,
+          version: 1,
+        },
+      })
+    }
+    if (name === 'capacity.settings.get') {
+      return Promise.resolve({
+        project_id: 1,
+        caps: {
+          max_active_lanes: null,
+          max_active_per_harness: null,
+          max_active_per_model: null,
+          max_active_per_usage_pool: null,
+          version: 1,
+        },
+      })
+    }
     return Promise.resolve({ workspaces: options.workspaces } satisfies WorkspaceListResponse)
   })
   const command =

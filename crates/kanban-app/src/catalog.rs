@@ -212,6 +212,13 @@ define_exposed_catalogue! {
         mcp: "project_schedule_policy_set",
         description: "Opt a Project into one catch-up occurrence, or restore skipped-history behaviour.",
     },
+    "project.update" => {
+        kind: Command,
+        request: "ProjectUpdateRequest",
+        response: "ProjectRecord",
+        mcp: "project_update",
+        description: "Change a Project's settings. The code, target repository, and Seed Workspace never move.",
+    },
     "project.archive" => {
         kind: Command,
         request: "ProjectArchiveRequest",

@@ -108,7 +108,7 @@ pub use profile::{
 };
 pub use project::{
     CodeError, NumberKind, Project, ProjectCode, ProjectCounters, ProjectError, ProjectId,
-    ProjectRegistration, ProjectState, RegistrationError,
+    ProjectRegistration, ProjectSettings, ProjectState, RegistrationError,
 };
 pub use reassignment::{ReassignmentError, apply_reassignment};
 pub use review_config::{

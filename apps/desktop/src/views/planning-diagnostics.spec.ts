@@ -9,6 +9,7 @@ import type {
 } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import router from '../router'
 import PlanningView from './PlanningView.vue'
 
 const project = {
@@ -92,6 +93,12 @@ function harness(answers: Record<string, unknown> = {}) {
     if (name === 'spec.list') {
       return { specs: [] }
     }
+    if (name === 'ticket.list') {
+      return { tickets: [] }
+    }
+    if (name === 'ticket.graph.list') {
+      return { proposals: [] }
+    }
     if (name === 'plan.list') {
       return { plans: [{ ...draft, version: planVersion }] } satisfies PlanListResponse
     }
@@ -123,9 +130,11 @@ function harness(answers: Record<string, unknown> = {}) {
 }
 
 async function mountView(transport: ShellTransport, pinia = createPinia()) {
+  await router.push('/planning')
+  await router.isReady()
   const wrapper = mount(PlanningView, {
     global: {
-      plugins: [pinia],
+      plugins: [pinia, router],
       provide: { [kanbanTransportKey as symbol]: transport },
     },
   })

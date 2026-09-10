@@ -217,6 +217,7 @@ impl Core {
             context.projects.clone(),
             context.specs.clone(),
             Arc::new(crate::diagnostics::AbsentCatalogue),
+            Arc::new(crate::diagnostics::AbsentClaims),
         )?;
         Ok(())
     }

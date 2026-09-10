@@ -114,6 +114,10 @@ define_live_event_catalogue! {
         payload: "ProjectRecord",
         description: "A Project was registered.",
     },
+    ProjectUpdated @ "project.updated" => {
+        payload: "ProjectRecord",
+        description: "A Project's settings were changed.",
+    },
     ProjectArchived @ "project.archived" => {
         payload: "ProjectRecord",
         description: "A Project was archived.",
@@ -337,6 +341,10 @@ pub enum LiveEvent {
         sequence: u64,
         payload: ProjectRecord,
     },
+    ProjectUpdated {
+        sequence: u64,
+        payload: ProjectRecord,
+    },
     ProjectArchived {
         sequence: u64,
         payload: ProjectRecord,
@@ -527,6 +535,7 @@ impl LiveEvent {
             Self::InitiativeRenamed { .. } => LiveEventName::InitiativeRenamed,
             Self::InitiativeArchived { .. } => LiveEventName::InitiativeArchived,
             Self::ProjectRegistered { .. } => LiveEventName::ProjectRegistered,
+            Self::ProjectUpdated { .. } => LiveEventName::ProjectUpdated,
             Self::ProjectArchived { .. } => LiveEventName::ProjectArchived,
             Self::PlanCreated { .. } => LiveEventName::PlanCreated,
             Self::PlanActivated { .. } => LiveEventName::PlanActivated,
@@ -582,6 +591,7 @@ impl LiveEvent {
             | Self::InitiativeRenamed { sequence, .. }
             | Self::InitiativeArchived { sequence, .. }
             | Self::ProjectRegistered { sequence, .. }
+            | Self::ProjectUpdated { sequence, .. }
             | Self::ProjectArchived { sequence, .. }
             | Self::PlanCreated { sequence, .. }
             | Self::PlanActivated { sequence, .. }
@@ -692,6 +702,10 @@ pub fn decode_live_event(envelope: &EventEnvelope) -> Result<LiveEvent, DecodeLi
             payload: decode_payload(name, &envelope.payload)?,
         },
         LiveEventName::ProjectRegistered => LiveEvent::ProjectRegistered {
+            sequence,
+            payload: decode_payload(name, &envelope.payload)?,
+        },
+        LiveEventName::ProjectUpdated => LiveEvent::ProjectUpdated {
             sequence,
             payload: decode_payload(name, &envelope.payload)?,
         },

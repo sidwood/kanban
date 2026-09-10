@@ -72,24 +72,36 @@ export function paletteItemFromHit(hit: SearchGlobalHit): PaletteItem {
   }
 }
 
-/** The route one search hit should open: a Ticket opens on its
- * Project's board with its drawer already open, so the hit keeps
- * the exact object it named. */
+/** The route one search hit should open: the exact object it named,
+ * never the list that object lives in (KAN-T140-AC2). A Ticket opens
+ * on its Project's board with its drawer already open; a Plan and a
+ * Spec open on the planning surface already scoped to their Project
+ * and selected; an Initiative opens selected in the Initiative
+ * register; a Project opens its own board. A hit naming no Project
+ * can only be taken as far as its kind's surface. */
 export function routeForSearchHit(hit: SearchGlobalHit): string {
   switch (hit.kind) {
     case 'initiative':
-      return '/initiatives'
+      return `/initiatives?initiative=${hit.id}`
     case 'project':
       return hit.project_id == null ? '/register' : `/projects/${hit.project_id}/board`
     case 'plan':
-      return '/planning'
+      return planningRoute('plan', hit)
     case 'spec':
-      return '/planning/specs'
+      return planningRoute('spec', hit)
     case 'ticket':
       return hit.project_id == null ? '/board' : `/projects/${hit.project_id}/board?ticket=${hit.id}`
     default:
       return '/board'
   }
+}
+
+/** The planning route that opens one Plan or Spec: the Project first,
+ * so the surface loads the Project the object belongs to before
+ * selecting it. */
+function planningRoute(object: 'plan' | 'spec', hit: SearchGlobalHit): string {
+  const scope = hit.project_id == null ? '' : `project=${hit.project_id}&`
+  return `/planning?${scope}${object}=${hit.id}`
 }
 
 /** Merge navigation rows and search hits for one palette view. */

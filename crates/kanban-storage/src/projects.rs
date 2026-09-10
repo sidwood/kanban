@@ -96,7 +96,12 @@ impl ProjectStore for SqliteProjectStore {
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let archived = project.is_archived();
         let counters = project.counters();
+        let registration = project.registration();
         let preceding_version = project.version() - 1;
+        // The code, the target repository, and the Seed Workspace are
+        // absent from this statement on purpose: they are the anchors
+        // every recorded Plan, Spec, Ticket, Workspace, and landing
+        // hangs from, so no write path can move them.
         let changed = span
             .execute(
                 "UPDATE projects
@@ -105,6 +110,11 @@ impl ProjectStore for SqliteProjectStore {
                      plan_counter = ?4,
                      spec_counter = ?5,
                      ticket_counter = ?6,
+                     name = ?8,
+                     default_branch = ?9,
+                     herdr_session = ?10,
+                     herdr_workspace = ?11,
+                     initiative_id = ?12,
                      archived_at = CASE
                          WHEN ?2 = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                          ELSE archived_at
@@ -118,6 +128,11 @@ impl ProjectStore for SqliteProjectStore {
                     counters.last(NumberKind::Spec) as i64,
                     counters.last(NumberKind::Ticket) as i64,
                     preceding_version as i64,
+                    registration.name(),
+                    registration.default_branch(),
+                    registration.herdr_session(),
+                    registration.herdr_workspace(),
+                    registration.initiative().map(|id| id.value() as i64),
                 ],
             )
             .map_err(internal)?;
@@ -253,6 +268,7 @@ mod project_repository {
     use kanban_app::{InitiativeStore, ProjectStore, TimelineEnvelope};
     use kanban_domain::{
         InitiativeId, InitiativeName, NumberKind, Project, ProjectId, ProjectRegistration,
+        ProjectSettings,
     };
     use kanban_dto::{
         ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, TimelineScope,
@@ -322,6 +338,11 @@ mod project_repository {
     /// The archive envelope for one Project.
     fn archived(id: ProjectId) -> TimelineEnvelope {
         transition(id, "archived", json!({}))
+    }
+
+    /// The settings envelope for one Project.
+    fn updated(id: ProjectId) -> TimelineEnvelope {
+        transition(id, "updated", json!({ "changed": {} }))
     }
 
     /// The envelope for persisting minted counters.
@@ -783,6 +804,124 @@ mod project_repository {
         assert_eq!(found.counters().last(NumberKind::Plan), 4);
         assert_eq!(found.counters().last(NumberKind::Spec), 2);
         assert_eq!(found.counters().last(NumberKind::Ticket), 6);
+    }
+
+    #[test]
+    fn saving_changed_settings_persists_them_and_leaves_the_anchors_alone() {
+        let (_dir, _database, store) = store();
+        let initiatives = SqliteInitiativeStore::new(&_database);
+        let initiative = initiatives
+            .create(
+                &InitiativeName::new("Recovery").expect("the fixture name validates"),
+                &|id| {
+                    TimelineEnvelope::global(
+                        TimelineEventKind::Transition,
+                        None,
+                        json!({ "action": "created", "id": id.value() }),
+                    )
+                },
+            )
+            .expect("the Initiative lands")
+            .id();
+        let mut project = store
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+
+        project
+            .update_settings(
+                ProjectSettings::new(
+                    "Recovery control plane",
+                    "trunk",
+                    "kanban.control",
+                    Some("kanban-control"),
+                    Some(initiative),
+                )
+                .expect("well-formed settings are accepted"),
+            )
+            .expect("an active Project takes its settings");
+        store
+            .save(&project, updated(project.id()))
+            .expect("the settings persist");
+
+        let reloaded = store
+            .find(project.id())
+            .expect("the store serves")
+            .expect("the Project is stored");
+        let registration = reloaded.registration();
+        assert_eq!(registration.name(), "Recovery control plane");
+        assert_eq!(registration.default_branch(), "trunk");
+        assert_eq!(registration.herdr_workspace(), "kanban.control");
+        assert_eq!(registration.herdr_session(), Some("kanban-control"));
+        assert_eq!(registration.initiative(), Some(initiative));
+        assert_eq!(registration.code().as_str(), "CORE");
+        assert_eq!(registration.repository(), "/repositories/kanban");
+        assert_eq!(registration.seed_workspace(), "/workspaces/kanban.seed");
+        assert_eq!(reloaded.version(), 2);
+    }
+
+    #[test]
+    fn clearing_the_session_and_the_initiative_persists_their_absence() {
+        let (_dir, _database, store) = store();
+        let mut project = store
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+
+        project
+            .update_settings(
+                ProjectSettings::new("Control plane", "main", "kanban.seed", None, None)
+                    .expect("well-formed settings are accepted"),
+            )
+            .expect("an active Project takes its settings");
+        store
+            .save(&project, updated(project.id()))
+            .expect("the settings persist");
+
+        let reloaded = store
+            .find(project.id())
+            .expect("the store serves")
+            .expect("the Project is stored");
+        assert_eq!(reloaded.registration().herdr_session(), None);
+        assert_eq!(reloaded.registration().initiative(), None);
+    }
+
+    #[test]
+    fn a_stale_settings_write_changes_nothing() {
+        let (_dir, database, store) = store();
+        let project = store
+            .create(&named("CORE", "kanban-main"), &registered("CORE"))
+            .expect("the registration lands");
+        let settings = |name: &str| {
+            ProjectSettings::new(name, "main", "kanban.seed", Some("kanban-main"), None)
+                .expect("well-formed settings are accepted")
+        };
+        let mut winner = project.clone();
+        winner
+            .update_settings(settings("Winner"))
+            .expect("an active Project takes its settings");
+        store
+            .save(&winner, updated(winner.id()))
+            .expect("the first save lands");
+        let mut stale = project;
+        stale
+            .update_settings(settings("Loser"))
+            .expect("an active Project takes its settings");
+        let timeline_before = timeline_rows(&database).len();
+
+        let error = store
+            .save(&stale, updated(stale.id()))
+            .expect_err("the stale save is refused");
+
+        assert_eq!(error.code, ErrorCode::StaleVersion);
+        assert_eq!(
+            timeline_rows(&database).len(),
+            timeline_before,
+            "a stale save must not append a timeline row"
+        );
+        let reloaded = store
+            .find(winner.id())
+            .expect("the store serves")
+            .expect("the Project is stored");
+        assert_eq!(reloaded.registration().name(), "Winner");
     }
 
     #[test]

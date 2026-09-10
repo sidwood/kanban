@@ -7,6 +7,7 @@ import RegisterView from '../views/RegisterView.vue'
 import HerdrSettingsView from '../views/HerdrSettingsView.vue'
 import CapacitySettingsView from '../views/CapacitySettingsView.vue'
 import ProfilesView from '../views/ProfilesView.vue'
+import ProjectSettingsView from '../views/ProjectSettingsView.vue'
 import WorkspacesIndexView from '../views/WorkspacesIndexView.vue'
 import WorkspacesView from '../views/WorkspacesView.vue'
 import HealthDashboardView from '../views/HealthDashboardView.vue'
@@ -40,6 +41,11 @@ const router = createRouter({
     { path: '/settings/herdr', name: 'herdr-settings', component: HerdrSettingsView },
     { path: '/settings/capacity', name: 'capacity-settings', component: CapacitySettingsView },
     { path: '/register', name: 'register', component: RegisterView },
+    {
+      path: '/projects/:projectId/settings',
+      name: 'project-settings',
+      component: ProjectSettingsView,
+    },
     { path: '/initiatives', name: 'initiatives', component: InitiativesView },
     { path: '/health', name: 'health', component: HealthDashboardView },
   ],

@@ -4,20 +4,47 @@
 // Selecting a Project mounts its timeline and rulings under the
 // numeric identity the core resolves (KAN-S2-US1, KAN-T79).
 import { computed, inject, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import RulingsSurface from '../components/RulingsSurface.vue'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey } from '../core/transport'
+import { adoptScope, emptyScope, projectScopeKey, scopeHolds } from '../core/scope-authority'
 import { useConnectionStore } from '../stores/connection'
 import { useProjectRegisterStore } from '../stores/project-register'
 
 const transport = inject(kanbanTransportKey)
+const route = useRoute()
 const connection = useConnectionStore()
 const projects = useProjectRegisterStore()
 const selectedProjectId = ref<number | null>(null)
 
+// The Project an Attention item's deferral — or any other link — named,
+// so arriving here opens that Project's activity rather than nothing
+// (KAN-T140-AC6).
+const linkedProjectId = computed(() => {
+  const raw = route.query.project
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const parsed = Number(value)
+  return value && Number.isInteger(parsed) && parsed > 0 ? parsed : null
+})
+
+// The observed role an Attention item is tracing, when one is named:
+// the only record this application holds of a role is its telemetry
+// on this Project's timeline (KAN-T140-AC6).
+const linkedRole = computed(() => {
+  const raw = route.query.role
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && value.length > 0 ? value : null
+})
+
 const timelineScope = computed(() =>
   selectedProjectId.value === null ? null : { project: selectedProjectId.value },
 )
+
+// Every read carries the scope it was issued in, so a Project the
+// link has left cannot select itself once its answer lands
+// (KAN-T140-AC6, KAN-T145).
+const scope = emptyScope()
 
 onMounted(() => {
   if (transport) {
@@ -25,15 +52,36 @@ onMounted(() => {
   }
 })
 
+// The activity on display follows the connection and the link
+// together: this component is reused when a later link changes only
+// the query, so a second Attention item must open its own Project's
+// activity rather than leave the previous one mounted (KAN-T140-AC6).
 watch(
-  () => connection.phase,
-  (phase) => {
+  () => [connection.phase, linkedProjectId.value] as const,
+  ([phase]) => {
+    const claim = adoptScope(scope, projectScopeKey(linkedProjectId.value))
+    // Synchronous: a link naming a Project takes the selection with
+    // it before the register is read again, so no Project the route
+    // left stays on display while that read is in flight.
+    adoptLinkedProject()
     if (phase === 'connected' && transport) {
-      void projects.refresh(transport)
+      void projects.refresh(transport).then(() => {
+        if (!scopeHolds(scope, claim)) return
+        adoptLinkedProject()
+      })
     }
   },
   { immediate: true },
 )
+
+// The Project the link names, once the register holds it. A link
+// naming none leaves the operator's own pick standing, because
+// nothing then contradicts it.
+function adoptLinkedProject(): void {
+  const named = linkedProjectId.value
+  if (named === null) return
+  selectedProjectId.value = projects.projects.some((entry) => entry.id === named) ? named : null
+}
 
 const status = computed(() => {
   switch (connection.phase) {
@@ -54,7 +102,7 @@ const eventStream = computed(() =>
 </script>
 
 <template>
-  <main class="flex min-h-screen flex-col items-center justify-center gap-3">
+  <main class="flex min-h-screen flex-col items-center justify-center gap-3 px-4 py-8">
     <h1 class="text-4xl font-semibold tracking-tight">
       Kanban
     </h1>
@@ -71,7 +119,7 @@ const eventStream = computed(() =>
     >
       {{ eventStream }}
     </p>
-    <div class="flex items-center gap-6">
+    <div class="flex w-full max-w-2xl flex-wrap items-center justify-center gap-x-6 gap-y-2 px-4">
       <RouterLink
         to="/attention"
         data-testid="attention-link"
@@ -148,7 +196,7 @@ const eventStream = computed(() =>
     </div>
     <section
       v-if="connection.phase === 'connected'"
-      class="mt-6 flex w-full max-w-2xl flex-col gap-6"
+      class="mt-6 flex w-full max-w-2xl min-w-0 flex-col gap-6"
     >
       <label class="flex flex-col gap-1 text-sm text-slate-600">
         Project
@@ -192,7 +240,17 @@ const eventStream = computed(() =>
         >
           Open the {{ projects.projects.find((entry) => entry.id === selectedProjectId)?.code }} board
         </RouterLink>
-        <TimelineSurface :scope="timelineScope" />
+        <p
+          v-if="linkedRole"
+          data-testid="activity-role"
+          class="text-sm text-slate-600"
+        >
+          Tracing the observed role {{ linkedRole }}: its reported activity is marked below.
+        </p>
+        <TimelineSurface
+          :scope="timelineScope"
+          :role="linkedRole"
+        />
         <RulingsSurface :project-id="selectedProjectId" />
       </template>
     </section>

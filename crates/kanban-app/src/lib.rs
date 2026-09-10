@@ -87,7 +87,7 @@ pub use deadlines::{
 };
 pub use deferrals::{DeferralStore, already_superseded_deferral_error};
 pub use dependency::DependencyStore;
-pub use diagnostics::StoredProfileCatalogue;
+pub use diagnostics::{StoredCoverageClaims, StoredProfileCatalogue};
 pub use dispatch::{Core, QueryHandler, RegistrationError, Reservation};
 pub use dispatch_request::{
     ClaimContext, CoordinatorWake, CoordinatorWakeRequest, DispatchEnqueue, DispatchStore,

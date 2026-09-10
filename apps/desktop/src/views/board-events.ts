@@ -14,6 +14,7 @@ const REFRESHES_BOARD: Readonly<Record<KanbanEventName, boolean>> = {
   'initiative.renamed': true,
   'initiative.archived': true,
   'project.registered': true,
+  'project.updated': true,
   'project.archived': true,
   // The Plan axis, and the Plan a Spec belongs to.
   'plan.created': true,

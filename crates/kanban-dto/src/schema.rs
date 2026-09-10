@@ -102,7 +102,7 @@ use crate::profile::{
 };
 use crate::project::{
     ProjectArchiveRequest, ProjectCounters, ProjectListQuery, ProjectListResponse, ProjectRecord,
-    ProjectRegisterRequest,
+    ProjectRegisterRequest, ProjectUpdateRequest,
 };
 use crate::review::{
     TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
@@ -627,6 +627,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "ProjectRegisterRequest",
             schema_for!(ProjectRegisterRequest),
         ),
+        ("ProjectUpdateRequest", schema_for!(ProjectUpdateRequest)),
         ("DeferralListQuery", schema_for!(DeferralListQuery)),
         ("DeferralListResponse", schema_for!(DeferralListResponse)),
         ("DeferralRecord", schema_for!(DeferralRecord)),

@@ -205,7 +205,7 @@ impl QueryHandler for CoverageMatrix {
                 claims: attached
                     .iter()
                     .flat_map(|ticket| {
-                        claims_of(ticket)
+                        claimed_criteria(ticket)
                             .iter()
                             .filter(|criterion| criterion.stories().contains(story))
                             .map(|criterion| SpecCoverageClaim {
@@ -231,7 +231,7 @@ impl QueryHandler for CoverageMatrix {
 /// claims through its criteria, a qualified Bug through its
 /// qualification's criteria (DR-TK-09), and a Task claims nothing
 /// (DR-TK-07).
-fn claims_of(ticket: &kanban_domain::Ticket) -> Vec<&AcceptanceCriterion> {
+pub(crate) fn claimed_criteria(ticket: &kanban_domain::Ticket) -> Vec<&AcceptanceCriterion> {
     match ticket.bug() {
         Some(bug) => bug
             .qualification()

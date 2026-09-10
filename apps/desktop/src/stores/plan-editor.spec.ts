@@ -4,6 +4,12 @@ import type { PlanGetResponse, PlanListResponse, PlanRecord } from '@kanban/cont
 import type { ShellTransport } from '../core/transport'
 import { usePlanEditorStore } from './plan-editor'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => { resolve = settle })
+  return { promise, resolve }
+}
+
 function record(overrides: Partial<PlanRecord> = {}): PlanRecord {
   return {
     id: 1,
@@ -20,8 +26,6 @@ function record(overrides: Partial<PlanRecord> = {}): PlanRecord {
   }
 }
 
-// A recording transport: every operation is captured, and the query
-// and command answers are steerable from the test.
 function harness() {
   const operations: Array<{ kind: 'query' | 'command'; name: string; request: unknown }> = []
   const query = vi.fn()
@@ -48,6 +52,70 @@ function harness() {
 }
 
 describe('plan editor store', () => {
+  it('keeps a new Plan selection when an older Plan command answers', async () => {
+    setActivePinia(createPinia())
+    const firstPlan = record({ id: 1, number: 1 })
+    const secondPlan = record({ id: 2, number: 2 })
+    const held = deferred<PlanRecord>()
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'plan.get') {
+        const planId = (request as { plan_id: number }).plan_id
+        return Promise.resolve({
+          plan: planId === 1 ? firstPlan : secondPlan,
+          versions: [],
+        } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [firstPlan, secondPlan] } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held.promise)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+    editor.select(1)
+    const beforeCommand = operations.length
+
+    const action = editor.activate(transport)
+    editor.select(2)
+    held.resolve(firstPlan)
+    await action
+
+    expect(operations[beforeCommand]).toMatchObject({
+      kind: 'command',
+      name: 'plan.activate',
+      request: { plan_id: 1 },
+    })
+    expect.soft(editor.selectedPlanId).toBe(2)
+    expect(operations.slice(beforeCommand + 1)).toEqual([])
+  })
+
+  it('keeps a Plan command valid across an unrelated list refresh', async () => {
+    setActivePinia(createPinia())
+    const held = deferred<PlanRecord>()
+    let stored = record()
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((name: string) => {
+      if (name === 'plan.get') {
+        return Promise.resolve({ plan: stored, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [stored] } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held.promise)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+    editor.select(1)
+
+    const action = editor.activate(transport)
+    await editor.refresh(transport, 4)
+    stored = record({ state: 'active', version: 7 })
+    held.resolve(stored)
+    await action
+
+    expect(operations.filter((entry) => entry.name === 'plan.activate')).toHaveLength(1)
+    expect(editor.selectedPlanId).toBe(1)
+    expect(editor.selectedPlan).toMatchObject({ state: 'active', version: 7 })
+    expect(editor.error).toBeNull()
+  })
+
   it('refresh loads every plan of the project through the generated client', async () => {
     setActivePinia(createPinia())
     const { transport, listing } = harness()
@@ -109,6 +177,214 @@ describe('plan editor store', () => {
     expect(request.project_id).toBe(4)
     expect(request.mutation.optimistic_version).toBe(0)
     expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)
+  })
+
+  it('lists a created Plan without replacing a newer Plan selection', async () => {
+    setActivePinia(createPinia())
+    const existing = record({ id: 1, number: 1 })
+    const created = record({ id: 9, number: 2, spec_numbers: [], edges: [], version: 1 })
+    const held = deferred<PlanRecord>()
+    const { transport, operations, query, command } = harness()
+    let listed = [existing]
+    query.mockImplementation((name: string) => {
+      if (name === 'plan.get') {
+        return Promise.resolve({ plan: existing, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [...listed] } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held.promise)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+
+    const creating = editor.create(transport, 4)
+    const opening = editor.open(transport, 1)
+    listed = [existing, created]
+    held.resolve(created)
+    await Promise.all([creating, opening])
+
+    const request = operations.find((entry) => entry.name === 'plan.create')?.request as {
+      mutation: { optimistic_version: number; idempotency_key: string }
+      project_id: number
+    }
+    expect(request.project_id).toBe(4)
+    expect(request.mutation.optimistic_version).toBe(0)
+    expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1, 9])
+    expect(editor.selectedPlanId).toBe(1)
+    expect(
+      operations.filter(
+        (entry) =>
+          entry.name === 'plan.get' && (entry.request as { plan_id: number }).plan_id === 9,
+      ),
+    ).toEqual([])
+  })
+
+  it('reports a refused Plan creation without replacing a newer Plan selection', async () => {
+    setActivePinia(createPinia())
+    const existing = record({ id: 1, number: 1 })
+    let refuse!: (failure: unknown) => void
+    const held = new Promise<PlanRecord>((_resolve, reject) => {
+      refuse = reject
+    })
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((name: string) => {
+      if (name === 'plan.get') {
+        return Promise.resolve({ plan: existing, versions: [] } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [existing] } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+
+    const creating = editor.create(transport, 4)
+    const opening = editor.open(transport, 1)
+    refuse({ code: 'invalid_request', message: 'the core refused this Plan' })
+    await Promise.all([creating, opening])
+
+    const request = operations.find((entry) => entry.name === 'plan.create')?.request as {
+      mutation: { optimistic_version: number; idempotency_key: string }
+      project_id: number
+    }
+    expect(request.project_id).toBe(4)
+    expect(request.mutation.optimistic_version).toBe(0)
+    expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)
+    expect(editor.error).toBe('the core refused this Plan')
+    expect(editor.selectedPlanId).toBe(1)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1])
+  })
+
+  it('reports a refused Plan creation while retaining an unchanged selection', async () => {
+    setActivePinia(createPinia())
+    const existing = record({ id: 1, number: 1 })
+    const { transport, operations, query, command } = harness()
+    query.mockResolvedValue({ plans: [existing] } satisfies PlanListResponse)
+    command.mockRejectedValue({
+      code: 'invalid_request',
+      message: 'the core refused this unchanged selection',
+    })
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+    editor.select(1)
+
+    await editor.create(transport, 4)
+
+    expect(operations.find((entry) => entry.name === 'plan.create')?.request).toMatchObject({
+      mutation: { optimistic_version: 0 },
+      project_id: 4,
+    })
+    expect(editor.error).toBe('the core refused this unchanged selection')
+    expect(editor.selectedPlanId).toBe(1)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1])
+  })
+
+  it('keeps Plan creation valid across an unrelated list refresh', async () => {
+    setActivePinia(createPinia())
+    const existing = record({ id: 1, number: 1 })
+    const created = record({ id: 9, number: 2, spec_numbers: [], edges: [], version: 1 })
+    const held = deferred<PlanRecord>()
+    const { transport, operations, query, command } = harness()
+    let listed = [existing]
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'plan.get') {
+        const planId = (request as { plan_id: number }).plan_id
+        return Promise.resolve({
+          plan: planId === created.id ? created : existing,
+          versions: [],
+        } satisfies PlanGetResponse)
+      }
+      return Promise.resolve({ plans: [...listed] } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held.promise)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+    editor.select(1)
+
+    const creating = editor.create(transport, 4)
+    await editor.refresh(transport, 4)
+    listed = [existing, created]
+    held.resolve(created)
+    await creating
+
+    expect(operations.find((entry) => entry.name === 'plan.create')?.request).toMatchObject({
+      mutation: { optimistic_version: 0 },
+      project_id: 4,
+    })
+    expect(editor.plans.map((plan) => plan.id)).toEqual([1, 9])
+    expect(editor.selectedPlanId).toBe(9)
+    expect(editor.error).toBeNull()
+  })
+
+  it('discards a created Plan response after the Project changes', async () => {
+    setActivePinia(createPinia())
+    const original = record({ id: 1, project_id: 4, number: 1 })
+    const replacement = record({ id: 5, project_id: 5, number: 1 })
+    const created = record({ id: 9, project_id: 4, number: 2 })
+    const held = deferred<PlanRecord>()
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((_name: string, request: unknown) => {
+      const projectId = (request as { project_id: number }).project_id
+      return Promise.resolve({
+        plans: projectId === 4 ? [original] : [replacement],
+      } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held.promise)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+
+    const creating = editor.create(transport, 4)
+    await editor.refresh(transport, 5)
+    held.resolve(created)
+    await creating
+
+    expect(editor.projectId).toBe(5)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([5])
+    expect(editor.selectedPlanId).toBeNull()
+    expect(editor.error).toBeNull()
+    expect(
+      operations.filter(
+        (entry) =>
+          entry.name === 'plan.list' && (entry.request as { project_id: number }).project_id === 4,
+      ),
+    ).toHaveLength(1)
+    expect(operations.filter((entry) => entry.name === 'plan.get')).toEqual([])
+  })
+
+  it('discards a Plan creation refusal after the Project changes', async () => {
+    setActivePinia(createPinia())
+    const original = record({ id: 1, project_id: 4, number: 1 })
+    const replacement = record({ id: 5, project_id: 5, number: 1 })
+    let refuse!: (failure: unknown) => void
+    const held = new Promise<PlanRecord>((_resolve, reject) => {
+      refuse = reject
+    })
+    const { transport, operations, query, command } = harness()
+    query.mockImplementation((_name: string, request: unknown) => {
+      const projectId = (request as { project_id: number }).project_id
+      return Promise.resolve({
+        plans: projectId === 4 ? [original] : [replacement],
+      } satisfies PlanListResponse)
+    })
+    command.mockReturnValue(held)
+    const editor = usePlanEditorStore()
+    await editor.refresh(transport, 4)
+
+    const creating = editor.create(transport, 4)
+    await editor.refresh(transport, 5)
+    refuse({ code: 'invalid_request', message: 'old Project refusal' })
+    await creating
+
+    expect(editor.projectId).toBe(5)
+    expect(editor.plans.map((plan) => plan.id)).toEqual([5])
+    expect(editor.selectedPlanId).toBeNull()
+    expect(editor.error).toBeNull()
+    expect(
+      operations.filter(
+        (entry) =>
+          entry.name === 'plan.list' && (entry.request as { project_id: number }).project_id === 4,
+      ),
+    ).toHaveLength(1)
+    expect(operations.filter((entry) => entry.name === 'plan.get')).toEqual([])
   })
 
   it('creating with no plan selected refreshes and opens the created plan', async () => {

@@ -6,6 +6,7 @@
     "initiative.renamed",
     "initiative.archived",
     "project.registered",
+    "project.updated",
     "project.archived",
     "plan.created",
     "plan.activated",

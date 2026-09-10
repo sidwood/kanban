@@ -259,11 +259,6 @@ fn recorded_rows(database_path: &Path) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// KAN-T132-AC1: a successful clone.create registers its Workspace in
-/// the same mutation and returns its id, proven over the real SQLite
-/// stores. KAN-T132-AC4: the same-key retry replays the recorded
-/// answer, and a different key at the taken target is refused without
-/// a second Workspace or a second skill invocation.
 #[test]
 fn clone_create_registration_returns_one_workspace_and_replays_it() {
     let scratch = TempDir::new().expect("a scratch directory is available");
@@ -314,9 +309,17 @@ fn clone_create_registration_returns_one_workspace_and_replays_it() {
         "registered-clone",
         "different-key",
     );
+    let refusal = wired
+        .core
+        .command("clone.create", &fresh)
+        .expect_err("a different key at the taken target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
     assert!(
-        wired.core.command("clone.create", &fresh).is_err(),
-        "a different key at the taken target is refused"
+        refusal.message.contains(&format!(
+            "`/workspaces/registered-clone` is already registered as Workspace {workspace_id}"
+        )),
+        "the refusal names the taken path and the Workspace holding it: {}",
+        refusal.message
     );
     assert_eq!(
         wired

@@ -3,7 +3,10 @@ use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::{CoordinatorWake, CoordinatorWakeRequest, ProjectStore};
-use kanban_domain::{ProjectId, RulingSummary, RunId, TicketId};
+use kanban_domain::{
+    ProjectId, ResumeCustody, ResumeRefusal, RulingSummary, RunId, TicketId, TicketState,
+    admit_run_resume,
+};
 use kanban_dto::RunRecoveryResumeRequest;
 use kanban_dto::{
     ApiError, RunRecoveryListQuery, RunRecoveryListResponse, RunRecoveryRecord,
@@ -16,6 +19,10 @@ use std::sync::Arc;
 pub struct RunRecoveryContext {
     pub project: ProjectId,
     pub ticket: TicketId,
+    /// Both read now rather than when the attempt started: a resume
+    /// is judged against the lifecycle that holds today.
+    pub project_archived: bool,
+    pub ticket_state: TicketState,
     pub version: u64,
     pub superseded: bool,
     pub has_submission: bool,
@@ -26,15 +33,72 @@ pub struct RunRecoveryContext {
 }
 
 impl RunRecoveryContext {
+    /// Whether current authoritative state admits resuming this
+    /// attempt, naming the reason when it does not. Every seam that
+    /// accepts or delivers a resume answers this one rule, so a stale
+    /// intent and a fresh request are judged alike.
+    pub fn admit_resume(&self) -> Result<(), ResumeRefusal> {
+        admit_run_resume(ResumeCustody {
+            project_archived: self.project_archived,
+            ticket_state: self.ticket_state,
+            superseded: self.superseded,
+            has_submission: self.has_submission,
+            request_active: self.review_eligible,
+            authority_active: self.resumable,
+        })
+    }
+
     pub fn can_resume(&self) -> bool {
-        self.resumable && !self.superseded && !self.has_submission && self.review_eligible
+        self.admit_resume().is_ok()
     }
 }
 
+/// The typed resume refusal as the transport reports it. Acceptance
+/// and delivery share it, so one refusal reads the same wherever it
+/// is raised.
+pub fn refuse_resume(refusal: ResumeRefusal) -> ApiError {
+    ApiError::invalid_request(&refusal.to_string())
+}
+
+/// The authorised delivery a dispatch is handed: the identities its
+/// prompt names, and nothing that would let a caller act on the
+/// authorisation after the window that granted it closed.
 pub struct PendingRunResume {
     pub recovery_id: u64,
     pub run_id: u64,
     pub dispatch_request_id: u64,
+}
+
+/// What the transport did with one authorised resume prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeDispatch {
+    /// The Coordinator accepted the prompt.
+    Accepted,
+    /// The Coordinator answered and refused it.
+    Declined,
+    /// The transport failed, so whether the prompt arrived is
+    /// unknown.
+    Failed,
+}
+
+/// How one resume delivery ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeDelivery {
+    /// No attempt was due: the intent is already closed, or its
+    /// bounded retry delay has not elapsed.
+    NotDue,
+    /// Current custody refused the intent, which is closed as
+    /// obsolete. Nothing was dispatched.
+    Closed,
+    /// The prompt was accepted, and the intent is closed as
+    /// delivered.
+    Delivered,
+    /// The Coordinator refused the prompt; the intent stays pending
+    /// for its bounded retry.
+    Declined,
+    /// The transport failed; the intent stays pending, and no
+    /// delivery is claimed.
+    Failed,
 }
 
 pub trait RunRecoveryStore: Send + Sync {
@@ -44,10 +108,23 @@ pub trait RunRecoveryStore: Send + Sync {
     fn resume(&self, run: RunId, summary: RulingSummary) -> Result<RunRecoveryRecord, ApiError>;
     fn list(&self, run: RunId) -> Result<Vec<RunRecoveryRecord>, ApiError>;
     fn pending_resume_ids(&self, project: ProjectId) -> Result<Vec<u64>, ApiError>;
-    /// Reserve a bounded delivery attempt and recheck current custody.
-    /// Socket I/O happens after this short write has released its lock.
-    fn prepare_resume_delivery(&self, id: u64) -> Result<Option<PendingRunResume>, ApiError>;
-    fn acknowledge_resume_delivery(&self, id: u64) -> Result<(), ApiError>;
+    /// Deliver one pending resume intent: recheck current custody,
+    /// reserve a bounded attempt, run `dispatch`, and record what the
+    /// transport reported.
+    ///
+    /// Authorisation covers the whole call, `dispatch` included, so
+    /// no mutation that could invalidate the custody just read can
+    /// commit before the prompt goes out, and nothing outside this
+    /// call can send that prompt or record its acknowledgement. The
+    /// database connection is released before `dispatch` runs:
+    /// `dispatch` may block on the transport for as long as its own
+    /// deadline allows, but it must not mutate, because its thread
+    /// already holds the authorisation a mutation would wait for.
+    fn deliver_resume(
+        &self,
+        id: u64,
+        dispatch: &mut dyn FnMut(&PendingRunResume) -> ResumeDispatch,
+    ) -> Result<ResumeDelivery, ApiError>;
 }
 
 impl Core {
@@ -202,9 +279,10 @@ impl CommandHandler for ResumeRun {
         let request: RunRecoveryResumeRequest = parse_payload(&command.payload)?;
         let run = RunId::new(request.run_id);
         let context = context(self.store.as_ref(), run)?;
-        if !context.can_resume() || context.pending_resume {
+        context.admit_resume().map_err(refuse_resume)?;
+        if context.pending_resume {
             return Err(ApiError::invalid_request(
-                "this attempt cannot resume with its original authority; request a new attempt instead",
+                "a resume intent is already pending delivery for this attempt",
             ));
         }
         let project = self
@@ -249,7 +327,13 @@ impl QueryHandler for ListRecovery {
             version: records.last().map_or(0, |record| record.version),
             can_resume: context.can_resume() && !context.pending_resume,
             can_retry: !context.superseded && !context.has_submission && context.review_eligible,
-            pending_resume: context.pending_resume && context.can_resume(),
+            // Whether an accepted intent is still awaiting its
+            // delivery disposition is a durable fact of its own: an
+            // invalidation stops the delivery, but until that
+            // delivery is authoritatively closed the row is really
+            // still queued, and a consumer polling for its outcome
+            // must not be told it vanished (KAN-T142-AC4).
+            pending_resume: context.pending_resume,
             records,
         };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))

@@ -20,6 +20,8 @@ pub struct ScriptedSession {
     socket_path: PathBuf,
     requests: Arc<AtomicUsize>,
     recorded: Arc<Mutex<Vec<HerdrRequest>>>,
+    late_prompt_answers: Arc<AtomicUsize>,
+    paced_prompt_writes: Arc<AtomicUsize>,
     server: JoinHandle<()>,
 }
 
@@ -91,8 +93,12 @@ impl ScriptedSession {
         let accept_connections = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(AtomicUsize::new(0));
         let recorded = Arc::new(Mutex::new(Vec::new()));
+        let late_prompt_answers = Arc::new(AtomicUsize::new(0));
+        let paced_prompt_writes = Arc::new(AtomicUsize::new(0));
         let served_requests = requests.clone();
         let served_recorded = recorded.clone();
+        let served_late_prompt_answers = late_prompt_answers.clone();
+        let served_paced_prompt_writes = paced_prompt_writes.clone();
         let server = thread::Builder::new()
             .name(format!("herdr-fixture-{session_name}"))
             .spawn(move || {
@@ -120,6 +126,8 @@ impl ScriptedSession {
                         index,
                         &served_requests,
                         &served_recorded,
+                        &served_late_prompt_answers,
+                        &served_paced_prompt_writes,
                     );
                 }
             })
@@ -129,6 +137,8 @@ impl ScriptedSession {
             socket_path,
             requests,
             recorded,
+            late_prompt_answers,
+            paced_prompt_writes,
             server,
         }
     }
@@ -158,6 +168,16 @@ impl ScriptedSession {
             .expect("the fixture request log is sound")
             .clone()
     }
+
+    /// How many delayed prompt answers the fixture attempted to send.
+    pub fn late_prompt_answers_attempted(&self) -> usize {
+        self.late_prompt_answers.load(Ordering::Relaxed)
+    }
+
+    /// How many non-empty writes emitted the paced prompt response.
+    pub fn paced_prompt_writes(&self) -> usize {
+        self.paced_prompt_writes.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for ScriptedSession {
@@ -177,6 +197,7 @@ pub struct SessionScript {
     wait_met: bool,
     wait_detail: Value,
     prompt_accepted: bool,
+    prompt_response: Option<HerdrResponse>,
     wake_accepted: bool,
     subscribe_error: Option<String>,
     close_after_events: bool,
@@ -184,8 +205,23 @@ pub struct SessionScript {
     close_every_after_hold: Option<Duration>,
     flap: bool,
     silent: bool,
+    prompt_pacing: Option<PromptPacing>,
+    prompt_incompatibility: Option<PromptIncompatibility>,
     reconnect_script: Option<Arc<SessionScript>>,
     connection_scripts: Vec<SessionScript>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PromptPacing {
+    events: usize,
+    fragments: usize,
+    gap: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct PromptIncompatibility {
+    queued_event: Value,
+    answer_delay: Duration,
 }
 
 impl SessionScript {
@@ -229,6 +265,12 @@ impl SessionScript {
     /// Whether prompt requests are accepted.
     pub fn with_prompt_accepted(mut self, accepted: bool) -> Self {
         self.prompt_accepted = accepted;
+        self
+    }
+
+    /// Override the response kind returned for prompt requests.
+    pub fn with_prompt_response(mut self, response: HerdrResponse) -> Self {
+        self.prompt_response = Some(response);
         self
     }
 
@@ -296,6 +338,33 @@ impl SessionScript {
         self
     }
 
+    /// Answer prompts slowly: `events` complete push event frames
+    /// first, then the prompt result split across `fragments` pieces,
+    /// with `gap` before each piece and the line's closing newline on
+    /// the last. The requested count is exact when the line has enough
+    /// bytes; otherwise every byte is one non-empty piece.
+    pub fn with_paced_prompt(mut self, events: usize, fragments: usize, gap: Duration) -> Self {
+        self.prompt_pacing = Some(PromptPacing {
+            events,
+            fragments,
+            gap,
+        });
+        self
+    }
+
+    /// Put one valid event and one incompatible frame ahead of a delayed prompt answer.
+    pub fn with_incompatible_prompt_frame(
+        mut self,
+        queued_event: Value,
+        answer_delay: Duration,
+    ) -> Self {
+        self.prompt_incompatibility = Some(PromptIncompatibility {
+            queued_event,
+            answer_delay,
+        });
+        self
+    }
+
     /// The scripts successive connections serve, one connection each,
     /// with the final script repeating once the list runs out. A test
     /// can give every connection its own behaviour — this one refuses,
@@ -318,6 +387,8 @@ fn serve_connection(
     connection_index: usize,
     requests: &Arc<AtomicUsize>,
     recorded: &Arc<Mutex<Vec<HerdrRequest>>>,
+    late_prompt_answers: &Arc<AtomicUsize>,
+    paced_prompt_writes: &Arc<AtomicUsize>,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
     let mut writer = stream;
@@ -351,6 +422,7 @@ fn serve_connection(
             .expect("the fixture request log is sound")
             .push(request.clone());
 
+        let is_prompt = matches!(request, HerdrRequest::Prompt { .. });
         let response = match request {
             HerdrRequest::Snapshot => {
                 let state = script
@@ -395,9 +467,12 @@ fn serve_connection(
             HerdrRequest::Prompt {
                 role: _,
                 message: _,
-            } => HerdrResponse::PromptResult {
-                accepted: script.prompt_accepted,
-            },
+            } => script
+                .prompt_response
+                .clone()
+                .unwrap_or(HerdrResponse::PromptResult {
+                    accepted: script.prompt_accepted,
+                }),
             HerdrRequest::Wake {
                 role: _,
                 dispatch_request_id: _,
@@ -406,7 +481,16 @@ fn serve_connection(
             },
         };
 
-        if write_response(&mut writer, response).is_err() {
+        let written = match (&script.prompt_incompatibility, script.prompt_pacing) {
+            (Some(incompatibility), _) if is_prompt => {
+                interrupt_prompt(&mut writer, response, incompatibility, late_prompt_answers)
+            }
+            (_, Some(pacing)) if is_prompt => {
+                pace_prompt(&mut writer, response, pacing, paced_prompt_writes)
+            }
+            _ => write_response(&mut writer, response),
+        };
+        if written.is_err() {
             break;
         }
 
@@ -443,6 +527,28 @@ fn serve_connection(
     }
 }
 
+fn interrupt_prompt(
+    stream: &mut UnixStream,
+    response: HerdrResponse,
+    incompatibility: &PromptIncompatibility,
+    late_prompt_answers: &AtomicUsize,
+) -> std::io::Result<()> {
+    write_response(
+        stream,
+        HerdrResponse::Event {
+            payload: incompatibility.queued_event.clone(),
+        },
+    )?;
+    writeln!(
+        stream,
+        r#"{{"kind":"event_v2","payload":{{"sequence":2}}}}"#
+    )?;
+    stream.flush()?;
+    thread::sleep(incompatibility.answer_delay);
+    late_prompt_answers.fetch_add(1, Ordering::Relaxed);
+    write_response(stream, response)
+}
+
 /// The capture time snapshots report unless a script overrides it.
 const DEFAULT_CAPTURED_AT: &str = "2026-09-05T04:46:00Z";
 
@@ -466,6 +572,40 @@ fn snapshot_with_state(
         state,
         captured_at: captured_at.unwrap_or(DEFAULT_CAPTURED_AT).to_owned(),
     }
+}
+
+fn pace_prompt(
+    stream: &mut UnixStream,
+    response: HerdrResponse,
+    pacing: PromptPacing,
+    paced_prompt_writes: &AtomicUsize,
+) -> std::io::Result<()> {
+    for index in 0..pacing.events {
+        thread::sleep(pacing.gap);
+        write_response(
+            stream,
+            HerdrResponse::Event {
+                payload: json!({ "paced_event": index }),
+            },
+        )?;
+    }
+    let encoded = serde_json::to_string(&response).expect("fixture responses encode");
+    let mut line = encoded.into_bytes();
+    line.push(b'\n');
+    let fragments = pacing.fragments.clamp(1, line.len());
+    let base_size = line.len() / fragments;
+    let longer_fragments = line.len() % fragments;
+    let mut offset = 0;
+    for index in 0..fragments {
+        let size = base_size + usize::from(index < longer_fragments);
+        let piece = &line[offset..offset + size];
+        offset += size;
+        thread::sleep(pacing.gap);
+        stream.write_all(piece)?;
+        stream.flush()?;
+        paced_prompt_writes.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 fn write_response(stream: &mut UnixStream, response: HerdrResponse) -> std::io::Result<()> {

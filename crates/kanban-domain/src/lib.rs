@@ -31,6 +31,7 @@ pub mod review_config;
 pub mod review_execution;
 pub mod ruling;
 pub mod run;
+pub mod run_recovery;
 pub mod saved_view;
 pub mod schedule;
 pub mod schedule_preview;
@@ -117,6 +118,7 @@ pub use review_config::{
 };
 pub use ruling::{Ruling, RulingDraft, RulingEntityRef, RulingError, RulingId, RulingSummary};
 pub use run::{ProfileSnapshot, Run, RunError, RunId, RunStatus, resolve_effective};
+pub use run_recovery::{ResumeCustody, ResumeRefusal, admit_run_resume};
 pub use saved_view::{
     DEFAULT_VIEW_NAME, DonePlacement, EXPANDABLE_GROUPS, SavedView, SavedViewError, SavedViewId,
     ViewMode, ViewName, ViewScope, ViewSorting,

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
 use rusqlite::Connection;
 
+use crate::delivery_gate::{self, DeliveryGate};
 use crate::error::StorageError;
 use crate::migrations::{self, MigrationReport, PreMigrationHook};
 use crate::paths;
@@ -98,6 +99,7 @@ impl Drop for WriteSpan<'_> {
 /// including the WebView, ever opens the file directly.
 pub struct Database {
     conn: ConnectionHandle,
+    delivery_gate: Arc<DeliveryGate>,
 }
 
 impl Database {
@@ -108,7 +110,7 @@ impl Database {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::configure(conn)
+        Self::configure(conn, path)
     }
 
     /// Opens the managed database, creating managed application data
@@ -128,13 +130,14 @@ impl Database {
     }
 
     /// Applies the connection pragmas every connection must carry.
-    fn configure(conn: Connection) -> Result<Self, StorageError> {
+    fn configure(conn: Connection, path: &Path) -> Result<Self, StorageError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         // The append-only triggers must fire for REPLACE's implicit delete.
         conn.pragma_update(None, "recursive_triggers", "ON")?;
         let database = Self {
             conn: Arc::new(ReentrantMutex::new(conn)),
+            delivery_gate: delivery_gate::gate_for(path),
         };
         let mode = database.journal_mode()?;
         if mode != "wal" {
@@ -147,6 +150,12 @@ impl Database {
     /// storage-backed ports serving the application core.
     pub(crate) fn connection_handle(&self) -> ConnectionHandle {
         self.conn.clone()
+    }
+
+    /// The gate a resume delivery holds while it prompts, and every
+    /// mutation acquires before it opens its write span.
+    pub(crate) fn delivery_gate(&self) -> Arc<DeliveryGate> {
+        self.delivery_gate.clone()
     }
 
     /// Reports the database journal mode; health surfaces use this.

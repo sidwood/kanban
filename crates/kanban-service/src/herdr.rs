@@ -21,6 +21,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
 use kanban_app::deadlines::{DeadlineConfig, DeadlineMonitor};
+use kanban_app::run_recovery::{ResumeDelivery, ResumeDispatch};
 use kanban_app::telemetry::{AttentionSignal, TelemetryProjection, project_herdr_event};
 use kanban_app::{
     CoordinatorWake, CoordinatorWakeRequest, HerdrDiagnostics, HerdrProjectObserver,
@@ -545,6 +546,11 @@ impl HerdrObserverHandle {
             // thread owns no live subscription, so queued wakes go
             // out over their own bounded connections.
             self.deliver_wakes(None);
+            // A stop raised inside that pass ends the cycle here
+            // rather than opening one more connection first.
+            if self.stopped() {
+                break;
+            }
             if self.observe_live(&mut live_once, &mut deadlines) {
                 // A settled session that ended is the first failure of
                 // the next cycle, not a reset.
@@ -601,31 +607,63 @@ impl HerdrObserverHandle {
     /// indefinitely nor be woken under the wrong identity.
     fn deliver_wake(&self, delivery: &WakeDelivery, live: Option<&mut SessionClient>) {
         let send = |client: &mut SessionClient| {
-            client
-                .wake_coordinator(WakeRequest {
-                    dispatch_request_id: delivery.dispatch_request_id,
-                })
-                .map(|_| ())
+            let _ = client.wake_coordinator(WakeRequest {
+                dispatch_request_id: delivery.dispatch_request_id,
+            });
         };
-        let delivered = match live {
+        match live {
             Some(client) => send(client),
-            None => SessionClient::open_with_io_timeout(
-                delivery.mapping.clone(),
-                &self.socket_root,
-                self.io_timeout,
-            )
-            .and_then(|mut client| {
-                let snapshot = client.snapshot()?;
-                client.mapping().verify_snapshot(&snapshot)?;
-                send(&mut client)
-            }),
+            None => self.over_transient_client(delivery.mapping.clone(), send),
+        }
+    }
+
+    /// Run `speak` against a connection opened just for it, owned the
+    /// way the live one is: its socket duplicate is registered before
+    /// the first blocking request and cleared when the work ends, so
+    /// an owned stop shuts that duplicate down and wakes this worker
+    /// instead of leaving it to wait out the request deadline. The
+    /// stop is re-read after the registration, so a stop on either
+    /// side of it is honoured — it is seen here, or it shuts down the
+    /// socket it has just taken (KAN-T78-AC1, KAN-T142-AC2).
+    ///
+    /// The mapping is verified through a snapshot before `speak`
+    /// runs, so a dead or lying session can neither stall this worker
+    /// indefinitely nor be spoken to under the wrong identity.
+    fn over_transient_client(
+        &self,
+        mapping: SessionMapping,
+        speak: impl FnOnce(&mut SessionClient),
+    ) {
+        if self.stopped() {
+            return;
+        }
+        let Ok(mut client) =
+            SessionClient::open_with_io_timeout(mapping, &self.socket_root, self.io_timeout)
+        else {
+            return;
         };
-        let _ = delivered;
+        let Ok(duplicate) = client.duplicate_socket() else {
+            return;
+        };
+        *self.socket.lock().unwrap() = Some(duplicate);
+        if !self.stopped()
+            && let Ok(snapshot) = client.snapshot()
+            && client.mapping().verify_snapshot(&snapshot).is_ok()
+        {
+            speak(&mut client);
+        }
+        *self.socket.lock().unwrap() = None;
     }
 
     /// Delivery is at least once across an ambiguous socket failure or crash.
     /// The stable recovery identity asks the Coordinator to reconcile, never
     /// mint a new run. Acknowledgement means prompt acceptance, not execution.
+    ///
+    /// The prompt is sent from inside `deliver_resume`, which holds
+    /// the delivery authorisation across it: the custody the store
+    /// checked is the custody the Coordinator is prompted under, and
+    /// this worker has no way to send a resume prompt outside that
+    /// window (KAN-T142-AC2).
     fn deliver_resumes(&self, live: Option<&mut SessionClient>) {
         let store = kanban_storage::SqliteRunRecoveryStore::new(&self.database);
         let ids = match store.pending_resume_ids(kanban_domain::ProjectId::new(self.project_id)) {
@@ -643,47 +681,34 @@ impl HerdrObserverHandle {
                 if self.stopped() {
                     break;
                 }
-                let delivery = match store.prepare_resume_delivery(id) {
-                    Ok(Some(delivery)) => delivery,
-                    Ok(None) => continue,
+                let delivered = store.deliver_resume(id, &mut |delivery| {
+                    match client.prompt(kanban_herdr::PromptRequest {
+                        role: kanban_herdr::COORDINATOR_ROLE.to_owned(),
+                        message: format!("Reconcile Recovery {} once: Resume existing Run {} for Dispatch Request {} only if its current custody still allows resume. Reuse its frozen context and existing authority. Do not restart an already resumed attempt, acknowledge or mint a replacement run. If it cannot resume, request operator recovery; never infer a verdict.", delivery.recovery_id, delivery.run_id, delivery.dispatch_request_id),
+                    }) {
+                        Ok(true) => ResumeDispatch::Accepted,
+                        Ok(_) => ResumeDispatch::Declined,
+                        Err(_) => ResumeDispatch::Failed,
+                    }
+                });
+                match delivered {
+                    // A session that failed mid-prompt carries no
+                    // further deliveries this cycle; the intents it
+                    // left pending are retried on the next one.
+                    Ok(ResumeDelivery::Failed) => break,
+                    Ok(_) => {}
                     Err(_) => {
                         self.mark_error(ObservationError::Timeline(
                             "resume delivery storage unavailable".to_owned(),
                         ));
                         break;
                     }
-                };
-                let outcome = client.prompt(kanban_herdr::PromptRequest {
-                    role: kanban_herdr::COORDINATOR_ROLE.to_owned(),
-                    message: format!("Reconcile Recovery {} once: Resume existing Run {} for Dispatch Request {} only if its current custody still allows resume. Reuse its frozen context and existing authority. Do not restart an already resumed attempt, acknowledge or mint a replacement run. If it cannot resume, request operator recovery; never infer a verdict.", delivery.recovery_id, delivery.run_id, delivery.dispatch_request_id),
-                });
-                match outcome {
-                    Ok(true) => {
-                        if store.acknowledge_resume_delivery(id).is_err() {
-                            self.mark_error(ObservationError::Timeline(
-                                "resume delivery acknowledgement unavailable".to_owned(),
-                            ));
-                            break;
-                        }
-                    }
-                    Ok(_) => {} // Explicit rejection remains pending for bounded retry.
-                    Err(_) => break,
                 }
             }
         };
         match live {
             Some(client) => send(client),
-            None => {
-                if let Ok(mut client) = SessionClient::open_with_io_timeout(
-                    self.mapping.clone(),
-                    &self.socket_root,
-                    self.io_timeout,
-                ) && let Ok(snapshot) = client.snapshot()
-                    && client.mapping().verify_snapshot(&snapshot).is_ok()
-                {
-                    send(&mut client);
-                }
-            }
+            None => self.over_transient_client(self.mapping.clone(), send),
         }
     }
 

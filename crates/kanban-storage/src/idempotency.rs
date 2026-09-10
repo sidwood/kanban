@@ -3,14 +3,16 @@
 //! the mutation itself (DR-SS-03, KAN-S1-US2).
 
 use std::num::NonZeroU32;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kanban_app::{IdempotencyStore, MutationSpan, RecordedOutcome};
 use kanban_dto::ApiError;
-use parking_lot::ReentrantMutexGuard;
+use parking_lot::{MutexGuard, ReentrantMutexGuard};
 use rusqlite::{Connection, params};
 
 use crate::db::{self, ConnectionHandle, Database};
+use crate::delivery_gate::DeliveryGate;
 
 /// How many replay outcomes the database keeps and how long each one
 /// survives a count-bound burst.
@@ -60,6 +62,7 @@ impl RetentionPolicy {
 /// The idempotency port over the authoritative database.
 pub struct SqliteIdempotencyStore {
     conn: ConnectionHandle,
+    delivery_gate: Arc<DeliveryGate>,
     retention: RetentionPolicy,
 }
 
@@ -69,6 +72,7 @@ impl SqliteIdempotencyStore {
     pub fn new(database: &Database, retention: RetentionPolicy) -> Self {
         Self {
             conn: database.connection_handle(),
+            delivery_gate: database.delivery_gate(),
             retention,
         }
     }
@@ -95,6 +99,13 @@ impl IdempotencyStore for SqliteIdempotencyStore {
     }
 
     fn begin(&self) -> Result<Box<dyn MutationSpan + '_>, ApiError> {
+        // The gate comes first, always: a resume delivery holds it
+        // across its prompt while holding no connection, so taking it
+        // before the connection is what keeps the two orderings
+        // acyclic — and what stops a mutation landing between the
+        // custody a delivery read and the prompt it sends
+        // (KAN-T142-AC2).
+        let authorised = self.delivery_gate.enter();
         // Holding the connection is what makes the span atomic: every
         // store the handler writes through shares this connection, so
         // its rows join this transaction and no other thread can read
@@ -103,16 +114,19 @@ impl IdempotencyStore for SqliteIdempotencyStore {
         db::open_span(&conn).map_err(internal)?;
         Ok(Box::new(SqliteMutationSpan {
             conn,
+            _authorised: authorised,
             retention: self.retention,
             committed: false,
         }))
     }
 }
 
-/// One mutation's durable span: the connection it holds, and the
-/// bound applied when its outcome lands.
+/// One mutation's durable span: the connection it holds, the
+/// delivery gate it excludes a resume prompt with, and the bound
+/// applied when its outcome lands.
 struct SqliteMutationSpan<'a> {
     conn: ReentrantMutexGuard<'a, Connection>,
+    _authorised: MutexGuard<'a, ()>,
     retention: RetentionPolicy,
     committed: bool,
 }

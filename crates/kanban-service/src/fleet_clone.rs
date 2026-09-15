@@ -689,11 +689,22 @@ mod tests {
     }
 
     fn read_pid(dir: &Path, name: &str) -> u32 {
-        fs::read_to_string(dir.join(name))
-            .expect("the fixture recorded a pid")
-            .trim()
-            .parse()
-            .expect("the recorded pid is a number")
+        let path = dir.join(name);
+        let by = Instant::now() + Duration::from_secs(1);
+        loop {
+            if let Some(pid) = fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            assert!(
+                Instant::now() < by,
+                "the fixture recorded a pid: {}",
+                std::io::Error::last_os_error()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Whether `pid` no longer exists, waiting briefly for the
@@ -733,7 +744,7 @@ mod tests {
         ]);
         let started = Instant::now();
 
-        let error = run_to_deadline(command, "bc-add", Duration::from_millis(300), plain_failure)
+        let error = run_to_deadline(command, "bc-add", Duration::from_secs(2), plain_failure)
             .expect_err("the overdue skill is refused");
 
         let elapsed = started.elapsed();

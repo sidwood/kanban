@@ -4,13 +4,13 @@
 use std::sync::{Arc, Mutex};
 
 use kanban_app::{
-    CommandEffects, CommandHandler, Core, MemoryIdempotencyStore, OperationDescriptor,
-    OperationKind, ParsedCommand, QueryHandler, exposed_operations,
+    exposed_operations, CommandEffects, CommandHandler, Core, MemoryIdempotencyStore,
+    OperationDescriptor, OperationKind, ParsedCommand, QueryHandler,
 };
-use kanban_desktop_lib::Shell;
 use kanban_desktop_lib::commands::{
     decode_invoke_args, forward_command_value, forward_query_value, install_link,
 };
+use kanban_desktop_lib::Shell;
 use kanban_dto::{
     BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
@@ -27,8 +27,9 @@ use kanban_dto::{
     PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest, PlanSpecAddRequest,
     PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest, ProfileGetQuery,
     ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest,
-    ProjectListQuery, ProjectRegisterRequest, RulingListQuery, RulingRecordRequest,
-    RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery, SearchGlobalQuery, SpecContent,
+    ProjectListQuery, ProjectRegisterRequest, ProjectUpdateRequest, RulingListQuery,
+    RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
+    SearchGlobalQuery, ShellPreferencesQuery, ShellPreferencesUpdateRequest, SpecContent,
     SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest,
     SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
@@ -39,13 +40,13 @@ use kanban_dto::{
     TicketGraphListQuery, TicketGraphProposeRequest, TicketListQuery, TicketParkRequest,
     TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewConfigQuery,
     TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
-    TicketSpecMoveRequest, TicketTransitionRequest, TicketUnparkRequest, TimelineEntityKind,
-    TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest, ViewListQuery,
-    ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
+    TicketSpecMoveRequest, TicketTransitionRequest, TicketTransitionsQuery, TicketUnparkRequest,
+    TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest,
+    ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 /// Payloads the recording core saw, keyed by operation name.
@@ -151,9 +152,11 @@ fn spec_content() -> SpecContent {
 fn sample_request(schema: &str) -> Value {
     let mutation = mutation_for(schema);
     match schema {
-        "HealthQuery" | "DiagnosticsExportQuery" | "InitiativeListQuery" | "ProjectListQuery" => {
-            json!({})
-        }
+        "HealthQuery"
+        | "DiagnosticsExportQuery"
+        | "InitiativeListQuery"
+        | "ProjectListQuery"
+        | "ShellPreferencesQuery" => json!({}),
         "InitiativeCreateRequest" => json!({ "mutation": mutation, "name": "Alpha" }),
         "InitiativeRenameRequest" => {
             json!({ "mutation": mutation, "initiative_id": 1, "name": "Beta" })
@@ -165,6 +168,15 @@ fn sample_request(schema: &str) -> Value {
             "name": "Control plane",
             "repository": "/repositories/kanban",
             "seed_workspace": "/workspaces/kanban.seed",
+            "default_branch": "main",
+            "herdr_workspace": "kanban.seed",
+            "herdr_session": "kanban-main",
+            "initiative_id": null,
+        }),
+        "ProjectUpdateRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "Control plane",
             "default_branch": "main",
             "herdr_workspace": "kanban.seed",
             "herdr_session": "kanban-main",
@@ -240,6 +252,7 @@ fn sample_request(schema: &str) -> Value {
             ],
         }),
         "TicketListQuery" => json!({ "project_id": 1 }),
+        "TicketTransitionsQuery" => json!({ "ticket_id": 1 }),
         "TicketBugQualifyRequest" => json!({
             "mutation": mutation,
             "ticket_id": 1,
@@ -641,6 +654,11 @@ fn sample_request(schema: &str) -> Value {
             json!({ "mutation": mutation, "instance_id": "fixture", "enabled": true })
         }
         "SearchGlobalQuery" => json!({ "q": "core-t1" }),
+        "ShellPreferencesUpdateRequest" => json!({
+            "mutation": mutation,
+            "rail_open": true,
+            "collapsed_columns": [],
+        }),
         other => panic!("no sample request fixture for {other}"),
     }
 }
@@ -743,6 +761,7 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "InitiativeListQuery" => decode_invoke_args::<InitiativeListQuery>(request).is_err(),
         "ProjectRegisterRequest" => decode_invoke_args::<ProjectRegisterRequest>(request).is_err(),
+        "ProjectUpdateRequest" => decode_invoke_args::<ProjectUpdateRequest>(request).is_err(),
         "ProjectArchiveRequest" => decode_invoke_args::<ProjectArchiveRequest>(request).is_err(),
         "PlanCreateRequest" => decode_invoke_args::<PlanCreateRequest>(request).is_err(),
         "PlanSpecAddRequest" => decode_invoke_args::<PlanSpecAddRequest>(request).is_err(),
@@ -944,6 +963,7 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "TicketBugFactsRequest" => decode_invoke_args::<TicketBugFactsRequest>(request).is_err(),
         "TicketListQuery" => decode_invoke_args::<TicketListQuery>(request).is_err(),
+        "TicketTransitionsQuery" => decode_invoke_args::<TicketTransitionsQuery>(request).is_err(),
         "TicketGetQuery" => decode_invoke_args::<TicketGetQuery>(request).is_err(),
         "TicketDependencyAddRequest" => {
             decode_invoke_args::<TicketDependencyAddRequest>(request).is_err()
@@ -1027,6 +1047,10 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ViewRenameRequest" => decode_invoke_args::<ViewRenameRequest>(request).is_err(),
         "ViewRemoveRequest" => decode_invoke_args::<ViewRemoveRequest>(request).is_err(),
         "SearchGlobalQuery" => decode_invoke_args::<SearchGlobalQuery>(request).is_err(),
+        "ShellPreferencesQuery" => decode_invoke_args::<ShellPreferencesQuery>(request).is_err(),
+        "ShellPreferencesUpdateRequest" => {
+            decode_invoke_args::<ShellPreferencesUpdateRequest>(request).is_err()
+        }
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

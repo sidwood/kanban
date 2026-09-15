@@ -18,8 +18,11 @@ import { usePlanDiagnosticsStore } from '../stores/plan-diagnostics'
 import { useCoverageMatrixStore } from '../stores/coverage-matrix'
 import { useGraphProposalsStore } from '../stores/graph-proposals'
 import { useProposalCoverageStore } from '../stores/proposal-coverage'
+import { useTicketDialogStore } from '../stores/ticket-dialog'
 import AppButton from '../components/AppButton.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ReviewConfigEditor from '../components/ReviewConfigEditor.vue'
+import ScheduleEditor from '../components/ScheduleEditor.vue'
 import InlineAlert from '../components/InlineAlert.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -32,6 +35,7 @@ const diagnostics = usePlanDiagnosticsStore()
 const matrix = useCoverageMatrixStore()
 const graphs = useGraphProposalsStore()
 const proposalCoverage = useProposalCoverageStore()
+const ticketDialog = useTicketDialogStore()
 
 const pickedProjectId = ref<number | null>(null)
 const specDraft = ref('')
@@ -180,7 +184,7 @@ async function loadTickets(
   try {
     const response = await new KanbanClient(transport).queryTicketList({ project_id: projectId })
     if (!scopeHolds(scope, claim) || (specClaim && !scopeHolds(specScope, specClaim))) return
-    tickets.value = response.tickets
+    tickets.value = response.tickets ?? []
     ticketsError.value = null
   } catch (failure) {
     if (!scopeHolds(scope, claim) || (specClaim && !scopeHolds(specScope, specClaim))) return
@@ -231,6 +235,27 @@ function specId(spec: number): string {
 
 function ticketId(ticket: number): string {
   return `${projectCode.value}-T${ticket}`
+}
+
+// A Story no Ticket claims is covered by an Implementation on this
+// Spec: the editor opens as a dialog, preset to that kind and that
+// Story, and nothing here mutates until the dialog's own command
+// lands (KAN-T139-AC1).
+function coverStory(story: string): void {
+  if (pickedProjectId.value === null || matrix.pickedSpecId === null) return
+  ticketDialog.openForStory({
+    projectId: pickedProjectId.value,
+    specId: matrix.pickedSpecId,
+    story,
+  })
+}
+
+// A saved schedule changes the Ticket the editors read, so the
+// Project's Tickets are read again.
+async function scheduleSaved(): Promise<void> {
+  if (pickedProjectId.value === null) return
+  const claim = adoptScope(scope, `planning:picked:${pickedProjectId.value}`)
+  await loadTickets(claim, pickedProjectId.value)
 }
 
 function memberLabel(id: number): string {
@@ -582,6 +607,15 @@ const stateLabels: Record<string, string> = {
               >
                 uncovered
               </StatusBadge>
+              <AppButton
+                v-if="row.claims.length === 0"
+                size="sm"
+                :data-testid="`coverage-cover-${row.story}`"
+                :aria-label="`Cover ${row.story} with an Implementation Ticket`"
+                @click="coverStory(row.story)"
+              >
+                Cover with a Ticket
+              </AppButton>
             </div>
             <ul
               v-if="row.claims.length"
@@ -1062,5 +1096,24 @@ const stateLabels: Record<string, string> = {
         </section>
       </div>
     </section>
+
+    <!-- Per-Ticket execution configuration: a Task's activation
+         schedule and an assignment's review stages. Neither edits a
+         Ticket's own content, so neither belongs in the Ticket editor
+         dialog; both belong beside the Project's Tickets. -->
+    <ScheduleEditor
+      v-if="tickets.length > 0"
+      :key="`schedule-${pickedProjectId ?? 'none'}`"
+      :tickets="tickets"
+      :project-code="projectCode"
+      @saved="scheduleSaved"
+    />
+
+    <ReviewConfigEditor
+      v-if="tickets.length > 0"
+      :key="`reviews-${pickedProjectId ?? 'none'}`"
+      :tickets="tickets"
+      :project-code="projectCode"
+    />
   </main>
 </template>

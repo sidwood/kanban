@@ -23,16 +23,34 @@ export const BUG_SEVERITIES: TicketSeverity[] = ['critical', 'high', 'medium', '
 
 // The qualification draft the form edits: the ten facts a Bug needs
 // before it may leave draft, sent whole in one act (DR-TK-09).
+// Severity is `null` until the operator chooses one: qualification is
+// the only thing that sets severity (DR-LC-13), so a default here
+// would be a severity nobody assigned.
 export interface BugQualificationDraft {
   expectedBehaviour: string
   reproduction: string
   environment: string
-  severity: TicketSeverity
+  severity: TicketSeverity | null
   frequency: string
   affectedScope: string
   risk: string
   criteria: TicketCriterionDraft[]
   verificationSteps: string[]
+}
+
+/** A qualification draft carrying the severity the operator chose:
+ * the only shape `ticket.bug.qualify` can be built from. */
+export type ChosenSeverityQualificationDraft = BugQualificationDraft & {
+  severity: TicketSeverity
+}
+
+/** The draft once a severity stands on it, or `null` while none
+ * does — a half-qualified Bug has no request to send. */
+export function withChosenSeverity(
+  draft: BugQualificationDraft,
+): ChosenSeverityQualificationDraft | null {
+  const severity = draft.severity
+  return severity === null ? null : { ...draft, severity }
 }
 
 // A fresh qualification draft: no severity chosen, one empty
@@ -42,7 +60,7 @@ export function blankBugQualificationDraft(): BugQualificationDraft {
     expectedBehaviour: '',
     reproduction: '',
     environment: '',
-    severity: 'medium',
+    severity: null,
     frequency: '',
     affectedScope: '',
     risk: '',
@@ -97,7 +115,7 @@ export function parseEvidenceIds(named: string): number[] {
 // record was read at.
 export function bugQualifyRequestOf(
   ticketId: number,
-  draft: BugQualificationDraft,
+  draft: ChosenSeverityQualificationDraft,
   optimisticVersion: number,
   idempotencyKey: string,
 ): TicketBugQualifyRequest {
@@ -166,7 +184,7 @@ export const useBugEditorStore = defineStore('bug-editor', {
       transport: ShellTransport,
       ticketId: number,
       optimisticVersion: number,
-      draft: BugQualificationDraft,
+      draft: ChosenSeverityQualificationDraft,
     ): Promise<TicketRecord | null> {
       const request = bugQualifyRequestOf(ticketId, draft, optimisticVersion, crypto.randomUUID())
       try {

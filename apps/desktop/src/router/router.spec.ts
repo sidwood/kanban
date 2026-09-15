@@ -11,7 +11,6 @@ const SURFACES = [
   '/attention',
   '/planning',
   '/planning/specs',
-  '/planning/tickets',
   '/planning/dependencies',
   '/workspaces',
   '/projects/1/workspaces',
@@ -42,5 +41,11 @@ describe('the route catalogue', () => {
     for (const path of paths) {
       expect(path).not.toMatch(/states|gallery|prototype|editors/)
     }
+  })
+
+  // The Ticket editor is a dialog off context and a shortcut, so it
+  // has no destination to resolve at all (KAN-T139-AC1).
+  it('has no Ticket editor destination', () => {
+    expect(router.resolve('/planning/tickets').matched).toHaveLength(0)
   })
 })

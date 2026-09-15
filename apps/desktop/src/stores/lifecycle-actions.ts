@@ -29,6 +29,12 @@ export const useLifecycleActionsStore = defineStore('lifecycle-actions', {
     error: null as string | null,
   }),
   actions: {
+    // Adopt a Ticket the caller already read, so every action guards
+    // on the version that record was read at.
+    adopt(ticket: TicketRecord): void {
+      this.ticket = ticket
+      this.error = null
+    },
     // Open one Ticket so every action guards on its current version.
     async open(transport: ShellTransport, ticketId: number): Promise<void> {
       try {

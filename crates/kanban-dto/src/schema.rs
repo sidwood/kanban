@@ -21,8 +21,9 @@ use crate::{
     FindingSeverity, ReviewAttemptRecord, ReviewBounceRecord, ReviewExecutionRecord,
     ReviewExecutionStatus, ReviewExpireRequest, ReviewFindingRecord, ReviewFindingReference,
     ReviewGetQuery, ReviewHistoryQuery, ReviewHistoryResponse, ReviewHumanSubmitRequest,
-    ReviewRevalidateRequest, ReviewSlotRecord, ReviewStageRecord, ReviewStageStatus,
-    ReviewStartRequest, ReviewVerdictRecord, ReviewerDispatchRecord,
+    ReviewLatestQuery, ReviewLatestResponse, ReviewRevalidateRequest, ReviewSlotRecord,
+    ReviewStageRecord, ReviewStageStatus, ReviewStartRequest, ReviewVerdictRecord,
+    ReviewerDispatchRecord,
 };
 use schemars::schema::RootSchema;
 use schemars::schema_for;
@@ -206,6 +207,8 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("ReviewHistoryQuery", schema_for!(ReviewHistoryQuery)),
         ("ReviewHistoryResponse", schema_for!(ReviewHistoryResponse)),
         ("ReviewAttemptRecord", schema_for!(ReviewAttemptRecord)),
+        ("ReviewLatestQuery", schema_for!(ReviewLatestQuery)),
+        ("ReviewLatestResponse", schema_for!(ReviewLatestResponse)),
         ("ReviewExpireRequest", schema_for!(ReviewExpireRequest)),
         (
             "ReviewRevalidateRequest",

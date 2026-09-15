@@ -60,9 +60,9 @@ pub mod ruling;
 pub use review_execution::{
     ReviewAttemptRecord, ReviewBounceRecord, ReviewExecutionRecord, ReviewExecutionStatus,
     ReviewExpireRequest, ReviewFindingReference, ReviewGetQuery, ReviewHistoryQuery,
-    ReviewHistoryResponse, ReviewHumanSubmitRequest, ReviewRevalidateRequest, ReviewSlotRecord,
-    ReviewStageRecord, ReviewStageStatus, ReviewStartRequest, ReviewVerdictRecord,
-    ReviewerDispatchRecord,
+    ReviewHistoryResponse, ReviewHumanSubmitRequest, ReviewLatestQuery, ReviewLatestResponse,
+    ReviewRevalidateRequest, ReviewSlotRecord, ReviewStageRecord, ReviewStageStatus,
+    ReviewStartRequest, ReviewVerdictRecord, ReviewerDispatchRecord,
 };
 pub mod run;
 pub mod run_recovery;
@@ -313,6 +313,8 @@ mod tests {
                 "ReviewHistoryQuery",
                 "ReviewHistoryResponse",
                 "ReviewAttemptRecord",
+                "ReviewLatestQuery",
+                "ReviewLatestResponse",
                 "ReviewExpireRequest",
                 "ReviewRevalidateRequest",
                 "ReviewHumanSubmitRequest",

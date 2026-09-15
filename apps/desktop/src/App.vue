@@ -9,6 +9,8 @@ import { useRoute } from 'vue-router'
 import AppRail from './components/shell/AppRail.vue'
 import AppTopBar from './components/shell/AppTopBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import QuickBugDialog from './components/QuickBugDialog.vue'
+import TicketEditorDialog from './components/TicketEditorDialog.vue'
 import { applyTheme, loadTheme } from './core/theme'
 import { kanbanTransportKey } from './core/transport'
 import { useConnectionStore } from './stores/connection'
@@ -16,6 +18,7 @@ import { usePaletteStore } from './stores/palette'
 import { usePreferencesStore } from './stores/preferences'
 import { useProjectRegisterStore } from './stores/project-register'
 import { useScopeStore } from './stores/scope'
+import { useTicketDialogStore } from './stores/ticket-dialog'
 import { ATTENTION_POLL_MS, NARROW_WIDTH_PX, useShellStore } from './stores/shell'
 
 const transport = inject(kanbanTransportKey)
@@ -26,6 +29,7 @@ const preferences = usePreferencesStore()
 const projects = useProjectRegisterStore()
 const scope = useScopeStore()
 const shell = useShellStore()
+const ticketDialog = useTicketDialogStore()
 const root = ref<HTMLElement | null>(null)
 let observer: ResizeObserver | undefined
 let poll: ReturnType<typeof setInterval> | undefined
@@ -58,6 +62,18 @@ function onGlobalKeydown(event: KeyboardEvent): void {
       return
     }
     palette.openPalette()
+    return
+  }
+  // Quick Bug capture is a shortcut, not a destination: it opens on
+  // the Project the shell is scoped to, wherever the operator is
+  // (KAN-S4-US3).
+  if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === 'b') {
+    event.preventDefault()
+    if (ticketDialog.quickBugOpen) {
+      ticketDialog.closeQuickBug()
+      return
+    }
+    ticketDialog.openQuickBug({ projectId: scope.projectId })
   }
 }
 
@@ -134,5 +150,7 @@ watch(
       </div>
     </div>
     <CommandPalette />
+    <TicketEditorDialog />
+    <QuickBugDialog />
   </div>
 </template>

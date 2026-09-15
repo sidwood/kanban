@@ -771,6 +771,7 @@ define_exposed_catalogue! {
     "review.expire" => { kind:Command,request:"ReviewExpireRequest",response:"ReviewExecutionRecord",mcp:"review_expire",description:"Expire an in-progress review gate so approval cannot proceed until revalidation.", },
     "review.get" => { kind:Query,request:"ReviewGetQuery",response:"ReviewExecutionRecord",mcp:"review_get",description:"Read a review's exact tip, frozen stages and authoritative verdicts.", },
     "review.history" => { kind:Query,request:"ReviewHistoryQuery",response:"ReviewHistoryResponse",mcp:"review_history",description:"Read every prior review attempt, verdict and invalidation for one Ticket.", },
+    "review.latest" => { kind:Query,request:"ReviewLatestQuery",response:"ReviewLatestResponse",mcp:"review_latest",description:"Read the review execution open on one Ticket now, or its most recent terminal one.", },
     "submission.submit" => {
         kind: Command,
         request: "SubmissionSubmitRequest",

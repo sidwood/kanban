@@ -2159,6 +2159,19 @@ async fn review_history(
 }
 
 #[tauri::command]
+async fn review_latest(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<kanban_dto::ReviewLatestResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<kanban_dto::ReviewLatestQuery>(request)?;
+    run_blocking(shell, "latest review", |shell| {
+        forward_query(shell, "review.latest", "latest review", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn clone_adopt(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2560,6 +2573,7 @@ shell_handlers::shell_handler_catalogue! {
     review_expire,
     review_get,
     review_history,
+    review_latest,
     clone_adopt,
     clone_recoveries,
     clone_create,

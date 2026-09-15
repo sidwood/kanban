@@ -31,6 +31,8 @@ import EmptyState from '../components/EmptyState.vue'
 import InlineAlert from '../components/InlineAlert.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import TicketDetailSections from '../components/TicketDetailSections.vue'
+import TicketDrawerActions from '../components/TicketDrawerActions.vue'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey, asApiError } from '../core/transport'
 import { useBoardStore } from '../stores/board'
@@ -41,6 +43,8 @@ import type { BoardScope } from '../stores/scope'
 import { useSavedViewsStore } from '../stores/saved-views'
 import type { ViewOwnedSet } from '../stores/saved-views'
 import { useShellStore } from '../stores/shell'
+import { useTicketDetailStore } from '../stores/ticket-detail'
+import { useTicketDialogStore } from '../stores/ticket-dialog'
 import {
   BOARD_GROUPS,
   BOARD_PRESENTATIONS,
@@ -111,6 +115,8 @@ const board = useBoardStore()
 const savedViews = useSavedViewsStore()
 const collapse = usePreferencesStore()
 const shell = useShellStore()
+const detail = useTicketDetailStore()
+const ticketDialog = useTicketDialogStore()
 
 // The scope the route names: every Project, one Project, or none
 // when the route carries something that is not a Project.
@@ -646,6 +652,9 @@ async function loadDrawer(ticketId: number): Promise<void> {
     if (attempt !== drawerRequest) return
     drawerTicket.value = record
     drawerError.value = null
+    // Everything the drawer says beyond the record itself is the
+    // core's to answer, read for exactly this Ticket.
+    await detail.load(transport, record)
   } catch (failure) {
     if (attempt !== drawerRequest) return
     drawerTicket.value = null
@@ -662,6 +671,7 @@ function clearDrawer(): void {
   drawerTicket.value = null
   drawerError.value = null
   drawerLoading.value = false
+  detail.clear()
 }
 
 // Closing the drawer takes the Ticket out of the link as well, so
@@ -707,19 +717,43 @@ async function followLink(ticketId: number | null): Promise<void> {
   await openTicket(ticketId)
 }
 
-const drawerAttempts = computed(() =>
-  drawerTicket.value ? board.attemptsFor(drawerTicket.value.id) : [],
-)
+const drawerAttempts = computed(() => detail.attempts)
 
 async function refreshAttempts(): Promise<void> {
   if (transport && drawerTicket.value) {
+    await detail.refreshRuns(transport, drawerTicket.value.project_id)
     await board.refreshRuns(transport, drawerTicket.value.project_id)
   }
+}
+
+// A command run from the drawer replaces the record the drawer is
+// showing with the one the core returned, and the board re-reads the
+// scope the move may have changed.
+function drawerActed(record: TicketRecord): void {
+  if (drawerTicket.value?.id !== record.id) return
+  drawerTicket.value = record
+  void load()
+}
+
+function openNewTicket(): void {
+  ticketDialog.openCreate({
+    projectId: scope.value === 'all' || scope.value === null ? null : scope.value,
+  })
 }
 
 const drawerTimelineId = computed(() =>
   drawerTicket.value ? ticketTimelineId(drawerTicket.value.id) : '',
 )
+
+// A human review verdict appends its audit against the Ticket without
+// moving the Ticket's own version, so the timeline is told to read
+// again rather than inferring the change from a version that did not
+// change (KAN-T139-AC5).
+const drawerReviewTick = ref(0)
+
+function drawerReviewed(): void {
+  drawerReviewTick.value += 1
+}
 
 // The facts the drawer shows for the open Ticket; the Spec identity
 // is the number the projection resolved — a Ticket the board does
@@ -882,13 +916,14 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
               data-testid="filters-badge"
             >{{ activeFilters }}</span>
           </button>
-          <RouterLink
-            to="/planning/tickets"
+          <button
+            type="button"
             data-testid="new-ticket"
             class="inline-flex h-7.5 items-center rounded-full border border-brand-500 bg-brand-gradient px-3.5 text-xs font-semibold text-cta-ink shadow-panel hover:brightness-105"
+            @click="openNewTicket"
           >
             New ticket
-          </RouterLink>
+          </button>
         </div>
       </div>
 
@@ -1122,12 +1157,14 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           >
             Open planning
           </RouterLink>
-          <RouterLink
-            to="/planning/tickets"
+          <button
+            type="button"
+            data-testid="new-ticket-empty"
             class="inline-flex h-7.5 items-center rounded-control border border-line-strong bg-surface px-3 text-xs font-medium text-ink"
+            @click="openNewTicket"
           >
             New ticket
-          </RouterLink>
+          </button>
         </div>
       </div>
 
@@ -1462,24 +1499,10 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           </div>
         </dl>
 
-        <section
-          v-if="drawerTicket.criteria.length > 0"
-          class="mt-6 flex flex-col gap-2"
-          data-testid="drawer-criteria"
-        >
-          <h3 class="font-display text-sm font-semibold tracking-tight text-ink">
-            Story-linked criteria
-          </h3>
-          <ul class="flex flex-col gap-2">
-            <li
-              v-for="(criterion, position) in drawerTicket.criteria"
-              :key="position"
-              class="rounded-control border border-line bg-surface/70 px-3 py-2 text-sm text-ink"
-            >
-              {{ criterion.outcome }}
-            </li>
-          </ul>
-        </section>
+        <TicketDetailSections
+          class="mt-6"
+          :ticket="drawerTicket"
+        />
 
         <section
           v-if="drawerTicket.completion.length > 0"
@@ -1510,12 +1533,30 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           class="mt-6"
           data-testid="drawer-timeline"
         >
+          <!-- Keyed on the record's version: a command run from the
+               footer appends its audit row, and the timeline re-reads
+               rather than standing on the answer it had before
+               (KAN-T139-AC5). -->
           <TimelineSurface
+            :key="`${drawerTicket.id}:${drawerTicket.version}:${drawerReviewTick}`"
             :scope="{ project: drawerTicket.project_id }"
             entity-kind="ticket"
             :entity-id="drawerTimelineId"
           />
         </div>
+      </template>
+
+      <template
+        v-if="drawerTicket"
+        #footer
+      >
+        <TicketDrawerActions
+          :ticket="drawerTicket"
+          :legal-targets="board.legalTargetsFor(drawerTicket.id)"
+          :state-labels="STATUS_LABELS"
+          @acted="drawerActed"
+          @reviewed="drawerReviewed"
+        />
       </template>
     </DetailDrawer>
   </main>

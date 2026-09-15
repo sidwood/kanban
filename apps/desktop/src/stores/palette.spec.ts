@@ -35,6 +35,8 @@ describe('palette navigation', () => {
     expect(filterNavigation('')).toEqual([...PALETTE_NAVIGATION])
   })
 
+  // The Ticket editor is deliberately absent: it opens from context
+  // and a shortcut, never from a navigation row (KAN-T139-AC1).
   it('offers every operational surface, and none of the scaffolding', () => {
     const routes = Object.fromEntries(PALETTE_NAVIGATION.map((item) => [item.label, item.route]))
     expect(routes).toEqual({
@@ -50,7 +52,6 @@ describe('palette navigation', () => {
       'Capacity settings': '/settings/capacity',
       Health: '/health',
       'Author Specs': '/planning/specs',
-      'Create Tickets': '/planning/tickets',
       'Wire Dependencies': '/planning/dependencies',
     })
   })

@@ -8,17 +8,26 @@ import type {
   BoardFilterOptions,
   BoardGlobalCard,
   BoardGlobalResponse,
+  CriterionBindingRecord,
+  EvidenceRecord,
+  FindingRecord,
   HealthResponse,
   KanbanLiveEvent,
+  LaneRecord,
+  ReviewExecutionRecord,
+  ReviewHumanSubmitRequest,
   ShellPreferencesRecord,
   ShellPreferencesUpdateRequest,
   ProjectRecord,
   RunRecord,
   SavedViewRecord,
+  TicketDependenciesResponse,
   TicketReadinessResponse,
   TicketRecord,
+  WorkspaceRecord,
 } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
+import { ReviewCore } from './review-core'
 
 export const coreProject: ProjectRecord = {
   id: 1,
@@ -207,6 +216,22 @@ export interface HarnessOptions {
   health?: HealthResponse | null
   /** The shell arrangement the core already holds. */
   preferences?: ShellPreferencesRecord
+  /** The registered dependencies and external blockers the core
+   * holds per Ticket. */
+  dependencies?: Record<number, Omit<TicketDependenciesResponse, 'ticket_id' | 'version'>>
+  /** The criterion evidence bindings the core holds per Ticket. */
+  bindings?: Record<number, CriterionBindingRecord[]>
+  /** The Lanes and Workspaces of the Projects on the board. */
+  lanes?: readonly LaneRecord[]
+  workspaces?: readonly WorkspaceRecord[]
+  /** The review executions the core holds. History, revalidation and
+   * the audit a verdict appends are derived from them exactly as the
+   * core derives them; none of the three can be authored by hand. */
+  reviews?: readonly ReviewExecutionRecord[]
+  /** The findings and evidence the core holds, filtered on read the
+   * way the core filters them. */
+  findings?: readonly FindingRecord[]
+  evidence?: readonly EvidenceRecord[]
   /** Queries answered by hand instead of the fixture. */
   override?: (name: string, request: unknown) => Promise<unknown> | undefined
 }
@@ -228,6 +253,19 @@ export interface Harness {
   /** Deliver one ordered live event to every subscriber, as the
    * shell's event stream would. */
   emit: (event: KanbanLiveEvent) => void
+  /** The review executions, history and audit the core holds, so a
+   * spec can read back what a command actually committed. */
+  reviews: ReviewCore
+}
+
+/** A core refusal reaches the caller as a rejected promise, the way
+ * the shell's transport delivers one. */
+function settle<T>(answer: () => T): Promise<T> {
+  try {
+    return Promise.resolve(answer())
+  } catch (refusal) {
+    return Promise.reject(refusal)
+  }
 }
 
 /** Whether one ticket passes one wire filter, the way the core
@@ -252,6 +290,7 @@ export function harness(options: HarnessOptions = {}): Harness {
   const projects = options.projects ?? [coreProject, edgeProject]
   const views: SavedViewRecord[] = [...(options.views ?? defaultViews())]
   const runs = options.runs ?? []
+  const reviews = new ReviewCore(options.reviews ?? [])
   let preferences: ShellPreferencesRecord = options.preferences ?? {
     rail_open: true,
     collapsed_columns: [],
@@ -304,8 +343,12 @@ export function harness(options: HarnessOptions = {}): Harness {
           ? Promise.resolve(found)
           : Promise.reject({ code: 'not_found', message: `ticket ${ticket_id}` })
       }
-      case 'timeline.query':
-        return Promise.resolve({ events: [] })
+      case 'timeline.query': {
+        const { scope } = request as { scope: 'global' | { project: number } }
+        return Promise.resolve({
+          events: scope === 'global' ? [] : reviews.timeline(scope.project),
+        })
+      }
       case 'search.global':
         return Promise.resolve({ hits: [] })
       case 'initiative.list':
@@ -316,10 +359,64 @@ export function harness(options: HarnessOptions = {}): Harness {
         return Promise.resolve({ plans: [] })
       case 'spec.list':
         return Promise.resolve({ specs: [] })
-      case 'workspace.list':
-        return Promise.resolve({ workspaces: [] })
-      case 'lane.list':
-        return Promise.resolve({ lanes: [] })
+      case 'workspace.list': {
+        const { project_id } = request as { project_id: number }
+        return Promise.resolve({
+          workspaces: (options.workspaces ?? []).filter(
+            (entry) => entry.project_id === project_id,
+          ),
+        })
+      }
+      case 'lane.list': {
+        const { project_id } = request as { project_id: number }
+        return Promise.resolve({
+          lanes: (options.lanes ?? []).filter((entry) => entry.project_id === project_id),
+        })
+      }
+      case 'ticket.dependencies': {
+        const { ticket_id } = request as { ticket_id: number }
+        const held = options.dependencies?.[ticket_id]
+        return Promise.resolve({
+          ticket_id,
+          version: tickets.find((entry) => entry.id === ticket_id)?.version ?? 1,
+          dependencies: held?.dependencies ?? [],
+          blockers: held?.blockers ?? [],
+        } satisfies TicketDependenciesResponse)
+      }
+      case 'review.history': {
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve(reviews.history(ticket_id))
+      }
+      case 'review.latest': {
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve(reviews.latest(ticket_id))
+      }
+      case 'review.get': {
+        const { review_id } = request as { review_id: number }
+        return settle(() => reviews.get(review_id))
+      }
+      case 'finding.list': {
+        const { project_id } = request as { project_id: number }
+        return Promise.resolve({
+          project_id,
+          findings: (options.findings ?? []).filter((entry) => entry.project_id === project_id),
+        })
+      }
+      case 'evidence.list': {
+        const { project_id, entity_kind, entity_id } = request as {
+          project_id: number
+          entity_kind?: string | null
+          entity_id?: string | null
+        }
+        return Promise.resolve({
+          evidence: (options.evidence ?? []).filter(
+            (entry) =>
+              entry.project_id === project_id &&
+              (entity_kind == null || entry.entity_kind === entity_kind) &&
+              (entity_id == null || entry.entity_id === entity_id),
+          ),
+        })
+      }
       case 'ticket.list':
         return Promise.resolve({ tickets: [] })
       case 'ticket.review.config':
@@ -336,8 +433,10 @@ export function harness(options: HarnessOptions = {}): Harness {
           targets: found.kind === 'task' ? LEGAL_TARGETS[found.state] : [],
         })
       }
-      case 'criterion.bindings':
-        return Promise.resolve({ bindings: [] })
+      case 'criterion.bindings': {
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve({ bindings: options.bindings?.[ticket_id] ?? [] })
+      }
       case 'shell.preferences':
         return Promise.resolve({ ...preferences })
       default:
@@ -377,6 +476,43 @@ export function harness(options: HarnessOptions = {}): Harness {
         version: preferences.version + 1,
       }
       return Promise.resolve({ ...preferences })
+    }
+    if (name === 'ticket.create') {
+      const created = ticket({
+        id: 500 + tickets.length,
+        number: 90 + tickets.length,
+        project_id: (body.project_id as number) ?? 1,
+        kind: (body.kind as TicketRecord['kind']) ?? 'bug',
+        priority: (body.priority as TicketRecord['priority']) ?? 'normal',
+        state: 'draft',
+        title: (body.title as string | undefined) ?? null,
+        slice: (body.slice as string | undefined) ?? null,
+        criteria: (body.criteria as TicketRecord['criteria'] | undefined) ?? [],
+        completion: (body.completion as string[] | undefined) ?? [],
+        subtype: (body.subtype as TicketRecord['subtype']) ?? null,
+        mode: (body.mode as TicketRecord['mode']) ?? null,
+        version: 1,
+      })
+      // The core keeps what it minted, so a fresh read sees it.
+      tickets.push(created)
+      return Promise.resolve(created)
+    }
+    if (name === 'ticket.park' || name === 'ticket.unpark' || name === 'ticket.emergency.override') {
+      const { ticket_id } = body as { ticket_id: number }
+      const found = tickets.find((entry) => entry.id === ticket_id)
+      if (!found) return Promise.reject({ code: 'not_found', message: `ticket ${ticket_id}` })
+      const to =
+        name === 'ticket.park'
+          ? ('parked' as const)
+          : name === 'ticket.unpark'
+            ? ('ready' as const)
+            : (body.to as TicketRecord['state'])
+      const moved = { ...found, state: to, version: found.version + 1 }
+      tickets.splice(tickets.indexOf(found), 1, moved)
+      return Promise.resolve(moved)
+    }
+    if (name === 'review.human.submit') {
+      return settle(() => reviews.humanSubmit(request as ReviewHumanSubmitRequest))
     }
     if (name === 'ticket.transition') {
       const { ticket_id, to } = body as { ticket_id: number; to: TicketRecord['state'] }
@@ -421,5 +557,6 @@ export function harness(options: HarnessOptions = {}): Harness {
     emit: (event) => {
       for (const handler of [...eventHandlers]) handler(event)
     },
+    reviews,
   }
 }

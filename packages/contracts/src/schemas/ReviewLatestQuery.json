@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "A surface that holds only a Ticket asks for the review open on it now; history names prior attempts alone and cannot answer this.",
+  "properties": {
+    "ticket_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ticket_id"
+  ],
+  "title": "ReviewLatestQuery",
+  "type": "object"
+}

@@ -42,6 +42,12 @@ export interface TicketCriterionDraft {
   stories: string
 }
 
+// The fields one edit carries: exactly the field the kind owns.
+export interface TicketEditFields {
+  title?: string
+  slice?: string
+}
+
 // The per-kind creation draft the form edits. Fields a kind does not
 // carry are ignored when its request is built.
 export interface TicketDraft {
@@ -178,6 +184,33 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       }
       await this.refresh(transport, landed.project_id)
       return true
+    },
+    // Revise exactly the field the kind owns — an Implementation's
+    // slice, a Bug's or Task's title — guarded by the version the
+    // record was read at. Returns the landed record, or null with the
+    // refusal, a stale version among them, reported.
+    async edit(
+      transport: ShellTransport,
+      ticketId: number,
+      optimisticVersion: number,
+      fields: TicketEditFields,
+    ): Promise<TicketRecord | null> {
+      try {
+        const landed = await new KanbanClient(transport).commandTicketEdit({
+          mutation: {
+            optimistic_version: optimisticVersion,
+            idempotency_key: crypto.randomUUID(),
+          },
+          ticket_id: ticketId,
+          ...(fields.title !== undefined ? { title: fields.title } : {}),
+          ...(fields.slice !== undefined ? { slice: fields.slice } : {}),
+        })
+        this.error = null
+        return landed
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return null
+      }
     },
   },
 })

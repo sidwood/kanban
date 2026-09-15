@@ -86,6 +86,7 @@ impl Core {
         self.register_command("review.revalidate", Arc::new(Revalidate(context.clone())))?;
         self.register_command("review.expire", Arc::new(Expire(context.clone())))?;
         self.register_query("review.get", Arc::new(Get(context.clone())))?;
+        self.register_query("review.latest", Arc::new(Latest(context.clone())))?;
         self.register_query("review.history", Arc::new(History(context)))
     }
 }
@@ -328,6 +329,20 @@ impl QueryHandler for Get {
                 .find(query.review_id)?
                 .ok_or_else(|| ApiError::not_found("review"))?,
         )
+    }
+}
+
+/// A Ticket is the only identity the board and drawer hold; history
+/// names prior attempts alone, so the review open on a Ticket now is
+/// reachable only through the Ticket itself.
+struct Latest(Context);
+impl QueryHandler for Latest {
+    fn handle(&self, value: &Value) -> Result<Value, ApiError> {
+        let query: ReviewLatestQuery = parse_payload(value)?;
+        encode(&ReviewLatestResponse {
+            ticket_id: query.ticket_id,
+            review: self.0.store.latest_for_ticket(query.ticket_id)?,
+        })
     }
 }
 

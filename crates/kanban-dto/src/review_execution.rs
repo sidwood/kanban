@@ -73,6 +73,23 @@ pub struct ReviewGetQuery {
     pub review_id: u64,
 }
 
+/// A surface that holds only a Ticket asks for the review open on it
+/// now; history names prior attempts alone and cannot answer this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLatestQuery {
+    pub ticket_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLatestResponse {
+    pub ticket_id: u64,
+    /// The Ticket's most recent review execution, active or terminal;
+    /// absent when the Ticket has never been reviewed.
+    pub review: Option<ReviewExecutionRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewHumanSubmitRequest {

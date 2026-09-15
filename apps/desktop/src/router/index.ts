@@ -12,13 +12,15 @@ import WorkspacesIndexView from '../views/WorkspacesIndexView.vue'
 import WorkspacesView from '../views/WorkspacesView.vue'
 import HealthDashboardView from '../views/HealthDashboardView.vue'
 import SpecEditorView from '../views/SpecEditorView.vue'
-import TicketEditorView from '../views/TicketEditorView.vue'
 import DependencyEditorView from '../views/DependencyEditorView.vue'
 import AttentionInboxView from '../views/AttentionInboxView.vue'
 
 // The route catalogue the shell's rail and the command palette read.
 // The board is the front door; every operational surface the
-// application already had keeps its route.
+// application already had keeps its route. The Ticket editor is not
+// one of them: it is a dialog off New Ticket, off a Spec's uncovered
+// Story, and off the drawer's Edit, and has no destination of its own
+// (KAN-T139-AC1).
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -29,7 +31,6 @@ const router = createRouter({
     { path: '/attention', name: 'attention-inbox', component: AttentionInboxView },
     { path: '/planning', name: 'planning', component: PlanningView },
     { path: '/planning/specs', name: 'planning-specs', component: SpecEditorView },
-    { path: '/planning/tickets', name: 'planning-tickets', component: TicketEditorView },
     {
       path: '/planning/dependencies',
       name: 'planning-dependencies',

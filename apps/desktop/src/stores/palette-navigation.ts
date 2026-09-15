@@ -19,7 +19,9 @@ export interface PaletteItem {
 
 /** Surfaces the operator can jump to without searching: the rail's
  * destinations first, then the planning surfaces the rail reaches
- * through Planning. */
+ * through Planning. The Ticket editor is deliberately absent — it is
+ * a dialog off context and a shortcut, never a destination
+ * (KAN-T139-AC1). */
 export const PALETTE_NAVIGATION: readonly PaletteItem[] = [
   { id: 'nav-boards', kind: 'navigation', label: 'Boards', route: '/board' },
   { id: 'nav-attention', kind: 'navigation', label: 'Attention inbox', route: '/attention' },
@@ -43,7 +45,6 @@ export const PALETTE_NAVIGATION: readonly PaletteItem[] = [
   },
   { id: 'nav-health', kind: 'navigation', label: 'Health', route: '/health' },
   { id: 'nav-specs', kind: 'navigation', label: 'Author Specs', route: '/planning/specs' },
-  { id: 'nav-tickets', kind: 'navigation', label: 'Create Tickets', route: '/planning/tickets' },
   {
     id: 'nav-dependencies',
     kind: 'navigation',

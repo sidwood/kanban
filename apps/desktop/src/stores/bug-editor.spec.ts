@@ -10,6 +10,7 @@ import {
   bugQualifyRequestOf,
   parseEvidenceIds,
   useBugEditorStore,
+  withChosenSeverity,
 } from './bug-editor'
 
 function bugRecord(overrides: Partial<TicketRecord> = {}): TicketRecord {
@@ -55,22 +56,30 @@ function harness() {
 }
 
 describe('bug editor store', () => {
-  it('severity offers exactly the closed vocabulary', () => {
+  it('severity offers exactly the closed vocabulary, and a blank draft has none', () => {
     expect(BUG_SEVERITIES).toEqual(['critical', 'high', 'medium', 'low'])
-    expect(BUG_SEVERITIES).toContain(blankBugQualificationDraft().severity)
+    // Qualification is the only thing that sets severity (DR-LC-13),
+    // so a fresh draft carries none to send.
+    expect(blankBugQualificationDraft().severity).toBeNull()
+    expect(withChosenSeverity(blankBugQualificationDraft())).toBeNull()
+    expect(
+      withChosenSeverity({ ...blankBugQualificationDraft(), severity: 'high' })?.severity,
+    ).toBe('high')
   })
 
   it('the qualification request carries the whole qualification at the read version', () => {
-    const draft = blankBugQualificationDraft()
-    draft.expectedBehaviour = 'The integration branch survives every landing.'
-    draft.reproduction = 'Re land a reviewed change.'
-    draft.environment = 'macOS 26.'
-    draft.severity = 'critical'
-    draft.frequency = 'Every landing.'
-    draft.affectedScope = 'Landings.'
-    draft.risk = 'Lost review state.'
-    draft.criteria = [{ outcome: 'The branch survives.', stories: 'CORE-S1-US1, S1-US2' }]
-    draft.verificationSteps = ['cargo test -p kanban-storage tickets', '  ', '']
+    const draft = {
+      ...blankBugQualificationDraft(),
+      expectedBehaviour: 'The integration branch survives every landing.',
+      reproduction: 'Re land a reviewed change.',
+      environment: 'macOS 26.',
+      severity: 'critical' as const,
+      frequency: 'Every landing.',
+      affectedScope: 'Landings.',
+      risk: 'Lost review state.',
+      criteria: [{ outcome: 'The branch survives.', stories: 'CORE-S1-US1, S1-US2' }],
+      verificationSteps: ['cargo test -p kanban-storage tickets', '  ', ''],
+    }
 
     expect(bugQualifyRequestOf(2, draft, 3, 'key-1')).toEqual({
       mutation: { optimistic_version: 3, idempotency_key: 'key-1' },
@@ -130,8 +139,7 @@ describe('bug editor store', () => {
     command.mockResolvedValue(bugRecord({ version: 2 }))
     const editor = useBugEditorStore()
 
-    const draft = blankBugQualificationDraft()
-    draft.severity = 'high'
+    const draft = { ...blankBugQualificationDraft(), severity: 'high' as const }
     const landed = await editor.qualify(transport, 2, 1, draft)
 
     expect(landed?.version).toBe(2)
@@ -154,7 +162,10 @@ describe('bug editor store', () => {
     })
     const editor = useBugEditorStore()
 
-    const landed = await editor.qualify(transport, 2, 1, blankBugQualificationDraft())
+    const landed = await editor.qualify(transport, 2, 1, {
+      ...blankBugQualificationDraft(),
+      severity: 'high',
+    })
 
     expect(landed).toBeNull()
     expect(editor.error).toBe('a Ticket environment cannot be blank')

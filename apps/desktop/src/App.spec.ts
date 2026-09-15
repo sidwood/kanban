@@ -301,10 +301,17 @@ describe('the application shell', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
-  it('reaches the ticket editor from the board, not from the rail', async () => {
+  // The editor has no destination at all: New Ticket opens the dialog
+  // in place, and the rail offers nothing (KAN-T139-AC1).
+  it('reaches the ticket editor from the board as a dialog, not from the rail', async () => {
     const wrapper = await mountApp(harness({ tickets: [ticket()] }).transport)
     expect(wrapper.find('[data-testid="rail-link-tickets"]').exists()).toBe(false)
 
-    expect(wrapper.get('[data-testid="new-ticket"]').attributes('href')).toBe('/planning/tickets')
+    const button = wrapper.get('[data-testid="new-ticket"]')
+    expect(button.attributes('href')).toBeUndefined()
+    expect(wrapper.find('[data-testid="ticket-dialog"]').exists()).toBe(false)
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ticket-dialog"]').exists()).toBe(true)
   })
 })

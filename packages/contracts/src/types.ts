@@ -983,6 +983,13 @@ export type ReviewHumanSubmitRequest = {
   summary: string;
   tip: string;
 };
+export type ReviewLatestQuery = {
+  ticket_id: number;
+};
+export type ReviewLatestResponse = {
+  review?: ReviewExecutionRecord | null;
+  ticket_id: number;
+};
 export type ReviewRevalidateRequest = {
   mutation: MutationContext;
   ticket_id: number;

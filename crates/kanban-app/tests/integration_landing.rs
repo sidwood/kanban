@@ -3,6 +3,8 @@
 //! lands through the Seed, and paths outside that topology are
 //! refused and recorded.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -184,9 +186,13 @@ fn wired() -> Wired {
         tickets,
         workspaces,
         lanes,
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database)),
         Arc::new(kanban_service::git_landing::LocalGitLanding),
     )
     .expect("the landing operations register");
+    common::landing_review::register_source_review(&mut core, &database, dir.path());
+    common::landing_review::seed_review_profiles(&core);
 
     let registration = ProjectRegistration::new(
         "CORE",
@@ -246,7 +252,7 @@ fn integration_landing_refuses_a_lane_that_does_not_target_the_spec_branch() {
                     "short_description": "Land through integration.",
                     "problem_statement": "Ad-hoc landing.",
                     "solution": "Guarded topology.",
-                    "user_stories": "US7",
+                    "user_stories": "- CORE-S1-US7: As an operator, I want work to land through integration.",
                     "implementation_decisions": "Lane to Spec branch.",
                     "testing_decisions": "Real git fixtures.",
                     "out_of_scope": "Recovery.",
@@ -307,7 +313,7 @@ fn authored_spec(core: &kanban_app::Core, key: &str) -> serde_json::Value {
                 "short_description": "Land through integration.",
                 "problem_statement": "Ad-hoc landing.",
                 "solution": "Guarded topology.",
-                "user_stories": "US7",
+                "user_stories": "- CORE-S1-US7: As an operator, I want work to land through integration.",
                 "implementation_decisions": "Lane to Spec branch.",
                 "testing_decisions": "Real git fixtures.",
                 "out_of_scope": "Recovery.",
@@ -332,6 +338,79 @@ fn claim_integration(core: &kanban_app::Core, spec: &serde_json::Value, path: &s
 }
 
 #[test]
+fn integration_landing_refuses_a_lane_without_ticket_review() {
+    let wired = wired();
+    let spec = authored_spec(&wired.core, "spec-unreviewed");
+    claim_integration(
+        &wired.core,
+        &spec,
+        wired.integration.to_str().expect("utf-8"),
+        "claim-unreviewed",
+    );
+    assign_ticket_lane(&wired, &spec);
+    let error = wired
+        .core
+        .command(
+            "landing.lane",
+            &json!({
+                "mutation": mutation(0, "land-unreviewed"),
+                "project_id": 1,
+                "spec_id": spec["id"],
+                "from_path": wired.lane.to_str().expect("utf-8"),
+                "into_path": wired.integration.to_str().expect("utf-8"),
+            }),
+        )
+        .expect_err("a Ticket Lane cannot land before its source tip is reviewed");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("Ticket review"),
+        "ordinary landing must name the missing Ticket review: {error:?}"
+    );
+    assert!(!wired.integration.join("lane.md").exists());
+}
+
+#[test]
+fn integration_landing_refuses_a_lane_without_satisfied_criteria() {
+    let wired = wired();
+    let spec = authored_spec(&wired.core, "spec-unsatisfied");
+    claim_integration(
+        &wired.core,
+        &spec,
+        wired.integration.to_str().expect("utf-8"),
+        "claim-unsatisfied",
+    );
+    let ticket = assign_ticket_lane(&wired, &spec);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        Some(&spec),
+        &wired.lane,
+        "lane.md",
+        "source-review-unsatisfied",
+        false,
+    );
+    let error = wired
+        .core
+        .command(
+            "landing.lane",
+            &json!({
+                "mutation": mutation(0, "land-unsatisfied"),
+                "project_id": 1,
+                "spec_id": spec["id"],
+                "from_path": wired.lane.to_str().expect("utf-8"),
+                "into_path": wired.integration.to_str().expect("utf-8"),
+            }),
+        )
+        .expect_err("a reviewed Lane still cannot land without satisfied criteria");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("criterion"),
+        "ordinary landing must name the missing criteria: {error:?}"
+    );
+    assert!(!wired.integration.join("lane.md").exists());
+}
+
+#[test]
 fn integration_landing_merges_a_lane_into_the_spec_branch() {
     let wired = wired();
     let spec = authored_spec(&wired.core, "spec-ok");
@@ -341,7 +420,16 @@ fn integration_landing_merges_a_lane_into_the_spec_branch() {
         wired.integration.to_str().expect("utf-8"),
         "claim-ok",
     );
-    assign_ticket_lane(&wired, &spec);
+    let ticket = assign_ticket_lane(&wired, &spec);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        Some(&spec),
+        &wired.lane,
+        "lane.md",
+        "source-review-ok",
+        true,
+    );
     let previous_tip = head_tip(&wired.integration);
     let landed = wired
         .core
@@ -493,7 +581,7 @@ fn integration_landing_refuses_an_unowned_workspace_with_the_right_branch_name()
     assert!(!impostor.join("lane.md").exists());
 }
 
-fn assign_ticket_lane(wired: &Wired, spec: &serde_json::Value) {
+fn assign_ticket_lane(wired: &Wired, spec: &serde_json::Value) -> serde_json::Value {
     let core = &wired.core;
     let ticket = core
         .command(
@@ -541,6 +629,7 @@ fn assign_ticket_lane(wired: &Wired, spec: &serde_json::Value) {
         }),
     )
     .unwrap();
+    ticket
 }
 
 #[test]
@@ -608,7 +697,16 @@ fn integration_landing_preserves_intent_when_outcome_commit_fails() {
         wired.integration.to_str().unwrap(),
         "claim-commit-failure",
     );
-    assign_ticket_lane(&wired, &spec);
+    let ticket = assign_ticket_lane(&wired, &spec);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        Some(&spec),
+        &wired.lane,
+        "lane.md",
+        "source-review-commit-failure",
+        true,
+    );
     let conn = rusqlite::Connection::open(wired._dir.path().join("kanban.sqlite")).unwrap();
     conn.execute_batch(
         "CREATE TRIGGER fail_landing_outcome BEFORE INSERT ON idempotency_outcomes

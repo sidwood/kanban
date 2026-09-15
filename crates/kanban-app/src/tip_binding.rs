@@ -170,7 +170,9 @@ impl CommandHandler for AttachCriterionEvidence {
         let count = if kind == CriterionKind::Task {
             ticket.completion().len()
         } else {
-            ticket.criteria().len()
+            // Same list ordinary landing counts, so a Bug qualification
+            // criterion can be bound and satisfied at the source tip.
+            ticket.landing_criteria().len()
         };
         if request.criterion_index as usize >= count {
             return Err(ApiError::invalid_request("the criterion index is unknown"));

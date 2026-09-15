@@ -8,13 +8,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kanban_domain::{
-    LandingKind, LandingRefusal, LandingRequest, ProjectId, SpecExecutionState, SpecId, TicketKind,
-    land_lane, land_seed, land_standalone_bug,
+    LandingKind, LandingRefusal, LandingRequest, ProjectId, SpecExecutionState, SpecId, TicketId,
+    TicketKind, land_lane, land_seed, land_standalone_bug,
 };
 use kanban_dto::{
     ApiError, LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest,
-    SpecIntegrationApproveRequest, SpecIntegrationClaimRequest, SpecIntegrationRecord,
-    TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    ReviewExecutionStatus, SpecIntegrationApproveRequest, SpecIntegrationClaimRequest,
+    SpecIntegrationRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
 };
 use serde_json::{Value, json};
 
@@ -22,9 +22,11 @@ use crate::dispatch::{Core, RegistrationError};
 use crate::lane::LaneStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
+use crate::review_execution::ReviewExecutionStore;
 use crate::spec::SpecStore;
 use crate::ticket::TicketStore;
 use crate::timeline::TimelineEnvelope;
+use crate::tip_binding::CriterionBindingStore;
 use crate::workspace::WorkspaceStore;
 
 pub trait GitLanding {
@@ -88,6 +90,8 @@ impl Core {
         tickets: Arc<dyn TicketStore>,
         workspaces: Arc<dyn WorkspaceStore>,
         lanes: Arc<dyn LaneStore>,
+        reviews: Arc<dyn ReviewExecutionStore>,
+        bindings: Arc<dyn CriterionBindingStore>,
         git: Arc<dyn GitLanding + Send + Sync>,
     ) -> Result<(), RegistrationError> {
         let context = LandingContext {
@@ -97,6 +101,8 @@ impl Core {
             tickets,
             workspaces,
             lanes,
+            reviews,
+            bindings,
             git,
         };
         self.register_command(
@@ -132,6 +138,8 @@ struct LandingContext {
     tickets: Arc<dyn TicketStore>,
     workspaces: Arc<dyn WorkspaceStore>,
     lanes: Arc<dyn LaneStore>,
+    reviews: Arc<dyn ReviewExecutionStore>,
+    bindings: Arc<dyn CriterionBindingStore>,
     git: Arc<dyn GitLanding + Send + Sync>,
 }
 
@@ -443,6 +451,8 @@ fn plan_landing(
         }
         None => (String::new(), false, false),
     };
+    let from_tip = context.git.head(from_path)?;
+    let source = source_review(context, kind, ticket_id, &from_tip)?;
     let request = LandingRequest {
         kind,
         from_branch: from_branch.clone(),
@@ -451,6 +461,11 @@ fn plan_landing(
         through_seed,
         spec_active,
         integration_review_approved: review_approved,
+        source_tip: from_tip.clone(),
+        ticket_review_approved: source.approved,
+        ticket_reviewed_tip: source.reviewed_tip,
+        criterion_count: source.criterion_count,
+        criteria_satisfied_at_source: source.satisfied_at_source,
     };
     match kind {
         LandingKind::Lane => land_lane(&request).map_err(refuse)?,
@@ -469,10 +484,61 @@ fn plan_landing(
         into_path: canonical_path(into_path)?,
         from_branch,
         into_branch,
-        from_tip: context.git.head(from_path)?,
+        from_tip,
         into_tip: context.git.head(into_path)?,
         spec_id,
         ticket_id,
+    })
+}
+
+struct SourceReviewFacts {
+    approved: bool,
+    reviewed_tip: Option<String>,
+    criterion_count: usize,
+    satisfied_at_source: usize,
+}
+
+fn source_review(
+    context: &LandingContext,
+    kind: LandingKind,
+    ticket_id: Option<u64>,
+    source_tip: &str,
+) -> Result<SourceReviewFacts, ApiError> {
+    if kind == LandingKind::Seed {
+        return Ok(SourceReviewFacts {
+            approved: false,
+            reviewed_tip: None,
+            criterion_count: 0,
+            satisfied_at_source: 0,
+        });
+    }
+    let ticket_id =
+        ticket_id.ok_or_else(|| ApiError::invalid_request("ordinary landing requires a Ticket"))?;
+    let ticket = context
+        .tickets
+        .find(TicketId::new(ticket_id))?
+        .ok_or_else(|| ApiError::not_found("landing ticket"))?;
+    let latest = context.reviews.latest_for_ticket(ticket_id)?;
+    let reviewed_tip = latest.as_ref().map(|review| review.tip.clone());
+    let approved = latest.as_ref().is_some_and(|review| {
+        review.status == ReviewExecutionStatus::Approved && review.tip == source_tip
+    });
+    let criterion_count = ticket.landing_criteria().len();
+    let bindings = context.bindings.list(ticket_id)?;
+    let satisfied_at_source = if bindings.len() == criterion_count
+        && bindings
+            .iter()
+            .all(|binding| binding.satisfied() && binding.tip() == source_tip)
+    {
+        criterion_count
+    } else {
+        criterion_count.wrapping_add(1)
+    };
+    Ok(SourceReviewFacts {
+        approved,
+        reviewed_tip,
+        criterion_count,
+        satisfied_at_source,
     })
 }
 

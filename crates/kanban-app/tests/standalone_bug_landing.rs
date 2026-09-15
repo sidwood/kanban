@@ -154,9 +154,13 @@ fn wired() -> Wired {
         tickets,
         workspaces,
         lanes,
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
+        Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database)),
         Arc::new(kanban_service::git_landing::LocalGitLanding),
     )
     .expect("the landing operations register");
+    common::landing_review::register_source_review(&mut core, &database, dir.path());
+    common::landing_review::seed_review_profiles(&core);
     let registration = ProjectRegistration::new(
         "CORE",
         "Control plane",
@@ -253,6 +257,95 @@ fn standalone_bug_landing_refuses_an_attached_active_spec() {
 }
 
 #[test]
+fn standalone_bug_landing_refuses_without_ticket_review() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-unreviewed"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    let error = wired
+        .core
+        .command(
+            "landing.bug",
+            &json!({
+                "mutation": mutation(0, "bug-unreviewed-land"),
+                "project_id": 1,
+                "ticket_id": ticket["id"],
+                "from_path": wired.bug.to_str().expect("utf-8"),
+                "into_path": wired.seed.to_str().expect("utf-8"),
+            }),
+        )
+        .expect_err("a standalone Bug cannot land before its source tip is reviewed");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("Ticket review"),
+        "ordinary landing must name the missing Ticket review: {error:?}"
+    );
+    assert!(!wired.seed.join("fix.md").exists());
+}
+
+#[test]
+fn standalone_bug_landing_refuses_without_satisfied_criteria() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-unsatisfied"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-unsatisfied",
+        false,
+    );
+    let error = wired
+        .core
+        .command(
+            "landing.bug",
+            &json!({
+                "mutation": mutation(0, "bug-unsatisfied-land"),
+                "project_id": 1,
+                "ticket_id": ticket["id"],
+                "from_path": wired.bug.to_str().expect("utf-8"),
+                "into_path": wired.seed.to_str().expect("utf-8"),
+            }),
+        )
+        .expect_err("a reviewed Bug still cannot land without satisfied criteria");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("criterion"),
+        "ordinary landing must name the missing criteria: {error:?}"
+    );
+    assert!(!wired.seed.join("fix.md").exists());
+}
+
+#[test]
 fn standalone_bug_landing_merges_through_the_seed() {
     let wired = wired();
     let ticket = wired
@@ -271,6 +364,15 @@ fn standalone_bug_landing_merges_through_the_seed() {
         )
         .expect("the standalone Bug is created");
     assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-bug",
+        true,
+    );
     let landed = wired
         .core
         .command(
@@ -349,6 +451,15 @@ fn standalone_bug_landing_allows_an_inactive_spec_without_an_integration() {
             rusqlite::params![state, spec["id"].as_i64().unwrap()],
         )
         .unwrap();
+        common::landing_review::complete_source_review(
+            &wired.core,
+            &ticket,
+            None,
+            &wired.bug,
+            "fix.md",
+            "source-review-inactive",
+            true,
+        );
         let result = wired.core.command(
             "landing.bug",
             &json!({

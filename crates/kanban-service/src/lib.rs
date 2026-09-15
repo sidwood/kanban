@@ -441,8 +441,9 @@ fn assemble_core_with_secret(
         Arc::new(kanban_storage::SqliteFindingStore::new(&database)),
         Arc::new(kanban_storage::SqliteProjectStore::new(&database)),
     )?;
+    let review_executions = Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database));
     core.register_reviews(
-        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
+        review_executions.clone(),
         Arc::new(kanban_storage::SqliteReviewConfigStore::new(&database)),
         Arc::new(kanban_storage::SqliteTicketStore::new(&database)),
         Arc::new(kanban_storage::SqliteProfileStore::new(&database)),
@@ -482,8 +483,9 @@ fn assemble_core_with_secret(
     )?;
     core.register_deferrals(deferral_store, project_store.clone())?;
     core.register_evidence(evidence_store.clone(), project_store.clone())?;
+    let criterion_bindings = Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database));
     core.register_criterion_bindings(
-        Arc::new(kanban_storage::SqliteCriterionBindingStore::new(&database)),
+        criterion_bindings.clone(),
         ticket_store.clone(),
         evidence_store,
     )?;
@@ -494,6 +496,8 @@ fn assemble_core_with_secret(
         ticket_store.clone(),
         workspace_store.clone(),
         lane_store.clone(),
+        review_executions,
+        criterion_bindings,
         Arc::new(git_landing::LocalGitLanding),
     )?;
     core.register_notification_permissions(notifications::shared_native())?;

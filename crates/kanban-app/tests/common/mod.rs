@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod landing_review;
 pub mod review;
 
 use std::num::NonZeroU32;

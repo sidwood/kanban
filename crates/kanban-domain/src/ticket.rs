@@ -1438,6 +1438,20 @@ impl Ticket {
         }
     }
 
+    /// The Acceptance Criteria ordinary landing must satisfy at the
+    /// source tip: Implementation story-linked criteria, or a Bug's
+    /// qualification criteria once one exists.
+    pub fn landing_criteria(&self) -> &[AcceptanceCriterion] {
+        match &self.body {
+            TicketBody::Implementation(implementation) => implementation.criteria(),
+            TicketBody::Bug(bug) => bug
+                .qualification()
+                .map(BugQualification::criteria)
+                .unwrap_or(&[]),
+            _ => &[],
+        }
+    }
+
     /// The Bug body, if this Ticket carries one.
     pub fn bug(&self) -> Option<&BugTicket> {
         match &self.body {
@@ -1833,6 +1847,11 @@ mod ticket_kinds {
             Some("Registration creates Projects end to end")
         );
         assert_eq!(ticket.criteria().len(), 1);
+        assert_eq!(
+            ticket.landing_criteria(),
+            ticket.criteria(),
+            "ordinary landing counts Implementation story-linked criteria"
+        );
         assert_eq!(
             ticket.title(),
             None,
@@ -2558,6 +2577,30 @@ mod bug_qualification {
             body.facts(),
             &BugFacts::empty(),
             "capture requires no references, snapshots, or evidence"
+        );
+        assert!(
+            bug.criteria().is_empty(),
+            "Bug Tickets have no Implementation story-linked criteria"
+        );
+        assert!(
+            bug.landing_criteria().is_empty(),
+            "an unqualified Bug has no landing criteria"
+        );
+    }
+
+    #[test]
+    fn landing_criteria_are_bug_qualification_criteria() {
+        let mut bug = captured();
+        bug.qualify(qualified(Severity::High))
+            .expect("the Bug qualifies");
+        assert!(
+            bug.criteria().is_empty(),
+            "qualification does not populate Implementation criteria()"
+        );
+        assert_eq!(bug.landing_criteria().len(), 1);
+        assert_eq!(
+            bug.landing_criteria()[0].outcome(),
+            "The integration branch survives a landing."
         );
     }
 

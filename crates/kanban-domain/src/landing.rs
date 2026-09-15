@@ -17,6 +17,8 @@ pub enum LandingRefusal {
     IntegrationReviewRequired,
     SpecAttached,
     UnguardedPath,
+    TicketReviewRequired,
+    CriteriaUnsatisfied,
 }
 
 impl std::fmt::Display for LandingRefusal {
@@ -39,6 +41,15 @@ impl std::fmt::Display for LandingRefusal {
                 )
             }
             Self::UnguardedPath => write!(f, "landing refuses paths outside this topology"),
+            Self::TicketReviewRequired => {
+                write!(f, "landing requires a Ticket review of the source tip")
+            }
+            Self::CriteriaUnsatisfied => {
+                write!(
+                    f,
+                    "landing requires every criterion to be satisfied at the source tip"
+                )
+            }
         }
     }
 }
@@ -52,6 +63,16 @@ pub struct LandingRequest {
     pub through_seed: bool,
     pub spec_active: bool,
     pub integration_review_approved: bool,
+    /// Git tip of the source Workspace (the Ticket Lane or Bug branch).
+    pub source_tip: String,
+    /// Whether a completed Ticket review approved that exact source tip.
+    pub ticket_review_approved: bool,
+    /// Tip the Ticket review bound, when one exists.
+    pub ticket_reviewed_tip: Option<String>,
+    /// How many Ticket criteria must be satisfied at the source tip.
+    pub criterion_count: usize,
+    /// How many of those criteria are satisfied at the source tip.
+    pub criteria_satisfied_at_source: usize,
 }
 
 pub fn land_lane(request: &LandingRequest) -> Result<(), LandingRefusal> {
@@ -64,7 +85,7 @@ pub fn land_lane(request: &LandingRequest) -> Result<(), LandingRefusal> {
     if request.into_branch != request.integration_branch {
         return Err(LandingRefusal::WrongIntegrationBranch);
     }
-    Ok(())
+    require_reviewed_source(request)
 }
 
 pub fn land_seed(request: &LandingRequest) -> Result<(), LandingRefusal> {
@@ -93,6 +114,19 @@ pub fn land_standalone_bug(request: &LandingRequest) -> Result<(), LandingRefusa
     if !request.through_seed {
         return Err(LandingRefusal::SeedRequired);
     }
+    require_reviewed_source(request)
+}
+
+fn require_reviewed_source(request: &LandingRequest) -> Result<(), LandingRefusal> {
+    if request.source_tip.is_empty()
+        || !request.ticket_review_approved
+        || request.ticket_reviewed_tip.as_deref() != Some(request.source_tip.as_str())
+    {
+        return Err(LandingRefusal::TicketReviewRequired);
+    }
+    if request.criteria_satisfied_at_source != request.criterion_count {
+        return Err(LandingRefusal::CriteriaUnsatisfied);
+    }
     Ok(())
 }
 
@@ -111,6 +145,11 @@ mod tests {
             through_seed: false,
             spec_active: true,
             integration_review_approved: true,
+            source_tip: "a".repeat(40),
+            ticket_review_approved: true,
+            ticket_reviewed_tip: Some("a".repeat(40)),
+            criterion_count: 1,
+            criteria_satisfied_at_source: 1,
         }
     }
 
@@ -139,6 +178,11 @@ mod tests {
             through_seed: true,
             spec_active: true,
             integration_review_approved: false,
+            source_tip: String::new(),
+            ticket_review_approved: false,
+            ticket_reviewed_tip: None,
+            criterion_count: 0,
+            criteria_satisfied_at_source: 0,
         };
         assert_eq!(
             land_seed(&request).unwrap_err(),
@@ -156,10 +200,82 @@ mod tests {
             through_seed: true,
             spec_active: true,
             integration_review_approved: false,
+            source_tip: "a".repeat(40),
+            ticket_review_approved: true,
+            ticket_reviewed_tip: Some("a".repeat(40)),
+            criterion_count: 0,
+            criteria_satisfied_at_source: 0,
         };
         assert_eq!(
             land_standalone_bug(&request).unwrap_err(),
             LandingRefusal::SpecAttached
         );
+    }
+
+    #[test]
+    fn ordinary_landing_requires_ticket_review_at_the_source_tip() {
+        let mut request = lane();
+        request.ticket_review_approved = false;
+        assert_eq!(
+            land_lane(&request).unwrap_err(),
+            LandingRefusal::TicketReviewRequired
+        );
+
+        let mut bug = LandingRequest {
+            kind: LandingKind::StandaloneBug,
+            from_branch: "kan-t2".to_owned(),
+            into_branch: "main".to_owned(),
+            integration_branch: String::new(),
+            through_seed: true,
+            spec_active: false,
+            integration_review_approved: false,
+            source_tip: "a".repeat(40),
+            ticket_review_approved: true,
+            ticket_reviewed_tip: Some("b".repeat(40)),
+            criterion_count: 0,
+            criteria_satisfied_at_source: 0,
+        };
+        assert_eq!(
+            land_standalone_bug(&bug).unwrap_err(),
+            LandingRefusal::TicketReviewRequired
+        );
+        bug.ticket_reviewed_tip = Some(bug.source_tip.clone());
+        bug.criterion_count = 1;
+        bug.criteria_satisfied_at_source = 1;
+        land_standalone_bug(&bug).expect("a reviewed standalone Bug may land");
+    }
+
+    #[test]
+    fn ordinary_landing_requires_satisfied_criteria_at_the_source_tip() {
+        let mut request = lane();
+        request.criteria_satisfied_at_source = 0;
+        assert_eq!(
+            land_lane(&request).unwrap_err(),
+            LandingRefusal::CriteriaUnsatisfied
+        );
+    }
+
+    #[test]
+    fn standalone_bug_landing_requires_satisfied_qualification_criteria() {
+        let mut request = LandingRequest {
+            kind: LandingKind::StandaloneBug,
+            from_branch: "kan-t2".to_owned(),
+            into_branch: "main".to_owned(),
+            integration_branch: String::new(),
+            through_seed: true,
+            spec_active: false,
+            integration_review_approved: false,
+            source_tip: "a".repeat(40),
+            ticket_review_approved: true,
+            ticket_reviewed_tip: Some("a".repeat(40)),
+            criterion_count: 1,
+            criteria_satisfied_at_source: 0,
+        };
+        assert_eq!(
+            land_standalone_bug(&request).unwrap_err(),
+            LandingRefusal::CriteriaUnsatisfied
+        );
+        request.criteria_satisfied_at_source = 1;
+        land_standalone_bug(&request).expect("satisfied qualification criteria may land");
     }
 }

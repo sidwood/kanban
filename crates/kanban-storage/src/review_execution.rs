@@ -55,6 +55,26 @@ impl ReviewExecutionStore for SqliteReviewExecutionStore {
             .transpose()
             .map(|record| record.flatten())
     }
+    fn latest_approved_for_tip(
+        &self,
+        ticket_id: u64,
+        tip: &str,
+    ) -> Result<Option<ReviewExecutionRecord>, ApiError> {
+        let conn = self.conn.lock();
+        let id = conn
+            .query_row(
+                "SELECT id FROM review_executions
+                 WHERE ticket_id=?1 AND tip=?2 AND status='approved'
+                 ORDER BY id DESC LIMIT 1",
+                params![ticket_id as i64, tip],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        id.map(|id| load(&conn, id as u64))
+            .transpose()
+            .map(|record| record.flatten())
+    }
     fn human_verdict(
         &self,
         request: &ReviewHumanSubmitRequest,

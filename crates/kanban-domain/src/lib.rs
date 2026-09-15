@@ -144,9 +144,10 @@ pub use timeline_time::{
     TimelineTimeError, normalise_timeline_bound, validate_timeline_time_window,
 };
 pub use tip_binding::{
-    CriterionBinding, CriterionKind, EvidenceReview, TipBindingError, attach_criterion_evidence,
-    complete_task_criterion, complete_task_criterion_kind, invalidate_on_content_change,
-    review_criterion_evidence, satisfy_at_approved_tip,
+    CriterionBinding, CriterionKind, EvidenceReview, ReviewExecutionState, ReviewedContent,
+    TipBindingError, attach_criterion_evidence, complete_task_criterion,
+    complete_task_criterion_kind, invalidate_on_content_change, refuse_spent_approval,
+    require_completed_required_stage_review, review_criterion_evidence, satisfy_at_approved_tip,
 };
 pub use workspace::{
     ReuseEvaluation, ReuseInputs, Workspace, WorkspaceCheckout, WorkspaceHealth,

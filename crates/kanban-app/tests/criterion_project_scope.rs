@@ -71,6 +71,7 @@ fn two_projects() -> DispatchHarness {
             Arc::new(SqliteCriterionBindingStore::new(&h.database)),
             tickets,
             evidence,
+            Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&h.database)),
         )
         .expect("the criterion operations register");
     h
@@ -157,7 +158,7 @@ fn criterion_completion_lands_on_the_owning_projects_timeline() {
 #[test]
 fn criterion_binding_review_satisfaction_and_invalidation_scope_to_the_owning_project() {
     let h = two_projects();
-    let ticket = task_in(&h.core, 2, "bound");
+    let (ticket, submission) = common::review::prepare_on_in(&h.core, &h.database_path, 2, 1);
     let evidence = h
         .core
         .command(
@@ -180,7 +181,7 @@ fn criterion_binding_review_satisfaction_and_invalidation_scope_to_the_owning_pr
             &json!({
                 "mutation": mutation(0, "bound-attach"),
                 "ticket_id": ticket,
-                "criterion_index": 1,
+                "criterion_index": 0,
                 "evidence_id": id(&evidence),
                 "tip": TIP_A,
             }),
@@ -192,18 +193,20 @@ fn criterion_binding_review_satisfaction_and_invalidation_scope_to_the_owning_pr
             &json!({
                 "mutation": mutation(0, "bound-review"),
                 "ticket_id": ticket,
-                "criterion_index": 1,
+                "criterion_index": 0,
                 "review": "validated",
             }),
         )
         .expect("the review lands");
+    let review = common::review::start(&h.core, ticket, &submission, "bound-review-start");
+    common::review::approve_required_stage(&h.core, &review, "bound-review-approve");
     h.core
         .command(
             "criterion.satisfy",
             &json!({
                 "mutation": mutation(0, "bound-satisfy"),
                 "ticket_id": ticket,
-                "criterion_index": 1,
+                "criterion_index": 0,
                 "tip": TIP_A,
             }),
         )

@@ -114,6 +114,7 @@ impl WorkspaceGitObserver for ScriptedGit {
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
+                tree: None,
             })
     }
 }
@@ -339,6 +340,7 @@ fn coordinator_loop_refuses_a_fresh_clone_on_the_wrong_branch() {
                 head: Some("a".repeat(40)),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
+                tree: None,
             },
         )]),
     });
@@ -461,6 +463,7 @@ fn coordinator_loop_reuses_a_clean_workspace_under_the_reuse_rules() {
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
+                tree: None,
             },
         )]),
     });
@@ -536,6 +539,7 @@ fn coordinator_loop_refuses_reuse_when_observed_branch_mismatches_execution_bran
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
+                tree: None,
             },
         )]),
     });
@@ -597,6 +601,7 @@ fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
                     head: Some("abc123".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             ),
             (
@@ -608,6 +613,7 @@ fn coordinator_loop_skips_the_seed_workspace_when_selecting_reuse_capacity() {
                     head: Some("abc123".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             ),
         ]),
@@ -703,6 +709,7 @@ fn coordinator_loop_launches_through_the_herdr_session_socket() {
                 head: Some("abc123".to_owned()),
                 working_tree_clean: Some(true),
                 unique_unlanded_commits: Some(false),
+                tree: None,
             },
         )]),
     });

@@ -299,6 +299,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "shell preferences",
         sql: include_str!("../migrations/0049_shell_preferences.sql"),
     },
+    Migration {
+        version: 50,
+        name: "voided approvals",
+        sql: include_str!("../migrations/0050_voided_approvals.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1886,6 +1891,10 @@ mod tests {
                 PendingMigration {
                     version: 49,
                     name: "shell preferences"
+                },
+                PendingMigration {
+                    version: 50,
+                    name: "voided approvals"
                 },
             ]]
         );

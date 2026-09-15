@@ -6,7 +6,8 @@ use kanban_dto::LiveEventName;
 use std::sync::Arc;
 
 use kanban_domain::{
-    ProjectId, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId, WorkspaceRegistration,
+    ProjectId, ReviewedContent, Workspace, WorkspaceCheckout, WorkspaceHealth, WorkspaceId,
+    WorkspaceRegistration,
 };
 use kanban_dto::{
     ApiError, TimelineEntityKind, TimelineEntityRef, TimelineEventKind, WorkspaceCheckoutDto,
@@ -16,7 +17,7 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
-use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::dispatch::{Core, ObservedWorkspaceHead, QueryHandler, RegistrationError};
 use crate::events::{EventSink, emit_catalogued};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
@@ -37,6 +38,8 @@ pub struct WorkspaceGitSnapshot {
     /// Whether the Workspace holds unique unlanded commits; `None`
     /// when the observer could not decide (DR-LW-06).
     pub unique_unlanded_commits: Option<bool>,
+    /// The tree hash of HEAD, when the observer could read it.
+    pub tree: Option<String>,
 }
 
 /// The git observation port: read-only workspace state. The service
@@ -140,6 +143,7 @@ impl Core {
                 store: workspaces.clone(),
                 projects,
                 git,
+                observed_head: self.observed_workspace_head.clone(),
             }),
         )?;
         self.register_command(
@@ -240,9 +244,10 @@ pub(crate) fn observe_workspace(
     store: &dyn WorkspaceStore,
     git: &dyn WorkspaceGitObserver,
     events: &dyn CommandEffects,
-) -> Result<(), ApiError> {
+) -> Result<ReviewedContent, ApiError> {
     let project_id = workspace.registration().project_id();
     let snapshot = git.observe(workspace.registration().path(), repository);
+    let observed = reviewed_content(&snapshot);
     let health_change = workspace.observe(
         snapshot.present,
         snapshot.repository_identity,
@@ -269,13 +274,31 @@ pub(crate) fn observe_workspace(
     };
     store.save(workspace, envelope)?;
     announce(events, LiveEventName::WorkspaceObserved, workspace);
-    Ok(())
+    Ok(observed)
+}
+
+fn reviewed_content(snapshot: &WorkspaceGitSnapshot) -> ReviewedContent {
+    let mut identities = Vec::new();
+    if let Some(head) = &snapshot.head {
+        identities.push(head.clone());
+    }
+    if let Some(tree) = &snapshot.tree
+        && !identities.iter().any(|identity| identity == tree)
+    {
+        identities.push(tree.clone());
+    }
+    if snapshot.present && snapshot.working_tree_clean == Some(true) && !identities.is_empty() {
+        ReviewedContent::clean(identities)
+    } else {
+        ReviewedContent::untrusted(identities)
+    }
 }
 
 struct ObserveWorkspace {
     store: Arc<dyn WorkspaceStore>,
     projects: Arc<dyn ProjectStore>,
     git: Arc<dyn WorkspaceGitObserver>,
+    observed_head: Arc<std::sync::Mutex<Option<Arc<dyn ObservedWorkspaceHead>>>>,
 }
 
 impl CommandHandler for ObserveWorkspace {
@@ -299,13 +322,26 @@ impl CommandHandler for ObserveWorkspace {
         let mut workspace = load_workspace(&self.store, request.workspace_id)?;
         let project_id = workspace.registration().project_id();
         let project = load_project(&self.projects, project_id)?;
-        observe_workspace(
+        let observed = observe_workspace(
             &mut workspace,
             project.registration().repository(),
             self.store.as_ref(),
             self.git.as_ref(),
             events,
         )?;
+        if let Some(observer) = self
+            .observed_head
+            .lock()
+            .expect("the observed-head lock is sound")
+            .as_ref()
+        {
+            observer.on_observed_head(
+                project_id.value(),
+                workspace.id().value(),
+                &observed,
+                events,
+            )?;
+        }
         encode_record(&workspace)
     }
 }
@@ -844,6 +880,7 @@ mod workspace_observe {
                     head: Some("abc".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
                 WorkspaceGitSnapshot {
                     present: true,
@@ -852,6 +889,7 @@ mod workspace_observe {
                     head: Some("def".to_owned()),
                     working_tree_clean: Some(false),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             ]),
         }));
@@ -922,6 +960,7 @@ mod workspace_observe {
                     head: Some("abc123".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             )]),
         }));
@@ -991,6 +1030,7 @@ mod workspace_observe {
                     head: Some("def456".to_owned()),
                     working_tree_clean: None,
                     unique_unlanded_commits: None,
+                    tree: None,
                 },
             )]),
         }));
@@ -1053,6 +1093,7 @@ mod workspace_observe {
                     head: Some("def456".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(true),
+                    tree: None,
                 },
             )]),
         }));
@@ -1100,6 +1141,7 @@ mod workspace_observe {
                     head: Some("abc123".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             )]),
         }));
@@ -1158,6 +1200,7 @@ mod workspace_observe {
                     head: Some("abc".to_owned()),
                     working_tree_clean: Some(false),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             )]),
         }));
@@ -1242,6 +1285,7 @@ mod workspace_retire {
                     head: Some("abc".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             )]),
         })

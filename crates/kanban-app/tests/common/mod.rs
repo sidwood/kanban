@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use kanban_app::catalog::exposed_operations;
 use kanban_app::dispatch::Core;
 use kanban_app::events::NoopEventSink;
-use kanban_app::{CoordinatorWake, CoordinatorWakeRequest, ProfileStore, ProjectStore};
+use kanban_app::{CoordinatorWake, CoordinatorWakeRequest, EventSink, ProfileStore, ProjectStore};
 use kanban_domain::{ExecutionProfile, ProfileDefinition, ProfileName, ProjectRegistration};
 use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_storage::{
@@ -69,6 +69,15 @@ pub fn harness() -> DispatchHarness {
 /// one already-migrated database, so a test can reopen the same
 /// file and serve it through a fresh Core.
 pub fn core_over(database: &Database) -> (Core, Arc<RecordingWake>) {
+    core_over_with_events(database, Arc::new(NoopEventSink))
+}
+
+/// The dispatch, review, run, and submission operations wired over
+/// one already-migrated database, publishing through `events`.
+pub fn core_over_with_events(
+    database: &Database,
+    events: Arc<dyn EventSink>,
+) -> (Core, Arc<RecordingWake>) {
     let projects = Arc::new(SqliteProjectStore::new(database));
     let tickets = Arc::new(SqliteTicketStore::new(database));
     let profiles = Arc::new(SqliteProfileStore::new(database));
@@ -83,7 +92,7 @@ pub fn core_over(database: &Database) -> (Core, Arc<RecordingWake>) {
         database,
         RetentionPolicy::keep_most_recent(NonZeroU32::new(100).expect("the bound is not zero")),
     ));
-    let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
+    let mut core = Core::new(exposed_operations(), idempotency, events);
     core.register_dispatch(
         requests.clone(),
         tickets.clone(),
@@ -210,7 +219,7 @@ pub fn insert_ticket_with_profile(
     priority: &str,
     profile: &str,
 ) -> u64 {
-    insert_ticket_row(database_path, number, priority, profile, "draft")
+    insert_ticket_row(database_path, 1, number, priority, profile, "draft")
 }
 
 /// Seat a fixture Task Ticket already ready: the executable state
@@ -227,11 +236,29 @@ pub fn insert_ready_ticket_with_profile(
     priority: &str,
     profile: &str,
 ) -> u64 {
-    insert_ticket_row(database_path, number, priority, profile, "ready")
+    insert_ticket_row(database_path, 1, number, priority, profile, "ready")
+}
+
+/// Seat a ready fixture Ticket in `project_id`.
+pub fn insert_ready_ticket_in(
+    database_path: &std::path::Path,
+    project_id: u64,
+    number: u64,
+    priority: &str,
+) -> u64 {
+    insert_ticket_row(
+        database_path,
+        project_id,
+        number,
+        priority,
+        "standard",
+        "ready",
+    )
 }
 
 fn insert_ticket_row(
     database_path: &std::path::Path,
+    project_id: u64,
     number: u64,
     priority: &str,
     profile: &str,
@@ -242,9 +269,9 @@ fn insert_ticket_row(
         "INSERT INTO tickets
              (project_id, number, kind, priority, state, title, criteria,
               subtype, mode, completion, profile, version)
-         VALUES (1, ?1, 'task', ?2, ?4, 'One slice', '[]',
-                 'operational', 'agent', '[\"done\"]', ?3, 1)",
-        rusqlite::params![number as i64, priority, profile, state],
+         VALUES (?1, ?2, 'task', ?3, ?5, 'One slice', '[]',
+                 'operational', 'agent', '[\"done\"]', ?4, 1)",
+        rusqlite::params![project_id as i64, number as i64, priority, profile, state],
     )
     .expect("the fixture Ticket lands");
     conn.last_insert_rowid()
@@ -290,10 +317,15 @@ pub fn cap_project(database_path: &std::path::Path, dimension: &str, cap: u64) {
 /// Seat `ticket_id` in a fresh Lane holding no Workspace: the Ticket
 /// is assigned, which is the fact the capacity claim reads.
 pub fn assign_lane(database_path: &std::path::Path, ticket_id: u64) {
+    assign_lane_in(database_path, 1, ticket_id)
+}
+
+/// Seat `ticket_id` in a fresh Lane of `project_id` holding no Workspace.
+pub fn assign_lane_in(database_path: &std::path::Path, project_id: u64, ticket_id: u64) {
     let conn = rusqlite::Connection::open(database_path).expect("the database reopens");
     conn.execute(
-        "INSERT INTO lanes (project_id, ticket_id, version) VALUES (1, ?1, 1)",
-        rusqlite::params![ticket_id as i64],
+        "INSERT INTO lanes (project_id, ticket_id, version) VALUES (?1, ?2, 1)",
+        rusqlite::params![project_id as i64, ticket_id as i64],
     )
     .expect("the fixture Lane lands");
 }

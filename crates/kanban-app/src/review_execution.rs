@@ -36,6 +36,11 @@ pub trait ReviewExecutionStore: Send + Sync {
     fn start(&self, draft: &ReviewExecutionDraft) -> Result<ReviewExecutionRecord, ApiError>;
     fn find(&self, review_id: u64) -> Result<Option<ReviewExecutionRecord>, ApiError>;
     fn latest_for_ticket(&self, ticket_id: u64) -> Result<Option<ReviewExecutionRecord>, ApiError>;
+    fn latest_approved_for_tip(
+        &self,
+        ticket_id: u64,
+        tip: &str,
+    ) -> Result<Option<ReviewExecutionRecord>, ApiError>;
     fn human_verdict(
         &self,
         request: &ReviewHumanSubmitRequest,

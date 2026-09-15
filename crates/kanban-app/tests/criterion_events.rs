@@ -5,18 +5,15 @@
 
 mod common;
 
-use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 
 use common::{mutation, seed_project_profile};
-use kanban_app::catalog::exposed_operations;
 use kanban_app::dispatch::Core;
 use kanban_app::events::EventSink;
 use kanban_dto::{LiveEventName, event_descriptor};
 use kanban_storage::{
-    AllowAllMigrations, Database, RetentionPolicy, SqliteCriterionBindingStore,
-    SqliteEvidenceStore, SqliteIdempotencyStore, SqlitePlanStore, SqliteProjectStore,
-    SqliteSpecStore, SqliteTicketStore,
+    AllowAllMigrations, Database, SqliteCriterionBindingStore, SqliteEvidenceStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteSpecStore, SqliteTicketStore,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -66,6 +63,7 @@ struct Harness {
     _dir: TempDir,
     core: Core,
     sink: Arc<RecordingSink>,
+    database_path: std::path::PathBuf,
 }
 
 /// A Core over a scratch SQLite database, publishing to a sink this
@@ -83,11 +81,7 @@ fn wired() -> Harness {
     std::fs::create_dir_all(&attachments).expect("the attachment root is created");
 
     let sink = Arc::new(RecordingSink::default());
-    let idempotency = Arc::new(SqliteIdempotencyStore::new(
-        &database,
-        RetentionPolicy::keep_most_recent(NonZeroU32::new(100).expect("the bound is not zero")),
-    ));
-    let mut core = Core::new(exposed_operations(), idempotency, sink.clone());
+    let (mut core, _) = common::core_over_with_events(&database, sink.clone());
     core.register_plans(
         Arc::new(SqlitePlanStore::new(&database)),
         Arc::new(SqliteProjectStore::new(&database)),
@@ -117,12 +111,14 @@ fn wired() -> Harness {
         Arc::new(SqliteCriterionBindingStore::new(&database)),
         Arc::new(SqliteTicketStore::new(&database)),
         evidence,
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
     )
     .expect("the criterion operations register");
     Harness {
         _dir: dir,
         core,
         sink,
+        database_path: path,
     }
 }
 
@@ -248,7 +244,7 @@ fn attaching_evidence_announces_the_binding_it_committed() {
 #[test]
 fn reviewing_satisfying_and_invalidating_each_announce_their_change() {
     let h = wired();
-    let ticket = implementation_ticket(&h.core);
+    let (ticket, submission) = common::review::prepare_on(&h.core, &h.database_path);
     let evidence = attach_repository(&h.core, ticket, "proof");
     h.core
         .command(
@@ -279,6 +275,9 @@ fn reviewing_satisfying_and_invalidating_each_announce_their_change() {
     assert_eq!(reviewed.len(), 1, "the review announced itself");
     assert_eq!(reviewed[0]["review"], "validated");
     assert_eq!(reviewed[0]["ticket_id"], ticket);
+
+    let review = common::review::start(&h.core, ticket, &submission, "review-start");
+    common::review::approve_required_stage(&h.core, &review, "review-approve");
 
     h.sink.forget();
     h.core

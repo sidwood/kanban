@@ -48,6 +48,7 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
         let checkout = git_output(workspace_path, &["rev-parse", "--abbrev-ref", "HEAD"])
             .map(|output| WorkspaceCheckout::from_abbrev_ref(&output));
         let head = git_output(workspace_path, &["rev-parse", "HEAD"]);
+        let tree = git_output(workspace_path, &["rev-parse", "HEAD^{tree}"]);
         WorkspaceGitSnapshot {
             present: true,
             repository_identity: Some(identity),
@@ -55,6 +56,7 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
             head,
             working_tree_clean: working_tree_clean(workspace_path),
             unique_unlanded_commits: unique_unlanded_commits(workspace_path, repository_path),
+            tree,
         }
     }
 }
@@ -327,6 +329,28 @@ mod tests {
             snapshot.unique_unlanded_commits,
             Some(false),
             "a clone at the seed head holds nothing unlanded"
+        );
+    }
+
+    #[test]
+    fn observation_reports_the_head_tree_hash() {
+        let dir = TempDir::new().expect("a scratch directory is available");
+        let repository = init_repo(dir.path());
+
+        let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
+        let expected = Command::new("git")
+            .args(["-C", &repository, "rev-parse", "HEAD^{tree}"])
+            .output()
+            .expect("git rev-parse runs");
+        let expected = String::from_utf8(expected.stdout)
+            .expect("git output is UTF-8")
+            .trim()
+            .to_owned();
+
+        assert_eq!(
+            snapshot.tree.as_deref(),
+            Some(expected.as_str()),
+            "clean observation must present the HEAD tree as a reviewed identity"
         );
     }
 

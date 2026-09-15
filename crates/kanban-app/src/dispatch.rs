@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use kanban_domain::ReviewedContent;
 use kanban_dto::ApiError;
 use serde_json::Value;
 
@@ -59,6 +60,21 @@ pub struct Core {
     command_gate: Mutex<()>,
     installation_secret: Option<Arc<crate::secrets::InstallationSecret>>,
     pub(crate) agent_authority: Option<Arc<crate::agent_authorization::RunAuthority>>,
+    /// Workspace observation fills this after git facts land so a
+    /// content change can void outstanding criterion approvals without
+    /// an operator `criterion.invalidate`.
+    pub(crate) observed_workspace_head: Arc<Mutex<Option<Arc<dyn ObservedWorkspaceHead>>>>,
+}
+
+/// Receives the reviewed content a Workspace observation just recorded.
+pub trait ObservedWorkspaceHead: Send + Sync {
+    fn on_observed_head(
+        &self,
+        project_id: u64,
+        workspace_id: u64,
+        observed: &ReviewedContent,
+        effects: &dyn CommandEffects,
+    ) -> Result<(), ApiError>;
 }
 
 impl Core {
@@ -134,6 +150,7 @@ impl Core {
             command_gate: Mutex::new(()),
             agent_authority: None,
             installation_secret: None,
+            observed_workspace_head: Arc::new(Mutex::new(None)),
         }
     }
 

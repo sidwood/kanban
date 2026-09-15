@@ -767,6 +767,7 @@ mod lane_assign {
                     head: Some("abc123".to_owned()),
                     working_tree_clean: Some(true),
                     unique_unlanded_commits: Some(false),
+                    tree: None,
                 },
             )]),
         })

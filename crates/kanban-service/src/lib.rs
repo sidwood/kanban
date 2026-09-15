@@ -488,6 +488,7 @@ fn assemble_core_with_secret(
         criterion_bindings.clone(),
         ticket_store.clone(),
         evidence_store,
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(&database)),
     )?;
     core.register_landings(
         Arc::new(kanban_storage::SqliteLandingStore::new(&database)),

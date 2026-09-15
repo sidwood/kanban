@@ -531,6 +531,7 @@ fn sample_request(schema: &str) -> Value {
         "ReviewRevalidateRequest" => json!({"mutation":mutation,"ticket_id":1}),
         "ReviewExpireRequest" => json!({"mutation":mutation,"review_id":1}),
         "ReviewGetQuery" => json!({"review_id":1}),
+        "ReviewLatestQuery" => json!({"ticket_id":1}),
         "ReviewHistoryQuery" => json!({"ticket_id":1}),
         "ProjectSchedulePolicyQuery" => json!({"project_id":1}),
         "ProjectSchedulePolicySetRequest" => {
@@ -870,6 +871,9 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
             decode_invoke_args::<kanban_dto::ReviewExpireRequest>(request).is_err()
         }
         "ReviewGetQuery" => decode_invoke_args::<kanban_dto::ReviewGetQuery>(request).is_err(),
+        "ReviewLatestQuery" => {
+            decode_invoke_args::<kanban_dto::ReviewLatestQuery>(request).is_err()
+        }
         "ReviewHistoryQuery" => {
             decode_invoke_args::<kanban_dto::ReviewHistoryQuery>(request).is_err()
         }

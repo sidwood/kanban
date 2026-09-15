@@ -2,9 +2,12 @@
 //! configuration, with manifest hashes, validation, encryption,
 //! preview, retention, and safe restore (KAN-S13-US2).
 
+use std::cell::RefCell;
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -759,6 +762,44 @@ const SNAPSHOT_PAGES_PER_STEP: i32 = 5;
 /// cadence, so a copying snapshot stays polite to the system.
 const SNAPSHOT_STEP_PAUSE: Duration = Duration::from_millis(50);
 
+/// Consecutive non-progressing steps, or snapshot restarts caused by
+/// a foreign commit. Twenty pauses is one second at the historical
+/// cadence. Remaining decreasing after a restart is SQLite beginning
+/// again, not progress toward a finished copy, so restarts accumulate
+/// until the copy completes or this bound trips.
+const SNAPSHOT_STALL_LIMIT: u32 = 20;
+
+thread_local! {
+    static COPY_STOP: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+/// Run `action` so this thread's snapshot copy observes `stop`.
+pub fn with_copy_stop<T>(stop: Arc<AtomicBool>, action: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Arc<AtomicBool>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            COPY_STOP.with(|slot| *slot.borrow_mut() = self.0.take());
+        }
+    }
+    let previous = COPY_STOP.with(|slot| slot.replace(Some(stop)));
+    let _restore = Restore(previous);
+    action()
+}
+
+fn copy_stop_requested() -> bool {
+    COPY_STOP.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|stop| stop.load(Ordering::Acquire))
+    })
+}
+
+fn snapshot_incomplete(reason: &str) -> StorageError {
+    StorageError::BackupIncomplete {
+        reason: reason.to_string(),
+    }
+}
+
 fn copy_in_bounded_steps(
     source: &Connection,
     destination: &mut Connection,
@@ -771,7 +812,13 @@ fn copy_in_bounded_steps(
         source,
     })?;
     let mut step = 0;
+    let mut stalls = 0_u32;
+    let mut restarts = 0_u32;
+    let mut last_remaining = i32::MAX;
     loop {
+        if copy_stop_requested() {
+            return Err(snapshot_incomplete("snapshot stopped before completion"));
+        }
         let outcome =
             backup
                 .step(SNAPSHOT_PAGES_PER_STEP)
@@ -783,12 +830,34 @@ fn copy_in_bounded_steps(
         snapshot_step_test_hooks::on_step(step, outcome == StepResult::Done);
         match outcome {
             StepResult::Done => return Ok(()),
-            // Busy and Locked are transient, and any other
-            // non-completing outcome waits as well: the step is
-            // retried after the same pause the historical cadence
-            // took.
-            _ => thread::sleep(SNAPSHOT_STEP_PAUSE),
+            // Busy and Locked are transient. A writer the copy
+            // observes restarts the snapshot, which jumps remaining
+            // up and then down again. Remaining decreasing after that
+            // jump is not a finished copy, so restarts accumulate
+            // independently of the consecutive-stall counter.
+            StepResult::More => {
+                let remaining = backup.progress().remaining;
+                if remaining > last_remaining {
+                    restarts += 1;
+                } else if remaining < last_remaining {
+                    stalls = 0;
+                } else {
+                    stalls += 1;
+                }
+                last_remaining = remaining;
+            }
+            StepResult::Busy | StepResult::Locked => stalls += 1,
+            _ => stalls += 1,
         }
+        if copy_stop_requested() {
+            return Err(snapshot_incomplete("snapshot stopped before completion"));
+        }
+        if stalls >= SNAPSHOT_STALL_LIMIT || restarts >= SNAPSHOT_STALL_LIMIT {
+            return Err(snapshot_incomplete(
+                "snapshot stalled under persistent contention",
+            ));
+        }
+        thread::sleep(SNAPSHOT_STEP_PAUSE);
     }
 }
 
@@ -1110,7 +1179,8 @@ mod snapshot_step_test_hooks {
     use std::sync::Mutex;
     use std::sync::MutexGuard;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+    use std::time::Duration;
 
     /// Names one armed gate and the single copy that owns it. Keys
     /// come from a process-wide counter, so gates armed by parallel
@@ -1260,12 +1330,25 @@ mod snapshot_step_test_hooks {
             return;
         };
         let released =
-            channel.events.send((index, done)).is_ok() && channel.release.recv() == Ok(());
+            channel.events.send((index, done)).is_ok() && wait_for_release(&channel.release);
         if released && !done {
             // The copy steps again: re-arm so its next boundary parks
             // too. A done copy never steps again, so its channel is
             // dropped and the gate disarms.
             armed_gates().insert(key, channel);
+        }
+    }
+
+    fn wait_for_release(release: &Receiver<()>) -> bool {
+        loop {
+            if super::copy_stop_requested() {
+                return false;
+            }
+            match release.recv_timeout(Duration::from_millis(10)) {
+                Ok(()) => return true,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return false,
+            }
         }
     }
 }
@@ -1867,8 +1950,13 @@ mod backup_restore {
     use std::{
         num::NonZeroU32,
         path::{Path, PathBuf},
+        process::Command,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -2004,15 +2092,25 @@ mod backup_restore {
     /// Grows the database past a single bounded snapshot step, so a
     /// copying snapshot necessarily crosses step boundaries.
     fn grow_for_several_bounded_steps(database: &Database) {
+        grow_to_page_count(database, 16);
+    }
+
+    fn grow_past_the_stall_limit(database: &Database) {
+        let min_pages =
+            i64::from(super::SNAPSHOT_PAGES_PER_STEP) * i64::from(super::SNAPSHOT_STALL_LIMIT) + 10;
+        grow_to_page_count(database, min_pages);
+    }
+
+    fn grow_to_page_count(database: &Database, min_pages: i64) {
         let conn = database.connection();
-        conn.execute_batch("CREATE TABLE snapshot_overlap_filler (payload BLOB)")
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS snapshot_overlap_filler (payload BLOB)")
             .expect("the filler table creates");
         let blob = vec![0_u8; 8192];
         loop {
             let pages: i64 = conn
                 .query_row("PRAGMA page_count", [], |row| row.get(0))
                 .expect("the page count reads");
-            if pages >= 16 {
+            if pages >= min_pages {
                 break;
             }
             for _ in 0..4 {
@@ -2363,6 +2461,375 @@ mod backup_restore {
         assert!(
             database.connection_handle().try_lock().is_some(),
             "a failed copy must release the live connection"
+        );
+    }
+
+    const CONTENTION_CHILD: &str = "KANBAN_BACKUP_CONTENTION_CHILD";
+    const STOP_CHILD: &str = "KANBAN_BACKUP_STOP_CHILD";
+    const CONTENTION_TEST: &str = "backup::backup_restore::in_flight_backup_fails_under_persistent_contention_without_publishing";
+    const STOP_TEST: &str =
+        "backup::backup_restore::in_flight_backup_fails_when_stop_is_observed_mid_snapshot";
+
+    fn published_bundles(root: &Path) -> Vec<PathBuf> {
+        let backups = crate::paths::backups_dir(root);
+        if !backups.exists() {
+            return Vec::new();
+        }
+        std::fs::read_dir(&backups)
+            .expect("the backups directory lists")
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                path.join("manifest.json").is_file().then_some(path)
+            })
+            .collect()
+    }
+
+    fn source_integrity(database: &Database) -> String {
+        database
+            .connection()
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("the live database answers integrity_check")
+    }
+
+    fn start_persistent_writer(
+        path: &Path,
+    ) -> (std::sync::Arc<AtomicBool>, thread::JoinHandle<()>) {
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let path = path.to_path_buf();
+        let worker = thread::spawn(move || {
+            let conn = rusqlite::Connection::open(&path).expect("the overlapping writer opens");
+            let _ = conn.execute_batch("PRAGMA busy_timeout = 20");
+            while !stopping.load(Ordering::Acquire) {
+                let _ = conn.execute(
+                    "INSERT INTO snapshot_overlap_filler (payload) VALUES (?1)",
+                    [vec![0_u8; 64]],
+                );
+            }
+        });
+        (stop, worker)
+    }
+
+    enum CopyWait<T> {
+        Step((usize, bool)),
+        Finished(T),
+    }
+
+    /// Wait until the copy parks at the next step or returns. Polling
+    /// both channels is the overlap verdict; a timeout is not.
+    fn wait_for_step_or_finished<T>(
+        events: &mpsc::Receiver<(usize, bool)>,
+        finished: &mpsc::Receiver<T>,
+    ) -> CopyWait<T> {
+        loop {
+            match finished.try_recv() {
+                Ok(value) => return CopyWait::Finished(value),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("the copy thread ended without reporting an outcome");
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            if let Ok(step) = events.try_recv() {
+                return CopyWait::Step(step);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn commit_overlap_filler(conn: &rusqlite::Connection) {
+        let _ = conn.execute(
+            "INSERT INTO snapshot_overlap_filler (payload) VALUES (?1)",
+            [vec![0_u8; 64]],
+        );
+    }
+
+    const CHILD_STATUS_ENV: &str = "KANBAN_BACKUP_CHILD_STATUS";
+    const CHILD_PARKED: &str = "kanban-child-parked";
+    const CHILD_DONE: &str = "kanban-child-done";
+    /// Deadlock detector for an isolated child, not a pass/fail duration bound.
+    /// The verdict is the parked/done markers and the child's exit.
+    const CHILD_DEADLOCK_REAP: Duration = Duration::from_secs(120);
+
+    fn child_status_dir() -> PathBuf {
+        PathBuf::from(
+            std::env::var(CHILD_STATUS_ENV).expect("the child status directory is passed"),
+        )
+    }
+
+    fn write_child_marker(name: &str) {
+        std::fs::write(child_status_dir().join(name), name).expect("the child marker writes");
+    }
+
+    fn reap_owned_child(
+        mut child: std::process::Child,
+        status_dir: &Path,
+    ) -> Result<std::process::ExitStatus, String> {
+        let parked = status_dir.join(CHILD_PARKED);
+        let done = status_dir.join(CHILD_DONE);
+        let mut phase_started = Instant::now();
+        let mut saw_parked = false;
+        loop {
+            if !saw_parked && parked.exists() {
+                saw_parked = true;
+                phase_started = Instant::now();
+            }
+            if done.exists() {
+                return child.wait().map_err(|error| error.to_string());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() && !done.exists() => {
+                    return Err("owned child exited without the completion marker".to_string());
+                }
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) if phase_started.elapsed() < CHILD_DEADLOCK_REAP => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if saw_parked {
+                        return Err("owned child hung after the snapshot parked".to_string());
+                    }
+                    return Err("owned child hung before the snapshot parked".to_string());
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error.to_string());
+                }
+            }
+        }
+    }
+
+    fn spawn_lib_child(test: &str, env: &str, status_dir: &Path) -> std::process::Child {
+        Command::new(std::env::current_exe().expect("the storage test binary can be re-run"))
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(env, "1")
+            .env(CHILD_STATUS_ENV, status_dir)
+            .env("RUST_BACKTRACE", "1")
+            .spawn()
+            .expect("the isolated child process starts")
+    }
+
+    #[test]
+    fn in_flight_backup_fails_under_persistent_contention_without_publishing() {
+        if std::env::var(CONTENTION_CHILD).is_ok() {
+            let (dir, database, store) = managed_fixture();
+            seed_state(dir.path(), &database);
+            grow_for_several_bounded_steps(&database);
+            let db_path = dir.path().join(database_file_name());
+            let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+            let token = gate.copy_token();
+            let (finished, outcome) = mpsc::channel();
+            let copying = thread::spawn(move || {
+                token.adopt();
+                finished.send(store.create(&database, &overlap_options()))
+            });
+            assert_eq!(
+                events.recv().expect("the copy parks mid-snapshot"),
+                (1, false),
+                "synchronization must observe an incomplete snapshot step"
+            );
+            write_child_marker(CHILD_PARKED);
+            let (stop_writer, writer) = start_persistent_writer(&db_path);
+            drop(release);
+            drop(gate);
+            let result = outcome
+                .recv()
+                .expect("persistent contention must bound the copy rather than hang");
+            stop_writer.store(true, Ordering::Release);
+            let _ = writer.join();
+            let _ = copying.join();
+            assert!(
+                result.is_err(),
+                "an incomplete snapshot must not report success under persistent contention: {result:?}"
+            );
+            assert!(
+                published_bundles(dir.path()).is_empty(),
+                "a terminated copy must not publish a partial bundle: {:?}",
+                published_bundles(dir.path())
+            );
+            assert_eq!(
+                source_integrity(&Database::open(&db_path).expect("the live database still opens")),
+                "ok",
+                "contention termination must not corrupt the source database"
+            );
+            write_child_marker(CHILD_DONE);
+            return;
+        }
+
+        let status_dir = tempfile::tempdir().expect("child status directory");
+        let status = reap_owned_child(
+            spawn_lib_child(CONTENTION_TEST, CONTENTION_CHILD, status_dir.path()),
+            status_dir.path(),
+        )
+        .expect("the contention child must terminate");
+        assert!(
+            status.success(),
+            "the contention child must complete its assertions, got {status}"
+        );
+    }
+
+    #[test]
+    fn in_flight_backup_fails_when_writers_commit_slower_than_the_step_pause() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        grow_for_several_bounded_steps(&database);
+        let db_path = dir.path().join(database_file_name());
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+        let token = gate.copy_token();
+        let (finished, outcome) = mpsc::channel();
+        let copy_stop = stop.clone();
+        let copying = thread::spawn(move || {
+            token.adopt();
+            finished.send(super::with_copy_stop(copy_stop, || {
+                store.create(&database, &overlap_options())
+            }))
+        });
+        assert_eq!(
+            events.recv().expect("the copy parks mid-snapshot"),
+            (1, false),
+            "synchronization must observe an incomplete snapshot step"
+        );
+
+        let writer = rusqlite::Connection::open(&db_path).expect("the cadence writer opens");
+        let _ = writer.execute_batch("PRAGMA busy_timeout = 20");
+        let mut steps = 1_usize;
+        let mut commits = 0_u32;
+        let result = loop {
+            // Commit every other parked step: slower than the 50 ms
+            // pause, so remaining decreases between restarts. The
+            // shipped stall bound resets on that decrease.
+            if steps.is_multiple_of(2) {
+                commit_overlap_filler(&writer);
+                commits += 1;
+            }
+            let _ = release.send(());
+            match wait_for_step_or_finished(&events, &outcome) {
+                CopyWait::Finished(result) => break result,
+                CopyWait::Step((index, done)) => {
+                    steps = index;
+                    if done {
+                        break outcome
+                            .recv()
+                            .expect("a completed copy must report its outcome");
+                    }
+                }
+            }
+            if steps > super::SNAPSHOT_STALL_LIMIT as usize * 4 {
+                stop.store(true, Ordering::Release);
+                let _ = release.send(());
+                let _ = copying.join();
+                panic!(
+                    "the stall bound must fail a copy whose writers commit slower than the step pause, still running after {steps} steps and {commits} commits"
+                );
+            }
+        };
+        stop.store(true, Ordering::Release);
+        drop(release);
+        drop(gate);
+        let _ = copying.join();
+
+        assert!(
+            result.is_err(),
+            "an incomplete snapshot must not report success under slower-cadence contention: {result:?}"
+        );
+        let message = result
+            .expect_err("the contended copy must fail")
+            .to_string();
+        assert!(
+            message.contains("stalled under persistent contention"),
+            "the copy must fail the stall bound, not a later stop: {message}"
+        );
+        assert!(
+            published_bundles(dir.path()).is_empty(),
+            "a terminated copy must not publish a partial bundle: {:?}",
+            published_bundles(dir.path())
+        );
+        assert_eq!(
+            source_integrity(&Database::open(&db_path).expect("the live database still opens")),
+            "ok",
+            "slower-cadence termination must not corrupt the source database"
+        );
+    }
+
+    #[test]
+    fn an_uncontended_copy_longer_than_the_stall_limit_still_completes() {
+        let (dir, database, store) = managed_fixture();
+        seed_state(dir.path(), &database);
+        grow_past_the_stall_limit(&database);
+        let bundle = store.create(&database, &overlap_options()).expect(
+            "an uncontended copy must finish even when it needs more steps than the stall limit",
+        );
+        BackupStore::new(dir.path().to_path_buf())
+            .validate(&bundle, None)
+            .expect("the long uncontended bundle still validates");
+        assert_eq!(
+            source_integrity(&database),
+            "ok",
+            "an uncontended long copy must not corrupt the source"
+        );
+    }
+
+    #[test]
+    fn in_flight_backup_fails_when_stop_is_observed_mid_snapshot() {
+        if std::env::var(STOP_CHILD).is_ok() {
+            let (dir, database, store) = managed_fixture();
+            seed_state(dir.path(), &database);
+            grow_for_several_bounded_steps(&database);
+            let db_path = dir.path().join(database_file_name());
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            let (events, release, gate) = super::snapshot_step_test_hooks::StepGate::arm();
+            let token = gate.copy_token();
+            let (finished, outcome) = mpsc::channel();
+            let copy_stop = stop.clone();
+            let copying = thread::spawn(move || {
+                token.adopt();
+                finished.send(super::with_copy_stop(copy_stop, || {
+                    store.create(&database, &overlap_options())
+                }))
+            });
+            assert_eq!(
+                events.recv().expect("the copy parks mid-snapshot"),
+                (1, false),
+                "synchronization must observe an incomplete snapshot step"
+            );
+            write_child_marker(CHILD_PARKED);
+            stop.store(true, Ordering::Release);
+            let _ = release.send(());
+            drop(gate);
+            let result = outcome
+                .recv()
+                .expect("an observed stop must bound the copy rather than hang");
+            let _ = copying.join();
+            assert!(
+                result.is_err(),
+                "a stopped snapshot must not report success: {result:?}"
+            );
+            assert!(
+                published_bundles(dir.path()).is_empty(),
+                "a stopped copy must not publish a partial bundle: {:?}",
+                published_bundles(dir.path())
+            );
+            assert_eq!(
+                source_integrity(&Database::open(&db_path).expect("the live database still opens")),
+                "ok",
+                "stop termination must not corrupt the source database"
+            );
+            write_child_marker(CHILD_DONE);
+            return;
+        }
+
+        let status_dir = tempfile::tempdir().expect("child status directory");
+        let status = reap_owned_child(
+            spawn_lib_child(STOP_TEST, STOP_CHILD, status_dir.path()),
+            status_dir.path(),
+        )
+        .expect("the stop child must terminate");
+        assert!(
+            status.success(),
+            "the stop child must complete its assertions, got {status}"
         );
     }
 

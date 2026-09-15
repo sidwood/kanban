@@ -142,6 +142,12 @@ pub enum StorageError {
         /// The integrity check output.
         detail: String,
     },
+    /// A snapshot copy stopped or stalled before capturing a complete page set.
+    #[error("backup snapshot did not complete: {reason}")]
+    BackupIncomplete {
+        /// Why the snapshot ended without a complete copy.
+        reason: String,
+    },
 }
 
 #[cfg(test)]

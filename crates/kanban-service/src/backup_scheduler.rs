@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,6 +27,7 @@ struct SchedulerState {
 /// The production backup scheduler owned by a running core.
 pub(crate) struct BackupScheduler {
     stop: Sender<()>,
+    halt: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -44,11 +46,21 @@ impl BackupScheduler {
         log: Arc<LogWriter>,
     ) -> Self {
         let (stop, stopping) = mpsc::channel();
+        let halt = Arc::new(AtomicBool::new(false));
+        let halt_for_loop = halt.clone();
         let worker = thread::spawn(move || {
-            scheduler_loop(&data_dir, &database, interval, &log, stopping);
+            scheduler_loop(
+                &data_dir,
+                &database,
+                interval,
+                &log,
+                stopping,
+                halt_for_loop,
+            );
         });
         Self {
             stop,
+            halt,
             worker: Some(worker),
         }
     }
@@ -139,9 +151,18 @@ fn scheduler_loop(
     interval: Duration,
     log: &LogWriter,
     stopping: Receiver<()>,
+    halt: Arc<AtomicBool>,
 ) {
     while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
-        let last_attempt_failed = !run_scheduled_backup_if_due(data_dir, database, interval, log);
+        if halt.load(Ordering::Acquire) {
+            break;
+        }
+        let last_attempt_failed = !kanban_storage::backup::with_copy_stop(halt.clone(), || {
+            run_scheduled_backup_if_due(data_dir, database, interval, log)
+        });
+        if halt.load(Ordering::Acquire) {
+            break;
+        }
         let last_success = load_scheduler_state(data_dir);
         let now = SystemTime::now();
         let sleep_for = scheduler_loop_sleep(last_success, interval, now, last_attempt_failed);
@@ -153,6 +174,7 @@ fn scheduler_loop(
 
 impl Drop for BackupScheduler {
     fn drop(&mut self) {
+        self.halt.store(true, Ordering::Release);
         let _ = self.stop.send(());
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -222,10 +244,15 @@ pub fn run_due_backup(
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::{Duration, Instant, SystemTime};
 
+    use kanban_storage::backup::SnapshotStepGate;
     use kanban_storage::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
     use kanban_storage::{BackupRetentionPolicy, BackupStore, Database};
     use tempfile::TempDir;
@@ -541,6 +568,208 @@ mod tests {
         assert!(
             load_scheduler_state(dir.path()).is_some(),
             "successful recovery must persist scheduler state"
+        );
+    }
+
+    const UNWIND_CHILD: &str = "KANBAN_BACKUP_UNWIND_CHILD";
+    const DROP_CHILD: &str = "KANBAN_BACKUP_DROP_CHILD";
+    const UNWIND_TEST: &str =
+        "backup_scheduler::tests::panic_unwind_terminates_with_isolated_core_process";
+    const DROP_TEST: &str =
+        "backup_scheduler::tests::implicit_cleanup_stops_producers_then_releases_ownership";
+    const CHILD_PARKED: &str = "kanban-child-parked";
+    const CHILD_DONE: &str = "kanban-child-done";
+    /// Deadlock detector for an isolated child, not a pass/fail duration bound.
+    /// The verdict is the parked/done markers and the child's exit.
+    const CHILD_DEADLOCK_REAP: Duration = Duration::from_secs(120);
+
+    fn spawn_lib_child(test: &str, env_name: &str, data: &Path) -> std::process::Child {
+        Command::new(std::env::current_exe().expect("the service test binary can be re-run"))
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(env_name, "1")
+            .env("KANBAN_BACKUP_CHILD_DATA", data)
+            .env("RUST_BACKTRACE", "1")
+            .spawn()
+            .expect("the isolated child process starts")
+    }
+
+    fn write_child_marker(data: &Path, name: &str) {
+        std::fs::write(data.join(name), name).expect("the child marker writes");
+    }
+
+    fn wait_for_parked_snapshot(events: &std::sync::mpsc::Receiver<(usize, bool)>, data: &Path) {
+        assert_eq!(
+            events.recv().expect("startup backup parks mid-snapshot"),
+            (1, false),
+            "synchronization must observe an incomplete snapshot step"
+        );
+        write_child_marker(data, CHILD_PARKED);
+    }
+
+    fn reap_owned_child(
+        mut child: std::process::Child,
+        status_dir: &Path,
+    ) -> Result<std::process::ExitStatus, String> {
+        let parked = status_dir.join(CHILD_PARKED);
+        let done = status_dir.join(CHILD_DONE);
+        let mut phase_started = Instant::now();
+        let mut saw_parked = false;
+        loop {
+            if !saw_parked && parked.exists() {
+                saw_parked = true;
+                phase_started = Instant::now();
+            }
+            if done.exists() {
+                return child.wait().map_err(|error| error.to_string());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() && !done.exists() => {
+                    return Err("owned child exited without the completion marker".to_string());
+                }
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) if phase_started.elapsed() < CHILD_DEADLOCK_REAP => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if saw_parked {
+                        return Err("owned child hung after the snapshot parked".to_string());
+                    }
+                    return Err("owned child hung before the snapshot parked".to_string());
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error.to_string());
+                }
+            }
+        }
+    }
+
+    fn prepare_gated_core(
+        data: &Path,
+    ) -> (
+        std::sync::mpsc::Receiver<(usize, bool)>,
+        std::sync::mpsc::Sender<()>,
+        SnapshotStepGate,
+    ) {
+        std::fs::create_dir_all(data).expect("the child data directory exists");
+        let path = data.join("kanban.sqlite");
+        let mut database = Database::open(&path).expect("the fixture database opens");
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the fixture migrates");
+        drop(database);
+        SnapshotStepGate::arm_for_database(&path)
+    }
+
+    fn boot_at(data: &Path) -> crate::CoreProcess {
+        crate::serve_with_herdr_sessions(data, data.join("isolated-herdr"))
+            .expect("the isolated core boots")
+    }
+
+    fn start_persistent_writer(path: &Path) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let path = path.to_path_buf();
+        let worker = thread::spawn(move || {
+            let conn = rusqlite::Connection::open(&path).expect("the overlapping writer opens");
+            let _ = conn.execute_batch("PRAGMA busy_timeout = 20");
+            let _ = conn
+                .execute_batch("CREATE TABLE IF NOT EXISTS snapshot_overlap_filler (payload BLOB)");
+            while !stopping.load(Ordering::Acquire) {
+                let _ = conn.execute(
+                    "INSERT INTO snapshot_overlap_filler (payload) VALUES (?1)",
+                    [vec![0_u8; 64]],
+                );
+            }
+        });
+        (stop, worker)
+    }
+
+    fn overlap_in_flight_core(
+        data: &Path,
+    ) -> (crate::CoreProcess, Arc<AtomicBool>, thread::JoinHandle<()>) {
+        let db_path = data.join("kanban.sqlite");
+        let (events, release, gate) = prepare_gated_core(data);
+        let core = boot_at(data);
+        wait_for_parked_snapshot(&events, data);
+        let (stop_writer, writer) = start_persistent_writer(&db_path);
+        std::mem::forget(release);
+        std::mem::forget(gate);
+        (core, stop_writer, writer)
+    }
+
+    #[test]
+    fn implicit_cleanup_stops_producers_then_releases_ownership() {
+        if std::env::var(DROP_CHILD).is_ok() {
+            let data = PathBuf::from(
+                std::env::var("KANBAN_BACKUP_CHILD_DATA")
+                    .expect("the child data directory is passed"),
+            );
+            let (core, stop_writer, writer) = overlap_in_flight_core(&data);
+            drop(core);
+            stop_writer.store(true, Ordering::Release);
+            let _ = writer.join();
+            crate::startup::StartupOwner::acquire(&data)
+                .expect("installation ownership is released only after cleanup");
+            assert!(
+                !data.join("core.sock").exists(),
+                "implicit cleanup must join the server before releasing the installation"
+            );
+            write_child_marker(&data, CHILD_DONE);
+            return;
+        }
+
+        let dir = TempDir::new().expect("scratch directory");
+        let status = reap_owned_child(
+            spawn_lib_child(DROP_TEST, DROP_CHILD, dir.path()),
+            dir.path(),
+        )
+        .expect("the implicit-drop child must terminate");
+        assert!(
+            status.success(),
+            "implicit cleanup must stop producers and finish, got {status}"
+        );
+    }
+
+    #[test]
+    fn panic_unwind_terminates_with_isolated_core_process() {
+        if std::env::var(UNWIND_CHILD).is_ok() {
+            let data = PathBuf::from(
+                std::env::var("KANBAN_BACKUP_CHILD_DATA")
+                    .expect("the child data directory is passed"),
+            );
+            let db_path = data.join("kanban.sqlite");
+            let (events, release, gate) = prepare_gated_core(&data);
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let core = boot_at(&data);
+                wait_for_parked_snapshot(&events, &data);
+                let (stop_writer, writer) = start_persistent_writer(&db_path);
+                std::mem::forget(stop_writer);
+                std::mem::forget(writer);
+                std::mem::forget(release);
+                std::mem::forget(gate);
+                let _core = core;
+                panic!("isolated CoreProcess unwind");
+            }));
+            assert!(result.is_err(), "the child must unwind the isolated core");
+            crate::startup::StartupOwner::acquire(&data)
+                .expect("installation ownership is released after unwind cleanup");
+            write_child_marker(&data, CHILD_DONE);
+            return;
+        }
+
+        let dir = TempDir::new().expect("scratch directory");
+        let status = reap_owned_child(
+            spawn_lib_child(UNWIND_TEST, UNWIND_CHILD, dir.path()),
+            dir.path(),
+        )
+        .expect("the panic/unwind child must terminate rather than hang");
+        assert!(
+            status.success(),
+            "panic/unwind must finish cleanup and report, got {status}"
         );
     }
 }

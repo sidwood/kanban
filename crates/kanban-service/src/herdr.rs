@@ -2374,7 +2374,7 @@ mod tests {
             }),
         );
         thread::sleep(Duration::from_millis(200));
-        let observer = core.herdr.clone();
+        let observer = core.herdr.clone().expect("the core is still serving");
         assert!(
             observer.is_observing(1),
             "registration starts observation without a restart"
@@ -2432,7 +2432,7 @@ mod tests {
             }),
             "the startup snapshot lands before the archive"
         );
-        let observer = core.herdr.clone();
+        let observer = core.herdr.clone().expect("the core is still serving");
         assert!(observer.is_observing(1));
 
         client.command(
@@ -3521,7 +3521,7 @@ mod tests {
             }),
         );
 
-        let observer = core.herdr.clone();
+        let observer = core.herdr.clone().expect("the core is still serving");
         assert!(
             soon_enough(Duration::from_secs(8), || {
                 observer

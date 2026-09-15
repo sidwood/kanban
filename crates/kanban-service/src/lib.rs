@@ -112,39 +112,54 @@ impl CloneTargetProbe for LocalCloneTargetProbe {
 
 /// The running core process: its open database, its serving
 /// socket, its Herdr observer, and its structured logs.
+///
+/// Explicit `shutdown` and implicit `Drop` share `cleanup`: owned
+/// producers stop before the backup worker is joined, and
+/// installation ownership is released only after that boundary.
 pub struct CoreProcess {
-    database: Arc<Database>,
-    server: ServerHandle,
-    http: LoopbackHttp,
-    herdr: Arc<HerdrObserver>,
-    logs: Arc<LogWriter>,
-    stop: Arc<kanban_app::service_lifecycle::StopControl>,
-    _backup_scheduler: BackupScheduler,
-    _activation_scheduler: ActivationScheduler,
-    _attention_scheduler: attention::AttentionScheduler,
-    _notification_scheduler: notifications::NotificationScheduler,
-    ownership: startup::StartupOwner,
+    database: Option<Arc<Database>>,
+    server: Option<ServerHandle>,
+    http: Option<LoopbackHttp>,
+    herdr: Option<Arc<HerdrObserver>>,
+    logs: Option<Arc<LogWriter>>,
+    stop: Option<Arc<kanban_app::service_lifecycle::StopControl>>,
+    backup_scheduler: Option<BackupScheduler>,
+    activation_scheduler: Option<ActivationScheduler>,
+    attention_scheduler: Option<attention::AttentionScheduler>,
+    notification_scheduler: Option<notifications::NotificationScheduler>,
+    ownership: Option<startup::StartupOwner>,
 }
 
 impl CoreProcess {
     /// The path clients connect on.
     pub fn socket_path(&self) -> &Path {
-        self.server.socket_path()
+        self.server
+            .as_ref()
+            .expect("the core is still serving")
+            .socket_path()
     }
 
     pub fn http_address(&self) -> Option<std::net::SocketAddr> {
-        self.http.local_addr()
+        self.http.as_ref().and_then(LoopbackHttp::local_addr)
     }
 
     /// The Herdr socket root this core dials.
     #[cfg(test)]
     pub(crate) fn herdr_socket_root(&self) -> &Path {
-        self.herdr.socket_root()
+        self.herdr
+            .as_ref()
+            .expect("the core is still serving")
+            .socket_root()
     }
 
     /// Wait for an explicit stop request, then shut down every owned worker.
     pub fn wait_for_stop(self) {
-        while !self.stop.requested() {
+        while !self
+            .stop
+            .as_ref()
+            .expect("the core is still serving")
+            .requested()
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
         self.shutdown();
@@ -152,32 +167,41 @@ impl CoreProcess {
 
     /// Join owned workers and close storage before releasing installation ownership.
     pub fn shutdown(self) {
-        let Self {
-            database,
-            server,
-            http,
-            herdr,
-            logs,
-            _backup_scheduler,
-            _activation_scheduler,
-            _attention_scheduler,
-            _notification_scheduler,
-            stop: _,
-            ownership,
-        } = self;
+        let mut this = self;
+        this.cleanup();
+    }
+
+    fn cleanup(&mut self) {
+        let Some(http) = self.http.take() else {
+            return;
+        };
         let _ = http.shutdown();
-        server.shutdown();
-        drop(_notification_scheduler);
-        drop(_attention_scheduler);
-        herdr.shutdown();
-        drop(herdr);
-        drop(_activation_scheduler);
-        drop(_backup_scheduler);
-        // A failing log write must never fail the shutdown it records.
-        let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));
-        drop(database);
-        drop(logs);
-        drop(ownership);
+        if let Some(server) = self.server.take() {
+            server.shutdown();
+        }
+        drop(self.notification_scheduler.take());
+        drop(self.attention_scheduler.take());
+        if let Some(herdr) = self.herdr.take() {
+            herdr.shutdown();
+        }
+        drop(self.activation_scheduler.take());
+        drop(self.backup_scheduler.take());
+        if let Some(logs) = self.logs.take() {
+            // A failing log write must never fail the shutdown it records.
+            let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));
+            drop(self.database.take());
+            drop(logs);
+        } else {
+            drop(self.database.take());
+        }
+        drop(self.stop.take());
+        drop(self.ownership.take());
+    }
+}
+
+impl Drop for CoreProcess {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 
@@ -727,17 +751,17 @@ fn serve_owned_with_mcp(
         format!("core serving on {}", socket_path.display()),
     ));
     Ok(CoreProcess {
-        database,
-        server,
-        http,
-        herdr,
-        logs,
-        stop,
-        _backup_scheduler: backup_scheduler,
-        _activation_scheduler: activation_scheduler,
-        _attention_scheduler: attention_scheduler,
-        _notification_scheduler: notification_scheduler,
-        ownership,
+        database: Some(database),
+        server: Some(server),
+        http: Some(http),
+        herdr: Some(herdr),
+        logs: Some(logs),
+        stop: Some(stop),
+        backup_scheduler: Some(backup_scheduler),
+        activation_scheduler: Some(activation_scheduler),
+        attention_scheduler: Some(attention_scheduler),
+        notification_scheduler: Some(notification_scheduler),
+        ownership: Some(ownership),
     })
 }
 

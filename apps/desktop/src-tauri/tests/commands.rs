@@ -4,13 +4,13 @@
 use std::sync::{Arc, Mutex};
 
 use kanban_app::{
-    exposed_operations, CommandEffects, CommandHandler, Core, MemoryIdempotencyStore,
-    OperationDescriptor, OperationKind, ParsedCommand, QueryHandler,
+    CommandEffects, CommandHandler, Core, MemoryIdempotencyStore, OperationDescriptor,
+    OperationKind, ParsedCommand, QueryHandler, exposed_operations,
 };
+use kanban_desktop_lib::Shell;
 use kanban_desktop_lib::commands::{
     decode_invoke_args, forward_command_value, forward_query_value, install_link,
 };
-use kanban_desktop_lib::Shell;
 use kanban_dto::{
     BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
@@ -46,7 +46,7 @@ use kanban_dto::{
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
 };
 use kanban_transport::SocketServer;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 /// Payloads the recording core saw, keyed by operation name.

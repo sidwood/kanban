@@ -105,6 +105,7 @@ pub fn register_source_review(core: &mut Core, database: &Database, scratch: &Pa
         Arc::new(kanban_storage::SqliteCriterionBindingStore::new(database)),
         tickets,
         evidence,
+        Arc::new(kanban_storage::SqliteReviewExecutionStore::new(database)),
     )
     .expect("the criterion binding operations register");
 }

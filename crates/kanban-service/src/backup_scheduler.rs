@@ -64,6 +64,17 @@ impl BackupScheduler {
             worker: Some(worker),
         }
     }
+
+    /// Finish a copy already in flight, then stop the loop.
+    ///
+    /// Explicit stop must not abort that copy: a gated snapshot is still
+    /// a live backup. Drop uses `halt` so unwind cannot wait forever.
+    pub(crate) fn join_current(mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 fn scheduler_state_path(data_dir: &Path) -> PathBuf {

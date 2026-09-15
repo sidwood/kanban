@@ -168,10 +168,14 @@ impl CoreProcess {
     /// Join owned workers and close storage before releasing installation ownership.
     pub fn shutdown(self) {
         let mut this = self;
-        this.cleanup();
+        this.cleanup_inner(true);
     }
 
     fn cleanup(&mut self) {
+        self.cleanup_inner(false);
+    }
+
+    fn cleanup_inner(&mut self, join_backup: bool) {
         let Some(http) = self.http.take() else {
             return;
         };
@@ -185,7 +189,9 @@ impl CoreProcess {
             herdr.shutdown();
         }
         drop(self.activation_scheduler.take());
-        drop(self.backup_scheduler.take());
+        if let (Some(scheduler), true) = (self.backup_scheduler.take(), join_backup) {
+            scheduler.join_current();
+        }
         if let Some(logs) = self.logs.take() {
             // A failing log write must never fail the shutdown it records.
             let _ = logs.append(&LogRecord::new(LogLevel::Info, "service", "core stopped"));

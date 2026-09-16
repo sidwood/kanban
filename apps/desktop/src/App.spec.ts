@@ -120,6 +120,29 @@ describe('the application shell', () => {
     expect(wrapper.get('[data-testid="rail-link-boards"]').attributes('aria-current')).toBeUndefined()
   })
 
+  it('collapses and expands the rail when the core is unreachable', async () => {
+    const shell = harness()
+    shell.command.mockImplementation((name: string) => {
+      if (name === 'shell.preferences.update') {
+        return Promise.reject({ code: 'unavailable', message: 'the core is unreachable' })
+      }
+      return Promise.resolve({})
+    })
+    const wrapper = await mountApp(shell.transport)
+    expect(wrapper.get('[data-testid="app-shell"]').attributes('data-rail-open')).toBe('true')
+
+    await wrapper.get('[data-testid="rail-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="app-shell"]').attributes('data-rail-open')).toBe('false')
+    expect(wrapper.get('[data-testid="rail-toggle"]').attributes('aria-expanded')).toBe('false')
+
+    await wrapper.get('[data-testid="rail-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="app-shell"]').attributes('data-rail-open')).toBe('true')
+  })
+
   it('collapses the rail through the core and keeps the choice across a reload', async () => {
     const shell = harness()
     const wrapper = await mountApp(shell.transport)

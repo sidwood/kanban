@@ -418,7 +418,7 @@ describe('the shell preferences store', () => {
     write.open()
     await Promise.all([railed, reconnect])
 
-    expect(preferences.railOpen).toBe(true)
+    expect(preferences.railOpen).toBe(false)
     expect(preferences.collapsedFor('global')).toEqual(['done'])
     expect(preferences.version).toBe(0)
     expect(preferences.pending).toEqual([])
@@ -532,10 +532,10 @@ describe('the shell preferences store', () => {
     gate.open()
     await Promise.all([railed, columned])
 
-    // The refusal is reported rather than swallowed, and the refused
-    // choice is not applied behind the operator's back.
+    // The refusal is reported rather than swallowed. The rail stays
+    // as the operator left it; board columns still follow the core.
     expect(preferences.error).toContain('moved on')
-    expect(preferences.railOpen).toBe(true)
+    expect(preferences.railOpen).toBe(false)
     // The other window's arrangement stands: this window wrote the
     // whole arrangement, but only the part it was asked about.
     expect(preferences.collapsedFor('project:2')).toEqual(['draft'])
@@ -574,7 +574,7 @@ describe('the shell preferences store', () => {
     await Promise.all([railed, reconnect])
 
     expect(preferences.error).toContain('moved on')
-    expect(preferences.railOpen).toBe(true)
+    expect(preferences.railOpen).toBe(false)
     expect(preferences.collapsedFor('project:2')).toEqual(['draft'])
     expect(preferences.version).toBe(1)
     expect(preferences.pending).toEqual([])

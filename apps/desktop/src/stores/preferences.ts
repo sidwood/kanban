@@ -147,6 +147,10 @@ export const usePreferencesStore = defineStore('preferences', {
      * (KAN-T144-AC3). */
     trouble: null as { message: string; asked: boolean } | null,
     loaded: false,
+    /** The rail is a shell control. A click must collapse or expand
+     * it even when the core is down; the core may remember the
+     * choice later, but it does not own the click. */
+    sessionRailOpen: null as boolean | null,
   }),
   getters: {
     /** The arrangement on screen: the record the core holds, with
@@ -156,7 +160,7 @@ export const usePreferencesStore = defineStore('preferences', {
     error: (state): string | null => state.trouble?.message ?? null,
     /** Whether the rail stands open with its labels. */
     railOpen(): boolean {
-      return this.arrangement.railOpen
+      return this.sessionRailOpen ?? this.arrangement.railOpen
     },
     /** The columns one scope keeps collapsed. */
     collapsedFor(): (key: ScopeKey) => readonly BoardColumn[] {
@@ -183,8 +187,12 @@ export const usePreferencesStore = defineStore('preferences', {
     async refresh(transport: ShellTransport): Promise<void> {
       await inTurn(this, () => this.reconcile(transport))
     },
-    // Open or collapse the rail.
-    async setRailOpen(transport: ShellTransport, open: boolean): Promise<void> {
+    // Open or collapse the rail. The screen changes first; the core
+    // is told when a transport exists, and a dead core must not put
+    // the rail back.
+    async setRailOpen(transport: ShellTransport | undefined, open: boolean): Promise<void> {
+      this.sessionRailOpen = open
+      if (!transport) return
       await this.ask(transport, { kind: 'rail', open })
     },
     // Collapse one column of one scope, or expand it again.

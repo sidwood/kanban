@@ -157,10 +157,10 @@ const groups = computed<RailGroup[]>(() => {
 
 const toggleLabel = computed(() => (open.value ? 'Collapse sidebar' : 'Expand sidebar'))
 
-// The rail's collapse is the operator's arrangement, and the core
-// holds it: the toggle writes through rather than into the browser.
+// The rail is a shell control. Collapse and expand happen here;
+// the core may remember the choice when it is reachable.
 function toggleRail(): void {
-  if (transport) void preferences.setRailOpen(transport, !preferences.railOpen)
+  void preferences.setRailOpen(transport, !preferences.railOpen)
 }
 </script>
 

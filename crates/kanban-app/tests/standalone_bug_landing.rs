@@ -109,6 +109,7 @@ fn assert_key_is_not_reserved(wired: &Wired, request: serde_json::Value) {
 
 struct Wired {
     core: Core,
+    database: kanban_storage::Database,
     _dir: TempDir,
     seed: PathBuf,
     bug: PathBuf,
@@ -231,6 +232,7 @@ fn wired() -> Wired {
         .expect("the project registers");
     Wired {
         core,
+        database,
         _dir: dir,
         seed,
         bug,
@@ -361,6 +363,7 @@ fn standalone_bug_landing_refuses_without_satisfied_criteria() {
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -410,6 +413,7 @@ fn standalone_bug_landing_merges_through_the_seed() {
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -497,6 +501,7 @@ fn standalone_bug_landing_allows_an_inactive_spec_without_an_integration() {
         .unwrap();
         common::landing_review::complete_source_review(
             &wired.core,
+            &wired.database,
             &ticket,
             None,
             &wired.bug,
@@ -540,6 +545,7 @@ fn standalone_bug_landing_completes_git_succeeded_before_durable_completion() {
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -624,6 +630,7 @@ fn standalone_bug_landing_completes_a_migrated_pending_intent() {
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -698,6 +705,7 @@ fn standalone_bug_landing_refuses_a_wrong_operation_before_binding_a_migrated_ke
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -825,6 +833,7 @@ fn standalone_bug_landing_releases_a_conflicted_merge() {
     git(&wired.bug, &["commit", "-m", "bug edit"]);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -881,6 +890,7 @@ fn reviewed_satisfied_bug(key: &str) -> (Wired, serde_json::Value) {
     assign_bug_lane(&wired, &ticket);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         None,
         &wired.bug,
@@ -1035,6 +1045,7 @@ fn satisfy_replacement(wired: &Wired, ticket: &serde_json::Value, key: &str) {
             }),
         )
         .expect("the replacement criterion is satisfied at the source tip");
+    common::landing_review::prove_walkthrough(&wired.database, ticket_id, &tip);
 }
 
 #[test]
@@ -1053,7 +1064,7 @@ fn standalone_bug_landing_refuses_after_a_satisfied_criterion_is_replaced() {
     let bindings = listed_bindings(&wired, &ticket);
     assert_eq!(
         bindings["bindings"].as_array().map(Vec::len),
-        Some(1),
+        Some(2),
         "replacement keeps the historical binding row: {bindings:?}"
     );
     assert_eq!(
@@ -1126,7 +1137,7 @@ fn standalone_bug_landing_binds_satisfaction_to_criterion_content() {
     );
 
     let bindings = listed_bindings(&wired, &ticket);
-    assert_eq!(bindings["bindings"].as_array().map(Vec::len), Some(1));
+    assert_eq!(bindings["bindings"].as_array().map(Vec::len), Some(2));
     let error = wired
         .core
         .command(

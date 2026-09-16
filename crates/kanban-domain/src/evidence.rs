@@ -26,13 +26,17 @@ impl fmt::Display for EvidenceId {
     }
 }
 
-/// Whether evidence is a managed file or repository reference.
+/// Whether evidence is a managed file, a repository reference, or a
+/// shell-minted walkthrough run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceKind {
     /// Bytes live in managed application data; SQLite holds the hash.
     ManagedFile,
     /// A relative path and commit identity; content is never copied.
     Repository,
+    /// A shell-minted walkthrough run; SQLite holds the hash of the
+    /// captured artefacts. MCP cannot create this kind.
+    Walkthrough,
 }
 
 /// Why evidence input was refused.
@@ -239,6 +243,14 @@ impl EvidenceItem {
                 }
                 if self.shape.content_hash.is_some() {
                     return Err(EvidenceError::UnexpectedContentHash);
+                }
+            }
+            EvidenceKind::Walkthrough => {
+                if self.shape.content_hash.is_none() {
+                    return Err(EvidenceError::MissingContentHash);
+                }
+                if self.shape.relative_path.is_some() || self.shape.commit_identity.is_some() {
+                    return Err(EvidenceError::UnexpectedRepositoryFields);
                 }
             }
         }

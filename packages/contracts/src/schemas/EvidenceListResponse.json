@@ -6,7 +6,8 @@
       "description": "Whether an evidence item is a managed file or repository reference.",
       "enum": [
         "managed_file",
-        "repository"
+        "repository",
+        "walkthrough"
       ],
       "type": "string"
     },

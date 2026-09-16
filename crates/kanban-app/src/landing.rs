@@ -492,6 +492,7 @@ fn plan_landing(
         ticket_reviewed_tip: source.reviewed_tip,
         criterion_count: source.criterion_count,
         criteria_satisfied_at_source: source.satisfied_at_source,
+        walkthrough_proven: source.walkthrough_proven,
     };
     match kind {
         LandingKind::Lane => land_lane(&request).map_err(refuse)?,
@@ -522,6 +523,7 @@ struct SourceReviewFacts {
     reviewed_tip: Option<String>,
     criterion_count: usize,
     satisfied_at_source: usize,
+    walkthrough_proven: bool,
 }
 
 fn source_review(
@@ -536,6 +538,7 @@ fn source_review(
             reviewed_tip: None,
             criterion_count: 0,
             satisfied_at_source: 0,
+            walkthrough_proven: false,
         });
     }
     let ticket_id =
@@ -553,11 +556,17 @@ fn source_review(
     let criterion_count = criteria.len();
     let bindings = context.bindings.list(ticket_id)?;
     let satisfied_at_source = satisfied_landing_criteria(criteria, &bindings, source_tip);
+    let walkthrough_proven = bindings.iter().any(|binding| {
+        binding.kind() == kanban_domain::CriterionKind::Walkthrough
+            && binding.satisfied()
+            && binding.tip() == source_tip
+    });
     Ok(SourceReviewFacts {
         approved,
         reviewed_tip,
         criterion_count,
         satisfied_at_source,
+        walkthrough_proven,
     })
 }
 

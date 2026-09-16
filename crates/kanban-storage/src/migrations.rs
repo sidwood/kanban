@@ -309,6 +309,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "landing command fingerprint",
         sql: include_str!("../migrations/0051_landing_command_fingerprint.sql"),
     },
+    Migration {
+        version: 52,
+        name: "walkthrough bindings",
+        sql: include_str!("../migrations/0052_walkthrough_bindings.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1904,6 +1909,10 @@ mod tests {
                 PendingMigration {
                     version: 51,
                     name: "landing command fingerprint"
+                },
+                PendingMigration {
+                    version: 52,
+                    name: "walkthrough bindings"
                 },
             ]]
         );

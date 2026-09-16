@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum EvidenceKindDto {
     ManagedFile,
     Repository,
+    Walkthrough,
 }
 
 /// One evidence record as every client sees it.

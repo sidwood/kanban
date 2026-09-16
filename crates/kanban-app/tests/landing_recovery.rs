@@ -195,6 +195,7 @@ fn timeline_actions(wired: &Wired) -> Vec<String> {
 
 struct Wired {
     core: Core,
+    database: kanban_storage::Database,
     _dir: TempDir,
     seed: PathBuf,
     integration: PathBuf,
@@ -345,6 +346,7 @@ fn wired() -> Wired {
 
     Wired {
         core,
+        database,
         _dir: dir,
         seed,
         integration,
@@ -453,6 +455,7 @@ fn reviewed_lane(wired: &Wired, spec: &serde_json::Value, prefix: &str) {
     let ticket = assign_ticket_lane(wired, spec, prefix);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         Some(spec),
         &wired.lane,

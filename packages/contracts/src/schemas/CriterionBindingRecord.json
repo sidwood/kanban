@@ -5,7 +5,8 @@
     "CriterionKindDto": {
       "enum": [
         "acceptance",
-        "task"
+        "task",
+        "walkthrough"
       ],
       "type": "string"
     },

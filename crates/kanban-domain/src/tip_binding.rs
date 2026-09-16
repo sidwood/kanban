@@ -6,6 +6,7 @@
 pub enum CriterionKind {
     Acceptance,
     Task,
+    Walkthrough,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -258,7 +258,7 @@ export type CriterionInvalidateRequest = {
   observed_tip: string;
   ticket_id: number;
 };
-export type CriterionKindDto = 'acceptance' | 'task';
+export type CriterionKindDto = 'acceptance' | 'task' | 'walkthrough';
 export type CriterionRefusal = 'no_outcome' | 'unlinked' | 'technical_command' | 'malformed_story' | 'foreign_story';
 export type CriterionSatisfyRequest = {
   criterion_index: number;
@@ -383,7 +383,7 @@ export type EvidenceAttachRequest = {
   project_id: number;
   relative_path?: string | null;
 };
-export type EvidenceKindDto = 'managed_file' | 'repository';
+export type EvidenceKindDto = 'managed_file' | 'repository' | 'walkthrough';
 export type EvidenceListQuery = {
   entity_id?: string | null;
   entity_kind?: string | null;

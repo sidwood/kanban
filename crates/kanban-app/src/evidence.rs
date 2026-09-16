@@ -159,6 +159,11 @@ impl CommandHandler for AttachEvidence {
                     },
                 )?
             }
+            EvidenceKindDto::Walkthrough => {
+                return Err(ApiError::invalid_request(
+                    "only the desktop shell can mint walkthrough proof; MCP cannot",
+                ));
+            }
         };
         announce(effects, LiveEventName::EvidenceAttached, &item);
         encode_record(&item)
@@ -237,6 +242,7 @@ fn record_of(item: &EvidenceItem) -> EvidenceRecord {
         evidence_kind: match item.kind() {
             EvidenceKind::ManagedFile => EvidenceKindDto::ManagedFile,
             EvidenceKind::Repository => EvidenceKindDto::Repository,
+            EvidenceKind::Walkthrough => EvidenceKindDto::Walkthrough,
         },
         content_hash: item.content_hash().map(|hash| hash.as_str().to_owned()),
         relative_path: item.relative_path().map(|path| path.as_str().to_owned()),

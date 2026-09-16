@@ -282,7 +282,8 @@ impl RecordingEvidence {
             entity_kind: "ticket".to_owned(),
             entity_id: "kan-t10".to_owned(),
             kind,
-            content_hash: (kind == EvidenceKind::ManagedFile).then_some(hash),
+            content_hash: matches!(kind, EvidenceKind::ManagedFile | EvidenceKind::Walkthrough)
+                .then_some(hash),
             relative_path: (kind == EvidenceKind::Repository)
                 .then(|| RelativePath::new("docs/spec.md").expect("the fixture path validates")),
             commit_identity: (kind == EvidenceKind::Repository)

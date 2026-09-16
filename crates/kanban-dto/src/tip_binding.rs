@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub enum CriterionKindDto {
     Acceptance,
     Task,
+    Walkthrough,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -83,6 +83,7 @@ fn current_branch(dir: &Path) -> String {
 
 struct Wired {
     core: Core,
+    database: kanban_storage::Database,
     _dir: TempDir,
     seed: PathBuf,
     integration: PathBuf,
@@ -230,6 +231,7 @@ fn wired() -> Wired {
 
     Wired {
         core,
+        database,
         _dir: dir,
         seed,
         integration,
@@ -382,6 +384,7 @@ fn integration_landing_refuses_a_lane_without_satisfied_criteria() {
     let ticket = assign_ticket_lane(&wired, &spec);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         Some(&spec),
         &wired.lane,
@@ -423,6 +426,7 @@ fn integration_landing_merges_a_lane_into_the_spec_branch() {
     let ticket = assign_ticket_lane(&wired, &spec);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         Some(&spec),
         &wired.lane,
@@ -700,6 +704,7 @@ fn integration_landing_preserves_intent_when_outcome_commit_fails() {
     let ticket = assign_ticket_lane(&wired, &spec);
     common::landing_review::complete_source_review(
         &wired.core,
+        &wired.database,
         &ticket,
         Some(&spec),
         &wired.lane,

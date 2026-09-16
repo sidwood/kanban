@@ -27,6 +27,7 @@ fn kind_wire(kind: CriterionKind) -> &'static str {
     match kind {
         CriterionKind::Acceptance => "acceptance",
         CriterionKind::Task => "task",
+        CriterionKind::Walkthrough => "walkthrough",
     }
 }
 
@@ -50,6 +51,7 @@ fn decode(
     let kind = match kind.as_str() {
         "acceptance" => CriterionKind::Acceptance,
         "task" => CriterionKind::Task,
+        "walkthrough" => CriterionKind::Walkthrough,
         _ => return Err(ApiError::internal("unknown criterion kind")),
     };
     let review = match review.as_str() {

@@ -317,6 +317,7 @@ fn parse_evidence_kind(raw: &str) -> rusqlite::Result<EvidenceKind> {
     match raw {
         "managed_file" => Ok(EvidenceKind::ManagedFile),
         "repository" => Ok(EvidenceKind::Repository),
+        "walkthrough" => Ok(EvidenceKind::Walkthrough),
         _ => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             CorruptEvidence,
         ))),
@@ -327,6 +328,7 @@ fn evidence_kind_wire(kind: EvidenceKind) -> &'static str {
     match kind {
         EvidenceKind::ManagedFile => "managed_file",
         EvidenceKind::Repository => "repository",
+        EvidenceKind::Walkthrough => "walkthrough",
     }
 }
 

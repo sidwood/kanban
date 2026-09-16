@@ -19,6 +19,7 @@ pub enum LandingRefusal {
     UnguardedPath,
     TicketReviewRequired,
     CriteriaUnsatisfied,
+    WalkthroughUnproven,
 }
 
 impl std::fmt::Display for LandingRefusal {
@@ -50,6 +51,10 @@ impl std::fmt::Display for LandingRefusal {
                     "landing requires every criterion to be satisfied at the source tip"
                 )
             }
+            Self::WalkthroughUnproven => write!(
+                f,
+                "landing requires a shell-minted walkthrough with captured artefacts at the source tip"
+            ),
         }
     }
 }
@@ -73,6 +78,9 @@ pub struct LandingRequest {
     pub criterion_count: usize,
     /// How many of those criteria are satisfied at the source tip.
     pub criteria_satisfied_at_source: usize,
+    /// Whether a shell-minted walkthrough run proved this Ticket at
+    /// the source tip. File, git, and MCP claims do not set this.
+    pub walkthrough_proven: bool,
 }
 
 pub fn land_lane(request: &LandingRequest) -> Result<(), LandingRefusal> {
@@ -85,7 +93,8 @@ pub fn land_lane(request: &LandingRequest) -> Result<(), LandingRefusal> {
     if request.into_branch != request.integration_branch {
         return Err(LandingRefusal::WrongIntegrationBranch);
     }
-    require_reviewed_source(request)
+    require_reviewed_source(request)?;
+    require_walkthrough_proof(request)
 }
 
 pub fn land_seed(request: &LandingRequest) -> Result<(), LandingRefusal> {
@@ -114,7 +123,8 @@ pub fn land_standalone_bug(request: &LandingRequest) -> Result<(), LandingRefusa
     if !request.through_seed {
         return Err(LandingRefusal::SeedRequired);
     }
-    require_reviewed_source(request)
+    require_reviewed_source(request)?;
+    require_walkthrough_proof(request)
 }
 
 /// Operator policy for reconciling a landing whose Git effect outlived
@@ -235,6 +245,14 @@ fn require_reviewed_source(request: &LandingRequest) -> Result<(), LandingRefusa
     Ok(())
 }
 
+fn require_walkthrough_proof(request: &LandingRequest) -> Result<(), LandingRefusal> {
+    if request.walkthrough_proven {
+        Ok(())
+    } else {
+        Err(LandingRefusal::WalkthroughUnproven)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -257,6 +275,7 @@ mod tests {
             ticket_reviewed_tip: Some("a".repeat(40)),
             criterion_count: 1,
             criteria_satisfied_at_source: 1,
+            walkthrough_proven: true,
         }
     }
 
@@ -290,6 +309,7 @@ mod tests {
             ticket_reviewed_tip: None,
             criterion_count: 0,
             criteria_satisfied_at_source: 0,
+            walkthrough_proven: true,
         };
         assert_eq!(
             land_seed(&request).unwrap_err(),
@@ -312,6 +332,7 @@ mod tests {
             ticket_reviewed_tip: Some("a".repeat(40)),
             criterion_count: 0,
             criteria_satisfied_at_source: 0,
+            walkthrough_proven: true,
         };
         assert_eq!(
             land_standalone_bug(&request).unwrap_err(),
@@ -341,6 +362,7 @@ mod tests {
             ticket_reviewed_tip: Some("b".repeat(40)),
             criterion_count: 0,
             criteria_satisfied_at_source: 0,
+            walkthrough_proven: true,
         };
         assert_eq!(
             land_standalone_bug(&bug).unwrap_err(),
@@ -377,6 +399,7 @@ mod tests {
             ticket_reviewed_tip: Some("a".repeat(40)),
             criterion_count: 1,
             criteria_satisfied_at_source: 0,
+            walkthrough_proven: true,
         };
         assert_eq!(
             land_standalone_bug(&request).unwrap_err(),
@@ -384,6 +407,18 @@ mod tests {
         );
         request.criteria_satisfied_at_source = 1;
         land_standalone_bug(&request).expect("satisfied qualification criteria may land");
+    }
+
+    #[test]
+    fn landing_refuses_a_ticket_without_shell_minted_walkthrough_proof() {
+        let mut request = lane();
+        request.walkthrough_proven = false;
+        assert_eq!(
+            land_lane(&request).unwrap_err(),
+            LandingRefusal::WalkthroughUnproven
+        );
+        request.walkthrough_proven = true;
+        land_lane(&request).expect("a proven walkthrough may land the lane");
     }
 
     fn observation(head: &str, merge_in_progress: bool, parents: &[&str]) -> LandingGitObservation {

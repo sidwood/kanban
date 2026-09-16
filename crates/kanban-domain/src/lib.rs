@@ -42,6 +42,7 @@ pub mod ticket;
 pub mod timeline;
 pub mod timeline_time;
 pub mod tip_binding;
+pub mod walkthrough;
 pub mod workspace;
 
 pub use admission::{
@@ -152,6 +153,11 @@ pub use tip_binding::{
     invalidate_on_criterion_replacement, refuse_spent_approval,
     require_completed_required_stage_review, review_criterion_evidence, satisfied_landing_criteria,
     satisfy_at_approved_tip,
+};
+pub use walkthrough::{
+    Walkthrough, WalkthroughArtifact, WalkthroughArtifactKind, WalkthroughError, WalkthroughOrigin,
+    WalkthroughRun, WalkthroughStep, WalkthroughSurface, require_proven_walkthrough,
+    require_walkthrough, walkthrough_evidence_fits,
 };
 pub use workspace::{
     ReuseEvaluation, ReuseInputs, Workspace, WorkspaceCheckout, WorkspaceHealth,

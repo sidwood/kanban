@@ -224,6 +224,7 @@ fn record_of(ticket_id: u64, binding: &CriterionBinding) -> CriterionBindingReco
         kind: match binding.kind() {
             CriterionKind::Acceptance => CriterionKindDto::Acceptance,
             CriterionKind::Task => CriterionKindDto::Task,
+            CriterionKind::Walkthrough => CriterionKindDto::Walkthrough,
         },
         evidence_id: binding.evidence_id(),
         tip: binding.tip().to_owned(),

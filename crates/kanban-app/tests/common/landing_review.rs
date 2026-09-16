@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
-use kanban_app::{Core, NoopCoordinatorWake};
+use kanban_app::{Core, CriterionBindingStore, NoopCoordinatorWake};
 use kanban_storage::Database;
 use serde_json::{Value, json};
 
@@ -142,6 +142,7 @@ pub fn seed_review_profiles(core: &Core) {
 /// optionally satisfy every criterion at that tip.
 pub fn complete_source_review(
     core: &Core,
+    database: &Database,
     ticket: &Value,
     spec: Option<&Value>,
     source: &Path,
@@ -347,6 +348,7 @@ pub fn complete_source_review(
     if !satisfy_criteria {
         return;
     }
+    prove_walkthrough(database, ticket_id, &tip);
     let criteria = source_review_criteria(&current);
     if criteria == 0 {
         return;
@@ -398,6 +400,37 @@ pub fn complete_source_review(
         )
         .expect("the criterion is satisfied at the source tip");
     }
+}
+
+pub fn prove_walkthrough(database: &Database, ticket_id: u64, tip: &str) {
+    use kanban_domain::{CriterionBinding, CriterionKind, EvidenceReview};
+    use kanban_dto::{TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+
+    let store = kanban_storage::SqliteCriterionBindingStore::new(database);
+    let binding = CriterionBinding::restore(
+        CriterionKind::Walkthrough,
+        10_000,
+        1,
+        tip,
+        EvidenceReview::Validated,
+        true,
+        false,
+    );
+    store
+        .save(
+            ticket_id,
+            &binding,
+            kanban_app::TimelineEnvelope::project(
+                1,
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Ticket,
+                    id: ticket_id.to_string(),
+                }),
+                json!({ "action": "walkthrough.proved", "tip": tip }),
+            ),
+        )
+        .expect("walkthrough proof persists");
 }
 
 fn source_review_criteria(ticket: &Value) -> usize {

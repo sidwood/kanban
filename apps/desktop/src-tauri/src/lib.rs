@@ -2628,54 +2628,71 @@ pub fn run() -> tauri::Result<()> {
 }
 
 /// Keep the shell's view of the core honest: start it if it is not
-/// serving, connect, forward events, and announce loss.
+/// serving, connect, forward events, and reconnect while the core
+/// still lives. Quitting the UI does not kill the core.
 fn supervise(socket_path: PathBuf, shell: Arc<Shell>, app: AppHandle) {
-    let spawned = match ensure_core_running(&socket_path) {
-        Ok(spawned) => spawned,
-        Err(failure) => {
-            eprintln!("kanban shell: {failure}");
-            let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
-            return;
+    let mut spawned = None;
+    loop {
+        if spawned.is_none() {
+            match ensure_core_running(&socket_path) {
+                Ok(child) => spawned = child,
+                Err(failure) => {
+                    eprintln!("kanban shell: {failure}");
+                    *shell
+                        .link
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                    let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+            }
         }
-    };
-    let link = match core_link::CoreLink::connect(&socket_path) {
-        Ok(link) => link,
-        Err(failure) => {
-            eprintln!("kanban shell: the core socket is unreachable: {failure}");
-            let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
-            return;
-        }
-    };
-    eprintln!("kanban shell: connected to {}", socket_path.display());
-    *shell
-        .link
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(link);
-    let _ = app.emit(CONNECTION_EVENT, ConnectionState::Connected);
+        let link = match core_link::CoreLink::connect(&socket_path) {
+            Ok(link) => link,
+            Err(failure) => {
+                eprintln!("kanban shell: the core socket is unreachable: {failure}");
+                *shell
+                    .link
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                continue;
+            }
+        };
+        eprintln!("kanban shell: connected to {}", socket_path.display());
+        *shell
+            .link
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(link);
+        let _ = app.emit(CONNECTION_EVENT, ConnectionState::Connected);
 
-    // Blocks until the core closes the socket or the connection
-    // dies; one reader thread keeps event order intact.
-    let event_app = app.clone();
-    let forward = core_link::forward_events(&socket_path, move |envelope| {
-        let _ = event_app.emit(CORE_EVENT, envelope);
-    });
-    if let Err(failure) = forward {
-        eprintln!("kanban shell: the event stream ended: {failure}");
-    }
-    // The socket is gone: drop the request link, say so, and reap
-    // the core we spawned if it was ours and has exited. The shell
-    // never kills a live core; reconnecting is KAN-S13 hardening.
-    *shell
-        .link
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
-    if let Some(mut child) = spawned {
-        let _ = std::thread::Builder::new()
-            .name("kanban-core-reaper".into())
-            .spawn(move || {
-                let _ = child.wait();
-            });
+        let event_app = app.clone();
+        let forward = core_link::forward_events(&socket_path, move |envelope| {
+            let _ = event_app.emit(CORE_EVENT, envelope);
+        });
+        if let Err(failure) = &forward {
+            eprintln!("kanban shell: the event stream ended: {failure}");
+        }
+        if socket_serving(&socket_path) {
+            // Request link stays; only the event subscription died.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            continue;
+        }
+        *shell
+            .link
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        let _ = app.emit(CONNECTION_EVENT, ConnectionState::Disconnected);
+        if let Some(mut child) = spawned.take() {
+            let _ = std::thread::Builder::new()
+                .name("kanban-core-reaper".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 }
 

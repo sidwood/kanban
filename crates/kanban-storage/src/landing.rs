@@ -22,6 +22,84 @@ impl SqliteLandingStore {
             rulings: SqliteRulingStore::new(database),
         }
     }
+
+    fn persist_landing(
+        &self,
+        key: &str,
+        record: &LandingDraft,
+        landed_tip: &str,
+        envelope: kanban_app::TimelineEnvelope,
+        replay_original: bool,
+    ) -> Result<LandingRecord, ApiError> {
+        let conn = self.conn.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        span.execute(
+            "INSERT INTO landings(project_id, kind, from_path, into_path, from_branch, into_branch, spec_id, ticket_id, from_tip, into_tip, landed_tip)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.project_id as i64,
+                record.kind,
+                record.from_path,
+                record.into_path,
+                record.from_branch,
+                record.into_branch,
+                record.spec_id.map(|id| id as i64),
+                record.ticket_id.map(|id| id as i64),
+                record.from_tip,
+                record.into_tip,
+                landed_tip,
+            ],
+        )
+        .map_err(internal)?;
+        let id = span.last_insert_rowid() as u64;
+        let changed = span
+            .execute(
+                "UPDATE landing_intents SET completed = 1 WHERE idempotency_key = ?1 AND completed = 0",
+                [key],
+            )
+            .map_err(internal)?;
+        if changed != 1 {
+            return Err(ApiError::invalid_request("landing has no pending intent"));
+        }
+        let landing = LandingRecord {
+            id,
+            project_id: record.project_id,
+            kind: record.kind.to_owned(),
+            from_path: record.from_path.clone(),
+            into_path: record.into_path.clone(),
+            from_branch: record.from_branch.clone(),
+            into_branch: record.into_branch.clone(),
+            from_tip: record.from_tip.clone(),
+            into_tip: record.into_tip.clone(),
+            landed_tip: landed_tip.to_owned(),
+            spec_id: record.spec_id,
+            ticket_id: record.ticket_id,
+        };
+        if replay_original {
+            let fingerprint: String = span
+                .query_row(
+                    "SELECT command_fingerprint FROM landing_intents WHERE idempotency_key = ?1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .map_err(internal)?;
+            if fingerprint.is_empty() {
+                return Err(ApiError::internal(
+                    "completed recovery requires the original command fingerprint",
+                ));
+            }
+            let response = serde_json::to_string(&landing).map_err(internal)?;
+            span.execute(
+                "INSERT INTO idempotency_outcomes (idempotency_key, fingerprint, response)
+                 VALUES (?1, ?2, ?3)",
+                params![key, fingerprint, response],
+            )
+            .map_err(internal)?;
+        }
+        insert_event(&span, &envelope).map_err(internal)?;
+        span.commit().map_err(internal)?;
+        Ok(landing)
+    }
 }
 
 fn internal(error: impl std::fmt::Display) -> ApiError {
@@ -33,14 +111,16 @@ impl LandingStore for SqliteLandingStore {
         &self,
         key: &str,
         draft: &LandingDraft,
+        fingerprint: &str,
         envelope: kanban_app::TimelineEnvelope,
     ) -> Result<(), ApiError> {
         let conn = self.conn.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let conflict: bool = span
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM landing_intents WHERE idempotency_key = ?1
-                OR (completed = 0 AND (from_path IN (?2, ?3) OR into_path IN (?2, ?3))))",
+                "SELECT EXISTS(SELECT 1 FROM landing_intents WHERE completed = 0 AND (
+                    idempotency_key = ?1 OR from_path IN (?2, ?3) OR into_path IN (?2, ?3)
+                ))",
                 params![key, draft.from_path, draft.into_path],
                 |row| row.get(0),
             )
@@ -50,9 +130,20 @@ impl LandingStore for SqliteLandingStore {
                 "a prior landing requires explicit recovery; no Git operation was repeated",
             ));
         }
-        span.execute("INSERT INTO landing_intents(idempotency_key, project_id, from_path, into_path, draft) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![key, draft.project_id as i64, draft.from_path, draft.into_path, serde_json::to_string(draft).map_err(internal)?],
-        ).map_err(internal)?;
+        span.execute(
+            "INSERT INTO landing_intents(
+                idempotency_key, project_id, from_path, into_path, draft, command_fingerprint
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                key,
+                draft.project_id as i64,
+                draft.from_path,
+                draft.into_path,
+                serde_json::to_string(draft).map_err(internal)?,
+                fingerprint,
+            ],
+        )
+        .map_err(internal)?;
         insert_event(&span, &envelope).map_err(internal)?;
         span.commit().map_err(internal)
     }
@@ -166,47 +257,7 @@ impl LandingStore for SqliteLandingStore {
         landed_tip: &str,
         envelope: kanban_app::TimelineEnvelope,
     ) -> Result<LandingRecord, ApiError> {
-        let conn = self.conn.lock();
-        let span = WriteSpan::begin(&conn).map_err(internal)?;
-        span.execute(
-            "INSERT INTO landings(project_id, kind, from_path, into_path, from_branch, into_branch, spec_id, ticket_id, from_tip, into_tip, landed_tip)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                record.project_id as i64,
-                record.kind,
-                record.from_path,
-                record.into_path,
-                record.from_branch,
-                record.into_branch,
-                record.spec_id.map(|id| id as i64),
-                record.ticket_id.map(|id| id as i64),
-                record.from_tip,
-                record.into_tip,
-                landed_tip,
-            ],
-        )
-        .map_err(internal)?;
-        let id = span.last_insert_rowid() as u64;
-        let changed = span.execute("UPDATE landing_intents SET completed = 1 WHERE idempotency_key = ?1 AND completed = 0", [key]).map_err(internal)?;
-        if changed != 1 {
-            return Err(ApiError::invalid_request("landing has no pending intent"));
-        }
-        insert_event(&span, &envelope).map_err(internal)?;
-        span.commit().map_err(internal)?;
-        Ok(LandingRecord {
-            id,
-            project_id: record.project_id,
-            kind: record.kind.to_owned(),
-            from_path: record.from_path.clone(),
-            into_path: record.into_path.clone(),
-            from_branch: record.from_branch.clone(),
-            into_branch: record.into_branch.clone(),
-            from_tip: record.from_tip.clone(),
-            into_tip: record.into_tip.clone(),
-            landed_tip: landed_tip.to_owned(),
-            spec_id: record.spec_id,
-            ticket_id: record.ticket_id,
-        })
+        self.persist_landing(key, record, landed_tip, envelope, false)
     }
 
     fn incomplete_intent(&self, key: &str) -> Result<Option<LandingDraft>, ApiError> {
@@ -258,14 +309,14 @@ impl LandingStore for SqliteLandingStore {
                 let envelope = landing_envelope.ok_or_else(|| {
                     ApiError::internal("completed recovery requires a landing envelope")
                 })?;
-                Some(self.record_landing(key, draft, tip, envelope)?)
+                Some(self.persist_landing(key, draft, tip, envelope, true)?)
             }
             None => {
                 let conn = self.conn.lock();
                 let span = WriteSpan::begin(&conn).map_err(internal)?;
                 let changed = span
                     .execute(
-                        "UPDATE landing_intents SET completed = 1 WHERE idempotency_key = ?1 AND completed = 0",
+                        "DELETE FROM landing_intents WHERE idempotency_key = ?1 AND completed = 0",
                         [key],
                     )
                     .map_err(internal)?;

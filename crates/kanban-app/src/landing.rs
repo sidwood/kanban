@@ -49,6 +49,7 @@ pub trait LandingStore: Send + Sync {
         &self,
         key: &str,
         draft: &LandingDraft,
+        fingerprint: &str,
         envelope: TimelineEnvelope,
     ) -> Result<(), ApiError>;
     fn pending_landing(&self, key: &str) -> Result<LandingDraft, ApiError>;
@@ -140,6 +141,7 @@ impl Core {
                 Arc::new(LandCommand {
                     context: context.clone(),
                     kind,
+                    operation: name,
                 }),
             )?;
         }
@@ -563,6 +565,7 @@ fn source_review(
 struct LandCommand {
     context: LandingContext,
     kind: LandingKind,
+    operation: &'static str,
 }
 
 impl LandCommand {
@@ -663,6 +666,7 @@ impl CommandHandler for LandCommand {
         self.context.store.prepare_landing(
             &command.idempotency_key,
             &draft,
+            &command.fingerprint(self.operation),
             landing_event(&draft, &command.idempotency_key, "landing_started"),
         )
     }

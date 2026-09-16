@@ -433,6 +433,16 @@ fn land_lane_request(wired: &Wired, spec: &serde_json::Value, key: &str) -> serd
     })
 }
 
+fn land_seed_request(wired: &Wired, spec: &serde_json::Value, key: &str) -> serde_json::Value {
+    json!({
+        "mutation": mutation(0, key),
+        "project_id": 1,
+        "spec_id": spec["id"],
+        "from_path": wired.integration.to_str().unwrap(),
+        "into_path": wired.seed.to_str().unwrap(),
+    })
+}
+
 fn refuse_later_landings(wired: &Wired, spec: &serde_json::Value, original_key: &str) {
     for key in [original_key, "fresh-key"] {
         let error = wired
@@ -442,6 +452,32 @@ fn refuse_later_landings(wired: &Wired, spec: &serde_json::Value, original_key: 
         assert!(
             error.message.contains("recovery"),
             "later landing must stay reserved until reconcile: {error:?}"
+        );
+    }
+}
+
+fn replay_completed_landing(
+    wired: &Wired,
+    command: &str,
+    request: serde_json::Value,
+    kind: &str,
+    landed_tip: &serde_json::Value,
+) {
+    let replayed = wired
+        .core
+        .command(command, &request)
+        .expect("the original key replays the completed landing");
+    assert_eq!(replayed["kind"], kind);
+    assert_eq!(replayed["landed_tip"], *landed_tip);
+}
+
+fn assert_key_is_not_reserved(wired: &Wired, command: &str, request: serde_json::Value) {
+    if let Err(error) = wired.core.command(command, &request) {
+        assert!(
+            !error
+                .message
+                .contains("a prior landing requires explicit recovery"),
+            "recovery must not leave a landing key refusing: {error:?}"
         );
     }
 }
@@ -518,16 +554,19 @@ fn landing_recovery_completes_git_succeeded_before_durable_completion() {
         timeline_actions(&wired)
     );
 
-    let retry = wired.core.command(
+    replay_completed_landing(
+        &wired,
         "landing.lane",
-        &land_lane_request(&wired, &spec, "later-lane"),
+        land_lane_request(&wired, &spec, "recovery-land"),
+        "lane",
+        &recovered["landing"]["landed_tip"],
     );
-    if let Err(error) = retry {
-        assert!(
-            !error.message.contains("recovery"),
-            "a fresh key must not stay blocked by the recovered reservation: {error:?}"
-        );
-    }
+    assert_eq!(landing_rows(&wired), 1);
+    assert_key_is_not_reserved(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "later-lane"),
+    );
 }
 
 #[test]
@@ -573,16 +612,11 @@ fn landing_recovery_releases_a_conflicted_merge_without_database_edits() {
             .any(|summary| summary == "landing_reservation_release")
     );
 
-    let retry = wired.core.command(
-        "landing.lane",
-        &land_lane_request(&wired, &spec, "after-release"),
-    );
-    if let Err(error) = retry {
-        assert!(
-            !error
-                .message
-                .contains("a prior landing requires explicit recovery"),
-            "release must not leave the reservation behind: {error:?}"
+    for key in ["conflict-land", "after-release"] {
+        assert_key_is_not_reserved(
+            &wired,
+            "landing.lane",
+            land_lane_request(&wired, &spec, key),
         );
     }
 }
@@ -618,13 +652,7 @@ fn landing_recovery_completes_a_failed_seed_outcome() {
             .core
             .command(
                 "landing.seed",
-                &json!({
-                    "mutation": mutation(0, "recovery-seed"),
-                    "project_id": 1,
-                    "spec_id": spec["id"],
-                    "from_path": wired.integration.to_str().unwrap(),
-                    "into_path": wired.seed.to_str().unwrap(),
-                }),
+                &land_seed_request(&wired, &spec, "recovery-seed"),
             )
             .is_err()
     );
@@ -635,6 +663,20 @@ fn landing_recovery_completes_a_failed_seed_outcome() {
     assert_eq!(recovered["policy"], "complete");
     assert_eq!(recovered["landing"]["kind"], "seed");
     assert_eq!(incomplete_intents(&wired), 0);
+    assert_eq!(landing_rows(&wired), 2);
+    replay_completed_landing(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "recovery-seed"),
+        "seed",
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_eq!(landing_rows(&wired), 2);
+    assert_key_is_not_reserved(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "later-seed"),
+    );
 }
 
 #[test]
@@ -658,4 +700,64 @@ fn landing_recovery_refuses_a_policy_that_does_not_match_git() {
     assert_eq!(error.code, ErrorCode::InvalidRequest);
     assert_eq!(incomplete_intents(&wired), 1);
     assert!(wired.integration.join("lane.md").exists());
+}
+
+#[test]
+fn landing_recovery_releases_a_conflicted_seed_merge() {
+    let wired = wired();
+    let spec = claimed_spec(&wired, "seed-release");
+    reviewed_lane(&wired, &spec, "seed-release");
+    wired
+        .core
+        .command(
+            "landing.lane",
+            &land_lane_request(&wired, &spec, "seed-release-lane"),
+        )
+        .expect("the lane lands first");
+    fs::write(wired.seed.join("README.md"), "seed edit\n").unwrap();
+    git(&wired.seed, &["add", "."]);
+    git(&wired.seed, &["commit", "-m", "seed edit"]);
+    fs::write(wired.integration.join("README.md"), "integration edit\n").unwrap();
+    git(&wired.integration, &["add", "."]);
+    git(&wired.integration, &["commit", "-m", "integration edit"]);
+    wired
+        .core
+        .command(
+            "spec.integration.approve",
+            &json!({
+                "mutation": mutation(spec_version(&wired.core, &spec), "seed-release-approve"),
+                "spec_id": spec["id"],
+                "reviewed_tip": head_tip(&wired.integration),
+                "reviewer": "operator",
+                "evidence": "Combined-result acceptance review",
+            }),
+        )
+        .expect("the combined result is approved");
+    let error = wired
+        .core
+        .command(
+            "landing.seed",
+            &land_seed_request(&wired, &spec, "seed-release-land"),
+        )
+        .expect_err("the conflicting Seed merge is refused");
+    assert_eq!(error.code, ErrorCode::Internal);
+    assert!(merge_in_progress(&wired.seed));
+    git(&wired.seed, &["merge", "--abort"]);
+    let recovered = reconcile(
+        &wired,
+        "seed-release-land",
+        "release",
+        "reconcile-seed-release",
+    )
+    .expect("a conflicted Seed merge is released through the same operation");
+    assert_eq!(recovered["policy"], "release");
+    assert!(recovered["landing"].is_null());
+    assert_eq!(incomplete_intents(&wired), 0);
+    for key in ["seed-release-land", "later-seed"] {
+        assert_key_is_not_reserved(
+            &wired,
+            "landing.seed",
+            land_seed_request(&wired, &spec, key),
+        );
+    }
 }

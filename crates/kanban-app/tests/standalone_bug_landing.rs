@@ -63,6 +63,50 @@ fn mutation(version: u64, key: &str) -> serde_json::Value {
     })
 }
 
+fn land_bug_request(wired: &Wired, ticket: &serde_json::Value, key: &str) -> serde_json::Value {
+    json!({
+        "mutation": mutation(0, key),
+        "project_id": 1,
+        "ticket_id": ticket["id"],
+        "from_path": wired.bug.to_str().expect("utf-8"),
+        "into_path": wired.seed.to_str().expect("utf-8"),
+    })
+}
+
+fn merge_in_progress(dir: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .status()
+        .expect("git rev-parse MERGE_HEAD runs")
+        .success()
+}
+
+fn replay_completed_landing(
+    wired: &Wired,
+    request: serde_json::Value,
+    landed_tip: &serde_json::Value,
+) {
+    let replayed = wired
+        .core
+        .command("landing.bug", &request)
+        .expect("the original key replays the completed landing");
+    assert_eq!(replayed["kind"], "standalone_bug");
+    assert_eq!(replayed["landed_tip"], *landed_tip);
+}
+
+fn assert_key_is_not_reserved(wired: &Wired, request: serde_json::Value) {
+    if let Err(error) = wired.core.command("landing.bug", &request) {
+        assert!(
+            !error
+                .message
+                .contains("a prior landing requires explicit recovery"),
+            "recovery must not leave a landing key refusing: {error:?}"
+        );
+    }
+}
+
 struct Wired {
     core: Core,
     _dir: TempDir,
@@ -514,13 +558,7 @@ fn standalone_bug_landing_completes_git_succeeded_before_durable_completion() {
             .core
             .command(
                 "landing.bug",
-                &json!({
-                    "mutation": mutation(0, "recovery-bug"),
-                    "project_id": 1,
-                    "ticket_id": ticket["id"],
-                    "from_path": wired.bug.to_str().expect("utf-8"),
-                    "into_path": wired.seed.to_str().expect("utf-8"),
-                }),
+                &land_bug_request(&wired, &ticket, "recovery-bug"),
             )
             .is_err()
     );
@@ -549,4 +587,81 @@ fn standalone_bug_landing_completes_git_succeeded_before_durable_completion() {
         )
         .unwrap();
     assert_eq!(incomplete, 0);
+    let landings: i64 = conn
+        .query_row("SELECT COUNT(*) FROM landings", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(landings, 1);
+    replay_completed_landing(
+        &wired,
+        land_bug_request(&wired, &ticket, "recovery-bug"),
+        &recovered["landing"]["landed_tip"],
+    );
+    let landings_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM landings", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(landings_after, 1);
+    assert_key_is_not_reserved(&wired, land_bug_request(&wired, &ticket, "later-bug"));
+}
+
+#[test]
+fn standalone_bug_landing_releases_a_conflicted_merge() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-release"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    fs::write(wired.seed.join("README.md"), "seed edit\n").unwrap();
+    git(&wired.seed, &["add", "."]);
+    git(&wired.seed, &["commit", "-m", "seed edit"]);
+    fs::write(wired.bug.join("README.md"), "bug edit\n").unwrap();
+    git(&wired.bug, &["add", "."]);
+    git(&wired.bug, &["commit", "-m", "bug edit"]);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-release",
+        true,
+    );
+    let error = wired
+        .core
+        .command(
+            "landing.bug",
+            &land_bug_request(&wired, &ticket, "conflict-bug"),
+        )
+        .expect_err("the conflicting Bug merge is refused");
+    assert_eq!(error.code, ErrorCode::Internal);
+    assert!(merge_in_progress(&wired.seed));
+    git(&wired.seed, &["merge", "--abort"]);
+    let recovered = wired
+        .core
+        .command(
+            "landing.reconcile",
+            &json!({
+                "mutation": mutation(0, "reconcile-bug-release"),
+                "project_id": 1,
+                "intent_key": "conflict-bug",
+                "policy": "release",
+            }),
+        )
+        .expect("a conflicted Bug merge is released through the same operation");
+    assert_eq!(recovered["policy"], "release");
+    assert!(recovered["landing"].is_null());
+    for key in ["conflict-bug", "later-bug"] {
+        assert_key_is_not_reserved(&wired, land_bug_request(&wired, &ticket, key));
+    }
 }

@@ -304,6 +304,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "voided approvals",
         sql: include_str!("../migrations/0050_voided_approvals.sql"),
     },
+    Migration {
+        version: 51,
+        name: "landing command fingerprint",
+        sql: include_str!("../migrations/0051_landing_command_fingerprint.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -1895,6 +1900,10 @@ mod tests {
                 PendingMigration {
                     version: 50,
                     name: "voided approvals"
+                },
+                PendingMigration {
+                    version: 51,
+                    name: "landing command fingerprint"
                 },
             ]]
         );

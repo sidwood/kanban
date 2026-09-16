@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "LandingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "from_branch": {
+          "type": "string"
+        },
+        "from_path": {
+          "type": "string"
+        },
+        "from_tip": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "into_branch": {
+          "type": "string"
+        },
+        "into_path": {
+          "type": "string"
+        },
+        "into_tip": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "landed_tip": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "spec_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_branch",
+        "from_path",
+        "from_tip",
+        "id",
+        "into_branch",
+        "into_path",
+        "into_tip",
+        "kind",
+        "landed_tip",
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "LandingRecoveryPolicy": {
+      "description": "Operator policy for `landing.reconcile`.",
+      "enum": [
+        "complete",
+        "release"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Record returned by `landing.reconcile`.",
+  "properties": {
+    "intent_key": {
+      "type": "string"
+    },
+    "landing": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/LandingRecord"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_tip": {
+      "type": "string"
+    },
+    "policy": {
+      "$ref": "#/definitions/LandingRecoveryPolicy"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ruling_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "ruling_summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_key",
+    "observed_tip",
+    "policy",
+    "project_id",
+    "ruling_id",
+    "ruling_summary"
+  ],
+  "title": "LandingReconcileRecord",
+  "type": "object"
+}

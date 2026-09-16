@@ -408,6 +408,13 @@ define_exposed_catalogue! {
         mcp: "landing_bug",
         description: "Land a standalone Bug through the Seed when no active Spec is attached.",
     },
+    "landing.reconcile" => {
+        kind: Command,
+        request: "LandingReconcileRequest",
+        response: "LandingReconcileRecord",
+        mcp: "landing_reconcile",
+        description: "Reconcile a landing whose Git merge outlived its durable outcome; complete the record or release the reservation under the operator-chosen policy.",
+    },
     "spec.list" => {
         kind: Query,
         request: "SpecListQuery",

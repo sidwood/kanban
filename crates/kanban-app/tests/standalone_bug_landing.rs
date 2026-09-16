@@ -474,3 +474,79 @@ fn standalone_bug_landing_allows_an_inactive_spec_without_an_integration() {
         assert!(wired.seed.join("fix.md").exists());
     }
 }
+
+#[test]
+fn standalone_bug_landing_completes_git_succeeded_before_durable_completion() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-recovery"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-recovery",
+        true,
+    );
+    let conn = rusqlite::Connection::open(wired._dir.path().join("kanban.sqlite")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_landing_outcome BEFORE INSERT ON idempotency_outcomes
+        WHEN NEW.idempotency_key = 'recovery-bug' BEGIN SELECT RAISE(ABORT, 'outcome failed'); END;",
+    )
+    .unwrap();
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.bug",
+                &json!({
+                    "mutation": mutation(0, "recovery-bug"),
+                    "project_id": 1,
+                    "ticket_id": ticket["id"],
+                    "from_path": wired.bug.to_str().expect("utf-8"),
+                    "into_path": wired.seed.to_str().expect("utf-8"),
+                }),
+            )
+            .is_err()
+    );
+    assert!(wired.seed.join("fix.md").exists());
+    conn.execute_batch("DROP TRIGGER fail_landing_outcome")
+        .unwrap();
+    let recovered = wired
+        .core
+        .command(
+            "landing.reconcile",
+            &json!({
+                "mutation": mutation(0, "reconcile-bug"),
+                "project_id": 1,
+                "intent_key": "recovery-bug",
+                "policy": "complete",
+            }),
+        )
+        .expect("Bug Git success is completed through the product operation");
+    assert_eq!(recovered["policy"], "complete");
+    assert_eq!(recovered["landing"]["kind"], "standalone_bug");
+    let incomplete: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM landing_intents WHERE completed = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(incomplete, 0);
+}

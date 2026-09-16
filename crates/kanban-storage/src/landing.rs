@@ -1,19 +1,25 @@
 //! Durable Spec integration ownership and landing records.
 
+use crate::SqliteRulingStore;
 use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::timeline::insert_event;
 use kanban_app::landing::{LandingDraft, LandingStore};
-use kanban_dto::{ApiError, LandingRecord, SpecIntegrationRecord};
-use rusqlite::params;
+use kanban_app::{RulingStore, TimelineFacts};
+use kanban_domain::{Ruling, RulingEntityRef, RulingSummary};
+use kanban_dto::{ApiError, LandingRecord, SpecIntegrationRecord, TimelineEventKind};
+use rusqlite::{OptionalExtension, params};
+use serde_json::json;
 
 pub struct SqliteLandingStore {
     conn: ConnectionHandle,
+    rulings: SqliteRulingStore,
 }
 
 impl SqliteLandingStore {
     pub fn new(database: &Database) -> Self {
         Self {
             conn: database.connection_handle(),
+            rulings: SqliteRulingStore::new(database),
         }
     }
 }
@@ -201,5 +207,79 @@ impl LandingStore for SqliteLandingStore {
             spec_id: record.spec_id,
             ticket_id: record.ticket_id,
         })
+    }
+
+    fn incomplete_intent(&self, key: &str) -> Result<Option<LandingDraft>, ApiError> {
+        let conn = self.conn.lock();
+        let draft: Option<String> = conn
+            .query_row(
+                "SELECT draft FROM landing_intents WHERE idempotency_key = ?1 AND completed = 0",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        draft
+            .map(|draft| serde_json::from_str(&draft).map_err(internal))
+            .transpose()
+    }
+
+    fn recover_landing(
+        &self,
+        key: &str,
+        draft: &LandingDraft,
+        landed_tip: Option<&str>,
+        policy_name: &str,
+        landing_envelope: Option<kanban_app::TimelineEnvelope>,
+        reconcile_envelope: kanban_app::TimelineEnvelope,
+    ) -> Result<(Option<LandingRecord>, u64), ApiError> {
+        let summary = RulingSummary::new(policy_name)
+            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        let ruling = self.rulings.insert(
+            &Ruling::record(
+                draft.project_id,
+                summary,
+                Some(RulingEntityRef {
+                    kind: "project".to_owned(),
+                    id: draft.project_id.to_string(),
+                }),
+            ),
+            TimelineFacts {
+                kind: TimelineEventKind::Ruling,
+                facts: json!({
+                    "summary": policy_name,
+                    "intent_key": key,
+                    "policy": policy_name,
+                }),
+            },
+        )?;
+        let landing = match landed_tip {
+            Some(tip) => {
+                let envelope = landing_envelope.ok_or_else(|| {
+                    ApiError::internal("completed recovery requires a landing envelope")
+                })?;
+                Some(self.record_landing(key, draft, tip, envelope)?)
+            }
+            None => {
+                let conn = self.conn.lock();
+                let span = WriteSpan::begin(&conn).map_err(internal)?;
+                let changed = span
+                    .execute(
+                        "UPDATE landing_intents SET completed = 1 WHERE idempotency_key = ?1 AND completed = 0",
+                        [key],
+                    )
+                    .map_err(internal)?;
+                if changed != 1 {
+                    return Err(ApiError::invalid_request("landing has no pending intent"));
+                }
+                span.commit().map_err(internal)?;
+                None
+            }
+        };
+        let conn = self.conn.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        insert_event(&span, &reconcile_envelope).map_err(internal)?;
+        span.commit().map_err(internal)?;
+        Ok((landing, ruling.id().value()))
     }
 }

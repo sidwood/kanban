@@ -117,6 +117,111 @@ pub fn land_standalone_bug(request: &LandingRequest) -> Result<(), LandingRefusa
     require_reviewed_source(request)
 }
 
+/// Operator policy for reconciling a landing whose Git effect outlived
+/// its durable outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandingRecoveryPolicy {
+    /// Persist the landing record for a Git merge that already succeeded.
+    Complete,
+    /// Drop the reservation when Git did not complete a merge.
+    Release,
+}
+
+impl LandingRecoveryPolicy {
+    /// The named ruling recorded for this policy.
+    pub fn ruling_name(self) -> &'static str {
+        match self {
+            Self::Complete => "git_succeeded_before_durable_completion",
+            Self::Release => "landing_reservation_release",
+        }
+    }
+}
+
+/// Git facts the recovery rule judges, with no I/O of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LandingGitObservation {
+    pub head: String,
+    pub merge_in_progress: bool,
+    pub parents: Vec<String>,
+}
+
+/// What the destination Workspace actually holds after the failed command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LandingObservedOutcome {
+    Merged { landed_tip: String },
+    Conflicted,
+    Unchanged,
+    Diverged,
+}
+
+/// The durable effect the chosen policy is allowed to apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LandingRecoveryEffect {
+    Complete { landed_tip: String },
+    Release { abort_merge: bool },
+}
+
+/// Why recovery refused the operator's policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandingRecoveryRefusal {
+    PolicyDoesNotMatchOutcome,
+}
+
+impl std::fmt::Display for LandingRecoveryRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PolicyDoesNotMatchOutcome => write!(
+                f,
+                "the chosen landing recovery policy does not match the observed Git outcome"
+            ),
+        }
+    }
+}
+
+/// Classify the destination Workspace against the pending landing draft.
+pub fn observe_landing_git(
+    from_tip: &str,
+    into_tip: &str,
+    observation: &LandingGitObservation,
+) -> LandingObservedOutcome {
+    if observation.merge_in_progress {
+        return LandingObservedOutcome::Conflicted;
+    }
+    if observation.head == into_tip {
+        return LandingObservedOutcome::Unchanged;
+    }
+    if observation.parents.len() == 2
+        && observation.parents[0] == into_tip
+        && observation.parents[1] == from_tip
+    {
+        return LandingObservedOutcome::Merged {
+            landed_tip: observation.head.clone(),
+        };
+    }
+    LandingObservedOutcome::Diverged
+}
+
+/// Apply the operator-chosen policy only when it matches the Git outcome.
+pub fn reconcile_landing(
+    outcome: &LandingObservedOutcome,
+    policy: LandingRecoveryPolicy,
+) -> Result<LandingRecoveryEffect, LandingRecoveryRefusal> {
+    match (outcome, policy) {
+        (LandingObservedOutcome::Merged { landed_tip }, LandingRecoveryPolicy::Complete) => {
+            Ok(LandingRecoveryEffect::Complete {
+                landed_tip: landed_tip.clone(),
+            })
+        }
+        (LandingObservedOutcome::Conflicted, LandingRecoveryPolicy::Release) => {
+            Ok(LandingRecoveryEffect::Release { abort_merge: true })
+        }
+        (LandingObservedOutcome::Unchanged, LandingRecoveryPolicy::Release) => {
+            Ok(LandingRecoveryEffect::Release { abort_merge: false })
+        }
+        _ => Err(LandingRecoveryRefusal::PolicyDoesNotMatchOutcome),
+    }
+}
+
 fn require_reviewed_source(request: &LandingRequest) -> Result<(), LandingRefusal> {
     if request.source_tip.is_empty()
         || !request.ticket_review_approved
@@ -133,7 +238,9 @@ fn require_reviewed_source(request: &LandingRequest) -> Result<(), LandingRefusa
 #[cfg(test)]
 mod tests {
     use super::{
-        LandingKind, LandingRefusal, LandingRequest, land_lane, land_seed, land_standalone_bug,
+        LandingGitObservation, LandingKind, LandingObservedOutcome, LandingRecoveryEffect,
+        LandingRecoveryPolicy, LandingRecoveryRefusal, LandingRefusal, LandingRequest, land_lane,
+        land_seed, land_standalone_bug, observe_landing_git, reconcile_landing,
     };
 
     fn lane() -> LandingRequest {
@@ -277,5 +384,68 @@ mod tests {
         );
         request.criteria_satisfied_at_source = 1;
         land_standalone_bug(&request).expect("satisfied qualification criteria may land");
+    }
+
+    fn observation(head: &str, merge_in_progress: bool, parents: &[&str]) -> LandingGitObservation {
+        LandingGitObservation {
+            head: head.to_owned(),
+            merge_in_progress,
+            parents: parents.iter().map(|parent| (*parent).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn landing_recovery_completes_a_no_ff_merge_that_outlived_its_outcome() {
+        let from = "a".repeat(40);
+        let into = "b".repeat(40);
+        let landed = "c".repeat(40);
+        let outcome =
+            observe_landing_git(&from, &into, &observation(&landed, false, &[&into, &from]));
+        assert_eq!(
+            outcome,
+            LandingObservedOutcome::Merged {
+                landed_tip: landed.clone()
+            }
+        );
+        assert_eq!(
+            reconcile_landing(&outcome, LandingRecoveryPolicy::Complete).unwrap(),
+            LandingRecoveryEffect::Complete {
+                landed_tip: landed.clone()
+            }
+        );
+        assert_eq!(
+            LandingRecoveryPolicy::Complete.ruling_name(),
+            "git_succeeded_before_durable_completion"
+        );
+        assert_eq!(
+            reconcile_landing(&outcome, LandingRecoveryPolicy::Release).unwrap_err(),
+            LandingRecoveryRefusal::PolicyDoesNotMatchOutcome
+        );
+    }
+
+    #[test]
+    fn landing_recovery_releases_a_conflicted_or_aborted_merge() {
+        let from = "a".repeat(40);
+        let into = "b".repeat(40);
+        let conflicted = observe_landing_git(&from, &into, &observation(&into, true, &[&into]));
+        assert_eq!(conflicted, LandingObservedOutcome::Conflicted);
+        assert_eq!(
+            reconcile_landing(&conflicted, LandingRecoveryPolicy::Release).unwrap(),
+            LandingRecoveryEffect::Release { abort_merge: true }
+        );
+        let aborted = observe_landing_git(&from, &into, &observation(&into, false, &[&into]));
+        assert_eq!(aborted, LandingObservedOutcome::Unchanged);
+        assert_eq!(
+            reconcile_landing(&aborted, LandingRecoveryPolicy::Release).unwrap(),
+            LandingRecoveryEffect::Release { abort_merge: false }
+        );
+        assert_eq!(
+            LandingRecoveryPolicy::Release.ruling_name(),
+            "landing_reservation_release"
+        );
+        assert_eq!(
+            reconcile_landing(&conflicted, LandingRecoveryPolicy::Complete).unwrap_err(),
+            LandingRecoveryRefusal::PolicyDoesNotMatchOutcome
+        );
     }
 }

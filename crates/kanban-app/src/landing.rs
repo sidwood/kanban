@@ -8,17 +8,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kanban_domain::{
-    LandingKind, LandingRefusal, LandingRequest, ProjectId, SpecExecutionState, SpecId, TicketId,
-    TicketKind, land_lane, land_seed, land_standalone_bug,
+    LandingGitObservation, LandingKind, LandingRecoveryPolicy as DomainRecoveryPolicy,
+    LandingRefusal, LandingRequest, ProjectId, SpecExecutionState, SpecId, TicketId, TicketKind,
+    land_lane, land_seed, land_standalone_bug, observe_landing_git, reconcile_landing,
 };
 use kanban_dto::{
-    ApiError, LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest,
-    ReviewExecutionStatus, SpecIntegrationApproveRequest, SpecIntegrationClaimRequest,
-    SpecIntegrationRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    ApiError, LandingBugRequest, LandingLaneRequest, LandingReconcileRecord,
+    LandingReconcileRequest, LandingRecord, LandingRecoveryPolicy, LandingSeedRequest,
+    LiveEventName, ReviewExecutionStatus, RulingIdentity, SpecIntegrationApproveRequest,
+    SpecIntegrationClaimRequest, SpecIntegrationRecord, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, RegistrationError};
+use crate::events::emit_catalogued;
 use crate::lane::LaneStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::ProjectStore;
@@ -35,6 +39,9 @@ pub trait GitLanding {
     fn require_clean(&self, path: &str) -> Result<(), ApiError>;
     fn require_base(&self, path: &str, base: &str) -> Result<(), ApiError>;
     fn merge(&self, draft: &LandingDraft) -> Result<String, ApiError>;
+    fn merge_in_progress(&self, path: &str) -> Result<bool, ApiError>;
+    fn parents(&self, path: &str) -> Result<Vec<String>, ApiError>;
+    fn abort_merge(&self, path: &str) -> Result<(), ApiError>;
 }
 
 pub trait LandingStore: Send + Sync {
@@ -64,6 +71,16 @@ pub trait LandingStore: Send + Sync {
         landed_tip: &str,
         envelope: TimelineEnvelope,
     ) -> Result<LandingRecord, ApiError>;
+    fn incomplete_intent(&self, key: &str) -> Result<Option<LandingDraft>, ApiError>;
+    fn recover_landing(
+        &self,
+        key: &str,
+        draft: &LandingDraft,
+        landed_tip: Option<&str>,
+        policy_name: &str,
+        landing_envelope: Option<TimelineEnvelope>,
+        reconcile_envelope: TimelineEnvelope,
+    ) -> Result<(Option<LandingRecord>, u64), ApiError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -126,6 +143,7 @@ impl Core {
                 }),
             )?;
         }
+        self.register_command("landing.reconcile", Arc::new(ReconcileLanding(context)))?;
         Ok(())
     }
 }
@@ -676,4 +694,115 @@ impl CommandHandler for LandCommand {
         )?;
         serde_json::to_value(record).map_err(|error| ApiError::internal(&error.to_string()))
     }
+}
+
+struct ReconcileLanding(LandingContext);
+
+fn domain_policy(policy: LandingRecoveryPolicy) -> DomainRecoveryPolicy {
+    match policy {
+        LandingRecoveryPolicy::Complete => DomainRecoveryPolicy::Complete,
+        LandingRecoveryPolicy::Release => DomainRecoveryPolicy::Release,
+    }
+}
+
+impl CommandHandler for ReconcileLanding {
+    fn parse(&self, value: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<LandingReconcileRequest>(value)?;
+        ParsedCommand::lift("landing", value)
+    }
+
+    fn current_version(&self, _: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: LandingReconcileRequest = parse_payload(&command.payload)?;
+        if request.intent_key.is_empty() {
+            return Err(ApiError::invalid_request("an intent key is required"));
+        }
+        let draft = self
+            .0
+            .store
+            .incomplete_intent(&request.intent_key)?
+            .ok_or_else(|| ApiError::not_found("pending landing intent"))?;
+        if draft.project_id != request.project_id {
+            return Err(ApiError::invalid_request(
+                "the landing intent belongs to another Project",
+            ));
+        }
+        let observation = LandingGitObservation {
+            head: self.0.git.head(&draft.into_path)?,
+            merge_in_progress: self.0.git.merge_in_progress(&draft.into_path)?,
+            parents: self.0.git.parents(&draft.into_path)?,
+        };
+        let outcome = observe_landing_git(&draft.from_tip, &draft.into_tip, &observation);
+        let policy = domain_policy(request.policy);
+        let effect = reconcile_landing(&outcome, policy).map_err(refuse_recovery)?;
+        if let kanban_domain::LandingRecoveryEffect::Release { abort_merge: true } = effect {
+            self.0.git.abort_merge(&draft.into_path)?;
+        }
+        let landed_tip = match &effect {
+            kanban_domain::LandingRecoveryEffect::Complete { landed_tip } => {
+                Some(landed_tip.clone())
+            }
+            kanban_domain::LandingRecoveryEffect::Release { .. } => None,
+        };
+        let landing_envelope = landed_tip.as_ref().map(|tip| {
+            transition(
+                ProjectId::new(draft.project_id),
+                TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: draft.project_id.to_string(),
+                },
+                "landed",
+                json!({"intent_key": request.intent_key, "landing": draft, "landed_tip": tip}),
+            )
+        });
+        let policy_name = policy.ruling_name();
+        let reconcile_envelope = transition(
+            ProjectId::new(draft.project_id),
+            TimelineEntityRef {
+                kind: TimelineEntityKind::Project,
+                id: draft.project_id.to_string(),
+            },
+            "landing_reconciled",
+            json!({
+                "intent_key": request.intent_key,
+                "policy": request.policy,
+                "ruling_summary": policy_name,
+                "landed_tip": landed_tip,
+            }),
+        );
+        let (landing, ruling_id) = self.0.store.recover_landing(
+            &request.intent_key,
+            &draft,
+            landed_tip.as_deref(),
+            policy_name,
+            landing_envelope,
+            reconcile_envelope,
+        )?;
+        emit_catalogued(
+            effects,
+            LiveEventName::RulingRecorded,
+            &RulingIdentity { id: ruling_id },
+        );
+        serde_json::to_value(LandingReconcileRecord {
+            project_id: draft.project_id,
+            intent_key: request.intent_key,
+            policy: request.policy,
+            ruling_id,
+            ruling_summary: policy_name.to_owned(),
+            landing,
+            observed_tip: observation.head,
+        })
+        .map_err(|error| ApiError::internal(&error.to_string()))
+    }
+}
+
+fn refuse_recovery(error: kanban_domain::LandingRecoveryRefusal) -> ApiError {
+    ApiError::invalid_request(&error.to_string())
 }

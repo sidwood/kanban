@@ -569,6 +569,9 @@ fn sample_request(schema: &str) -> Value {
         "LandingBugRequest" => {
             json!({"mutation":mutation,"project_id":1,"ticket_id":1,"from_path":"/workspaces/kanban.kan-t2","into_path":"/workspaces/kanban.seed"})
         }
+        "LandingReconcileRequest" => {
+            json!({"mutation":mutation,"project_id":1,"intent_key":"recovery-land","policy":"complete"})
+        }
         "SubmissionSubmitRequest" => json!({
             "mutation": mutation, "run_id": 1, "capability_id": 1,
             "result": {"kind": "implementation", "tip": "a".repeat(40), "summary": "Finished"}
@@ -928,6 +931,9 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "LandingBugRequest" => {
             decode_invoke_args::<kanban_dto::LandingBugRequest>(request).is_err()
+        }
+        "LandingReconcileRequest" => {
+            decode_invoke_args::<kanban_dto::LandingReconcileRequest>(request).is_err()
         }
         "SubmissionSubmitRequest" => {
             decode_invoke_args::<kanban_dto::SubmissionSubmitRequest>(request).is_err()

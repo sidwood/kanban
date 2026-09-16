@@ -83,3 +83,35 @@ pub struct LandingRecord {
     pub spec_id: Option<u64>,
     pub ticket_id: Option<u64>,
 }
+
+/// Operator policy for `landing.reconcile`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LandingRecoveryPolicy {
+    Complete,
+    Release,
+}
+
+/// Request payload for the `landing.reconcile` command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LandingReconcileRequest {
+    pub mutation: super::MutationContext,
+    pub project_id: u64,
+    pub intent_key: String,
+    pub policy: LandingRecoveryPolicy,
+}
+
+/// Record returned by `landing.reconcile`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LandingReconcileRecord {
+    pub project_id: u64,
+    pub intent_key: String,
+    pub policy: LandingRecoveryPolicy,
+    pub ruling_id: u64,
+    pub ruling_summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<LandingRecord>,
+    pub observed_tip: String,
+}

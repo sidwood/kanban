@@ -14,7 +14,8 @@ use crate::{
     CriterionInvalidateRequest, CriterionKindDto, CriterionSatisfyRequest, DeferralPromoteRequest,
     DeferralPromoteResponse, DeferralPromotionRecord, DeferralPromotionTarget, EvidenceReviewDto,
     FindingGetQuery, FindingListQuery, FindingListResponse, FindingRecord, LandingBugRequest,
-    LandingLaneRequest, LandingRecord, LandingSeedRequest, SpecIntegrationApproveRequest,
+    LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest, LandingRecord,
+    LandingRecoveryPolicy, LandingSeedRequest, SpecIntegrationApproveRequest,
     SpecIntegrationClaimRequest, SpecIntegrationRecord,
 };
 use crate::{
@@ -818,6 +819,15 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("LandingBugRequest", schema_for!(LandingBugRequest)),
         ("LandingLaneRequest", schema_for!(LandingLaneRequest)),
         ("LandingRecord", schema_for!(LandingRecord)),
+        ("LandingRecoveryPolicy", schema_for!(LandingRecoveryPolicy)),
+        (
+            "LandingReconcileRecord",
+            schema_for!(LandingReconcileRecord),
+        ),
+        (
+            "LandingReconcileRequest",
+            schema_for!(LandingReconcileRequest),
+        ),
         ("LandingSeedRequest", schema_for!(LandingSeedRequest)),
         (
             "ScheduleAttentionListQuery",

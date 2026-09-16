@@ -68,6 +68,35 @@ impl GitLanding for LocalGitLanding {
         )?;
         self.head(&draft.into_path)
     }
+
+    fn merge_in_progress(&self, path: &str) -> Result<bool, ApiError> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+            .output()
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(ApiError::internal(
+                "Git landing operation failed; inspect the Workspace before recovery",
+            )),
+        }
+    }
+
+    fn parents(&self, path: &str) -> Result<Vec<String>, ApiError> {
+        let line = git_output(path, &["log", "-1", "--pretty=%P"])?;
+        Ok(line.split_whitespace().map(ToOwned::to_owned).collect())
+    }
+
+    fn abort_merge(&self, path: &str) -> Result<(), ApiError> {
+        if !self.merge_in_progress(path)? {
+            return Ok(());
+        }
+        git_output(path, &["merge", "--abort"])?;
+        Ok(())
+    }
 }
 
 fn git_output(path: &str, args: &[&str]) -> Result<String, ApiError> {

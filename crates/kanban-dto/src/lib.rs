@@ -143,8 +143,9 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use landing::{
-    LandingBugRequest, LandingLaneRequest, LandingRecord, LandingSeedRequest,
-    SpecIntegrationApproveRequest, SpecIntegrationClaimRequest, SpecIntegrationRecord,
+    LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,
+    LandingRecord, LandingRecoveryPolicy, LandingSeedRequest, SpecIntegrationApproveRequest,
+    SpecIntegrationClaimRequest, SpecIntegrationRecord,
 };
 pub use lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -606,6 +607,9 @@ mod tests {
                 "LandingBugRequest",
                 "LandingLaneRequest",
                 "LandingRecord",
+                "LandingRecoveryPolicy",
+                "LandingReconcileRecord",
+                "LandingReconcileRequest",
                 "LandingSeedRequest",
                 "ScheduleAttentionListQuery",
                 "ScheduleAttentionListResponse",

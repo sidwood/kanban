@@ -93,7 +93,9 @@ pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
 pub use landing::{
-    LandingKind, LandingRefusal, LandingRequest, land_lane, land_seed, land_standalone_bug,
+    LandingGitObservation, LandingKind, LandingObservedOutcome, LandingRecoveryEffect,
+    LandingRecoveryPolicy, LandingRecoveryRefusal, LandingRefusal, LandingRequest, land_lane,
+    land_seed, land_standalone_bug, observe_landing_git, reconcile_landing,
 };
 pub use lane::{Lane, LaneError, LaneId, workspace_lane_conflict};
 pub use lifecycle::{

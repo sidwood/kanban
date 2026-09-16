@@ -563,6 +563,21 @@ export type LandingLaneRequest = {
   project_id: number;
   spec_id: number;
 };
+export type LandingReconcileRecord = {
+  intent_key: string;
+  landing?: LandingRecord | null;
+  observed_tip: string;
+  policy: LandingRecoveryPolicy;
+  project_id: number;
+  ruling_id: number;
+  ruling_summary: string;
+};
+export type LandingReconcileRequest = {
+  intent_key: string;
+  mutation: MutationContext;
+  policy: LandingRecoveryPolicy;
+  project_id: number;
+};
 export type LandingRecord = {
   from_branch: string;
   from_path: string;
@@ -577,6 +592,7 @@ export type LandingRecord = {
   spec_id?: number | null;
   ticket_id?: number | null;
 };
+export type LandingRecoveryPolicy = 'complete' | 'release';
 export type LandingSeedRequest = {
   from_path: string;
   into_path: string;

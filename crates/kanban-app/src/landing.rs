@@ -73,6 +73,10 @@ pub trait LandingStore: Send + Sync {
         envelope: TimelineEnvelope,
     ) -> Result<LandingRecord, ApiError>;
     fn incomplete_intent(&self, key: &str) -> Result<Option<LandingDraft>, ApiError>;
+    /// Completed landing named by `key`, if any. A key-only match is
+    /// not an operation identity: callers that replay must compare
+    /// the retry's kind and stable request fields before returning
+    /// the record, and must not record an outcome on mismatch.
     fn completed_landing(&self, key: &str) -> Result<Option<LandingRecord>, ApiError>;
     fn recover_landing(
         &self,
@@ -630,6 +634,63 @@ impl LandCommand {
             &into,
         )
     }
+
+    fn completed_matching_landing(
+        &self,
+        command: &ParsedCommand,
+    ) -> Result<Option<LandingRecord>, ApiError> {
+        let Some(record) = self
+            .context
+            .store
+            .completed_landing(&command.idempotency_key)?
+        else {
+            return Ok(None);
+        };
+        if !self.matches_completed(command, &record)? {
+            return Err(ApiError::invalid_request(
+                "the completed landing does not match this request; no outcome was recorded",
+            ));
+        }
+        Ok(Some(record))
+    }
+
+    fn matches_completed(
+        &self,
+        command: &ParsedCommand,
+        record: &LandingRecord,
+    ) -> Result<bool, ApiError> {
+        let kind = match self.kind {
+            LandingKind::Lane => "lane",
+            LandingKind::Seed => "seed",
+            LandingKind::StandaloneBug => "standalone_bug",
+        };
+        if record.kind != kind {
+            return Ok(false);
+        }
+        match self.kind {
+            LandingKind::Lane => {
+                let request: LandingLaneRequest = parse_payload(&command.payload)?;
+                Ok(record.project_id == request.project_id
+                    && record.spec_id == Some(request.spec_id)
+                    && same_path(&record.from_path, &request.from_path)?
+                    && same_path(&record.into_path, &request.into_path)?)
+            }
+            LandingKind::Seed => {
+                let request: LandingSeedRequest = parse_payload(&command.payload)?;
+                Ok(record.project_id == request.project_id
+                    && record.spec_id == Some(request.spec_id)
+                    && same_path(&record.from_path, &request.from_path)?
+                    && same_path(&record.into_path, &request.into_path)?)
+            }
+            LandingKind::StandaloneBug => {
+                let request: LandingBugRequest = parse_payload(&command.payload)?;
+                Ok(record.project_id == request.project_id
+                    && record.ticket_id == Some(request.ticket_id)
+                    && same_path(&record.from_path, &request.from_path)?
+                    && same_path(&record.into_path, &request.into_path)?)
+            }
+        }
+    }
 }
 
 fn landing_event(draft: &LandingDraft, key: &str, action: &str) -> TimelineEnvelope {
@@ -663,12 +724,7 @@ impl CommandHandler for LandCommand {
         Ok(0)
     }
     fn prepare(&self, command: &ParsedCommand) -> Result<(), ApiError> {
-        if self
-            .context
-            .store
-            .completed_landing(&command.idempotency_key)?
-            .is_some()
-        {
+        if self.completed_matching_landing(command)?.is_some() {
             return Ok(());
         }
         let draft = self.plan(command)?;
@@ -680,11 +736,7 @@ impl CommandHandler for LandCommand {
         )
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
-        if let Some(record) = self
-            .context
-            .store
-            .completed_landing(&command.idempotency_key)?
-        {
+        if let Some(record) = self.completed_matching_landing(command)? {
             return serde_json::to_value(record)
                 .map_err(|error| ApiError::internal(&error.to_string()));
         }

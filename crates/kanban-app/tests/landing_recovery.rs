@@ -125,6 +125,43 @@ fn incomplete_intents(wired: &Wired) -> i64 {
     )
 }
 
+fn outcome_rows(wired: &Wired, key: &str) -> i64 {
+    open_db(wired)
+        .query_row(
+            "SELECT COUNT(*) FROM idempotency_outcomes WHERE idempotency_key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn outcome_fingerprint(wired: &Wired, key: &str) -> String {
+    open_db(wired)
+        .query_row(
+            "SELECT fingerprint FROM idempotency_outcomes WHERE idempotency_key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .expect("the matching retry records the real fingerprint")
+}
+
+fn refuse_mismatched_retry(wired: &Wired, command: &str, request: serde_json::Value, key: &str) {
+    let error = wired
+        .core
+        .command(command, &request)
+        .expect_err("a mismatched retry must not replay the completed landing");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("does not match"),
+        "mismatch must fail closed without binding the key: {error:?}"
+    );
+    assert_eq!(
+        outcome_rows(wired, key),
+        0,
+        "a mismatched retry must not record an outcome"
+    );
+}
+
 fn landing_rows(wired: &Wired) -> i64 {
     count_sql(wired, "SELECT COUNT(*) FROM landings")
 }
@@ -897,5 +934,143 @@ fn landing_recovery_completes_a_migrated_pending_seed_intent() {
         &wired,
         "landing.seed",
         land_seed_request(&wired, &spec, "later-migrated-seed"),
+    );
+}
+
+#[test]
+fn landing_recovery_refuses_a_wrong_operation_before_binding_a_migrated_key() {
+    let wired = wired();
+    let spec = claimed_spec(&wired, "mismatch-lane");
+    reviewed_lane(&wired, &spec, "mismatch-lane");
+    fail_outcome(&wired, "mismatch-lane-land");
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.lane",
+                &land_lane_request(&wired, &spec, "mismatch-lane-land")
+            )
+            .is_err()
+    );
+    drop_outcome_failure(&wired);
+    backfill_empty_command_fingerprint(&wired, "mismatch-lane-land");
+    let recovered = reconcile(
+        &wired,
+        "mismatch-lane-land",
+        "complete",
+        "reconcile-mismatch-lane",
+    )
+    .expect("a schema-50 Lane intent completes after migration 0051");
+    assert_eq!(recovered["landing"]["kind"], "lane");
+    assert_eq!(landing_rows(&wired), 1);
+    assert_eq!(outcome_rows(&wired, "mismatch-lane-land"), 0);
+
+    refuse_mismatched_retry(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "mismatch-lane-land"),
+        "mismatch-lane-land",
+    );
+    let mut changed_body = land_lane_request(&wired, &spec, "mismatch-lane-land");
+    changed_body["spec_id"] = json!(999);
+    refuse_mismatched_retry(&wired, "landing.lane", changed_body, "mismatch-lane-land");
+    assert_eq!(landing_rows(&wired), 1);
+
+    replay_completed_landing(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "mismatch-lane-land"),
+        "lane",
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_eq!(landing_rows(&wired), 1);
+    assert_eq!(outcome_rows(&wired, "mismatch-lane-land"), 1);
+    let fingerprint = outcome_fingerprint(&wired, "mismatch-lane-land");
+    assert!(
+        fingerprint.contains("landing.lane"),
+        "the bound fingerprint must name the original operation: {fingerprint}"
+    );
+    replay_completed_landing(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "mismatch-lane-land"),
+        "lane",
+        &recovered["landing"]["landed_tip"],
+    );
+    let seed_after_bind = wired
+        .core
+        .command(
+            "landing.seed",
+            &land_seed_request(&wired, &spec, "mismatch-lane-land"),
+        )
+        .expect_err("the bound fingerprint still refuses a different operation");
+    assert_eq!(seed_after_bind.code, ErrorCode::DuplicateIdempotencyKey);
+}
+
+#[test]
+fn landing_recovery_refuses_a_wrong_operation_before_binding_a_migrated_seed_key() {
+    let wired = wired();
+    let spec = claimed_spec(&wired, "mismatch-seed");
+    reviewed_lane(&wired, &spec, "mismatch-seed");
+    wired
+        .core
+        .command(
+            "landing.lane",
+            &land_lane_request(&wired, &spec, "mismatch-seed-lane"),
+        )
+        .expect("the lane lands first");
+    wired
+        .core
+        .command(
+            "spec.integration.approve",
+            &json!({
+                "mutation": mutation(spec_version(&wired.core, &spec), "mismatch-seed-approve"),
+                "spec_id": spec["id"],
+                "reviewed_tip": head_tip(&wired.integration),
+                "reviewer": "operator",
+                "evidence": "Combined-result acceptance review",
+            }),
+        )
+        .expect("the combined result is approved");
+    fail_outcome(&wired, "mismatch-seed-land");
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.seed",
+                &land_seed_request(&wired, &spec, "mismatch-seed-land"),
+            )
+            .is_err()
+    );
+    drop_outcome_failure(&wired);
+    backfill_empty_command_fingerprint(&wired, "mismatch-seed-land");
+    let recovered = reconcile(
+        &wired,
+        "mismatch-seed-land",
+        "complete",
+        "reconcile-mismatch-seed",
+    )
+    .expect("a schema-50 Seed intent completes after migration 0051");
+    assert_eq!(recovered["landing"]["kind"], "seed");
+    assert_eq!(outcome_rows(&wired, "mismatch-seed-land"), 0);
+
+    refuse_mismatched_retry(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "mismatch-seed-land"),
+        "mismatch-seed-land",
+    );
+    replay_completed_landing(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "mismatch-seed-land"),
+        "seed",
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_eq!(outcome_rows(&wired, "mismatch-seed-land"), 1);
+    let fingerprint = outcome_fingerprint(&wired, "mismatch-seed-land");
+    assert!(
+        fingerprint.contains("landing.seed"),
+        "the bound fingerprint must name the original operation: {fingerprint}"
     );
 }

@@ -85,8 +85,9 @@ impl SqliteLandingStore {
                 .map_err(internal)?;
             // Schema 50 intents keep command_fingerprint = ''. Do not
             // invent a v2 fingerprint from the draft: it would not match
-            // the original request body, so the completed intent is the
-            // original-key resolution until a retry records the real one.
+            // the original request body. The completed intent is the
+            // original-key resolution until a matching retry records the
+            // real fingerprint.
             if !fingerprint.is_empty() {
                 let response = serde_json::to_string(&landing).map_err(internal)?;
                 span.execute(

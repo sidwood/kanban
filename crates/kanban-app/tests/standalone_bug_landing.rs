@@ -678,6 +678,127 @@ fn standalone_bug_landing_completes_a_migrated_pending_intent() {
 }
 
 #[test]
+fn standalone_bug_landing_refuses_a_wrong_operation_before_binding_a_migrated_key() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-mismatch"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-mismatch",
+        true,
+    );
+    let conn = rusqlite::Connection::open(wired._dir.path().join("kanban.sqlite")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_landing_outcome BEFORE INSERT ON idempotency_outcomes
+        WHEN NEW.idempotency_key = 'mismatch-bug' BEGIN SELECT RAISE(ABORT, 'outcome failed'); END;",
+    )
+    .unwrap();
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.bug",
+                &land_bug_request(&wired, &ticket, "mismatch-bug"),
+            )
+            .is_err()
+    );
+    conn.execute_batch("DROP TRIGGER fail_landing_outcome")
+        .unwrap();
+    conn.execute(
+        "UPDATE landing_intents SET command_fingerprint = '' WHERE idempotency_key = 'mismatch-bug'",
+        [],
+    )
+    .expect("migration 0051 backfills existing intents with an empty fingerprint");
+    let recovered = wired
+        .core
+        .command(
+            "landing.reconcile",
+            &json!({
+                "mutation": mutation(0, "reconcile-mismatch-bug"),
+                "project_id": 1,
+                "intent_key": "mismatch-bug",
+                "policy": "complete",
+            }),
+        )
+        .expect("a schema-50 Bug intent completes after migration 0051");
+    assert_eq!(recovered["landing"]["kind"], "standalone_bug");
+    let outcomes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM idempotency_outcomes WHERE idempotency_key = 'mismatch-bug'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcomes, 0);
+
+    let error = wired
+        .core
+        .command(
+            "landing.seed",
+            &json!({
+                "mutation": mutation(0, "mismatch-bug"),
+                "project_id": 1,
+                "spec_id": 1,
+                "from_path": wired.bug.to_str().expect("utf-8"),
+                "into_path": wired.seed.to_str().expect("utf-8"),
+            }),
+        )
+        .expect_err("a mismatched retry must not replay the completed Bug landing");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("does not match"),
+        "mismatch must fail closed without binding the key: {error:?}"
+    );
+    let outcomes_after_mismatch: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM idempotency_outcomes WHERE idempotency_key = 'mismatch-bug'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(outcomes_after_mismatch, 0);
+    let landings: i64 = conn
+        .query_row("SELECT COUNT(*) FROM landings", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(landings, 1);
+
+    replay_completed_landing(
+        &wired,
+        land_bug_request(&wired, &ticket, "mismatch-bug"),
+        &recovered["landing"]["landed_tip"],
+    );
+    let fingerprint: String = conn
+        .query_row(
+            "SELECT fingerprint FROM idempotency_outcomes WHERE idempotency_key = 'mismatch-bug'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the matching retry records the real fingerprint");
+    assert!(
+        fingerprint.contains("landing.bug"),
+        "the bound fingerprint must name the original operation: {fingerprint}"
+    );
+}
+
+#[test]
 fn standalone_bug_landing_releases_a_conflicted_merge() {
     let wired = wired();
     let ticket = wired

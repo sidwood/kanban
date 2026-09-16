@@ -238,6 +238,35 @@ pub fn invalidate_on_content_change(binding: &mut CriterionBinding, observed: &R
     }
 }
 
+/// Void a binding because the criterion it satisfied was replaced.
+/// Count is not identity: a same-index replacement cannot keep the
+/// earned review or satisfaction.
+pub fn invalidate_on_criterion_replacement(binding: &mut CriterionBinding) {
+    binding.void = true;
+    binding.satisfied = false;
+}
+
+/// How many current landing criteria have a non-void satisfied binding
+/// at `source_tip`. A matching binding count is not enough; each
+/// current index must still be earned.
+pub fn satisfied_landing_criteria(
+    criteria: &[crate::AcceptanceCriterion],
+    bindings: &[CriterionBinding],
+    source_tip: &str,
+) -> usize {
+    criteria
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            bindings.iter().any(|binding| {
+                binding.criterion_index() as usize == *index
+                    && binding.satisfied()
+                    && binding.tip() == source_tip
+            })
+        })
+        .count()
+}
+
 /// A historical approval that content change already voided cannot
 /// satisfy a criterion again.
 pub fn refuse_spent_approval(spent: bool) -> Result<(), TipBindingError> {
@@ -275,9 +304,9 @@ mod tests {
     use super::{
         CriterionKind, EvidenceReview, ReviewExecutionState, ReviewedContent, TipBindingError,
         attach_criterion_evidence, complete_task_criterion, complete_task_criterion_kind,
-        invalidate_on_content_change, refuse_spent_approval,
+        invalidate_on_content_change, invalidate_on_criterion_replacement, refuse_spent_approval,
         require_completed_required_stage_review, review_criterion_evidence,
-        satisfy_at_approved_tip,
+        satisfied_landing_criteria, satisfy_at_approved_tip,
     };
 
     fn approved_at(tip: &str) -> super::CriterionBinding {
@@ -456,6 +485,50 @@ mod tests {
             "unreadable content conservatively voids outstanding approvals"
         );
         assert!(!binding.satisfied());
+    }
+
+    #[test]
+    fn criterion_replacement_voids_earned_satisfaction() {
+        let tip = "a".repeat(40);
+        let mut binding = approved_at(&tip);
+
+        invalidate_on_criterion_replacement(&mut binding);
+
+        assert!(binding.void());
+        assert!(!binding.satisfied());
+        assert_eq!(
+            satisfy_at_approved_tip(&mut binding, &tip),
+            Err(TipBindingError::AlreadyVoid),
+            "the old binding cannot satisfy a replacement criterion"
+        );
+    }
+
+    #[test]
+    fn landing_satisfaction_does_not_treat_matching_counts_as_identity() {
+        let tip = "a".repeat(40);
+        let mut binding = approved_at(&tip);
+        let criteria = [crate::AcceptanceCriterion::new(
+            "The source tip is reviewed before the merge.",
+            vec![
+                crate::UserStoryRef::new(
+                    crate::SpecNumber::new(1).expect("the Spec number is valid"),
+                    7,
+                )
+                .expect("the story ordinal is valid"),
+            ],
+        )
+        .expect("the replacement criterion is valid")];
+
+        assert_eq!(
+            satisfied_landing_criteria(&criteria, &[binding.clone()], &tip),
+            1
+        );
+        invalidate_on_criterion_replacement(&mut binding);
+        assert_eq!(
+            satisfied_landing_criteria(&criteria, &[binding], &tip),
+            0,
+            "a voided same-index binding does not satisfy the current criterion"
+        );
     }
 
     #[test]

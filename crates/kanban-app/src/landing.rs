@@ -11,6 +11,7 @@ use kanban_domain::{
     LandingGitObservation, LandingKind, LandingRecoveryPolicy as DomainRecoveryPolicy,
     LandingRefusal, LandingRequest, ProjectId, SpecExecutionState, SpecId, TicketId, TicketKind,
     land_lane, land_seed, land_standalone_bug, observe_landing_git, reconcile_landing,
+    satisfied_landing_criteria,
 };
 use kanban_dto::{
     ApiError, LandingBugRequest, LandingLaneRequest, LandingReconcileRecord,
@@ -548,17 +549,10 @@ fn source_review(
     let approved = latest.as_ref().is_some_and(|review| {
         review.status == ReviewExecutionStatus::Approved && review.tip == source_tip
     });
-    let criterion_count = ticket.landing_criteria().len();
+    let criteria = ticket.landing_criteria();
+    let criterion_count = criteria.len();
     let bindings = context.bindings.list(ticket_id)?;
-    let satisfied_at_source = if bindings.len() == criterion_count
-        && bindings
-            .iter()
-            .all(|binding| binding.satisfied() && binding.tip() == source_tip)
-    {
-        criterion_count
-    } else {
-        criterion_count.wrapping_add(1)
-    };
+    let satisfied_at_source = satisfied_landing_criteria(criteria, &bindings, source_tip);
     Ok(SourceReviewFacts {
         approved,
         reviewed_tip,

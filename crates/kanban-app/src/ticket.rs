@@ -16,7 +16,7 @@
 //! their own tickets; readiness stays a computed projection, so
 //! qualifying a Bug never moves its state.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kanban_domain::{
     AcceptanceCriterion, BugFacts, BugQualification, CompletionCriterion as DomainCompletion,
@@ -35,7 +35,7 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
-use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::dispatch::{Core, LandingCriteriaReplacement, QueryHandler, RegistrationError};
 use crate::events::{EventSink, emit_catalogued};
 use crate::evidence::{EvidenceFilter, EvidenceStore};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
@@ -130,6 +130,7 @@ struct TicketContext {
     projects: Arc<dyn ProjectStore>,
     specs: Arc<dyn SpecStore>,
     evidence: Arc<dyn EvidenceStore>,
+    landing_criteria_replacement: Arc<Mutex<Option<Arc<dyn LandingCriteriaReplacement>>>>,
 }
 
 impl TicketContext {
@@ -168,6 +169,7 @@ impl Core {
             projects,
             specs,
             evidence,
+            landing_criteria_replacement: self.landing_criteria_replacement.clone(),
         };
         self.register_command("ticket.create", Arc::new(CreateTicket(context.clone())))?;
         self.register_command(
@@ -359,13 +361,27 @@ impl CommandHandler for QualifyBug {
     fn apply(
         &self,
         command: &ParsedCommand,
-        _events: &dyn CommandEffects,
+        events: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: TicketBugQualifyRequest = parse_payload(&command.payload)?;
         let (project, mut ticket) = self.0.open(request.ticket_id)?;
         let qualification = qualification_of(&request.qualification, &project)?;
         let severity = qualification.severity();
+        let criteria_replaced = ticket.landing_criteria() != qualification.criteria();
         ticket.qualify(qualification).map_err(refuse)?;
+        // Void earned bindings before the qualification write so a
+        // failed save cannot leave the replacement ready to land on
+        // the old satisfaction. Same-body replay skips this path.
+        if criteria_replaced
+            && let Some(hook) = self
+                .0
+                .landing_criteria_replacement
+                .lock()
+                .expect("the replacement lock is sound")
+                .clone()
+        {
+            hook.on_replaced(&ticket, events)?;
+        }
         let facts = json!({
             "severity": severity.wire_name(),
             "version": ticket.version(),

@@ -56,10 +56,10 @@ fn init_repo(dir: &Path) -> PathBuf {
     dir.to_path_buf()
 }
 
-fn mutation(version: u64, key: &str) -> serde_json::Value {
+fn mutation(version: u64, key: impl AsRef<str>) -> serde_json::Value {
     json!({
         "optimistic_version": version,
-        "idempotency_key": key,
+        "idempotency_key": key.as_ref(),
     })
 }
 
@@ -859,4 +859,357 @@ fn standalone_bug_landing_releases_a_conflicted_merge() {
     for key in ["conflict-bug", "later-bug"] {
         assert_key_is_not_reserved(&wired, land_bug_request(&wired, &ticket, key));
     }
+}
+
+fn reviewed_satisfied_bug(key: &str) -> (Wired, serde_json::Value) {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, format!("{key}-create")),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        key,
+        true,
+    );
+    (wired, ticket)
+}
+
+fn ticket_record(wired: &Wired, ticket: &serde_json::Value) -> serde_json::Value {
+    wired
+        .core
+        .query("ticket.get", &json!({ "ticket_id": ticket["id"] }))
+        .expect("the Ticket reads")
+}
+
+fn source_tip(dir: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git rev-parse runs");
+    assert!(output.status.success(), "git rev-parse HEAD succeeds");
+    String::from_utf8(output.stdout)
+        .expect("the tip is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+/// The qualification `complete_source_review` writes for an
+/// unqualified standalone Bug. Same-body replay must match this
+/// exactly or the command is a replacement, not a replay.
+fn source_review_qualification(criteria_outcome: &str, stories: &[&str]) -> serde_json::Value {
+    json!({
+        "expected_behaviour": "The standalone Bug lands only after review.",
+        "reproduction": "Land without a Ticket review.",
+        "environment": "macOS, disposable git fixtures.",
+        "severity": "high",
+        "frequency": "Every unreviewed landing.",
+        "affected_scope": "Seed landing.",
+        "risk": "Unreviewed code lands.",
+        "criteria": [{
+            "outcome": criteria_outcome,
+            "stories": stories,
+        }],
+        "verification_steps": [{
+            "command": "cargo test -p kanban-app --test standalone_bug_landing"
+        }]
+    })
+}
+
+fn qualify_request(
+    wired: &Wired,
+    ticket: &serde_json::Value,
+    key: &str,
+    qualification: serde_json::Value,
+) -> serde_json::Value {
+    let current = ticket_record(wired, ticket);
+    json!({
+        "mutation": mutation(
+            current["version"].as_u64().expect("the Ticket version is a number"),
+            key,
+        ),
+        "ticket_id": ticket["id"],
+        "qualification": qualification,
+    })
+}
+
+fn qualify_bug(
+    wired: &Wired,
+    ticket: &serde_json::Value,
+    key: &str,
+    qualification: serde_json::Value,
+) -> serde_json::Value {
+    let request = qualify_request(wired, ticket, key, qualification);
+    wired
+        .core
+        .command("ticket.bug.qualify", &request)
+        .expect("the Bug qualifies")
+}
+
+fn listed_bindings(wired: &Wired, ticket: &serde_json::Value) -> serde_json::Value {
+    wired
+        .core
+        .query("criterion.bindings", &json!({ "ticket_id": ticket["id"] }))
+        .expect("the criterion bindings list")
+}
+
+fn review_history(wired: &Wired, ticket: &serde_json::Value) -> serde_json::Value {
+    wired
+        .core
+        .query("review.history", &json!({ "ticket_id": ticket["id"] }))
+        .expect("the review history reads")
+}
+
+fn satisfy_replacement(wired: &Wired, ticket: &serde_json::Value, key: &str) {
+    let tip = source_tip(&wired.bug);
+    let ticket_id = ticket["id"]
+        .as_u64()
+        .expect("the Ticket identity is a number");
+    let evidence = wired
+        .core
+        .command(
+            "evidence.attach",
+            &json!({
+                "mutation": mutation(0, format!("{key}-evidence")),
+                "project_id": 1,
+                "entity_kind": "ticket",
+                "entity_id": ticket_id.to_string(),
+                "evidence_kind": "repository",
+                "relative_path": "fix.md",
+                "commit_identity": tip,
+            }),
+        )
+        .expect("replacement evidence attaches");
+    wired
+        .core
+        .command(
+            "criterion.evidence.attach",
+            &json!({
+                "mutation": mutation(0, format!("{key}-bind")),
+                "ticket_id": ticket_id,
+                "criterion_index": 0,
+                "evidence_id": evidence["id"],
+                "tip": tip,
+            }),
+        )
+        .expect("evidence binds to the replacement criterion");
+    wired
+        .core
+        .command(
+            "criterion.evidence.review",
+            &json!({
+                "mutation": mutation(0, format!("{key}-validate")),
+                "ticket_id": ticket_id,
+                "criterion_index": 0,
+                "review": "validated",
+            }),
+        )
+        .expect("reviewers validate the replacement evidence");
+    wired
+        .core
+        .command(
+            "criterion.satisfy",
+            &json!({
+                "mutation": mutation(0, format!("{key}-satisfy")),
+                "ticket_id": ticket_id,
+                "criterion_index": 0,
+                "tip": tip,
+            }),
+        )
+        .expect("the replacement criterion is satisfied at the source tip");
+}
+
+#[test]
+fn standalone_bug_landing_refuses_after_a_satisfied_criterion_is_replaced() {
+    let (wired, ticket) = reviewed_satisfied_bug("replace-ac1");
+    qualify_bug(
+        &wired,
+        &ticket,
+        "replace-ac1-later",
+        source_review_qualification(
+            "The Bug exports the replacement requirement.",
+            &["CORE-S1-US5"],
+        ),
+    );
+
+    let bindings = listed_bindings(&wired, &ticket);
+    assert_eq!(
+        bindings["bindings"].as_array().map(Vec::len),
+        Some(1),
+        "replacement keeps the historical binding row: {bindings:?}"
+    );
+    assert_eq!(
+        bindings["bindings"][0]["void"],
+        json!(true),
+        "replacement voids the old satisfaction: {bindings:?}"
+    );
+    assert_eq!(
+        bindings["bindings"][0]["satisfied"],
+        json!(false),
+        "a voided binding is not satisfied: {bindings:?}"
+    );
+
+    let error = wired
+        .core
+        .command(
+            "landing.bug",
+            &land_bug_request(&wired, &ticket, "replace-ac1-land"),
+        )
+        .expect_err("landing must refuse the replaced, unvalidated criterion");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(
+        error.message.contains("criterion"),
+        "ordinary landing must name the missing replacement criterion: {error:?}"
+    );
+    assert!(!wired.seed.join("fix.md").exists());
+
+    satisfy_replacement(&wired, &ticket, "replace-ac1-again");
+    let landed = wired
+        .core
+        .command(
+            "landing.bug",
+            &land_bug_request(&wired, &ticket, "replace-ac1-land-after"),
+        )
+        .expect("landing proceeds once the replacement criterion is evidenced and validated");
+    assert_eq!(landed["kind"], "standalone_bug");
+    assert!(wired.seed.join("fix.md").exists());
+}
+
+#[test]
+fn standalone_bug_landing_binds_satisfaction_to_criterion_content() {
+    let (wired, ticket) = reviewed_satisfied_bug("replace-ac2");
+    let before = ticket_record(&wired, &ticket);
+    assert_eq!(
+        before["bug"]["qualification"]["criteria"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    qualify_bug(
+        &wired,
+        &ticket,
+        "replace-ac2-later",
+        source_review_qualification(
+            "The Bug exports the replacement requirement.",
+            &["CORE-S1-US5"],
+        ),
+    );
+    let after = ticket_record(&wired, &ticket);
+    assert_eq!(
+        after["bug"]["qualification"]["criteria"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "the replacement keeps one criterion so a count-only guard would still pass"
+    );
+    assert_ne!(
+        after["bug"]["qualification"]["criteria"][0]["outcome"],
+        before["bug"]["qualification"]["criteria"][0]["outcome"]
+    );
+
+    let bindings = listed_bindings(&wired, &ticket);
+    assert_eq!(bindings["bindings"].as_array().map(Vec::len), Some(1));
+    let error = wired
+        .core
+        .command(
+            "landing.bug",
+            &land_bug_request(&wired, &ticket, "replace-ac2-land"),
+        )
+        .expect_err("a same-count replacement cannot reuse the old binding");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(error.message.contains("criterion"), "{error:?}");
+
+    let reused = wired.core.command(
+        "criterion.satisfy",
+        &json!({
+            "mutation": mutation(0, "replace-ac2-reuse"),
+            "ticket_id": ticket["id"],
+            "criterion_index": 0,
+            "tip": source_tip(&wired.bug),
+        }),
+    );
+    assert!(
+        reused.is_err(),
+        "the old binding cannot satisfy the replacement criterion: {reused:?}"
+    );
+}
+
+#[test]
+fn standalone_bug_same_body_qualify_replay_stays_idempotent() {
+    let (wired, ticket) = reviewed_satisfied_bug("replace-ac3");
+    let before_bindings = listed_bindings(&wired, &ticket);
+    let before_history = review_history(&wired, &ticket);
+    let before_attempts = before_history["attempts"]
+        .as_array()
+        .expect("review history lists attempts")
+        .len();
+    assert_eq!(before_attempts, 1, "the source review created one attempt");
+
+    let qualification = source_review_qualification(
+        "The source tip is reviewed before the merge.",
+        &["CORE-S1-US7"],
+    );
+    let request = qualify_request(&wired, &ticket, "replace-ac3-same-body", qualification);
+    let first = wired
+        .core
+        .command("ticket.bug.qualify", &request)
+        .expect("the same-body qualify applies once");
+    let replay = wired
+        .core
+        .command("ticket.bug.qualify", &request)
+        .expect("the same-body key replays without reapplying");
+    assert_eq!(
+        first, replay,
+        "the same-body key replays without reapplying"
+    );
+
+    let after_bindings = listed_bindings(&wired, &ticket);
+    assert_eq!(
+        after_bindings["bindings"][0]["satisfied"],
+        json!(true),
+        "same-body replay must not void the earned satisfaction: {after_bindings:?}"
+    );
+    assert_eq!(
+        after_bindings["bindings"][0]["void"],
+        json!(false),
+        "same-body replay must not void the review binding: {after_bindings:?}"
+    );
+    assert_eq!(
+        after_bindings["bindings"][0]["tip"],
+        before_bindings["bindings"][0]["tip"]
+    );
+
+    let after_history = review_history(&wired, &ticket);
+    assert_eq!(
+        after_history["attempts"].as_array().map(Vec::len),
+        Some(before_attempts),
+        "same-body qualify must not invent a second review: {after_history:?}"
+    );
+
+    let landed = wired
+        .core
+        .command(
+            "landing.bug",
+            &land_bug_request(&wired, &ticket, "replace-ac3-land"),
+        )
+        .expect("same-body qualify leaves the Bug ready to land");
+    assert_eq!(landed["kind"], "standalone_bug");
 }

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use kanban_domain::{
     CriterionBinding, CriterionKind, EvidenceReview, ReviewExecutionState, ReviewedContent, Ticket,
     TicketId, TicketKind, TipBindingError, attach_criterion_evidence, complete_task_criterion,
-    invalidate_on_content_change, refuse_spent_approval, require_completed_required_stage_review,
-    review_criterion_evidence, satisfy_at_approved_tip,
+    invalidate_on_content_change, invalidate_on_criterion_replacement, refuse_spent_approval,
+    require_completed_required_stage_review, review_criterion_evidence, satisfy_at_approved_tip,
 };
 use kanban_dto::{
     ApiError, CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
@@ -19,7 +19,9 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
-use crate::dispatch::{Core, ObservedWorkspaceHead, QueryHandler, RegistrationError};
+use crate::dispatch::{
+    Core, LandingCriteriaReplacement, ObservedWorkspaceHead, QueryHandler, RegistrationError,
+};
 use crate::events::emit_catalogued;
 use crate::evidence::{EvidenceFilter, EvidenceStore};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
@@ -71,6 +73,10 @@ impl Core {
             .observed_workspace_head
             .lock()
             .expect("the observed-head lock is sound") = Some(Arc::new(context.clone()));
+        *self
+            .landing_criteria_replacement
+            .lock()
+            .expect("the replacement lock is sound") = Some(Arc::new(context.clone()));
         self.register_command(
             "criterion.evidence.attach",
             Arc::new(AttachCriterionEvidence(context.clone())),
@@ -154,6 +160,29 @@ impl ObservedWorkspaceHead for BindingContext {
                 ticket_id,
                 &binding,
                 envelope(&ticket, "invalidated", json!({ "observed_content": true })),
+            )?;
+            announce(effects, ticket_id, &binding);
+        }
+        Ok(())
+    }
+}
+
+impl LandingCriteriaReplacement for BindingContext {
+    fn on_replaced(&self, ticket: &Ticket, effects: &dyn CommandEffects) -> Result<(), ApiError> {
+        let ticket_id = ticket.id().value();
+        for mut binding in self.bindings.list(ticket_id)? {
+            if binding.void() {
+                continue;
+            }
+            invalidate_on_criterion_replacement(&mut binding);
+            self.bindings.save(
+                ticket_id,
+                &binding,
+                envelope(
+                    ticket,
+                    "invalidated",
+                    json!({ "qualification_replaced": true }),
+                ),
             )?;
             announce(effects, ticket_id, &binding);
         }

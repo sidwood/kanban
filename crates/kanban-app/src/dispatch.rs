@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use kanban_domain::ReviewedContent;
+use kanban_domain::{ReviewedContent, Ticket};
 use kanban_dto::ApiError;
 use serde_json::Value;
 
@@ -64,6 +64,11 @@ pub struct Core {
     /// content change can void outstanding criterion approvals without
     /// an operator `criterion.invalidate`.
     pub(crate) observed_workspace_head: Arc<Mutex<Option<Arc<dyn ObservedWorkspaceHead>>>>,
+    /// Criterion binding registration fills this so a later Bug
+    /// qualification that replaces landing criteria can void the
+    /// earned satisfaction without a separate operator command.
+    pub(crate) landing_criteria_replacement:
+        Arc<Mutex<Option<Arc<dyn LandingCriteriaReplacement>>>>,
 }
 
 /// Receives the reviewed content a Workspace observation just recorded.
@@ -75,6 +80,12 @@ pub trait ObservedWorkspaceHead: Send + Sync {
         observed: &ReviewedContent,
         effects: &dyn CommandEffects,
     ) -> Result<(), ApiError>;
+}
+
+/// Receives a Bug qualification whose landing criteria replaced the
+/// ones already bound. Same-body replay must not call this.
+pub trait LandingCriteriaReplacement: Send + Sync {
+    fn on_replaced(&self, ticket: &Ticket, effects: &dyn CommandEffects) -> Result<(), ApiError>;
 }
 
 impl Core {
@@ -151,6 +162,7 @@ impl Core {
             agent_authority: None,
             installation_secret: None,
             observed_workspace_head: Arc::new(Mutex::new(None)),
+            landing_criteria_replacement: Arc::new(Mutex::new(None)),
         }
     }
 

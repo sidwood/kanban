@@ -105,6 +105,15 @@ fn drop_outcome_failure(wired: &Wired) {
         .unwrap();
 }
 
+fn backfill_empty_command_fingerprint(wired: &Wired, key: &str) {
+    open_db(wired)
+        .execute(
+            "UPDATE landing_intents SET command_fingerprint = '' WHERE idempotency_key = ?1",
+            [key],
+        )
+        .expect("migration 0051 backfills existing intents with an empty fingerprint");
+}
+
 fn count_sql(wired: &Wired, sql: &str) -> i64 {
     open_db(wired).query_row(sql, [], |row| row.get(0)).unwrap()
 }
@@ -760,4 +769,133 @@ fn landing_recovery_releases_a_conflicted_seed_merge() {
             land_seed_request(&wired, &spec, key),
         );
     }
+}
+
+#[test]
+fn landing_recovery_completes_a_pending_intent_migrated_with_an_empty_fingerprint() {
+    let wired = wired();
+    let spec = claimed_spec(&wired, "migrated");
+    reviewed_lane(&wired, &spec, "migrated");
+    fail_outcome(&wired, "migrated-land");
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.lane",
+                &land_lane_request(&wired, &spec, "migrated-land")
+            )
+            .is_err()
+    );
+    assert!(
+        wired.integration.join("lane.md").exists(),
+        "the external merge happened"
+    );
+    assert_eq!(incomplete_intents(&wired), 1);
+    assert_eq!(landing_rows(&wired), 0);
+    drop_outcome_failure(&wired);
+    backfill_empty_command_fingerprint(&wired, "migrated-land");
+
+    let recovered = reconcile(&wired, "migrated-land", "complete", "reconcile-migrated")
+        .expect("a schema-50 pending intent completes after migration 0051");
+    assert_eq!(recovered["policy"], "complete");
+    assert_eq!(
+        recovered["ruling_summary"],
+        "git_succeeded_before_durable_completion"
+    );
+    assert_eq!(recovered["landing"]["kind"], "lane");
+    assert_eq!(
+        recovered["landing"]["landed_tip"],
+        head_tip(&wired.integration)
+    );
+    assert_eq!(incomplete_intents(&wired), 0);
+    assert_eq!(landing_rows(&wired), 1);
+    assert!(
+        ruling_summaries(&wired)
+            .iter()
+            .any(|summary| summary == "git_succeeded_before_durable_completion"),
+        "the named policy is recorded as a ruling: {:?}",
+        ruling_summaries(&wired)
+    );
+    assert!(
+        timeline_actions(&wired)
+            .iter()
+            .any(|action| action == "landing_reconciled"),
+        "reconcile is on the timeline: {:?}",
+        timeline_actions(&wired)
+    );
+
+    replay_completed_landing(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "migrated-land"),
+        "lane",
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_eq!(landing_rows(&wired), 1);
+    assert_key_is_not_reserved(
+        &wired,
+        "landing.lane",
+        land_lane_request(&wired, &spec, "later-migrated"),
+    );
+}
+
+#[test]
+fn landing_recovery_completes_a_migrated_pending_seed_intent() {
+    let wired = wired();
+    let spec = claimed_spec(&wired, "migrated-seed");
+    reviewed_lane(&wired, &spec, "migrated-seed");
+    wired
+        .core
+        .command(
+            "landing.lane",
+            &land_lane_request(&wired, &spec, "migrated-seed-lane"),
+        )
+        .expect("the lane lands first");
+    wired
+        .core
+        .command(
+            "spec.integration.approve",
+            &json!({
+                "mutation": mutation(spec_version(&wired.core, &spec), "migrated-seed-approve"),
+                "spec_id": spec["id"],
+                "reviewed_tip": head_tip(&wired.integration),
+                "reviewer": "operator",
+                "evidence": "Combined-result acceptance review",
+            }),
+        )
+        .expect("the combined result is approved");
+    fail_outcome(&wired, "migrated-seed-land");
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.seed",
+                &land_seed_request(&wired, &spec, "migrated-seed-land"),
+            )
+            .is_err()
+    );
+    drop_outcome_failure(&wired);
+    backfill_empty_command_fingerprint(&wired, "migrated-seed-land");
+
+    let recovered = reconcile(
+        &wired,
+        "migrated-seed-land",
+        "complete",
+        "reconcile-migrated-seed",
+    )
+    .expect("a schema-50 Seed intent completes after migration 0051");
+    assert_eq!(recovered["landing"]["kind"], "seed");
+    assert_eq!(incomplete_intents(&wired), 0);
+    replay_completed_landing(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "migrated-seed-land"),
+        "seed",
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_key_is_not_reserved(
+        &wired,
+        "landing.seed",
+        land_seed_request(&wired, &spec, "later-migrated-seed"),
+    );
 }

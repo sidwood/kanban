@@ -73,6 +73,7 @@ pub trait LandingStore: Send + Sync {
         envelope: TimelineEnvelope,
     ) -> Result<LandingRecord, ApiError>;
     fn incomplete_intent(&self, key: &str) -> Result<Option<LandingDraft>, ApiError>;
+    fn completed_landing(&self, key: &str) -> Result<Option<LandingRecord>, ApiError>;
     fn recover_landing(
         &self,
         key: &str,
@@ -662,6 +663,14 @@ impl CommandHandler for LandCommand {
         Ok(0)
     }
     fn prepare(&self, command: &ParsedCommand) -> Result<(), ApiError> {
+        if self
+            .context
+            .store
+            .completed_landing(&command.idempotency_key)?
+            .is_some()
+        {
+            return Ok(());
+        }
         let draft = self.plan(command)?;
         self.context.store.prepare_landing(
             &command.idempotency_key,
@@ -671,6 +680,14 @@ impl CommandHandler for LandCommand {
         )
     }
     fn apply(&self, command: &ParsedCommand, _: &dyn CommandEffects) -> Result<Value, ApiError> {
+        if let Some(record) = self
+            .context
+            .store
+            .completed_landing(&command.idempotency_key)?
+        {
+            return serde_json::to_value(record)
+                .map_err(|error| ApiError::internal(&error.to_string()));
+        }
         let draft = self
             .context
             .store

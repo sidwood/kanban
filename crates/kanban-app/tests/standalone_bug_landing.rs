@@ -604,6 +604,80 @@ fn standalone_bug_landing_completes_git_succeeded_before_durable_completion() {
 }
 
 #[test]
+fn standalone_bug_landing_completes_a_migrated_pending_intent() {
+    let wired = wired();
+    let ticket = wired
+        .core
+        .command(
+            "ticket.create",
+            &json!({
+                "mutation": mutation(0, "bug-migrated"),
+                "project_id": 1,
+                "kind": "bug",
+                "priority": "high",
+                "title": "Landing drops the integration branch",
+                "actual_behaviour": "The integration branch is dropped after a review lands.",
+                "reporter_evidence": "The landing log names the drop immediately after the merge.",
+            }),
+        )
+        .expect("the standalone Bug is created");
+    assign_bug_lane(&wired, &ticket);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &ticket,
+        None,
+        &wired.bug,
+        "fix.md",
+        "source-review-migrated",
+        true,
+    );
+    let conn = rusqlite::Connection::open(wired._dir.path().join("kanban.sqlite")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_landing_outcome BEFORE INSERT ON idempotency_outcomes
+        WHEN NEW.idempotency_key = 'migrated-bug' BEGIN SELECT RAISE(ABORT, 'outcome failed'); END;",
+    )
+    .unwrap();
+    assert!(
+        wired
+            .core
+            .command(
+                "landing.bug",
+                &land_bug_request(&wired, &ticket, "migrated-bug"),
+            )
+            .is_err()
+    );
+    conn.execute_batch("DROP TRIGGER fail_landing_outcome")
+        .unwrap();
+    conn.execute(
+        "UPDATE landing_intents SET command_fingerprint = '' WHERE idempotency_key = 'migrated-bug'",
+        [],
+    )
+    .expect("migration 0051 backfills existing intents with an empty fingerprint");
+    let recovered = wired
+        .core
+        .command(
+            "landing.reconcile",
+            &json!({
+                "mutation": mutation(0, "reconcile-migrated-bug"),
+                "project_id": 1,
+                "intent_key": "migrated-bug",
+                "policy": "complete",
+            }),
+        )
+        .expect("a schema-50 Bug intent completes after migration 0051");
+    assert_eq!(recovered["landing"]["kind"], "standalone_bug");
+    replay_completed_landing(
+        &wired,
+        land_bug_request(&wired, &ticket, "migrated-bug"),
+        &recovered["landing"]["landed_tip"],
+    );
+    assert_key_is_not_reserved(
+        &wired,
+        land_bug_request(&wired, &ticket, "later-migrated-bug"),
+    );
+}
+
+#[test]
 fn standalone_bug_landing_releases_a_conflicted_merge() {
     let wired = wired();
     let ticket = wired

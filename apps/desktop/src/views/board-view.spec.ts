@@ -1,5 +1,5 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { BoardGlobalResponse, TicketRecord } from '@kanban/contracts'
@@ -106,6 +106,62 @@ async function dragCard(card: Surface, column: Surface): Promise<void> {
 
 function boardCalls(query: ReturnType<typeof harness>['query']): unknown[] {
   return query.mock.calls.filter(([name]) => name === 'board.global').map(([, request]) => request)
+}
+
+// The board's rise animation retains transform:translateY(0), which
+// makes a nested position:fixed overlay size to the board instead of
+// the viewport. These helpers name that containing-block relationship
+// the way Astra measured it (KAN-T147).
+function transformedBoard(): HTMLElement {
+  const board = document.querySelector('main.animate-rise')
+  if (!(board instanceof HTMLElement)) {
+    throw new Error('missing the rise-transformed board')
+  }
+  return board
+}
+
+function flyoutOverlay(testid: string): HTMLElement {
+  const dialog = document.querySelector(`[data-testid="${testid}"]`)
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error(`missing ${testid}`)
+  }
+  const overlay = dialog.closest('.fixed')
+  if (!(overlay instanceof HTMLElement)) {
+    throw new Error(`${testid} is not inside a position:fixed overlay`)
+  }
+  return overlay
+}
+
+// Flyouts teleport to body, so wrapper.get cannot see them. The page
+// still can.
+function onPage(testid: string): DOMWrapper<Element> {
+  const el = document.querySelector(`[data-testid="${testid}"]`)
+  if (!el) {
+    throw new Error(`Unable to get [data-testid="${testid}"] on the page`)
+  }
+  return new DOMWrapper(el)
+}
+
+const FLYOUT_SURFACES = [
+  { label: 'desktop light', width: 1440, narrow: false, dark: false },
+  { label: 'desktop dark', width: 1440, narrow: false, dark: true },
+  { label: 'narrow light', width: 720, narrow: true, dark: false },
+  { label: 'narrow dark', width: 720, narrow: true, dark: true },
+] as const
+
+async function openFlyoutOnSurface(
+  testid: 'columns-open' | 'filters-open',
+  surface: (typeof FLYOUT_SURFACES)[number],
+): Promise<VueWrapper> {
+  const pinia = createPinia()
+  const shell = harness({ tickets: boardTickets() })
+  const wrapper = await mountBoard(shell.transport, '/projects/1/board', pinia)
+  useShellStore(pinia).setNarrow(surface.narrow)
+  document.documentElement.classList.toggle('dark', surface.dark)
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: surface.width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+  await wrapper.get(`[data-testid="${testid}"]`).trigger('click')
+  return wrapper
 }
 
 describe('the board', () => {
@@ -269,26 +325,26 @@ describe('the board', () => {
     const { wrapper } = await mounted()
 
     await wrapper.get('[data-testid="columns-open"]').trigger('click')
-    const flyout = wrapper.get('[data-testid="columns-flyout"]')
+    const flyout = onPage('columns-flyout')
     expect(flyout.attributes('role')).toBe('dialog')
     expect(flyout.get('[data-testid="column-pref-hide-review"]').text()).toBe('Visible')
     expect(flyout.get('[data-testid="column-pref-collapse-review"]').text()).toBe('Expanded')
 
     await flyout.get('[data-testid="column-pref-hide-review"]').trigger('click')
     expect(wrapper.find('[data-testid="kanban-column-review"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="column-pref-hide-review"]').text()).toBe('Hidden')
+    expect(flyout.get('[data-testid="column-pref-hide-review"]').text()).toBe('Hidden')
     expect(wrapper.find('[data-testid="view-drift"]').exists()).toBe(true)
 
-    await wrapper.get('[data-testid="column-pref-collapse-current"]').trigger('click')
+    await flyout.get('[data-testid="column-pref-collapse-current"]').trigger('click')
     expect(wrapper.get('[data-testid="kanban-column-current"]').attributes('data-collapsed')).toBe('true')
-    expect(wrapper.get('[data-testid="column-pref-collapse-current"]').text()).toBe('Collapsed')
+    expect(flyout.get('[data-testid="column-pref-collapse-current"]').text()).toBe('Collapsed')
 
-    await wrapper.get('[data-testid="columns-show-all"]').trigger('click')
+    await flyout.get('[data-testid="columns-show-all"]').trigger('click')
     expect(wrapper.find('[data-testid="kanban-column-review"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="kanban-column-current"]').attributes('data-collapsed')).toBe('false')
 
-    await wrapper.get('[data-testid="columns-close"]').trigger('click')
-    expect(wrapper.find('[data-testid="columns-flyout"]').exists()).toBe(false)
+    await flyout.get('[data-testid="columns-close"]').trigger('click')
+    expect(document.querySelector('[data-testid="columns-flyout"]')).toBeNull()
   })
 
   it('refuses a drop on a collapsed column without sending anything', async () => {
@@ -500,7 +556,7 @@ describe('the board', () => {
     const { wrapper, query } = await mounted()
 
     await wrapper.get('[data-testid="filters-open"]').trigger('click')
-    const flyout = wrapper.get('[data-testid="filters-flyout"]')
+    const flyout = onPage('filters-flyout')
     expect(flyout.attributes('role')).toBe('dialog')
     expect(
       flyout.findAll('select').map((select) => select.attributes('aria-label')),
@@ -523,11 +579,11 @@ describe('the board', () => {
     expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="kanban-card-9"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="board-count"]').text()).toContain('1 of 4')
-    expect(wrapper.get('[data-testid="filters-count"]').text()).toContain('1 of 4')
+    expect(flyout.get('[data-testid="filters-count"]').text()).toContain('1 of 4')
     expect(wrapper.get('[data-testid="filters-badge"]').text()).toBe('1')
     expect(wrapper.find('[data-testid="view-drift"]').exists()).toBe(true)
 
-    await wrapper.get('[data-testid="filters-close"]').trigger('click')
+    await flyout.get('[data-testid="filters-close"]').trigger('click')
     const chip = wrapper.get('[data-testid="filter-chip-kinds-bug"]')
     expect(chip.text()).toContain('Bug')
     await chip.trigger('click')
@@ -541,9 +597,9 @@ describe('the board', () => {
   it('says when the filters match nothing and clears them in place', async () => {
     const { wrapper } = await mounted()
     await wrapper.get('[data-testid="filters-open"]').trigger('click')
-    await wrapper.get('[data-testid="filter-priorities"]').setValue('urgent')
+    await onPage('filter-priorities').setValue('urgent')
     await flushPromises()
-    await wrapper.get('[data-testid="filters-close"]').trigger('click')
+    await onPage('filters-close').trigger('click')
 
     expect(wrapper.get('[data-testid="board-filtered-empty"]').text()).toContain('No tickets match')
     await wrapper.get('[data-testid="filters-clear-inline"]').trigger('click')
@@ -972,9 +1028,9 @@ describe('the board', () => {
   it('reads the filtered projection again once a move lands', async () => {
     const { wrapper, query } = await mounted()
     await wrapper.get('[data-testid="filters-open"]').trigger('click')
-    await wrapper.get('[data-testid="filter-states"]').setValue('ready')
+    await onPage('filter-states').setValue('ready')
     await flushPromises()
-    await wrapper.get('[data-testid="filters-close"]').trigger('click')
+    await onPage('filters-close').trigger('click')
     expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
     const before = boardCalls(query).length
 
@@ -1036,7 +1092,7 @@ describe('the board', () => {
     await wrapper.get('[data-testid="layout-axis-backlog-expanded"]').trigger('click')
     await wrapper.get('[data-testid="columns-open"]').trigger('click')
 
-    await wrapper.get('[data-testid="column-pref-collapse-backlog"]').trigger('click')
+    await onPage('column-pref-collapse-backlog').trigger('click')
 
     for (const column of ['parked', 'blocked', 'scheduled', 'ready']) {
       expect(
@@ -1044,14 +1100,14 @@ describe('the board', () => {
         `${column} follows the group`,
       ).toBe('true')
     }
-    expect(wrapper.get('[data-testid="column-pref-collapse-backlog"]').text()).toContain('Collapsed')
+    expect(onPage('column-pref-collapse-backlog').text()).toContain('Collapsed')
 
-    await wrapper.get('[data-testid="column-pref-collapse-backlog"]').trigger('click')
+    await onPage('column-pref-collapse-backlog').trigger('click')
     expect(wrapper.get('[data-testid="kanban-column-ready"]').attributes('data-collapsed')).toBe('false')
 
     // One nested column collapsed is neither collapsed nor silent.
     await wrapper.get('[data-testid="column-collapse-ready"]').trigger('click')
-    expect(wrapper.get('[data-testid="column-pref-collapse-backlog"]').text()).toContain('1 of 4')
+    expect(onPage('column-pref-collapse-backlog').text()).toContain('1 of 4')
   })
 
   it('selects the layout a segment names, however often it is chosen', async () => {
@@ -1067,5 +1123,68 @@ describe('the board', () => {
     await wrapper.get('[data-testid="layout-axis-completion-collapsed"]').trigger('click')
     await wrapper.get('[data-testid="layout-axis-completion-collapsed"]').trigger('click')
     expect(wrapper.get('[data-testid="kanban-board"]').attributes('data-completion-layout')).toBe('collapsed')
+  })
+
+  it.each(FLYOUT_SURFACES)(
+    'keeps the Columns flyout footer in the $label viewport after rise',
+    async (surface) => {
+      await openFlyoutOnSurface('columns-open', surface)
+
+      const overlay = flyoutOverlay('columns-flyout')
+      const footer = overlay.querySelector('footer')
+      expect(
+        transformedBoard().contains(overlay),
+        'the rise-transformed board must not contain the Columns overlay',
+      ).toBe(false)
+      expect(overlay.className.split(/\s+/)).toEqual(expect.arrayContaining(['fixed', 'inset-0']))
+      expect(footer?.textContent).toContain('Show all')
+      expect(footer?.textContent).toContain('Done')
+    },
+  )
+
+  it.each(FLYOUT_SURFACES)(
+    'keeps the Filters flyout footer in the $label viewport after rise',
+    async (surface) => {
+      await openFlyoutOnSurface('filters-open', surface)
+
+      const overlay = flyoutOverlay('filters-flyout')
+      const footer = overlay.querySelector('footer')
+      expect(
+        transformedBoard().contains(overlay),
+        'the rise-transformed board must not contain the Filters overlay',
+      ).toBe(false)
+      expect(overlay.className.split(/\s+/)).toEqual(expect.arrayContaining(['fixed', 'inset-0']))
+      expect(footer?.textContent).toContain('Clear all')
+      expect(footer?.textContent).toContain('Done')
+    },
+  )
+
+  it('scrolls the flyout body independently of its footer', async () => {
+    const { wrapper } = await mounted()
+
+    for (const testid of ['columns-flyout', 'filters-flyout'] as const) {
+      const open = testid === 'columns-flyout' ? 'columns-open' : 'filters-open'
+      await wrapper.get(`[data-testid="${open}"]`).trigger('click')
+      const dialog = document.querySelector(`[data-testid="${testid}"]`)
+      const scroller = dialog?.querySelector('.overflow-y-auto')
+      const footer = dialog?.querySelector('footer')
+      expect(scroller, `${testid} body`).not.toBeNull()
+      expect(footer, `${testid} footer`).not.toBeNull()
+      expect(scroller?.contains(footer as Node), `${testid} footer stays out of the scroller`).toBe(
+        false,
+      )
+      expect(scroller?.className.split(/\s+/)).toEqual(
+        expect.arrayContaining(['min-h-0', 'flex-1', 'overflow-y-auto']),
+      )
+      expect(footer?.className.split(/\s+/)).toContain('shrink-0')
+      const close = document.querySelector(
+        `[data-testid="${testid.replace('-flyout', '-close')}"]`,
+      )
+      if (!(close instanceof HTMLElement)) {
+        throw new Error(`missing close control for ${testid}`)
+      }
+      close.click()
+      await flushPromises()
+    }
   })
 })

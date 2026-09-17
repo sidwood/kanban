@@ -185,10 +185,11 @@ watch(scope, () => {
   void followLink(linkedTicketId.value)
 })
 
-// A change the core announces, and a reconnection after the shell
-// lost it, both leave what the board shows out of date: it reads the
-// projection again rather than waiting for the operator to navigate
-// (KAN-T137-AC2, KAN-T137-AC3).
+// A change the core announces leaves the projection out of date, and
+// a reconnection after the shell lost it dates everything the boot
+// read — the Projects, the views, and the projection alike — so the
+// whole load runs again rather than waiting for the operator to
+// navigate (KAN-T137-AC2, KAN-T137-AC3).
 const listening: Array<() => void> = []
 onMounted(() => {
   if (!transport) return
@@ -197,7 +198,7 @@ onMounted(() => {
       if (refreshesBoard(event.event_type)) void project_()
     }),
     transport.onConnectionChange((state) => {
-      if (state === 'connected') void project_()
+      if (state === 'connected') void load()
     }),
   )
 })

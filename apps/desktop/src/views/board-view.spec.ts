@@ -1067,6 +1067,41 @@ describe('the board', () => {
     expect(boardCalls(query).length).toBeGreaterThan(afterEvent)
   })
 
+  it('clears a boot-time load failure once the shell reconnects', async () => {
+    // The WebView boots before the shell's link is up: the first
+    // loads fail with the link's own refusal, and every one of those
+    // failures must leave the board once the link arrives — the
+    // projection's and the views' alike.
+    let linkDown = true
+    const shell = harness({
+      tickets: boardTickets(),
+      override: (name) =>
+        linkDown && (name === 'view.list' || name === 'board.global')
+          ? Promise.reject({
+              code: 'internal',
+              message: 'the core connection is not up; retry once it connects',
+            })
+          : undefined,
+    })
+    const wrapper = await mountBoard(shell.transport)
+
+    expect(wrapper.get('[data-testid="board-error"]').text()).toContain(
+      'the core connection is not up',
+    )
+
+    linkDown = false
+    shell.connection('connected')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+    // The views were read again, not just the projection: their
+    // boot-time failure is what the banner would otherwise keep.
+    expect(
+      shell.query.mock.calls.filter(([name]) => name === 'view.list').length,
+    ).toBeGreaterThan(1)
+  })
+
   it('leaves the board alone for an event that cannot change it', async () => {
     const { query, emit } = await mounted()
     const before = boardCalls(query).length

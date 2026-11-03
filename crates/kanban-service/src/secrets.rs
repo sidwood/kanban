@@ -129,19 +129,55 @@ mod file_installation_secret {
         }
     }
 
+    fn partial_temp_path(store_dir: &Path, path: &Path) -> Result<std::path::PathBuf, ApiError> {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("credential");
+        let mut suffix = [0u8; 8];
+        let filled = unsafe { libc::getrandom(suffix.as_mut_ptr().cast(), suffix.len(), 0) };
+        if filled != suffix.len() as isize {
+            return Err(unavailable());
+        }
+        let suffix_hex = suffix.iter().fold(String::new(), |mut encoded, byte| {
+            use std::fmt::Write;
+            let _ = write!(encoded, "{byte:02x}");
+            encoded
+        });
+        Ok(store_dir.join(format!(".{name}.partial.{suffix_hex}")))
+    }
+
+    fn publish_new_key(temp: &Path, path: &Path) -> Result<(), ApiError> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let temp_c = CString::new(temp.as_os_str().as_bytes()).map_err(|_| unavailable())?;
+        let path_c = CString::new(path.as_os_str().as_bytes()).map_err(|_| unavailable())?;
+        let rc = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                temp_c.as_ptr(),
+                libc::AT_FDCWD,
+                path_c.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if rc == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EEXIST) {
+            return Err(unavailable());
+        }
+        Err(unavailable())
+    }
+
     fn install_new_key(
         store_dir: &Path,
         path: &Path,
         key: &zeroize::Zeroizing<[u8; 32]>,
     ) -> Result<InstallationSecret, ApiError> {
-        let temp = store_dir.join(format!(
-            ".{}.partial.{}",
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("credential"),
-            std::process::id()
-        ));
-        let result = (|| {
+        let temp = partial_temp_path(store_dir, path)?;
+        let result: Result<InstallationSecret, ApiError> = (|| {
             let file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -155,7 +191,7 @@ mod file_installation_secret {
             file.sync_all().map_err(|_| unavailable())?;
             verify_regular_file(&file, 0o600)?;
             drop(file);
-            fs::rename(&temp, path).map_err(|_| unavailable())?;
+            publish_new_key(&temp, path)?;
             #[allow(clippy::explicit_auto_deref)]
             let key_ref: &[u8; 32] = &*key;
             Ok(InstallationSecret::from_key(key_ref))
@@ -165,11 +201,11 @@ mod file_installation_secret {
         }
         match result {
             Ok(secret) => Ok(secret),
-            Err(error) => match path.symlink_metadata() {
+            Err(_) => match path.symlink_metadata() {
                 Ok(metadata) if !metadata.file_type().is_symlink() => {
                     read_existing(store_dir, path)
                 }
-                _ => Err(error),
+                _ => Err(unavailable()),
             },
         }
     }
@@ -328,7 +364,38 @@ mod tests {
     }
 
     #[test]
+    fn file_store_repeated_load_or_create_preserves_first_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        let first = store.load_or_create().expect("first provision");
+        let second = store.load_or_create().expect("second read");
+        assert!(
+            credentials_match(&first, &second),
+            "a second load_or_create must not rotate the installation key"
+        );
+    }
+
+    #[test]
     fn file_store_honours_0700_and_0600_when_umask_is_zero() {
+        let exe = std::env::current_exe().expect("test executable");
+        let status = std::process::Command::new(exe)
+            .env("KANBAN_FILE_STORE_UMASK_TEST", "1")
+            .args([
+                "--exact",
+                "file_store_honours_0700_and_0600_when_umask_is_zero_isolated",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .status()
+            .expect("spawn isolated umask test");
+        assert!(status.success(), "isolated umask test failed");
+    }
+
+    #[test]
+    fn file_store_honours_0700_and_0600_when_umask_is_zero_isolated() {
+        if std::env::var_os("KANBAN_FILE_STORE_UMASK_TEST").is_none() {
+            return;
+        }
         let dir = tempfile::TempDir::new().unwrap();
         let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
         let previous = unsafe { libc::umask(0) };

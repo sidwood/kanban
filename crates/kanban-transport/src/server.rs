@@ -610,7 +610,7 @@ fn spawn_event_writer(
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{self, BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
@@ -789,10 +789,24 @@ mod tests {
 
         /// Read one frame, failing on EOF or a malformed line.
         fn recv(&mut self) -> ResponseFrame {
-            let mut line = String::new();
-            let read = self.reader.read_line(&mut line).expect("the client reads");
-            assert!(read > 0, "the server closed the connection early");
-            serde_json::from_str(line.trim_end()).expect("the frame decodes")
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut line = String::new();
+                match self.reader.read_line(&mut line) {
+                    Ok(0) => panic!("the server closed the connection early"),
+                    Ok(read) if read > 0 => {
+                        return serde_json::from_str(line.trim_end()).expect("the frame decodes");
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            panic!("timed out waiting for a server frame");
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("the client reads: {error:?}"),
+                }
+            }
         }
 
         /// Read one frame, or `None` when the server has closed the

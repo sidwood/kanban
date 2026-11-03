@@ -29,6 +29,7 @@ pub mod finding;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
+pub mod issue;
 pub mod landing;
 pub mod lane;
 pub mod mutation;
@@ -141,6 +142,13 @@ pub use herdr::{
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
+};
+pub use issue::{
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
+    IssueStateHistoryRecord, IssueWorkflowStateRecord, IssueWorkflowStatesQuery,
+    IssueWorkflowStatesResponse,
 };
 pub use landing::{
     LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,
@@ -412,6 +420,23 @@ mod tests {
                 "InitiativeListResponse",
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
+                "IssueGetQuery",
+                "IssueLabelRecord",
+                "IssueLabelsQuery",
+                "IssueLabelsResponse",
+                "IssueListQuery",
+                "IssueListResponse",
+                "IssueMilestoneRecord",
+                "IssueMilestonesQuery",
+                "IssueMilestonesResponse",
+                "IssueRecord",
+                "IssueRelationRecord",
+                "IssueSaveRequest",
+                "IssueSaveResponse",
+                "IssueStateHistoryRecord",
+                "IssueWorkflowStateRecord",
+                "IssueWorkflowStatesQuery",
+                "IssueWorkflowStatesResponse",
                 "McpHealth",
                 "MutationContext",
                 "PlanActivateRequest",

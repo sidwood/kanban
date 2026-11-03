@@ -549,6 +549,101 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
+export type IssueGetQuery = {
+  identifier: string;
+};
+export type IssueLabelRecord = {
+  color: string;
+  group?: string | null;
+  name: string;
+  retired?: boolean;
+};
+export type IssueLabelsQuery = {
+  project_id: number;
+};
+export type IssueLabelsResponse = {
+  labels: IssueLabelRecord[];
+};
+export type IssueListQuery = {
+  cursor?: string | null;
+  label?: string | null;
+  limit?: number;
+  project_id?: number | null;
+  query?: string | null;
+  state?: string | null;
+  updated_since?: string | null;
+};
+export type IssueListResponse = {
+  issues: IssueRecord[];
+  next_cursor?: string | null;
+};
+export type IssueMilestoneRecord = {
+  id: number;
+  name: string;
+  target_date?: string | null;
+};
+export type IssueMilestonesQuery = {
+  project_id: number;
+};
+export type IssueMilestonesResponse = {
+  milestones: IssueMilestoneRecord[];
+};
+export type IssueRecord = {
+  description: string;
+  due_date?: string | null;
+  identifier: string;
+  labels: string[];
+  milestone_id?: number | null;
+  priority: number;
+  project_id: number;
+  relations: IssueRelationRecord[];
+  state: string;
+  state_history: IssueStateHistoryRecord[];
+  state_type: string;
+  ticket_id: number;
+  title: string;
+  updated_at: string;
+  url: string;
+};
+export type IssueRelationRecord = {
+  identifier: string;
+  kind: string;
+};
+export type IssueSaveRequest = {
+  add_labels?: string[] | null;
+  description?: string | null;
+  description_patch?: string | null;
+  due_date?: string | null;
+  identifier?: string | null;
+  milestone_id?: number | null;
+  mutation: MutationContext;
+  priority?: number | null;
+  project_id?: number | null;
+  remove_labels?: string[] | null;
+  state?: string | null;
+  title?: string | null;
+};
+export type IssueSaveResponse = {
+  identifier: string;
+  ticket_id: number;
+  url: string;
+};
+export type IssueStateHistoryRecord = {
+  ended_at?: string | null;
+  started_at: string;
+  state: string;
+  state_type: string;
+};
+export type IssueWorkflowStateRecord = {
+  name: string;
+  state_type: string;
+};
+export type IssueWorkflowStatesQuery = {
+  project_id: number;
+};
+export type IssueWorkflowStatesResponse = {
+  states: IssueWorkflowStateRecord[];
+};
 export type LandingBugRequest = {
   from_path: string;
   into_path: string;

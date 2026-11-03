@@ -17,19 +17,22 @@ pub struct Adapter {
     backend: Arc<Backend>,
 }
 enum Backend {
-    Direct(kanban_app::agent_authorization::AgentSession),
+    Agent(kanban_app::agent_authorization::AgentSession),
+    Operator(kanban_app::OperatorSession),
     Channel(kanban_transport::agent::AgentClient),
 }
 impl Backend {
     fn operations(&self) -> Result<Vec<String>, kanban_dto::ApiError> {
         match self {
-            Self::Direct(session) => session.operations(),
+            Self::Agent(session) => session.operations(),
+            Self::Operator(session) => session.operations(),
             Self::Channel(client) => client.operations(),
         }
     }
     fn call(&self, name: &str, payload: &Value) -> Result<Value, kanban_dto::ApiError> {
         match self {
-            Self::Direct(session) => session.call(name, payload),
+            Self::Agent(session) => session.call(name, payload),
+            Self::Operator(session) => session.call(name, payload),
             Self::Channel(client) => client.call(name, payload),
         }
     }
@@ -38,7 +41,7 @@ impl Adapter {
     /// Only the trusted service chooses this binding, never MCP arguments.
     pub fn new(core: Arc<Core>, capability: CapabilityId) -> Self {
         Self {
-            backend: Arc::new(Backend::Direct(
+            backend: Arc::new(Backend::Agent(
                 kanban_app::agent_authorization::AgentSession::new(core, capability)
                     .expect("service selected a live run"),
             )),
@@ -46,7 +49,12 @@ impl Adapter {
     }
     pub fn from_session(session: kanban_app::agent_authorization::AgentSession) -> Self {
         Self {
-            backend: Arc::new(Backend::Direct(session)),
+            backend: Arc::new(Backend::Agent(session)),
+        }
+    }
+    pub fn from_operator(core: Arc<Core>) -> Self {
+        Self {
+            backend: Arc::new(Backend::Operator(kanban_app::OperatorSession::new(core))),
         }
     }
     pub fn from_channel(channel: std::os::unix::net::UnixStream) -> Self {

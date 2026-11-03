@@ -58,7 +58,7 @@ use kanban_storage::{
     SqliteRunStore, SqliteSavedViewStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
     SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
-use kanban_transport::loopback::{LoopbackHttp, LoopbackHttpConfig};
+use kanban_transport::loopback::{LoopbackHttp, LoopbackHttpConfig, LoopbackHttpHandlers};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use herdr::{HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, production_socket_root};
@@ -321,6 +321,13 @@ fn assemble_core_with_secret(
         projects.clone(),
         spec_store.clone(),
         evidence_store.clone(),
+    )?;
+    let issue_store = Arc::new(kanban_storage::SqliteIssueStore::new(&database));
+    core.register_issue_operator(
+        ticket_store.clone(),
+        projects.clone(),
+        spec_store.clone(),
+        issue_store,
     )?;
     core.register_lanes(
         lane_store.clone(),
@@ -740,13 +747,21 @@ fn serve_owned_with_mcp(
         notifications::NotificationScheduler::spawn(dispatcher, logs.clone());
     let core = Arc::new(core);
     let http_core = core.clone();
-    let http = LoopbackHttp::start(http, secret.clone(), move |capability| {
-        kanban_app::agent_authorization::AgentSession::new(
-            http_core.clone(),
-            kanban_domain::CapabilityId::new(capability),
-        )
-        .map(kanban_mcp::Adapter::from_session)
-    })
+    let operator_core = core.clone();
+    let http = LoopbackHttp::start_with_handlers(
+        http,
+        secret.clone(),
+        LoopbackHttpHandlers::with_operator(
+            move |capability| {
+                kanban_app::agent_authorization::AgentSession::new(
+                    http_core.clone(),
+                    kanban_domain::CapabilityId::new(capability),
+                )
+                .map(kanban_mcp::Adapter::from_session)
+            },
+            move || Ok(kanban_mcp::Adapter::from_operator(operator_core.clone())),
+        ),
+    )
     .map_err(|_| {
         herdr.shutdown();
         ServiceError::LoopbackHttp

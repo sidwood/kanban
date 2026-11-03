@@ -319,6 +319,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "linear issue model",
         sql: include_str!("../migrations/0053_linear_issue_model.sql"),
     },
+    Migration {
+        version: 54,
+        name: "linear issue relaxation",
+        sql: include_str!("../migrations/0054_linear_issue_relaxation.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -448,6 +453,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
     let span = WriteSpan::begin(conn)?;
     if migration.version == 53 {
         crate::linear_issue_migration::apply_linear_issue_model_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 54 {
+        crate::linear_issue_migration::apply_linear_issue_relaxation_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -1931,7 +1944,11 @@ mod tests {
                 },
                 PendingMigration {
                     version: 53,
-                    name: "linear issue model"
+                    name: "linear issue model",
+                },
+                PendingMigration {
+                    version: 54,
+                    name: "linear issue relaxation",
                 },
             ]]
         );

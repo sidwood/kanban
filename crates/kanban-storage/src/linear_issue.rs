@@ -1,6 +1,7 @@
 //! Linear issue persistence: workflow states, labels, and issue keys.
 
 use crate::error::StorageError;
+use crate::db::WriteSpan;
 use kanban_domain::{IssueKey, LinearPriority, WorkflowStateType};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -16,7 +17,7 @@ pub struct WorkflowStateRecord {
 }
 
 impl WorkflowStateRecord {
-    fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+    pub(crate) fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         let state_type: String = row.get(3)?;
         Ok(Self {
             id: row.get(0)?,
@@ -86,6 +87,101 @@ pub fn linear_priority_for_ticket(
     Ok(value.and_then(|v| LinearPriority::new(v as u8)))
 }
 
+const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
+    ("Draft", "backlog", "draft", 0),
+    ("Parked", "backlog", "parked", 1),
+    ("Blocked", "backlog", "blocked", 2),
+    ("Scheduled", "unstarted", "scheduled", 3),
+    ("Ready", "unstarted", "ready", 4),
+    ("Active", "started", "active", 5),
+    ("In Review", "started", "in_review", 6),
+    ("Approved", "started", "approved", 7),
+    ("Landing", "started", "landing", 8),
+    ("Done", "completed", "done", 9),
+    ("Cancelled", "canceled", "cancelled", 10),
+    ("Superseded", "canceled", "superseded", 11),
+];
+
+/// Seed default workflow, Type labels, and label group for a new project.
+pub fn seed_project_defaults(span: &WriteSpan<'_>, project_id: i64) -> Result<(), StorageError> {
+    for (name, kind, legacy, position) in DEFAULT_WORKFLOW {
+        span.execute(
+            "INSERT OR IGNORE INTO issue_workflow_states
+                 (project_id, name, type, legacy_state, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![project_id, name, kind, legacy, position],
+        )
+        .map_err(StorageError::from)?;
+    }
+    span.execute(
+        "INSERT OR IGNORE INTO issue_label_groups (project_id, name, single_select)
+         VALUES (?1, 'Type', 1)",
+        [project_id],
+    )
+    .map_err(StorageError::from)?;
+    for (name, color) in [
+        ("implementation", "#6366F1"),
+        ("bug", "#EF4444"),
+        ("task", "#10B981"),
+    ] {
+        span.execute(
+            "INSERT OR IGNORE INTO issue_labels (project_id, group_id, name, color)
+             SELECT ?1, g.id, ?2, ?3
+             FROM issue_label_groups AS g
+             WHERE g.project_id = ?1 AND g.name = 'Type'",
+            rusqlite::params![project_id, name, color],
+        )
+        .map_err(StorageError::from)?;
+    }
+    Ok(())
+}
+
+pub fn seed_project_defaults_on_connection(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<(), StorageError> {
+    let span = WriteSpan::begin(conn).map_err(StorageError::from)?;
+    seed_project_defaults(&span, project_id)?;
+    span.commit().map_err(StorageError::from)?;
+    Ok(())
+}
+
+pub fn workflow_state_by_name(
+    conn: &Connection,
+    project_id: i64,
+    name: &str,
+) -> Result<Option<WorkflowStateRecord>, StorageError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, project_id, name, type, legacy_state, position
+             FROM issue_workflow_states
+             WHERE project_id = ?1 AND name = ?2",
+        )
+        .map_err(StorageError::from)?;
+    statement
+        .query_row(rusqlite::params![project_id, name], WorkflowStateRecord::map_row)
+        .optional()
+        .map_err(StorageError::from)
+}
+
+pub fn workflow_state_by_legacy(
+    conn: &Connection,
+    project_id: i64,
+    legacy_state: &str,
+) -> Result<Option<WorkflowStateRecord>, StorageError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, project_id, name, type, legacy_state, position
+             FROM issue_workflow_states
+             WHERE project_id = ?1 AND legacy_state = ?2",
+        )
+        .map_err(StorageError::from)?;
+    statement
+        .query_row(rusqlite::params![project_id, legacy_state], WorkflowStateRecord::map_row)
+        .optional()
+        .map_err(StorageError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,15 +222,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
-        database
+        crate::linear_issue::seed_project_defaults_on_connection(&database.connection(), 1).unwrap();
+        let count: i64 = database
             .connection()
-            .execute_batch(
-                "INSERT INTO issue_workflow_states (project_id, name, type, legacy_state, position)
-                 VALUES (1, 'Draft', 'backlog', 'draft', 0);",
+            .query_row(
+                "SELECT COUNT(*) FROM issue_workflow_states WHERE project_id = 1",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
+        assert_eq!(count, 12);
         let states = list_workflow_states(&database.connection(), 1).unwrap();
-        assert_eq!(states.len(), 1);
+        assert_eq!(states.len(), 12);
         assert_eq!(states[0].state_type, WorkflowStateType::Backlog);
     }
 }

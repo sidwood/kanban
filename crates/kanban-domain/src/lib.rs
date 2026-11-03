@@ -94,7 +94,7 @@ pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
-pub use issue::{IssueKey, LinearPriority, WorkflowStateType};
+pub use issue::{IssueKey, IssueStateTimestamps, LinearPriority, WorkflowStateType};
 pub use landing::{
     LandingGitObservation, LandingKind, LandingObservedOutcome, LandingRecoveryEffect,
     LandingRecoveryPolicy, LandingRecoveryRefusal, LandingRefusal, LandingRequest, land_lane,

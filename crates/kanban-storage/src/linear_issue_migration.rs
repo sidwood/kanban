@@ -205,6 +205,109 @@ pub(crate) fn apply_linear_issue_model_in_span(span: &WriteSpan<'_>) -> rusqlite
     apply_linear_issue_model(span)
 }
 
+fn tickets_table_has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
+    let mut statement =
+        conn.prepare("SELECT 1 FROM pragma_table_info('tickets') WHERE name = ?1")?;
+    Ok(statement
+        .query_row([column], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// Relaxes kind shape triggers/CHECK and adds issue description metadata.
+pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Result<()> {
+    if tickets_table_has_column(conn, "description")? {
+        conn.execute_batch(
+            "UPDATE tickets
+             SET due_date = due
+             WHERE due IS NOT NULL
+               AND due <> ''
+               AND due_date = '2099-12-31';",
+        )?;
+        return Ok(());
+    }
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
+         DROP TRIGGER IF EXISTS tickets_bug_shape_update;
+         CREATE TABLE tickets_relaxed (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             project_id INTEGER NOT NULL REFERENCES projects (id),
+             number INTEGER NOT NULL CHECK (number > 0),
+             kind TEXT NOT NULL CHECK (kind IN ('implementation', 'bug', 'task')),
+             priority TEXT NOT NULL CHECK (priority IN ('urgent', 'high', 'normal', 'low')),
+             state TEXT NOT NULL CHECK (state IN (
+                 'draft', 'parked', 'blocked', 'scheduled', 'ready', 'active',
+                 'in_review', 'approved', 'landing', 'done', 'cancelled',
+                 'superseded'
+             )),
+             spec_id INTEGER REFERENCES specs (id),
+             title TEXT,
+             slice TEXT,
+             criteria TEXT NOT NULL DEFAULT '[]',
+             actual_behaviour TEXT,
+             reporter_evidence TEXT,
+             bug_qualification TEXT,
+             bug_facts TEXT,
+             subtype TEXT,
+             mode TEXT,
+             completion TEXT NOT NULL DEFAULT '[]',
+             scheduled_for TEXT,
+             due TEXT,
+             profile TEXT REFERENCES execution_profiles (name),
+             pinned_version INTEGER,
+             predecessor_id INTEGER REFERENCES tickets (id),
+             workflow_state_id INTEGER REFERENCES issue_workflow_states (id),
+             linear_priority INTEGER NOT NULL DEFAULT 3
+                 CHECK (linear_priority BETWEEN 0 AND 4),
+             due_date TEXT NOT NULL DEFAULT '2099-12-31',
+             estimate REAL,
+             milestone_id INTEGER REFERENCES issue_milestones (id),
+             started_at TEXT,
+             completed_at TEXT,
+             canceled_at TEXT,
+             duplicate_of_ticket_id INTEGER REFERENCES tickets (id),
+             description TEXT NOT NULL DEFAULT '',
+             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+             version INTEGER NOT NULL CHECK (version > 0),
+             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+             UNIQUE (project_id, number)
+         );
+         INSERT INTO tickets_relaxed (
+             id, project_id, number, kind, priority, state, spec_id, title, slice,
+             criteria, actual_behaviour, reporter_evidence, bug_qualification, bug_facts,
+             subtype, mode, completion, scheduled_for, due, profile, pinned_version,
+             predecessor_id, workflow_state_id, linear_priority, due_date, estimate,
+             milestone_id, started_at, completed_at, canceled_at, duplicate_of_ticket_id,
+             description, updated_at, version, created_at
+         )
+         SELECT
+             id, project_id, number, kind, priority, state, spec_id, title, slice,
+             criteria, actual_behaviour, reporter_evidence, bug_qualification, bug_facts,
+             subtype, mode, completion, scheduled_for, due, profile, pinned_version,
+             predecessor_id, workflow_state_id, linear_priority, due_date, estimate,
+             milestone_id, started_at, completed_at, canceled_at, duplicate_of_ticket_id,
+             '', created_at, version, created_at
+         FROM tickets;
+         DROP TABLE tickets;
+         ALTER TABLE tickets_relaxed RENAME TO tickets;
+         CREATE TRIGGER tickets_refuse_delete
+         BEFORE DELETE ON tickets
+         BEGIN
+             SELECT RAISE(ABORT, 'tickets are never deleted; supersede or cancel them');
+         END;
+         UPDATE tickets
+         SET due_date = due
+         WHERE due IS NOT NULL
+           AND due <> ''
+           AND due_date = '2099-12-31';",
+    )?;
+    Ok(())
+}
+
+pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_linear_issue_relaxation(span)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +321,23 @@ mod tests {
         migrations::apply_through(&conn, 52).unwrap();
         apply_linear_issue_model(&conn).unwrap();
         apply_linear_issue_model(&conn).unwrap();
+    }
+
+    #[test]
+    fn migration_0054_reapply_is_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        migrations::apply_through(&conn, 53).unwrap();
+        apply_linear_issue_relaxation(&conn).unwrap();
+        apply_linear_issue_relaxation(&conn).unwrap();
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('tickets') WHERE name = 'description'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 1);
     }
 }

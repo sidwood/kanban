@@ -1096,6 +1096,48 @@ define_exposed_catalogue! {
         mcp: "search_global",
         description: "Search Initiatives, Projects, Plans, Specs, and Tickets by identifier and text. Hits return in deterministic order; the query never mutates workflow.",
     },
+    "issue.save" => {
+        kind: Command,
+        request: "IssueSaveRequest",
+        response: "IssueSaveResponse",
+        mcp: "save_issue",
+        description: "Create or update one Linear-shaped issue and return its key and deep link.",
+    },
+    "issue.get" => {
+        kind: Query,
+        request: "IssueGetQuery",
+        response: "IssueRecord",
+        mcp: "get_issue",
+        description: "Read one issue by key with relations and state history.",
+    },
+    "issue.list" => {
+        kind: Query,
+        request: "IssueListQuery",
+        response: "IssueListResponse",
+        mcp: "list_issues",
+        description: "List issues with Linear-style filters and pagination.",
+    },
+    "issue.list_workflow_states" => {
+        kind: Query,
+        request: "IssueWorkflowStatesQuery",
+        response: "IssueWorkflowStatesResponse",
+        mcp: "list_issue_statuses",
+        description: "List workflow states with names and Linear types for one project.",
+    },
+    "issue.list_labels" => {
+        kind: Query,
+        request: "IssueLabelsQuery",
+        response: "IssueLabelsResponse",
+        mcp: "list_issue_labels",
+        description: "List labels and groups for one project, including retired labels.",
+    },
+    "issue.list_milestones" => {
+        kind: Query,
+        request: "IssueMilestonesQuery",
+        response: "IssueMilestonesResponse",
+        mcp: "list_milestones",
+        description: "List milestones for one project.",
+    },
 }
 
 /// Compare registered core handlers with the exposed catalogue.

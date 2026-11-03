@@ -455,11 +455,12 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
             },
         )?;
     } else {
-        span.execute_batch(migration.sql).map_err(|source| StorageError::Migration {
-            version: migration.version,
-            name: migration.name,
-            source,
-        })?;
+        span.execute_batch(migration.sql)
+            .map_err(|source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            })?;
     }
     crate::audit::insert_event(
         &span,

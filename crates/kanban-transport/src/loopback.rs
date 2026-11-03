@@ -42,9 +42,7 @@ pub struct LoopbackHttpHandlers<S> {
 }
 
 impl<S> LoopbackHttpHandlers<S> {
-    pub fn agent_only(
-        agent: impl Fn(u64) -> Result<S, ApiError> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn agent_only(agent: impl Fn(u64) -> Result<S, ApiError> + Send + Sync + 'static) -> Self {
         Self {
             agent: Arc::new(agent),
             operator: None,

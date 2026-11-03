@@ -574,8 +574,16 @@ fn push_section(document: &mut String, heading: &str, body: &str) {
 
 fn render_spec_sections(sections: &SpecVersionSections) -> String {
     let mut document = format!("\n## Spec — {}\n", sections.name);
-    push_section(&mut document, "Short description", &sections.short_description);
-    push_section(&mut document, "Problem statement", &sections.problem_statement);
+    push_section(
+        &mut document,
+        "Short description",
+        &sections.short_description,
+    );
+    push_section(
+        &mut document,
+        "Problem statement",
+        &sections.problem_statement,
+    );
     push_section(&mut document, "Solution", &sections.solution);
     push_section(&mut document, "User stories", &sections.user_stories);
     push_section(
@@ -583,7 +591,11 @@ fn render_spec_sections(sections: &SpecVersionSections) -> String {
         "Implementation decisions",
         &sections.implementation_decisions,
     );
-    push_section(&mut document, "Testing decisions", &sections.testing_decisions);
+    push_section(
+        &mut document,
+        "Testing decisions",
+        &sections.testing_decisions,
+    );
     push_section(&mut document, "Out of scope", &sections.out_of_scope);
     push_section(&mut document, "Further notes", &sections.further_notes);
     document
@@ -714,7 +726,9 @@ mod tests {
     use kanban_app::events::NoopEventSink;
     use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
     use kanban_domain::{CommentId, ProjectRegistration};
-    use kanban_dto::{IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use kanban_dto::{
+        IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+    };
     use serde_json::json;
 
     use super::*;
@@ -875,7 +889,11 @@ mod tests {
         }
     }
 
-    fn register_operator_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
+    fn register_operator_stack(
+        core: &mut Core,
+        database: &Database,
+        attachments: &std::path::Path,
+    ) {
         let projects = Arc::new(SqliteProjectStore::new(database));
         let tickets = Arc::new(SqliteTicketStore::new(database));
         let specs = Arc::new(SqliteSpecStore::new(database));
@@ -890,19 +908,15 @@ mod tests {
             tickets.clone(),
             projects.clone(),
             specs.clone(),
-            Arc::new(SqliteEvidenceStore::new(database, attachments.to_path_buf())),
+            Arc::new(SqliteEvidenceStore::new(
+                database,
+                attachments.to_path_buf(),
+            )),
         )
         .unwrap();
-        core.register_issue_operator(
-            tickets,
-            projects.clone(),
-            specs,
-            issues,
-            comments.clone(),
-        )
-        .unwrap();
-        core.register_comments(comments, projects)
+        core.register_issue_operator(tickets, projects.clone(), specs, issues, comments.clone())
             .unwrap();
+        core.register_comments(comments, projects).unwrap();
     }
 
     #[test]
@@ -945,11 +959,9 @@ mod tests {
 
         let conn = database.connection();
         let description: String = conn
-            .query_row(
-                "SELECT description FROM tickets WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT description FROM tickets WHERE id = 1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(description.contains("Login flow"));
         assert!(description.contains(PROBLEM));

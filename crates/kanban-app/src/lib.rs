@@ -29,13 +29,13 @@ pub mod herdr;
 pub mod initiative;
 pub mod issue;
 pub mod issue_operator;
-pub mod operator_authorization;
 pub mod landing;
 pub mod lane;
 pub mod lifecycle;
 mod login_launch;
 pub mod mutation;
 pub mod notifications;
+pub mod operator_authorization;
 pub mod plan;
 pub mod profile;
 pub mod project;
@@ -105,8 +105,9 @@ pub use herdr::{
     HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, NoopHerdrProjectObserver,
 };
 pub use initiative::InitiativeStore;
-pub use issue::{IssueLabelRow, IssueMilestoneRow, IssueStore, IssueTicketFields, IssueWorkflowState};
-pub use operator_authorization::OperatorSession;
+pub use issue::{
+    IssueLabelRow, IssueMilestoneRow, IssueStore, IssueTicketFields, IssueWorkflowState,
+};
 pub use landing::{GitLanding, LandingStore};
 pub use lane::LaneStore;
 #[cfg(any(test, feature = "test-support"))]
@@ -115,6 +116,7 @@ pub use mutation::{
     CommandEffects, CommandHandler, IdempotencyStore, MutationSpan, NoopCommandEffects,
     ParsedCommand, PostCommitEffect, RecordedOutcome, parse_payload,
 };
+pub use operator_authorization::OperatorSession;
 pub use plan::PlanStore;
 pub use profile::{ProfileStore, duplicate_profile_name_error};
 pub use project::{GitObservation, ProjectStore, duplicate_code_error};

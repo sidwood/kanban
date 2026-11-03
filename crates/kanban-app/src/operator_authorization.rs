@@ -1,7 +1,7 @@
 //! Installation-authenticated operator MCP session (Linear issue tools).
-use crate::catalog::{exposed_operations, OperationKind};
-use crate::issue_operator::OPERATOR_MCP_OPERATIONS;
 use crate::Core;
+use crate::catalog::{OperationKind, exposed_operations};
+use crate::issue_operator::OPERATOR_MCP_OPERATIONS;
 use kanban_dto::ApiError;
 use serde_json::Value;
 use std::sync::Arc;

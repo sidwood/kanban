@@ -6,11 +6,11 @@ use std::sync::Arc;
 use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
 use kanban_domain::ProjectRegistration;
 use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
+use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
     Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore, SqliteSpecStore,
     SqliteTicketStore,
 };
-use kanban_storage::SqliteCommentStore;
 use serde_json::json;
 
 mod common;
@@ -72,12 +72,9 @@ fn acceptance_create_and_read_issue_returns_key_and_fields() {
         "priority": 2,
         "due_date": "2026-12-01",
     });
-    let saved: IssueSaveResponse = serde_json::from_value(
-        session
-            .call("issue.save", &save)
-            .expect("save succeeds"),
-    )
-    .expect("save response shape");
+    let saved: IssueSaveResponse =
+        serde_json::from_value(session.call("issue.save", &save).expect("save succeeds"))
+            .expect("save response shape");
     assert!(saved.identifier.contains('-'));
     assert!(saved.url.starts_with("kanban://issue/"));
 
@@ -344,7 +341,9 @@ fn acceptance_list_issues_without_project_id_spans_projects() {
     assert_eq!(edge_save.identifier, "EDGE-1");
 
     let listed: kanban_dto::IssueListResponse = serde_json::from_value(
-        session.call("issue.list", &json!({})).expect("global list succeeds"),
+        session
+            .call("issue.list", &json!({}))
+            .expect("global list succeeds"),
     )
     .unwrap();
     assert!(
@@ -661,5 +660,8 @@ fn acceptance_sub_issue_links_parent_and_lists_children() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(read_child.parent.as_deref(), Some(parent.identifier.as_str()));
+    assert_eq!(
+        read_child.parent.as_deref(),
+        Some(parent.identifier.as_str())
+    );
 }

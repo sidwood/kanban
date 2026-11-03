@@ -1,7 +1,7 @@
 //! Linear issue persistence: workflow states, labels, and issue keys.
 
-use crate::error::StorageError;
 use crate::db::WriteSpan;
+use crate::error::StorageError;
 use kanban_domain::{IssueKey, LinearPriority, WorkflowStateType};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -115,7 +115,10 @@ const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
 ];
 
 /// Seed default workflow, Type labels, and label group for a new project.
-pub(crate) fn seed_project_defaults(span: &WriteSpan<'_>, project_id: i64) -> Result<(), StorageError> {
+pub(crate) fn seed_project_defaults(
+    span: &WriteSpan<'_>,
+    project_id: i64,
+) -> Result<(), StorageError> {
     for (name, kind, legacy, position) in DEFAULT_WORKFLOW {
         span.execute(
             "INSERT OR IGNORE INTO issue_workflow_states
@@ -171,7 +174,10 @@ pub fn workflow_state_by_name(
         )
         .map_err(StorageError::from)?;
     statement
-        .query_row(rusqlite::params![project_id, name], WorkflowStateRecord::map_row)
+        .query_row(
+            rusqlite::params![project_id, name],
+            WorkflowStateRecord::map_row,
+        )
         .optional()
         .map_err(StorageError::from)
 }
@@ -189,7 +195,10 @@ pub fn workflow_state_by_legacy(
         )
         .map_err(StorageError::from)?;
     statement
-        .query_row(rusqlite::params![project_id, legacy_state], WorkflowStateRecord::map_row)
+        .query_row(
+            rusqlite::params![project_id, legacy_state],
+            WorkflowStateRecord::map_row,
+        )
         .optional()
         .map_err(StorageError::from)
 }
@@ -234,7 +243,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
-        crate::linear_issue::seed_project_defaults_on_connection(&database.connection(), 1).unwrap();
+        crate::linear_issue::seed_project_defaults_on_connection(&database.connection(), 1)
+            .unwrap();
         let count: i64 = database
             .connection()
             .query_row(

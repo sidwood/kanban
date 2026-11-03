@@ -125,18 +125,21 @@ impl CommandHandler for SaveIssue {
                 .issues
                 .resolve_identifier(identifier)?
                 .ok_or_else(|| ApiError::not_found(identifier))?;
-            return Ok(
-                self.0
-                    .tickets
-                    .find(TicketId::new(ticket_id as u64))?
-                    .ok_or_else(|| ApiError::not_found(identifier))?
-                    .version(),
-            );
+            return Ok(self
+                .0
+                .tickets
+                .find(TicketId::new(ticket_id as u64))?
+                .ok_or_else(|| ApiError::not_found(identifier))?
+                .version());
         }
         Ok(0)
     }
 
-    fn apply(&self, command: &ParsedCommand, effects: &dyn CommandEffects) -> Result<Value, ApiError> {
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
         let request: IssueSaveRequest = parse_payload(&command.payload)?;
         if request.identifier.is_some() {
             update_issue(&self.0, &request, effects)
@@ -275,12 +278,10 @@ fn create_issue(
         ctx.issues.set_description(ticket_id as i64, description)?;
     }
     if let Some(priority) = request.priority {
-        ctx.issues
-            .set_linear_priority(ticket_id as i64, priority)?;
+        ctx.issues.set_linear_priority(ticket_id as i64, priority)?;
     }
     if let Some(due) = request.due_date.as_ref() {
-        ctx.issues
-            .set_due_date(ticket_id as i64, due.as_deref())?;
+        ctx.issues.set_due_date(ticket_id as i64, due.as_deref())?;
     }
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id as i64, project_id, state, effects)?;
@@ -289,12 +290,7 @@ fn create_issue(
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
     }
-    apply_label_changes(
-        ctx,
-        project_id as i64,
-        ticket_id as i64,
-        request,
-    )?;
+    apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
     finish_save_response(ctx, ticket_id as u64)
 }
@@ -476,7 +472,10 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     })
 }
 
-fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueListResponse, ApiError> {
+fn list_issues(
+    ctx: &IssueContext,
+    request: &IssueListQuery,
+) -> Result<IssueListResponse, ApiError> {
     let limit = if request.limit == 0 {
         50
     } else {
@@ -501,9 +500,7 @@ fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueList
         for ticket in ctx.tickets.list(ProjectId::new(project_id))? {
             let ticket_id = ticket.id().value();
             if let Some(state) = request.state.as_deref() {
-                let workflow = ctx
-                    .issues
-                    .workflow_state_for_ticket(ticket_id as i64)?;
+                let workflow = ctx.issues.workflow_state_for_ticket(ticket_id as i64)?;
                 if workflow.as_ref().is_none_or(|value| value.name != state) {
                     continue;
                 }
@@ -520,13 +517,8 @@ fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueList
                     continue;
                 }
             }
-            let record = load_issue_record(
-                ctx,
-                &ctx
-                    .issues
-                    .load_issue_key(ticket_id as i64)?
-                    .display(),
-            )?;
+            let record =
+                load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;
             if let Some(since) = request.updated_since.as_deref()
                 && record.updated_at.as_str() < since
             {

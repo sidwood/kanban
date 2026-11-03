@@ -3,13 +3,13 @@
 use kanban_app::TimelineEnvelope;
 use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState};
 use kanban_dto::{ApiError, IssueRelationRecord};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::error::StorageError;
 use crate::timeline::insert_event;
 
-use super::linear_issue::{workflow_state_by_legacy, workflow_state_by_name, WorkflowStateRecord};
+use super::linear_issue::{WorkflowStateRecord, workflow_state_by_legacy, workflow_state_by_name};
 
 /// Issue persistence beside the Ticket port.
 pub struct SqliteIssueStore {
@@ -49,11 +49,7 @@ impl SqliteIssueStore {
         Ok(())
     }
 
-    pub fn patch_description(
-        &self,
-        ticket_id: i64,
-        patch: &str,
-    ) -> Result<String, ApiError> {
+    pub fn patch_description(&self, ticket_id: i64, patch: &str) -> Result<String, ApiError> {
         let conn = self.lock();
         let current: String = conn
             .query_row(
@@ -137,7 +133,9 @@ impl SqliteIssueStore {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         let now: String = span
-            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| row.get(0))
+            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+                row.get(0)
+            })
             .map_err(internal)?;
         let mut stamps = IssueStateTimestamps {
             started_at: span
@@ -181,9 +179,8 @@ impl SqliteIssueStore {
             params![ticket_id, to_state.id, &now],
         )
         .map_err(internal)?;
-        let legacy = TicketState::parse(&to_state.legacy_state).ok_or_else(|| {
-            ApiError::internal("stored workflow state is invalid")
-        })?;
+        let legacy = TicketState::parse(&to_state.legacy_state)
+            .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
         span.execute(
             "UPDATE tickets
              SET state = ?2,
@@ -227,12 +224,7 @@ impl SqliteIssueStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(internal)
     }
 
-    pub fn add_label(
-        &self,
-        project_id: i64,
-        ticket_id: i64,
-        name: &str,
-    ) -> Result<(), ApiError> {
+    pub fn add_label(&self, project_id: i64, ticket_id: i64, name: &str) -> Result<(), ApiError> {
         let conn = self.lock();
         let row: Option<(i64, Option<String>)> = conn
             .query_row(
@@ -243,7 +235,9 @@ impl SqliteIssueStore {
             .optional()
             .map_err(internal)?;
         let Some((label_id, retired_at)) = row else {
-            return Err(ApiError::invalid_request(&format!("unknown label `{name}`")));
+            return Err(ApiError::invalid_request(&format!(
+                "unknown label `{name}`"
+            )));
         };
         if retired_at.is_some() {
             return Err(ApiError::invalid_request(&format!(
@@ -282,7 +276,12 @@ impl SqliteIssueStore {
         self.touch_updated_at(ticket_id)
     }
 
-    pub fn remove_label(&self, project_id: i64, ticket_id: i64, name: &str) -> Result<(), ApiError> {
+    pub fn remove_label(
+        &self,
+        project_id: i64,
+        ticket_id: i64,
+        name: &str,
+    ) -> Result<(), ApiError> {
         let conn = self.lock();
         conn.execute(
             "DELETE FROM issue_ticket_labels
@@ -378,7 +377,10 @@ impl SqliteIssueStore {
         super::linear_issue::list_workflow_states(&conn, project_id).map_err(internal_storage)
     }
 
-    pub fn list_project_labels(&self, project_id: i64) -> Result<Vec<kanban_app::IssueLabelRow>, ApiError> {
+    pub fn list_project_labels(
+        &self,
+        project_id: i64,
+    ) -> Result<Vec<kanban_app::IssueLabelRow>, ApiError> {
         let conn = self.lock();
         let mut statement = conn
             .prepare(
@@ -536,16 +538,16 @@ impl SqliteIssueStore {
 
     pub fn set_parent(&self, ticket_id: i64, parent_id: Option<i64>) -> Result<(), ApiError> {
         if parent_id == Some(ticket_id) {
-            return Err(ApiError::invalid_request("an issue cannot be its own parent"));
+            return Err(ApiError::invalid_request(
+                "an issue cannot be its own parent",
+            ));
         }
         if let Some(parent_id) = parent_id {
             let conn = self.lock();
             let exists: Option<i64> = conn
-                .query_row(
-                    "SELECT id FROM tickets WHERE id = ?1",
-                    [parent_id],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT id FROM tickets WHERE id = ?1", [parent_id], |row| {
+                    row.get(0)
+                })
                 .optional()
                 .map_err(internal)?;
             if exists.is_none() {
@@ -611,8 +613,8 @@ impl SqliteIssueStore {
         kind: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, to_ticket_id)) =
-            super::linear_issue::resolve_issue_key(&conn, to_identifier).map_err(internal_storage)?
+        let Some((_, to_ticket_id)) = super::linear_issue::resolve_issue_key(&conn, to_identifier)
+            .map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(to_identifier));
         };
@@ -638,8 +640,8 @@ impl SqliteIssueStore {
         kind: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, to_ticket_id)) =
-            super::linear_issue::resolve_issue_key(&conn, to_identifier).map_err(internal_storage)?
+        let Some((_, to_ticket_id)) = super::linear_issue::resolve_issue_key(&conn, to_identifier)
+            .map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(to_identifier));
         };
@@ -660,8 +662,8 @@ impl SqliteIssueStore {
     ) -> Result<(), ApiError> {
         let conn = self.lock();
         let target_id = if let Some(identifier) = target_identifier {
-            let Some((_, id)) =
-                super::linear_issue::resolve_issue_key(&conn, identifier).map_err(internal_storage)?
+            let Some((_, id)) = super::linear_issue::resolve_issue_key(&conn, identifier)
+                .map_err(internal_storage)?
             else {
                 return Err(ApiError::not_found(identifier));
             };
@@ -803,9 +805,8 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         &self,
         ticket_id: i64,
     ) -> Result<Option<kanban_app::IssueWorkflowState>, ApiError> {
-        SqliteIssueStore::workflow_state_for_ticket(self, ticket_id).map(|state| {
-            state.map(map_workflow_state)
-        })
+        SqliteIssueStore::workflow_state_for_ticket(self, ticket_id)
+            .map(|state| state.map(map_workflow_state))
     }
 
     fn resolve_identifier(&self, identifier: &str) -> Result<Option<(IssueKey, i64)>, ApiError> {

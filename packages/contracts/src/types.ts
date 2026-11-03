@@ -549,6 +549,12 @@ export type InitiativeRenameRequest = {
   mutation: MutationContext;
   name: string;
 };
+export type IssueChildRecord = {
+  identifier: string;
+  sort_order: number;
+  state: string;
+  title: string;
+};
 export type IssueGetQuery = {
   identifier: string;
 };

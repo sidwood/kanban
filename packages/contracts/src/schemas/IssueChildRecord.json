@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "identifier": {
+      "type": "string"
+    },
+    "sort_order": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "state": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "identifier",
+    "sort_order",
+    "state",
+    "title"
+  ],
+  "title": "IssueChildRecord",
+  "type": "object"
+}

@@ -77,21 +77,35 @@ describe('lifecycle actions store', () => {
   it('a drag sends the target against the open version', async () => {
     setActivePinia(createPinia())
     const { transport, operations, query, command } = harness()
-    query.mockResolvedValue(openTask satisfies TicketRecord)
-    command.mockResolvedValue(moved('ready', 5))
+    let reads = 0
+    query.mockImplementation((name: string) => {
+      if (name === 'ticket.get') {
+        reads += 1
+        return Promise.resolve(reads === 1 ? openTask : moved('ready', 5))
+      }
+      return Promise.resolve(openTask)
+    })
+    command.mockImplementation((name: string) => {
+      if (name === 'issue.save') {
+        return Promise.resolve({ identifier: 'CORE-3', ticket_id: 2, url: 'kanban://issue/CORE-3' })
+      }
+      return Promise.resolve({})
+    })
     const actions = useLifecycleActionsStore()
     await actions.open(transport, 2)
 
     const landed = await actions.transition(transport, 'ready')
 
     expect(landed).toBe(true)
-    const dragged = operations.find((entry) => entry.name === 'ticket.transition')
+    const dragged = operations.find((entry) => entry.name === 'issue.save')
     expect(dragged?.kind).toBe('command')
-    expect(dragged?.request).toEqual({
-      mutation: mutationOf(4),
-      ticket_id: 2,
-      to: 'ready',
-    })
+    expect(dragged?.request).toEqual(
+      expect.objectContaining({
+        mutation: mutationOf(4),
+        identifier: 'CORE-3',
+        state: 'Ready',
+      }),
+    )
     expect(actions.ticket?.state).toBe('ready')
     expect(actions.ticket?.version).toBe(5)
   })

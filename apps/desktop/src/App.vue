@@ -33,6 +33,7 @@ const ticketDialog = useTicketDialogStore()
 const root = ref<HTMLElement | null>(null)
 let observer: ResizeObserver | undefined
 let poll: ReturnType<typeof setInterval> | undefined
+let stopProjectEvents: (() => void) | undefined
 let attentionInFlight = false
 
 // The width the shell has to work with decides the rail and the
@@ -88,6 +89,15 @@ onMounted(() => {
   applyTheme(loadTheme())
   if (transport) {
     void connection.boot(transport)
+    stopProjectEvents = transport.subscribe((event) => {
+      if (
+        event.event_type === 'project.registered' ||
+        event.event_type === 'project.updated' ||
+        event.event_type === 'project.archived'
+      ) {
+        void projects.refresh(transport).then(() => scope.reconcile(projects.projects))
+      }
+    })
   }
   // No live event announces an Attention item, so the badge re-reads
   // the inbox on the inbox's own cadence.
@@ -98,6 +108,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('resize', measure)
   observer?.disconnect()
+  stopProjectEvents?.()
   if (poll !== undefined) clearInterval(poll)
 })
 

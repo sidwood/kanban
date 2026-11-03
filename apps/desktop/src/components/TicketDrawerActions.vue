@@ -16,12 +16,13 @@ import { useTicketDialogStore } from '../stores/ticket-dialog'
 import AppButton from './AppButton.vue'
 import InlineAlert from './InlineAlert.vue'
 
-const { ticket, legalTargets, stateLabels } = defineProps<{
+const { ticket, legalTargets, projectCode } = defineProps<{
   ticket: TicketRecord
-  /** Where a human drag may take this Ticket now, as the core
-   * judges it: empty for the agent-owned kinds. */
-  legalTargets: readonly TicketState[]
-  stateLabels: Record<TicketState, string>
+  /** Workflow states this issue may move to now. */
+  legalTargets: readonly string[]
+  projectCode: string
+  /** @deprecated unused; workflow names are shown directly */
+  stateLabels?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -53,9 +54,9 @@ const recoveryTo = ref<TicketState | ''>('')
 const recoveryWho = ref('')
 const recoveryWhy = ref('')
 
-// Only a Task answers a human drag; an Implementation or Bug moves
-// under its agents (DR-LC-07, DR-LC-08).
-const agentOwned = computed(() => ticket.kind !== 'task')
+// Issues move through the project workflow; park and unpark remain
+// named human commands beside free state moves.
+const agentOwned = computed(() => false)
 
 // The human slot the core is waiting on in the stage it is resolving
 // now; a slot in a later stage is not open to a verdict and the core
@@ -63,6 +64,21 @@ const agentOwned = computed(() => ticket.kind !== 'task')
 const waitingSlot = computed(() => detail.waitingHumanSlots[0] ?? null)
 
 const SEVERITIES: FindingSeverity[] = ['p0', 'p1', 'p2', 'p3']
+
+const TICKET_STATE_LABELS: Record<TicketState, string> = {
+  draft: 'Draft',
+  parked: 'Parked',
+  blocked: 'Blocked',
+  scheduled: 'Scheduled',
+  ready: 'Ready',
+  active: 'Active',
+  in_review: 'In Review',
+  approved: 'Approved',
+  landing: 'Landing',
+  done: 'Done',
+  cancelled: 'Cancelled',
+  superseded: 'Superseded',
+}
 
 // A rejection that resolves the stage must carry at least one
 // blocking in-scope P0 to P2 finding, and every narrative field of
@@ -108,7 +124,7 @@ const recoveryGap = computed(() => {
 // actually reach is the core's judgement, and a refusal is reported
 // (DR-LC-10).
 const recoveryTargets = computed(() =>
-  (Object.keys(stateLabels) as TicketState[]).filter((state) => state !== ticket.state),
+  (Object.keys(TICKET_STATE_LABELS) as TicketState[]).filter((state) => state !== ticket.state),
 )
 
 // Every action guards on the record the drawer is showing.
@@ -150,9 +166,9 @@ async function unpark(): Promise<void> {
 }
 
 async function move(event: Event): Promise<void> {
-  const target = (event.target as HTMLSelectElement).value as TicketState | ''
+  const target = (event.target as HTMLSelectElement).value
   if (!transport || target === '') return
-  await run(() => lifecycle.transition(transport, target))
+  await run(() => lifecycle.moveToWorkflowState(transport, projectCode, target))
 }
 
 async function submitReview(): Promise<void> {
@@ -222,21 +238,14 @@ const FIELD_CLASS =
     </InlineAlert>
 
     <div class="flex flex-wrap items-center justify-end gap-2">
-      <p
-        v-if="agentOwned"
-        data-testid="drawer-agent-owned"
-        class="mr-auto text-xs text-ink-subtle"
-      >
-        This kind's lifecycle is agent-owned; a human moves it only through these commands.
-      </p>
       <label
-        v-else
+        v-if="legalTargets.length > 0"
         class="mr-auto flex items-center gap-2 text-xs text-ink-muted"
       >
         Move to
         <select
           data-testid="drawer-move"
-          aria-label="Move this Task"
+          aria-label="Move this issue"
           :class="FIELD_CLASS"
           :value="''"
           @change="move"
@@ -249,7 +258,7 @@ const FIELD_CLASS =
             :key="target"
             :value="target"
           >
-            {{ stateLabels[target] }}
+            {{ target }}
           </option>
         </select>
       </label>
@@ -464,7 +473,7 @@ const FIELD_CLASS =
             :key="target"
             :value="target"
           >
-            {{ stateLabels[target] }}
+            {{ TICKET_STATE_LABELS[target] }}
           </option>
         </select>
       </label>

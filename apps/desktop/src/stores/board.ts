@@ -21,6 +21,7 @@ import type {
   BoardFilterOptions,
   BoardGlobalCard,
   CriterionBindingRecord,
+  IssueWorkflowStateRecord,
   RunRecord,
   TicketReadinessBlocker,
   TicketRecord,
@@ -31,8 +32,15 @@ import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import { activeFilterCount, scopedFilter } from '../views/board-filters'
 import { boardGroupForState } from '../views/board-layout'
+import { issueDisplayKey } from '../views/board-card'
 import { emptyFilter, wireFilter } from '../views/global-board-filters'
 import type { BoardScope } from './scope'
+import {
+  defaultWorkflowStates,
+  legacyStateToWorkflowName,
+  workflowMoveTargets,
+  workflowNameToLegacyState,
+} from './issue-workflow'
 
 /** The execution facts a card's profile chips wear. */
 export interface ExecutionFacts {
@@ -94,8 +102,11 @@ export const useBoardStore = defineStore('board', {
     /** The criterion evidence bindings the core holds per Ticket:
      * what the cards' progress is counted from. */
     bindings: {} as Record<number, CriterionBindingRecord[]>,
-    /** The states a human drag may move each Ticket to now, as the
-     * core judges them. */
+    /** Workflow states per Project, for free issue moves. */
+    workflowByProject: {} as Record<number, readonly IssueWorkflowStateRecord[]>,
+    /** Linear workflow state names each Ticket may move to now. */
+    workflowTargets: {} as Record<number, readonly string[]>,
+    /** @deprecated legacy lifecycle targets; use workflowTargets. */
     transitions: {} as Record<number, TicketState[]>,
     /** The run records of every Project on the board, by Project. */
     runs: {} as Record<number, RunRecord[]>,
@@ -121,11 +132,19 @@ export const useBoardStore = defineStore('board', {
     /** The criterion bindings the core holds for one Ticket. */
     bindingsFor: (state) => (ticketId: number): readonly CriterionBindingRecord[] =>
       state.bindings[ticketId] ?? [],
-    /** Where a human drag may move one Ticket now: the core's own
-     * answer, and nothing a client worked out for itself. A Ticket
-     * the board has not read moves nowhere. */
-    legalTargetsFor: (state) => (ticketId: number): readonly TicketState[] =>
-      state.transitions[ticketId] ?? [],
+    /** Where an issue may move now: every workflow state except the
+     * current one for that Ticket's Project. */
+    workflowTargetsFor: (state) => (ticketId: number): readonly string[] =>
+      state.workflowTargets[ticketId] ?? [],
+    /** Legacy lifecycle targets derived from workflow names (for
+     * column drops that still speak in TicketState). */
+    legalTargetsFor: (state) => (ticketId: number): readonly TicketState[] => {
+      const names = state.workflowTargets[ticketId] ?? []
+      const mapped = names
+        .map((name) => workflowNameToLegacyState(name))
+        .filter((state): state is TicketState => state !== undefined)
+      return [...new Set(mapped)]
+    },
     /** One card by the Ticket it carries, when the board holds it. */
     cardOf: (state) => (ticketId: number): BoardGlobalCard | undefined =>
       state.cards.find((card) => card.ticket.id === ticketId),
@@ -167,6 +186,8 @@ export const useBoardStore = defineStore('board', {
       this.blockers = {}
       this.reviewers = {}
       this.bindings = {}
+      this.workflowByProject = {}
+      this.workflowTargets = {}
       this.transitions = {}
       this.runs = {}
       this.scopeTotal = null
@@ -224,17 +245,11 @@ export const useBoardStore = defineStore('board', {
         const reviewed = this.cards
           .filter((card) => card.ticket.kind === 'implementation')
           .map((card) => card.ticket.id)
-        // Only a Task answers a human drag, so only a Task's legal
-        // moves are worth reading: the core answers every other kind
-        // with nothing at all (DR-LC-07, DR-LC-08).
-        const draggable = this.cards
-          .filter((card) => card.ticket.kind === 'task')
-          .map((card) => card.ticket.id)
         await Promise.all([
           this.refreshReadiness(transport, asking, attempt),
           this.refreshReviewers(transport, reviewed, attempt),
           this.refreshBindings(transport, this.cards.map((card) => card.ticket.id), attempt),
-          this.refreshTransitions(transport, draggable, attempt),
+          this.refreshWorkflowTargets(transport, this.cards, attempt),
           this.loadRuns(transport, this.projectsPresent, attempt),
         ])
       } catch (failure) {
@@ -308,26 +323,56 @@ export const useBoardStore = defineStore('board', {
       })
       this.bindings = bindings
     },
-    // Where the core says each draggable Ticket may go: the whole
-    // legality judgement — the canonical lifecycle, the kind's
-    // ownership, and the Ticket's own gates — stays in the core, and
-    // a surface offering moves offers exactly these (KAN-T137-AC5).
+    async refreshWorkflowTargets(
+      transport: ShellTransport,
+      cards: readonly BoardGlobalCard[],
+      issuedFor?: number,
+    ): Promise<void> {
+      const attempt = issuedFor ?? this.issued
+      const client = new KanbanClient(transport)
+      const projectIds = [...new Set(cards.map((card) => card.ticket.project_id))]
+      const statesByProject: Record<number, readonly IssueWorkflowStateRecord[]> = {}
+      await Promise.all(
+        projectIds.map(async (projectId) => {
+          try {
+            const response = await client.queryIssueList_workflowStates({ project_id: projectId })
+            statesByProject[projectId] =
+              response.states.length > 0 ? response.states : defaultWorkflowStates()
+          } catch {
+            statesByProject[projectId] = defaultWorkflowStates()
+          }
+        }),
+      )
+      if (attempt !== this.issued) return
+      this.workflowByProject = statesByProject
+      const targets: Record<number, readonly string[]> = {}
+      for (const card of cards) {
+        const states = statesByProject[card.ticket.project_id] ?? []
+        targets[card.ticket.id] = workflowMoveTargets(card.ticket.state, states)
+      }
+      this.workflowTargets = targets
+      this.transitions = Object.fromEntries(
+        Object.entries(targets).map(([ticketId, names]) => [
+          Number(ticketId),
+          names
+            .map((name) => workflowNameToLegacyState(name))
+            .filter((state): state is TicketState => state !== undefined),
+        ]),
+      )
+    },
+    // Kept for tests that still mock ticket.transitions.
     async refreshTransitions(
       transport: ShellTransport,
       ticketIds: readonly number[],
       issuedFor?: number,
     ): Promise<void> {
-      const attempt = issuedFor ?? this.issued
-      const client = new KanbanClient(transport)
-      const responses = await Promise.all(
-        ticketIds.map((ticketId) => client.queryTicketTransitions({ ticket_id: ticketId })),
+      await this.refreshWorkflowTargets(
+        transport,
+        ticketIds
+          .map((id) => this.cardOf(id))
+          .filter((card): card is BoardGlobalCard => card !== undefined),
+        issuedFor,
       )
-      if (attempt !== this.issued) return
-      const transitions: Record<number, TicketState[]> = {}
-      ticketIds.forEach((ticketId, index) => {
-        transitions[ticketId] = responses[index]?.targets ?? []
-      })
-      this.transitions = transitions
     },
     // The runs of every Project on the board, one read per Project.
     async loadRuns(
@@ -359,44 +404,39 @@ export const useBoardStore = defineStore('board', {
     // replacing the held record with the one the command returns; the
     // card follows its new state into the group the mapping fixes.
     async move(transport: ShellTransport, ticketId: number, to: TicketState): Promise<boolean> {
+      return this.moveToWorkflowState(transport, ticketId, legacyStateToWorkflowName(to))
+    },
+    async moveToWorkflowState(
+      transport: ShellTransport,
+      ticketId: number,
+      workflowState: string,
+    ): Promise<boolean> {
       const card = this.cardOf(ticketId)
-      // The board speaks for one scope: a card it does not hold never
-      // mutates through it, however it came to be dragged
-      // (KAN-T125-AC3).
       if (card === undefined) {
         this.error = `the board does not hold Ticket ${ticketId}`
         return false
       }
-      // A move the board issued before it changed scope belongs to
-      // the scope it was issued for: its result — landed or refused
-      // — renders nowhere here.
       const attempt = this.issued
       try {
-        const moved: TicketRecord | undefined = await new KanbanClient(transport).commandTicketTransition({
+        await new KanbanClient(transport).commandIssueSave({
           mutation: {
             optimistic_version: card.ticket.version,
             idempotency_key: crypto.randomUUID(),
           },
-          ticket_id: ticketId,
-          to,
+          identifier: issueDisplayKey(card.project_code, card.ticket.number),
+          state: workflowState,
         })
+        const moved = await new KanbanClient(transport).queryTicketGet({ ticket_id: ticketId })
         if (attempt !== this.issued) return false
-        if (moved === undefined || moved === null) {
-          this.error = `the core returned no record for the move of Ticket ${ticketId}`
-          return false
-        }
         const group = boardGroupForState(moved.state)
         this.cards = this.cards.flatMap((entry) => {
           if (entry.ticket.id !== moved.id) return [entry]
-          // A record that left the active board leaves the cards.
           return group === undefined ? [] : [{ ...entry, ticket: moved, group }]
         })
         this.error = null
-        // The move may have changed what holds the Ticket back; the
-        // projection is the core's to recompute, and a failure to
-        // refresh it never rolls the move back.
         try {
           await this.refreshReadiness(transport, [moved.id], attempt)
+          await this.refreshWorkflowTargets(transport, this.cards, attempt)
         } catch (projection) {
           if (attempt === this.issued) {
             this.error = asApiError(projection).message

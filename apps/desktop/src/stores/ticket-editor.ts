@@ -11,6 +11,7 @@
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type {
+  IssueSaveRequest,
   TaskMode,
   TaskSubtype,
   TicketCreateRequest,
@@ -35,6 +36,30 @@ export const TASK_SUBTYPES: TaskSubtype[] = [
   'manual',
 ]
 export const TASK_MODES: TaskMode[] = ['human', 'agent']
+
+export const LINEAR_PRIORITIES: readonly { value: number; label: string }[] = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Urgent' },
+  { value: 2, label: 'High' },
+  { value: 3, label: 'Medium' },
+  { value: 4, label: 'Low' },
+]
+
+export interface IssueCreateDraft {
+  title: string
+  description: string
+  priority: number
+  dueDate: string
+}
+
+export function blankIssueCreateDraft(): IssueCreateDraft {
+  return {
+    title: '',
+    description: '',
+    priority: 3,
+    dueDate: '',
+  }
+}
 
 // One criterion row the editor holds before its story links parse.
 export interface TicketCriterionDraft {
@@ -165,6 +190,33 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       } catch (failure) {
         this.error = asApiError(failure).message
       }
+    },
+    async createIssue(
+      transport: ShellTransport,
+      projectId: number,
+      draft: IssueCreateDraft,
+    ): Promise<boolean> {
+      const request: IssueSaveRequest = {
+        mutation: { optimistic_version: 0, idempotency_key: crypto.randomUUID() },
+        project_id: projectId,
+        title: draft.title.trim(),
+        description: draft.description,
+        priority: draft.priority,
+        state: 'Draft',
+      }
+      const due = draft.dueDate.trim()
+      if (due !== '') {
+        request.due_date = due
+      }
+      try {
+        await new KanbanClient(transport).commandIssueSave(request)
+        this.error = null
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return false
+      }
+      await this.refresh(transport, projectId)
+      return true
     },
     // Create one Ticket under its kind's schema. Reports whether the
     // Ticket landed; a refusal is reported and the list stands.

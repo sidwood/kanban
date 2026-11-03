@@ -215,6 +215,40 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
       evidence_ids?: number[]
     }
     switch (name) {
+      case 'issue.save': {
+        const save = body as {
+          project_id?: number
+          title?: string
+          description?: string
+          priority?: number
+          state?: string
+          due_date?: string
+        }
+        const project_id = save.project_id ?? 4
+        const project = projects.find((entry) => entry.id === project_id)
+        const code = project?.code ?? 'CORE'
+        const created: TicketRecord = {
+          id: 100 + tickets.length,
+          project_id,
+          number: 30 + tickets.length,
+          kind: 'task',
+          priority: 'normal',
+          state: 'draft',
+          spec_id: null,
+          title: save.title ?? null,
+          slice: save.description ?? null,
+          criteria: [],
+          bug: null,
+          subtype: null,
+          mode: null,
+          completion: [],
+          scheduled_for: null,
+          due: save.due_date ?? null,
+          profile: null,
+          version: 1,
+        }
+        return Promise.resolve(replace(created))
+      }
       case 'ticket.create': {
         const created: TicketRecord = {
           id: 100 + tickets.length,

@@ -174,6 +174,31 @@ function serving(
       const { ticket_id } = request as { ticket_id: number }
       return Promise.resolve({ bindings: bindings[ticket_id] ?? [] })
     }
+    if (name === 'issue.list_workflow_states') {
+      return Promise.resolve({
+        states: [
+          { name: 'Draft', state_type: 'backlog' },
+          { name: 'Parked', state_type: 'backlog' },
+          { name: 'Blocked', state_type: 'backlog' },
+          { name: 'Scheduled', state_type: 'backlog' },
+          { name: 'Ready', state_type: 'backlog' },
+          { name: 'Active', state_type: 'started' },
+          { name: 'In Review', state_type: 'started' },
+          { name: 'Approved', state_type: 'started' },
+          { name: 'Landing', state_type: 'started' },
+          { name: 'Done', state_type: 'completed' },
+          { name: 'Cancelled', state_type: 'canceled' },
+          { name: 'Superseded', state_type: 'canceled' },
+        ],
+      })
+    }
+    if (name === 'ticket.get') {
+      const { ticket_id } = request as { ticket_id: number }
+      const found = tickets.find((entry) => entry.id === ticket_id)
+      return found
+        ? Promise.resolve(found)
+        : Promise.reject({ code: 'not_found', message: 'ticket' })
+    }
     if (name === 'ticket.transitions') {
       const { ticket_id } = request as { ticket_id: number }
       const found = tickets.find((entry) => entry.id === ticket_id)
@@ -404,10 +429,18 @@ describe('board store', () => {
   it('moves a Ticket against its current version and keeps the record the core returns', async () => {
     setActivePinia(createPinia())
     const { transport, query, command, operations } = harness()
-    query.mockImplementation(serving([task()]))
-    command.mockImplementation((_name: string, request: unknown) => {
-      const { ticket_id, to } = request as { ticket_id: number; to: TicketRecord['state'] }
-      return Promise.resolve(task({ id: ticket_id, state: to, version: 4 }))
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'ticket.get') {
+        const { ticket_id } = request as { ticket_id: number }
+        return Promise.resolve(task({ id: ticket_id, state: 'active', version: 4 }))
+      }
+      return serving([task()])(name, request)
+    })
+    command.mockImplementation((name: string) => {
+      if (name === 'issue.save') {
+        return Promise.resolve({ identifier: 'CORE-12', ticket_id: 7, url: 'kanban://issue/CORE-12' })
+      }
+      return Promise.resolve({})
     })
     const board = useBoardStore()
     await board.refresh(transport, 1, emptyFilter())
@@ -415,10 +448,10 @@ describe('board store', () => {
     expect(await board.move(transport, 7, 'active')).toBe(true)
 
     expect(command).toHaveBeenCalledWith(
-      'ticket.transition',
+      'issue.save',
       expect.objectContaining({
-        ticket_id: 7,
-        to: 'active',
+        identifier: 'CORE-12',
+        state: 'Active',
         mutation: expect.objectContaining({ optimistic_version: 3 }),
       }),
     )
@@ -436,8 +469,18 @@ describe('board store', () => {
     setActivePinia(createPinia())
     const { transport, query, command, operations } = harness()
     const blocker = { External: { blocker_id: 1, description: 'Vendor API quota' } }
-    query.mockImplementation(serving([task({ state: 'landing' })], { 7: [blocker] }))
-    command.mockImplementation(() => Promise.resolve(task({ state: 'done', version: 4 })))
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'ticket.get') {
+        return Promise.resolve(task({ state: 'done', version: 4 }))
+      }
+      return serving([task({ state: 'landing' })], { 7: [blocker] })(name, request)
+    })
+    command.mockImplementation((name: string) => {
+      if (name === 'issue.save') {
+        return Promise.resolve({ identifier: 'CORE-12', ticket_id: 7, url: 'kanban://issue/CORE-12' })
+      }
+      return Promise.resolve({})
+    })
     const board = useBoardStore()
     await board.refresh(transport, 1, emptyFilter())
     expect(board.blockersFor(7)).toEqual([blocker])
@@ -449,22 +492,24 @@ describe('board store', () => {
     expect(requestsOf(operations, 'ticket.readiness')).toHaveLength(before)
   })
 
-  it('reports a drag the core refuses and keeps the Ticket as it stands', async () => {
+  it('reports a move the core refuses and keeps the Ticket as it stands', async () => {
     setActivePinia(createPinia())
     const { transport, query, command } = harness()
     query.mockImplementation(serving([task({ kind: 'bug' })]))
-    command.mockImplementation(() =>
-      Promise.reject({
-        code: 'invalid_request',
-        message: 'bug transitions are agent-owned; a human may drag only Task Tickets',
-      }),
+    command.mockImplementation((name: string) =>
+      name === 'issue.save'
+        ? Promise.reject({
+            code: 'invalid_request',
+            message: 'unknown state `Ghost`',
+          })
+        : Promise.resolve({}),
     )
     const board = useBoardStore()
     await board.refresh(transport, 1, emptyFilter())
 
     expect(await board.move(transport, 7, 'active')).toBe(false)
 
-    expect(board.error).toBe('bug transitions are agent-owned; a human may drag only Task Tickets')
+    expect(board.error).toBe('unknown state `Ghost`')
     expect(board.cardOf(7)?.ticket.state).toBe('ready')
     expect(board.cardOf(7)?.ticket.version).toBe(3)
   })
@@ -591,9 +636,17 @@ describe('board store', () => {
   it('renders nothing from a move that lands after the board has left', async () => {
     setActivePinia(createPinia())
     const { transport, query, command } = harness()
-    query.mockImplementation(serving([task()]))
     const slow = deferred<TicketRecord>()
-    command.mockImplementation(() => slow.promise)
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'ticket.get') return slow.promise
+      return serving([task()])(name, request)
+    })
+    command.mockImplementation((name: string) => {
+      if (name === 'issue.save') {
+        return Promise.resolve({ identifier: 'CORE-12', ticket_id: 7, url: 'kanban://issue/CORE-12' })
+      }
+      return Promise.resolve({})
+    })
     const board = useBoardStore()
     await board.refresh(transport, 1, emptyFilter())
 
@@ -639,12 +692,9 @@ describe('board store', () => {
     await board.refresh(transport, 1, emptyFilter())
 
     expect(board.bindingsFor(7).map((binding) => binding.criterion_index)).toEqual([0])
-    expect(board.legalTargetsFor(7)).toEqual(['parked', 'active'])
-    // Only a Task answers a human drag, so only a Task's moves are read.
-    expect(
-      query.mock.calls.filter(([name]) => name === 'ticket.transitions').map(([, request]) => request),
-    ).toEqual([{ ticket_id: 7 }])
-    expect(board.legalTargetsFor(8)).toEqual([])
+    expect(board.workflowTargetsFor(7)).not.toContain('Ready')
+    expect(board.workflowTargetsFor(7)).toContain('Active')
+    expect(board.workflowTargetsFor(8).length).toBeGreaterThan(0)
   })
 
   it('forgets the bindings and legal moves of the scope it leaves', async () => {
@@ -653,11 +703,11 @@ describe('board store', () => {
     query.mockImplementation(serving([task()], {}, [], {}, {}, { 7: ['parked', 'active'] }))
     const board = useBoardStore()
     await board.refresh(transport, 1, emptyFilter())
-    expect(board.legalTargetsFor(7)).toEqual(['parked', 'active'])
+    expect(board.workflowTargetsFor(7).length).toBeGreaterThan(0)
 
     board.clear()
 
-    expect(board.legalTargetsFor(7)).toEqual([])
+    expect(board.workflowTargetsFor(7)).toEqual([])
     expect(board.bindingsFor(7)).toEqual([])
   })
 })

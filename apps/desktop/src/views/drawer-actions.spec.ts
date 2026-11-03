@@ -531,26 +531,28 @@ describe('the drawer footer actions', () => {
     expect(document.querySelector('[data-testid="recovery-confirm"]')).not.toBeNull()
   })
 
-  it('keeps the drag Task-only: an agent-owned kind offers no drag and no move select', async () => {
+  it('offers every workflow state except the current one in the move select', async () => {
     const state = harness({ tickets: [implementation({ state: 'ready' })] })
     const wrapper = await openDrawer(state)
 
     const card = wrapper.find('[data-testid="kanban-card-8"]')
-    expect(card.attributes('draggable')).toBe('false')
-    expect(document.querySelector('[data-testid="drawer-move"]')).toBeNull()
-    expect(document.querySelector('[data-testid="drawer-agent-owned"]')?.textContent).toContain(
-      'agent-owned',
-    )
+    expect(card.attributes('draggable')).not.toBe('false')
+    const move = document.querySelector('[data-testid="drawer-move"]') as HTMLSelectElement
+    expect(move).not.toBeNull()
+    expect([...move.options].map((option) => option.value)).toContain('Active')
+    expect([...move.options].map((option) => option.value)).not.toContain('Ready')
   })
 
-  it('offers a Task its legal moves as the core judges them', async () => {
+  it('moves through issue.save with a workflow state name', async () => {
     const state = harness({ tickets: [ticket({ id: 7, state: 'ready' })] })
     await openDrawer(state, 7)
 
     const move = document.querySelector('[data-testid="drawer-move"]') as HTMLSelectElement
-    expect([...move.options].map((option) => option.value)).toEqual(['', 'parked', 'active'])
-    await type('drawer-move', 'active')
+    await type('drawer-move', 'Active')
 
-    expect(issued(state, 'ticket.transition')[0]).toMatchObject({ ticket_id: 7, to: 'active' })
+    expect(issued(state, 'issue.save')[0]).toMatchObject({
+      identifier: 'CORE-12',
+      state: 'Active',
+    })
   })
 })

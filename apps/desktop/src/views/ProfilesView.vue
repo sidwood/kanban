@@ -332,7 +332,7 @@ async function pickProject(event: Event) {
           :key="entry.id"
           class="flex flex-wrap items-center gap-3 px-3 py-2 text-sm"
         >
-          <span class="font-mono text-xs text-ink">{{ projectCode }}-T{{ entry.number }}</span>
+          <span class="font-mono text-xs text-ink">{{ issueDisplayKey(projectCode, entry.number) }}</span>
           <span class="min-w-0 flex-1 truncate text-ink-muted">
             {{ entry.slice ?? entry.title ?? 'Untitled Ticket' }}
           </span>

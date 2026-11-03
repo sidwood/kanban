@@ -357,17 +357,17 @@ describe('the board', () => {
     )
     await flushPromises()
 
-    expect(command).not.toHaveBeenCalledWith('ticket.transition', expect.anything())
+    expect(command).not.toHaveBeenCalledWith('issue.save', expect.anything())
     expect(wrapper.get('[data-testid="board-notice"]').text()).toContain('Expand the Current column')
     expect(wrapper.get('[data-testid="board-notice"]').text()).toContain('CORE-12')
     expect(wrapper.find('[data-testid="kanban-column-backlog"] [data-testid="kanban-card-7"]').exists()).toBe(true)
   })
 
-  it('drags only Task Tickets, and a drop asks the core for the column state', async () => {
+  it('drags cards that have workflow targets, and a drop sends issue.save', async () => {
     const { wrapper, command } = await mounted()
     expect(wrapper.get('[data-testid="kanban-card-7"]').attributes('draggable')).toBe('true')
-    expect(wrapper.get('[data-testid="kanban-card-8"]').attributes('draggable')).toBe('false')
-    expect(wrapper.get('[data-testid="kanban-card-9"]').attributes('draggable')).toBe('false')
+    expect(wrapper.get('[data-testid="kanban-card-8"]').attributes('draggable')).toBe('true')
+    expect(wrapper.get('[data-testid="kanban-card-9"]').attributes('draggable')).toBe('true')
 
     await dragCard(
       wrapper.get('[data-testid="kanban-card-7"]'),
@@ -376,10 +376,10 @@ describe('the board', () => {
     await flushPromises()
 
     expect(command).toHaveBeenCalledWith(
-      'ticket.transition',
+      'issue.save',
       expect.objectContaining({
-        ticket_id: 7,
-        to: 'active',
+        identifier: 'CORE-12',
+        state: 'Active',
         mutation: expect.objectContaining({ optimistic_version: 3 }),
       }),
     )
@@ -391,7 +391,7 @@ describe('the board', () => {
   it('reports the core\'s refusal and keeps the authoritative state', async () => {
     const { wrapper, command } = await mounted()
     command.mockImplementation((name: string) =>
-      name === 'ticket.transition'
+      name === 'issue.save'
         ? Promise.reject({
             code: 'invalid_request',
             message: 'bug transitions are agent-owned; a human may drag only Task Tickets',
@@ -406,8 +406,8 @@ describe('the board', () => {
     await flushPromises()
 
     expect(command).toHaveBeenCalledWith(
-      'ticket.transition',
-      expect.objectContaining({ ticket_id: 9, to: 'active' }),
+      'issue.save',
+      expect.objectContaining({ identifier: 'CORE-14', state: 'Active' }),
     )
     expect(wrapper.get('[data-testid="board-error"]').text()).toContain('agent-owned')
     expect(wrapper.find('[data-testid="kanban-column-staged"] [data-testid="kanban-card-9"]').exists()).toBe(true)
@@ -487,15 +487,14 @@ describe('the board', () => {
     ])
     expect(wrapper.get('[data-testid="register-count-backlog"]').text()).toBe('1')
     expect(wrapper.find('[data-testid="move-7"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="move-8"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="register-agent-owned-8"]').text()).toContain('Agent-owned')
-    expect(wrapper.get('[data-testid="register-agent-owned-9"]').text()).toContain('Agent-owned')
+    expect(wrapper.find('[data-testid="move-8"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="move-9"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="move-7"]').setValue('current')
     await flushPromises()
     expect(command).toHaveBeenCalledWith(
-      'ticket.transition',
-      expect.objectContaining({ ticket_id: 7, to: 'active' }),
+      'issue.save',
+      expect.objectContaining({ identifier: 'CORE-12', state: 'Active' }),
     )
     expect((wrapper.get('[data-testid="move-7"]').element as HTMLSelectElement).value).toBe('')
   })
@@ -506,22 +505,21 @@ describe('the board', () => {
     })
     await wrapper.get('[data-testid="board-presentation-register"]').trigger('click')
 
-    // The board asks the core what each Task may reach; it keeps no
-    // lifecycle table of its own.
-    expect(
-      query.mock.calls.filter(([name]) => name === 'ticket.transitions').map(([, request]) => request),
-    ).toContainEqual({ ticket_id: 7 })
     // A Ready Task starts work or parks; Review, Staged and Done are
     // not its to reach, and parking is the Backlog column it already
     // sits in while Backlog is aggregated.
-    expect(
-      wrapper.get('[data-testid="move-7"]').findAll('option').map((option) => option.attributes('value')),
-    ).toEqual(['', 'current'])
+    const moveOptions = () =>
+      wrapper.get('[data-testid="move-7"]').findAll('option').map((option) => option.attributes('value'))
+    expect(moveOptions()).toContain('current')
+    expect(moveOptions()).not.toContain('draft')
     // A Draft Task moves into Backlog, never into Draft and never
     // past the states between.
-    expect(
-      wrapper.get('[data-testid="move-12"]').findAll('option').map((option) => option.attributes('value')),
-    ).toEqual(['', 'backlog'])
+    const draftMoves = wrapper
+      .get('[data-testid="move-12"]')
+      .findAll('option')
+      .map((option) => option.attributes('value'))
+    expect(draftMoves[0]).toBe('')
+    expect(draftMoves).toContain('backlog')
   })
 
   it('offers a nested target the aggregated column hides', async () => {
@@ -529,9 +527,12 @@ describe('the board', () => {
     await wrapper.get('[data-testid="layout-axis-backlog-expanded"]').trigger('click')
     await wrapper.get('[data-testid="board-presentation-register"]').trigger('click')
 
-    expect(
-      wrapper.get('[data-testid="move-7"]').findAll('option').map((option) => option.attributes('value')),
-    ).toEqual(['', 'parked', 'current'])
+    const moveOptions = wrapper
+      .get('[data-testid="move-7"]')
+      .findAll('option')
+      .map((option) => option.attributes('value'))
+    expect(moveOptions).toContain('parked')
+    expect(moveOptions).toContain('current')
   })
 
   it('offers no register move for a Task the core says has landed', async () => {

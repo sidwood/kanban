@@ -81,6 +81,7 @@ import {
   statusSurfaceClass,
   ticketTimelineId,
 } from './board-card'
+import { legacyStateToWorkflowName } from '../stores/issue-workflow'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
 import { refreshesBoard } from './board-events'
 import { chipsFor } from './board-chips'
@@ -431,22 +432,22 @@ function registerRow(card: BoardGlobalCard): BoardRegisterRow {
     priorityTone: PRIORITY_TONES[ticket.priority],
     progress: progressOf(card),
     moves: movesFor(card),
-    agentOwned: ticket.kind !== 'task',
+    agentOwned: false,
   }
 }
 
-// A register row is moved by naming its target, and the targets are
-// the core's: it says where this Ticket may go now, and the register
-// offers the visible columns that ask for one of those states
-// (KAN-T137-AC5). No lifecycle rule is kept here — the column only
-// says which state a move into it asks for.
+const FINISHED_STATES: readonly TicketRecord['state'][] = ['done', 'cancelled', 'superseded']
+
 function movesFor(card: BoardGlobalCard): readonly { column: BoardColumnId; label: string }[] {
-  const targets = board.legalTargetsFor(card.ticket.id)
-  if (targets.length === 0) return []
+  if (FINISHED_STATES.includes(card.ticket.state)) return []
+  const targetNames = board.workflowTargetsFor(card.ticket.id)
+  if (targetNames.length === 0) return []
   return registerColumnsFor(layouts.value, hidden.value)
     .filter((column) => {
       const drop = dropFor(card.ticket.state, column, layouts.value)
-      return drop !== undefined && targets.includes(drop.state)
+      if (drop === undefined) return false
+      const workflowName = legacyStateToWorkflowName(drop.state)
+      return targetNames.includes(workflowName)
     })
     .map((column) => ({ column, label: boardColumnLabel(column) }))
 }
@@ -482,7 +483,7 @@ const moving = ref(false)
 const notice = ref<string | null>(null)
 
 function canDrag(ticket: TicketRecord): boolean {
-  return ticket.kind === 'task'
+  return board.workflowTargetsFor(ticket.id).length > 0
 }
 
 function dropHighlight(target: BoardColumnId): boolean {
@@ -1554,8 +1555,8 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
       >
         <TicketDrawerActions
           :ticket="drawerTicket"
-          :legal-targets="board.legalTargetsFor(drawerTicket.id)"
-          :state-labels="STATUS_LABELS"
+          :project-code="drawerProjectCode"
+          :legal-targets="board.workflowTargetsFor(drawerTicket.id)"
           @acted="drawerActed"
           @reviewed="drawerReviewed"
         />

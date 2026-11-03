@@ -80,11 +80,8 @@ describe('the Ticket editor entry points', () => {
 
     await wrapper.get('[data-testid="new-ticket"]').trigger('click')
     await flushPromises()
-    await wrapper.find('[data-testid="ticket-kind"]').setValue('task')
     await wrapper.find('[data-testid="ticket-title"]').setValue('Archive the old exports')
-    await wrapper
-      .find('[data-testid="ticket-completion-outcome-0"]')
-      .setValue('The old exports are archived.')
+    await wrapper.find('[data-testid="ticket-description"]').setValue('The old exports are archived.')
     await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
     await flushPromises()
 

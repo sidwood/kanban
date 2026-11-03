@@ -421,6 +421,23 @@ export function harness(options: HarnessOptions = {}): Harness {
         return Promise.resolve({ tickets: [] })
       case 'ticket.review.config':
         return Promise.resolve({ config: null })
+      case 'issue.list_workflow_states':
+        return Promise.resolve({
+          states: [
+            { name: 'Draft', state_type: 'backlog' },
+            { name: 'Parked', state_type: 'backlog' },
+            { name: 'Blocked', state_type: 'backlog' },
+            { name: 'Scheduled', state_type: 'backlog' },
+            { name: 'Ready', state_type: 'backlog' },
+            { name: 'Active', state_type: 'started' },
+            { name: 'In Review', state_type: 'started' },
+            { name: 'Approved', state_type: 'started' },
+            { name: 'Landing', state_type: 'started' },
+            { name: 'Done', state_type: 'completed' },
+            { name: 'Cancelled', state_type: 'canceled' },
+            { name: 'Superseded', state_type: 'canceled' },
+          ],
+        })
       case 'ticket.transitions': {
         const { ticket_id } = request as { ticket_id: number }
         const found = tickets.find((entry) => entry.id === ticket_id)
@@ -513,6 +530,57 @@ export function harness(options: HarnessOptions = {}): Harness {
     }
     if (name === 'review.human.submit') {
       return settle(() => reviews.humanSubmit(request as ReviewHumanSubmitRequest))
+    }
+    if (name === 'issue.save') {
+      const projectId = body.project_id as number | undefined
+      const title = body.title as string | undefined
+      if (!body.identifier && projectId != null && title) {
+        const code = projectId === edgeProject.id ? edgeProject.code : coreProject.code
+        const number = 90 + tickets.length
+        const created = ticket({
+          id: 500 + tickets.length,
+          number,
+          project_id: projectId,
+          title,
+          state: 'draft',
+        })
+        tickets.push(created)
+        const identifier = `${code}-${number}`
+        return Promise.resolve({
+          identifier,
+          ticket_id: created.id,
+          url: `kanban://issue/${identifier}`,
+        })
+      }
+      const identifier = body.identifier as string
+      const stateName = body.state as string
+      const number = Number(identifier.split('-').pop())
+      const code = identifier.slice(0, identifier.lastIndexOf('-'))
+      const found =
+        tickets.find((entry) => entry.number === number) ??
+        tickets.find((entry) => entry.id === (body.ticket_id as number | undefined))
+      const project_id = found?.project_id ?? (code === 'EDGE' ? 2 : 1)
+      const legacy =
+        stateName === 'Active'
+          ? 'active'
+          : stateName === 'Done'
+            ? 'done'
+            : stateName === 'Draft'
+              ? 'draft'
+              : stateName === 'Ready'
+                ? 'ready'
+                : stateName === 'Parked'
+                  ? 'parked'
+                  : found?.state ?? 'ready'
+      const moved = found
+        ? { ...found, state: legacy as TicketRecord['state'], version: found.version + 1 }
+        : ticket({ number, project_id, state: legacy as TicketRecord['state'] })
+      if (found) {
+        tickets.splice(tickets.indexOf(found), 1, moved)
+      } else {
+        tickets.push(moved)
+      }
+      return Promise.resolve({ identifier, ticket_id: moved.id, url: `kanban://issue/${identifier}` })
     }
     if (name === 'ticket.transition') {
       const { ticket_id, to } = body as { ticket_id: number; to: TicketRecord['state'] }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // The one Ticket editor: a kind-adaptive dialog the operator reaches
 // from New Ticket, from a Spec's uncovered Story, and from the
-// drawer's Edit, preset to the kind that entry point means
-// (KAN-S4-US1, KAN-S4-US3). Creating sends `ticket.create`; revising
+// drawer's Edit, preset to the kind that entry point means for edits.
+// Creating sends `issue.save`; revising sends `ticket.edit`, and a Bug's
 // sends `ticket.edit`, and a Bug's qualification and vendor-neutral
 // facts send `ticket.bug.qualify` and `ticket.bug.facts` — each at the
 // version the record was read at, each refusal reported rather than
@@ -10,6 +10,7 @@
 // carry and what a complete qualification is, and a command can only
 // ever address the Ticket this dialog was opened on.
 import { computed, inject, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
 import type { SpecRecord, TicketRecord } from '@kanban/contracts'
 import { asApiError, kanbanTransportKey } from '../core/transport'
@@ -21,9 +22,12 @@ import {
   TASK_SUBTYPES,
   TICKET_KINDS,
   TICKET_PRIORITIES,
+  LINEAR_PRIORITIES,
+  blankIssueCreateDraft,
   blankTicketDraft,
   useTicketEditorStore,
 } from '../stores/ticket-editor'
+import { issueDisplayKey } from '../views/board-card'
 import {
   BUG_SEVERITIES,
   blankBugFactsDraft,
@@ -47,6 +51,7 @@ const projectId = ref<number | null>(null)
 const specs = ref<SpecRecord[]>([])
 const record = ref<TicketRecord | null>(null)
 const draft = ref(blankTicketDraft())
+const issueDraft = ref(blankIssueCreateDraft())
 const qualificationDraft = ref<BugQualificationDraft>(blankBugQualificationDraft())
 const factsDraft = ref<BugFactsDraft>(blankBugFactsDraft())
 const readError = ref<string | null>(null)
@@ -68,18 +73,22 @@ const KIND_LABELS: Record<string, string> = {
   task: 'Task',
 }
 
-const title = computed(() =>
-  mode.value === 'create'
-    ? `New ${KIND_LABELS[draft.value.kind]} Ticket`
-    : `Edit ${KIND_LABELS[draft.value.kind]} Ticket`,
+const activeProjects = computed(() => projects.projects.filter((entry) => !entry.archived))
+
+const projectMissing = computed(
+  () => projects.loaded && (activeProjects.value.length === 0 || projectId.value === null),
 )
+
+const title = computed(() => (mode.value === 'create' ? 'New issue' : `Edit ${KIND_LABELS[draft.value.kind]} Ticket`))
 
 const project = computed(
   () => projects.projects.find((entry) => entry.id === projectId.value) ?? null,
 )
 
 const identity = computed(() =>
-  record.value && project.value ? `${project.value.code}-T${record.value.number}` : null,
+  record.value && project.value
+    ? issueDisplayKey(project.value.code, record.value.number)
+    : null,
 )
 
 function specIdOf(spec: SpecRecord): string {
@@ -110,17 +119,21 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   if (!request || !transport) return
 
   draft.value = blankTicketDraft()
+  issueDraft.value = blankIssueCreateDraft()
   draft.value.kind = request.kind
   draft.value.specId = request.specId
   if (request.story !== null) {
     draft.value.criteria = [{ outcome: '', stories: request.story }]
+    issueDraft.value.description = `Covers story ${request.story}.`
   }
   qualificationDraft.value = blankBugQualificationDraft()
   factsDraft.value = blankBugFactsDraft()
   projectId.value = request.projectId
 
   try {
-    if (!projects.loaded) await projects.refresh(transport)
+    if (!projects.loaded || projects.projects.length === 0) {
+      await projects.refresh(transport)
+    }
     if (attempt !== opening) return
     if (projectId.value === null) {
       const first =
@@ -223,8 +236,13 @@ async function switchProject(): Promise<void> {
 }
 
 async function submitCreate(): Promise<void> {
-  if (!transport || projectId.value === null) return
-  const landed = await editor.create(transport, projectId.value, draft.value)
+  if (!transport) return
+  if (projectMissing.value || projectId.value === null) {
+    readError.value = 'Register a project before creating an issue.'
+    return
+  }
+  readError.value = null
+  const landed = await editor.createIssue(transport, projectId.value, issueDraft.value)
   if (landed) dialog.closeEditor()
 }
 
@@ -329,6 +347,108 @@ const FIELD_CLASS =
       {{ error }}
     </InlineAlert>
 
+    <InlineAlert
+      v-if="mode === 'create' && projectMissing"
+      data-testid="ticket-project-missing"
+    >
+      Register a project before creating an issue.
+      <RouterLink
+        to="/register"
+        class="ml-1 underline"
+      >
+        Register a project
+      </RouterLink>
+    </InlineAlert>
+
+    <form
+      v-if="mode === 'create'"
+      class="flex flex-col gap-3"
+      @submit.prevent="submitCreate()"
+    >
+      <label class="flex flex-col gap-1 text-sm text-ink-muted">
+        Project
+        <select
+          v-model="projectId"
+          data-testid="ticket-project"
+          aria-label="Project"
+          :class="FIELD_CLASS"
+          @change="switchProject"
+        >
+          <option
+            v-for="entry in activeProjects"
+            :key="entry.id"
+            :value="entry.id"
+          >
+            {{ entry.code }} — {{ entry.name }}
+          </option>
+        </select>
+      </label>
+
+      <label class="flex flex-col gap-1 text-sm text-ink-muted">
+        Title
+        <input
+          v-model="issueDraft.title"
+          data-testid="ticket-title"
+          aria-label="Issue title"
+          required
+          placeholder="What needs doing?"
+          :class="FIELD_CLASS"
+        >
+      </label>
+
+      <label class="flex flex-col gap-1 text-sm text-ink-muted">
+        Description
+        <textarea
+          v-model="issueDraft.description"
+          data-testid="ticket-description"
+          aria-label="Issue description"
+          rows="4"
+          placeholder="Context, acceptance notes, links…"
+          :class="FIELD_CLASS"
+        />
+      </label>
+
+      <div class="flex flex-wrap gap-3">
+        <label class="flex flex-col gap-1 text-sm text-ink-muted">
+          Priority
+          <select
+            v-model="issueDraft.priority"
+            data-testid="ticket-priority"
+            aria-label="Priority"
+            :class="FIELD_CLASS"
+          >
+            <option
+              v-for="priority in LINEAR_PRIORITIES"
+              :key="priority.value"
+              :value="priority.value"
+            >
+              {{ priority.label }}
+            </option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-sm text-ink-muted">
+          Due date (optional)
+          <input
+            v-model="issueDraft.dueDate"
+            data-testid="ticket-due"
+            aria-label="Due date, RFC 3339"
+            placeholder="2026-09-30T17:00:00Z"
+            class="rounded-control border border-line bg-surface px-3 py-2 font-mono text-sm text-ink"
+          >
+        </label>
+      </div>
+
+      <AppButton
+        variant="primary"
+        type="submit"
+        data-testid="ticket-create"
+        :disabled="projectMissing"
+      >
+        Create issue
+      </AppButton>
+    </form>
+
+    <template v-else>
     <div class="flex flex-wrap gap-3">
       <label class="flex flex-col gap-1 text-sm text-ink-muted">
         Project
@@ -1002,6 +1122,7 @@ const FIELD_CLASS =
           Record Bug facts
         </AppButton>
       </form>
+    </template>
     </template>
   </AppDialog>
 </template>

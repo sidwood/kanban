@@ -333,7 +333,7 @@ describe('Workspaces & Lanes follows its Project route parameter', () => {
         `${operation} must be read for the Project the route names`,
       ).toBe(true)
     }
-    expect(wrapper.get('[data-testid="lane-ticket-14"]').text()).toBe('TWO-T20')
+    expect(wrapper.get('[data-testid="lane-ticket-14"]').text()).toBe('TWO-20')
     expect(state.commands).toEqual([])
   })
 
@@ -352,7 +352,7 @@ describe('Workspaces & Lanes follows its Project route parameter', () => {
     await flushPromises()
 
     expect(state.commands.map((entry) => entry.name)).toEqual(['lane.create'])
-    expect(wrapper.get('[data-testid="lane-ticket-14"]').text()).toBe('TWO-T20')
+    expect(wrapper.get('[data-testid="lane-ticket-14"]').text()).toBe('TWO-20')
     expect(wrapper.find('[data-testid="lane-row-7"]').exists()).toBe(false)
     expect(
       state.queries.filter(
@@ -485,7 +485,7 @@ describe('Profiles keeps assignment inside the selected Project', () => {
 
     expect(state.commands.map((entry) => entry.name)).toEqual(['ticket.assign'])
     const rows = wrapper.findAll('[data-testid="assign-tickets"] li').map((row) => row.text())
-    expect(rows.join(' ')).toContain('TWO-T20')
+    expect(rows.join(' ')).toContain('TWO-20')
     expect(rows.join(' ')).not.toContain('deep')
   })
 

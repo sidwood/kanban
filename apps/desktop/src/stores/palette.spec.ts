@@ -174,6 +174,30 @@ describe('palette store', () => {
     expect(commands).toEqual([])
   })
 
+  it('debounces search refresh while the query is non-empty', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      const answer = vi.fn(() => Promise.resolve({ hits: [] }))
+      const { transport, queries } = harness(answer)
+      const palette = usePaletteStore()
+      palette.openPalette()
+
+      const pending = palette.setQuery(transport, 'arch')
+      expect(queries).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(199)
+      expect(queries).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(queries).toEqual([{ name: 'search.global', request: { q: 'arch' } }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears search state when it closes', async () => {
     setActivePinia(createPinia())
     const answer = vi.fn(() => Promise.resolve({ hits: [] }))

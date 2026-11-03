@@ -123,13 +123,18 @@ export const useProjectRegisterStore = defineStore('project-register', {
       transport: ShellTransport,
       command: (client: KanbanClient) => Promise<ProjectRecord>,
     ): Promise<boolean> {
+      let landed: ProjectRecord
       try {
-        await command(new KanbanClient(transport))
+        landed = await command(new KanbanClient(transport))
         this.error = null
       } catch (failure) {
         this.error = asApiError(failure).message
         return false
       }
+      this.projects = this.projects.some((project) => project.id === landed.id)
+        ? this.projects.map((project) => (project.id === landed.id ? landed : project))
+        : [...this.projects, landed]
+      this.loaded = true
       await this.refresh(transport)
       return true
     },

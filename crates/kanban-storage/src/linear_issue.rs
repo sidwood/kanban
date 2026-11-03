@@ -89,8 +89,8 @@ pub fn linear_priority_for_ticket(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
     use crate::Database;
+    use crate::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
 
     #[test]
     fn migration_0053_seeds_twelve_workflow_states_per_project() {

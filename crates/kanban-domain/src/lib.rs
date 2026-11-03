@@ -19,6 +19,7 @@ pub mod gate_revalidation;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
+pub mod issue;
 pub mod landing;
 pub mod lane;
 pub mod lifecycle;
@@ -39,7 +40,6 @@ pub mod search;
 pub mod shell_preference;
 pub mod spec;
 pub mod ticket;
-pub mod issue;
 pub mod timeline;
 pub mod timeline_time;
 pub mod tip_binding;
@@ -94,6 +94,7 @@ pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
+pub use issue::{IssueKey, LinearPriority, WorkflowStateType};
 pub use landing::{
     LandingGitObservation, LandingKind, LandingObservedOutcome, LandingRecoveryEffect,
     LandingRecoveryPolicy, LandingRecoveryRefusal, LandingRefusal, LandingRequest, land_lane,
@@ -143,7 +144,6 @@ pub use ticket::{
     TaskSubtype, TaskTicket, TaskTiming, Ticket, TicketBody, TicketError, TicketId, TicketKind,
     TicketNumber, TicketNumberError, TicketState,
 };
-pub use issue::{IssueKey, LinearPriority, WorkflowStateType};
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use timeline_time::{
     TimelineTimeError, normalise_timeline_bound, validate_timeline_time_window,

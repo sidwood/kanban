@@ -346,7 +346,5 @@ const FIELD_CLASS =
         </AppButton>
       </form>
     </template>
-    </template>
-    </template>
   </AppDialog>
 </template>

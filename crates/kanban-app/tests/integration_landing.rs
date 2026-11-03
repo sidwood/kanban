@@ -26,22 +26,28 @@ use kanban_storage::{
 use serde_json::json;
 use tempfile::TempDir;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+fn git_command(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(dir)
-        .status()
-        .expect("git runs");
+        .env("GIT_CONFIG_COUNT", "3")
+        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+        .env("GIT_CONFIG_VALUE_0", "master")
+        .env("GIT_CONFIG_KEY_1", "user.email")
+        .env("GIT_CONFIG_VALUE_1", "test@example.com")
+        .env("GIT_CONFIG_KEY_2", "user.name")
+        .env("GIT_CONFIG_VALUE_2", "Test");
+    command
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = git_command(dir, args).status().expect("git runs");
     assert!(status.success(), "git {:?} in {}", args, dir.display());
 }
 
 fn git_init(dir: &Path) {
-    let status = Command::new("git")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "master")
-        .args(["init", "-b", "main"])
-        .current_dir(dir)
+    let status = git_command(dir, &["init", "-b", "main"])
         .status()
         .expect("git runs");
     assert!(status.success(), "git init -b main in {}", dir.display());
@@ -66,13 +72,7 @@ fn mutation(version: u64, key: &str) -> serde_json::Value {
 }
 
 fn current_branch(dir: &Path) -> String {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            dir.to_str().expect("the path is UTF-8"),
-            "branch",
-            "--show-current",
-        ])
+    let output = git_command(dir, &["branch", "--show-current"])
         .output()
         .expect("the current branch reads");
     String::from_utf8(output.stdout)
@@ -453,13 +453,7 @@ fn integration_landing_merges_a_lane_into_the_spec_branch() {
     assert_eq!(landed["into_tip"], previous_tip);
     assert_eq!(landed["landed_tip"], head_tip(&wired.integration));
     assert_eq!(current_branch(&wired.integration), "kan-s1");
-    let log = Command::new("git")
-        .args([
-            "-C",
-            wired.integration.to_str().expect("utf-8"),
-            "log",
-            "--oneline",
-        ])
+    let log = git_command(&wired.integration, &["log", "--oneline"])
         .output()
         .expect("the integration log reads");
     let history = String::from_utf8(log.stdout).expect("the log is UTF-8");
@@ -912,12 +906,7 @@ fn integration_landing_rechecks_seed_branch_and_workspace_liveness() {
 }
 
 fn head_tip(dir: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .unwrap();
+    let output = git_command(dir, &["rev-parse", "HEAD"]).output().unwrap();
     assert!(output.status.success());
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }

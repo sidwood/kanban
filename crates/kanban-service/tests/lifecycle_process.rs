@@ -220,4 +220,47 @@ fn main() {
     println!(
         "lifecycle_process: selected data directory, real SQLite health, reuse, clean stop, detached restart passed"
     );
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let data = dir.path().join("native CLI data");
+        std::fs::create_dir_all(&data).unwrap();
+        let credential_dir = data.join("installation-credential");
+        assert!(!credential_dir.exists());
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kanban-service"))
+            .arg("--data-dir")
+            .arg(&data)
+            .env_clear()
+            .env(
+                "HOME",
+                std::env::var_os("HOME").expect("HOME is set for managed paths"),
+            )
+            .spawn()
+            .unwrap();
+        let socket = data.join("core.sock");
+        wait_ready(&socket, &mut child);
+        let credential_path = credential_dir
+            .read_dir()
+            .unwrap()
+            .next()
+            .expect("one credential file is provisioned")
+            .unwrap()
+            .path();
+        assert_eq!(
+            credential_path.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            request(&socket, "query", "health.get", json!({}))["connected"],
+            true
+        );
+        stop(&socket, "native-cli-stop");
+        assert!(child.wait().unwrap().success());
+        std::fs::remove_file(&credential_path).unwrap();
+        assert!(!credential_path.exists());
+        println!(
+            "lifecycle_native_cli: actual kanban-service, cleared environment, isolated data directory, file-backed credential, health and confirmed stop passed; credential removed"
+        );
+    }
 }

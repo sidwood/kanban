@@ -3,3 +3,4 @@ repos:
     rev: v10.0.1
     hooks:
       - id: cspell
+        language_version: system

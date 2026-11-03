@@ -21,6 +21,8 @@ pub mod idempotency;
 pub mod initiatives;
 pub mod landing;
 pub mod lanes;
+pub mod linear_issue;
+mod linear_issue_migration;
 pub mod migrations;
 pub mod paths;
 pub mod plan;

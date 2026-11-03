@@ -133,7 +133,7 @@ mod tests {
                  VALUES (1, 'Draft', 'backlog', 'draft', 0);",
             )
             .unwrap();
-        let states = list_workflow_states(&*database.connection(), 1).unwrap();
+        let states = list_workflow_states(&database.connection(), 1).unwrap();
         assert_eq!(states.len(), 1);
         assert_eq!(states[0].state_type, WorkflowStateType::Backlog);
     }

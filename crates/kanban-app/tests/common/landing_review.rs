@@ -140,6 +140,7 @@ pub fn seed_review_profiles(core: &Core) {
 
 /// Run the Ticket review sequence at the source Workspace tip, and
 /// optionally satisfy every criterion at that tip.
+#[allow(clippy::too_many_arguments)]
 pub fn complete_source_review(
     core: &Core,
     database: &Database,

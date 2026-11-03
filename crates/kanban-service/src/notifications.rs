@@ -311,10 +311,10 @@ impl Drop for NotificationScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kanban_app::notifications::{
-        NotificationMessage, NotificationOutcome, NotificationPermissionPort, NotificationSink,
-    };
-    use kanban_dto::{NotificationPermissionState, NotificationTarget};
+    use kanban_app::notifications::{NotificationMessage, NotificationOutcome, NotificationSink};
+    #[cfg(target_os = "macos")]
+    use kanban_dto::NotificationPermissionState;
+    use kanban_dto::NotificationTarget;
     use kanban_herdr::fixture::{ScriptedSession, SessionScript};
 
     #[cfg(target_os = "macos")]

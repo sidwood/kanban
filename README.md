@@ -46,12 +46,15 @@ MCP tool arguments cannot replace the service-selected grant.
 
 Managed startup keeps installation credentials in macOS Keychain under
 service `dev.kanban.desktop.installation`, account `installation`.
-An explicitly selected non-default data directory uses account `data-`
-followed by the lowercase SHA-256 of its canonical path bytes instead.
+On Linux, the same logical credential lives in a mode `0600` file inside
+a mode `0700` directory under the managed data path; see
+[`docs/linux.md`](docs/linux.md). An explicitly selected non-default data
+directory uses account `data-` followed by the lowercase SHA-256 of its
+canonical path bytes instead.
 Startup acquires installation ownership before requesting credentials.
 Credentials never belong in client configuration, prompts, SQLite, or
-environment variables. Keychain failure refuses managed startup; there
-is no plaintext fallback. HTTP is not enabled by this stdio integration.
+environment variables. Credential storage failure refuses managed startup;
+there is no plaintext fallback. HTTP is not enabled by this stdio integration.
 
 ## Optional loopback HTTP
 

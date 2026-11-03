@@ -72,19 +72,21 @@ fn unavailable() -> ApiError {
 
 #[cfg(not(target_os = "macos"))]
 fn unavailable() -> ApiError {
-    ApiError::internal("installation credential storage is unavailable")
+    ApiError::internal("credential storage failed")
 }
 
 #[cfg(not(target_os = "macos"))]
 mod file_installation_secret {
     use super::{InstallationSecret, unavailable};
     use kanban_dto::ApiError;
-    use std::fs::{self, File, OpenOptions};
+    use std::fs::{self, DirBuilder, File, OpenOptions};
     use std::io::{Read, Write};
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+    use std::os::unix::io::AsRawFd;
     use std::path::Path;
 
     const CREDENTIAL_DIR: &str = "installation-credential";
+    const KEY_LEN: usize = 32;
 
     pub(super) fn load_or_create(
         data_dir: &Path,
@@ -93,65 +95,143 @@ mod file_installation_secret {
         let store_dir = data_dir.join(CREDENTIAL_DIR);
         ensure_store_dir(&store_dir)?;
         let path = store_dir.join(account);
-        if path.exists() {
-            return read_existing(&store_dir, &path);
-        }
-        let key = random_key()?;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&key).map_err(|_| unavailable())?;
-                file.sync_all().map_err(|_| unavailable())?;
-                Ok(InstallationSecret::from_key(&key))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                read_existing(&store_dir, &path)
+        match path.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable()),
+            Ok(_) => read_existing(&store_dir, &path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let key = random_key()?;
+                install_new_key(&store_dir, &path, &key)
             }
             Err(_) => Err(unavailable()),
         }
     }
 
     fn ensure_store_dir(store_dir: &Path) -> Result<(), ApiError> {
-        if store_dir.exists() {
-            return require_mode(store_dir, 0o700, true);
+        match store_dir.symlink_metadata() {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(unavailable());
+                }
+                require_directory_mode(&metadata)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                DirBuilder::new()
+                    .mode(0o700)
+                    .create(store_dir)
+                    .map_err(|_| unavailable())?;
+                let metadata = store_dir.symlink_metadata().map_err(|_| unavailable())?;
+                if metadata.file_type().is_symlink() {
+                    return Err(unavailable());
+                }
+                require_directory_mode(&metadata)
+            }
+            Err(_) => Err(unavailable()),
         }
-        fs::create_dir_all(store_dir).map_err(|_| unavailable())?;
-        fs::set_permissions(store_dir, fs::Permissions::from_mode(0o700))
-            .map_err(|_| unavailable())?;
-        require_mode(store_dir, 0o700, true)
+    }
+
+    fn install_new_key(
+        store_dir: &Path,
+        path: &Path,
+        key: &zeroize::Zeroizing<[u8; 32]>,
+    ) -> Result<InstallationSecret, ApiError> {
+        let temp = store_dir.join(format!(
+            ".{}.partial.{}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("credential"),
+            std::process::id()
+        ));
+        let result = (|| {
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&temp)
+                .map_err(|_| unavailable())?;
+            verify_regular_file(&file, 0o600)?;
+            let mut file = file;
+            file.write_all(key.as_ref()).map_err(|_| unavailable())?;
+            file.sync_all().map_err(|_| unavailable())?;
+            verify_regular_file(&file, 0o600)?;
+            drop(file);
+            fs::rename(&temp, path).map_err(|_| unavailable())?;
+            #[allow(clippy::explicit_auto_deref)]
+            let key_ref: &[u8; 32] = &*key;
+            Ok(InstallationSecret::from_key(key_ref))
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        match result {
+            Ok(secret) => Ok(secret),
+            Err(error) => match path.symlink_metadata() {
+                Ok(metadata) if !metadata.file_type().is_symlink() => {
+                    read_existing(store_dir, path)
+                }
+                _ => Err(error),
+            },
+        }
     }
 
     fn read_existing(store_dir: &Path, path: &Path) -> Result<InstallationSecret, ApiError> {
-        require_mode(store_dir, 0o700, true)?;
-        require_mode(path, 0o600, false)?;
-        let mut file = File::open(path).map_err(|_| unavailable())?;
-        let mut key = [0u8; 32];
-        file.read_exact(&mut key).map_err(|_| unavailable())?;
-        Ok(InstallationSecret::from_key(&key))
-    }
-
-    fn require_mode(path: &Path, expected: u32, directory: bool) -> Result<(), ApiError> {
-        let metadata = fs::metadata(path).map_err(|_| unavailable())?;
-        if metadata.is_dir() != directory {
+        ensure_store_dir(store_dir)?;
+        let metadata = path.symlink_metadata().map_err(|_| unavailable())?;
+        if metadata.file_type().is_symlink() {
             return Err(unavailable());
         }
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != expected {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|_| unavailable())?;
+        verify_regular_file(&file, 0o600)?;
+        if file.metadata().map_err(|_| unavailable())?.size() as usize != KEY_LEN {
+            return Err(unavailable());
+        }
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        file.read_exact(&mut *key).map_err(|_| unavailable())?;
+        #[allow(clippy::explicit_auto_deref)]
+        let key_ref: &[u8; 32] = &*key;
+        Ok(InstallationSecret::from_key(key_ref))
+    }
+
+    fn require_directory_mode(metadata: &fs::Metadata) -> Result<(), ApiError> {
+        if !metadata.is_dir() {
+            return Err(unavailable());
+        }
+        if metadata.mode() & 0o777 != 0o700 {
             return Err(unavailable());
         }
         Ok(())
     }
 
-    fn random_key() -> Result<[u8; 32], ApiError> {
-        let mut key = [0u8; 32];
-        File::open("/dev/urandom") // cspell:ignore urandom
-            .map_err(|_| unavailable())?
-            .read_exact(&mut key)
-            .map_err(|_| unavailable())?;
+    fn verify_regular_file(file: &File, expected_mode: u32) -> Result<(), ApiError> {
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(file.as_raw_fd(), &mut stat) } != 0 {
+            return Err(unavailable());
+        }
+        if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err(unavailable());
+        }
+        if stat.st_mode & 0o777 != expected_mode {
+            return Err(unavailable());
+        }
+        if stat.st_uid != unsafe { libc::geteuid() } {
+            return Err(unavailable());
+        }
+        if stat.st_nlink != 1 {
+            return Err(unavailable());
+        }
+        Ok(())
+    }
+
+    fn random_key() -> Result<zeroize::Zeroizing<[u8; 32]>, ApiError> {
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        let filled = unsafe { libc::getrandom(key.as_mut_ptr().cast(), KEY_LEN, 0) };
+        if filled != KEY_LEN as isize {
+            return Err(unavailable());
+        }
         Ok(key)
     }
 
@@ -170,6 +250,10 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn credentials_match(first: &InstallationSecret, second: &InstallationSecret) -> bool {
+        first.expose().as_bytes() == second.expose().as_bytes()
+    }
+
     #[test]
     fn file_store_custom_data_directory_uses_an_isolated_account() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -185,11 +269,11 @@ mod tests {
         let first = store
             .load_or_create()
             .expect("the file store provisions one credential");
-        assert_eq!(
-            first.expose(),
-            repeated.load_or_create().unwrap().expose(),
+        assert!(
+            credentials_match(&first, &repeated.load_or_create().unwrap()),
             "reopening must not rotate credentials"
         );
+        assert!(!format!("{first:?}").contains(first.expose()));
     }
 
     #[test]
@@ -218,6 +302,70 @@ mod tests {
             0o700
         );
         assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn file_store_refuses_symlinked_credential_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", &path).unwrap();
+        assert!(store.load_or_create().is_err());
+    }
+
+    #[test]
+    fn file_store_refuses_symlinked_store_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let store_dir = dir.path().join("installation-credential");
+        let real = dir.path().join("real-store");
+        std::fs::rename(&store_dir, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &store_dir).unwrap();
+        assert!(store.load_or_create().is_err());
+    }
+
+    #[test]
+    fn file_store_honours_0700_and_0600_when_umask_is_zero() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        let previous = unsafe { libc::umask(0) };
+        let result = store.load_or_create();
+        unsafe {
+            libc::umask(previous);
+        }
+        result.unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        let store_dir = path.parent().unwrap();
+        assert_eq!(
+            store_dir.metadata().unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn file_store_rejects_truncated_credential_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        std::fs::write(&path, [7u8; 16]).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(store.load_or_create().is_err());
+    }
+
+    #[test]
+    fn file_store_reports_credential_storage_failed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let error = store.load_or_create().unwrap_err();
+        assert_eq!(error.message, "credential storage failed");
     }
 }
 

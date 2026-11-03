@@ -17,7 +17,7 @@ sudo apt-get install -y \
 
 Tooling:
 
-- [Rust](https://rustup.rs) stable (2024 edition; 1.90+ as pinned in the repo)
+- [Rust](https://rustup.rs) stable (2024 edition; MSRV 1.90+)
 - Node.js 22+ with [pnpm](https://pnpm.io) (`corepack enable`)
 - [`just`](https://github.com/casey/just) 1.59+
 - [`pre-commit`](https://pre-commit.com) for the spelling gate
@@ -89,16 +89,22 @@ Dispatch capability IDs and run-scoped tools behave the same as on macOS.
 
 ## Desktop app
 
-Build the web assets and Tauri shell:
+Build the Rust core and MCP adapter, then the web assets and Tauri shell:
 
 ```bash
-just build
-# or: pnpm --filter desktop run build
+cargo build -p kanban-service -p kanban-mcp
+just dev
+# or: cargo build -p kanban-service -p kanban-mcp && pnpm --filter desktop dev
 ```
 
-Launch on a desktop session with WebKitGTK:
+`just dev` builds the core and adapter before starting the desktop shell.
+`pnpm --filter desktop run build` produces the web bundle and Tauri binary
+only; it does not compile `kanban-service`.
+
+Launch on a desktop session with WebKitGTK (if you are not using `just dev`):
 
 ```bash
+cargo build -p kanban-service -p kanban-mcp
 pnpm --filter desktop dev
 ```
 

@@ -5,8 +5,9 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::WriteSpan;
 
 fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
-    let mut statement =
-        conn.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"))?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+    ))?;
     let found = statement
         .query_row([column], |_| Ok(()))
         .optional()?
@@ -14,7 +15,12 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::R
     Ok(found)
 }
 
-fn add_column(conn: &Connection, table: &str, column: &str, definition: &str) -> rusqlite::Result<()> {
+fn add_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
     if table_has_column(conn, table, column)? {
         return Ok(());
     }

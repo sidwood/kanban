@@ -418,6 +418,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "InitiativeRenameRequest",
             schema_for!(InitiativeRenameRequest),
         ),
+        ("IssueChildRecord", schema_for!(IssueChildRecord)),
         ("IssueGetQuery", schema_for!(IssueGetQuery)),
         ("IssueLabelRecord", schema_for!(IssueLabelRecord)),
         ("IssueLabelsQuery", schema_for!(IssueLabelsQuery)),

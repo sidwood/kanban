@@ -420,6 +420,7 @@ mod tests {
                 "InitiativeListResponse",
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
+                "IssueChildRecord",
                 "IssueGetQuery",
                 "IssueLabelRecord",
                 "IssueLabelsQuery",

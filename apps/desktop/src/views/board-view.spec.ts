@@ -186,7 +186,7 @@ describe('the board', () => {
     expect(wrapper.find('[data-testid="kanban-column-done"] [data-testid="kanban-card-10"]').exists()).toBe(true)
     // Another Project's card never reaches this Project's board.
     expect(wrapper.find('[data-testid="kanban-card-11"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="card-number-7"]').text()).toBe('CORE-T12')
+    expect(wrapper.get('[data-testid="card-number-7"]').text()).toBe('CORE-12')
     expect(wrapper.get('[data-testid="open-ticket-8"]').text()).toBe('Serve the lifecycle command surface')
     expect(wrapper.get('[data-testid="card-status-7"]').text()).toBe('Ready')
     expect(wrapper.find('[data-testid="card-status-8"]').exists()).toBe(false)
@@ -199,7 +199,7 @@ describe('the board', () => {
     expect(boardCalls(query)[0]).toEqual({ filter: {} })
     expect(wrapper.get('[data-testid="board-title"]').text()).toBe('All projects')
     expect(wrapper.find('[data-testid="kanban-column-review"] [data-testid="kanban-card-11"]').exists()).toBe(true)
-    expect(wrapper.get('[data-testid="card-number-11"]').text()).toBe('EDGE-T3')
+    expect(wrapper.get('[data-testid="card-number-11"]').text()).toBe('EDGE-3')
     expect(wrapper.get('[data-testid="card-project-11"]').text()).toContain('EDGE')
     expect(wrapper.get('[data-testid="board-count"]').text()).toContain('5 of 5')
   })
@@ -359,7 +359,7 @@ describe('the board', () => {
 
     expect(command).not.toHaveBeenCalledWith('ticket.transition', expect.anything())
     expect(wrapper.get('[data-testid="board-notice"]').text()).toContain('Expand the Current column')
-    expect(wrapper.get('[data-testid="board-notice"]').text()).toContain('CORE-T12')
+    expect(wrapper.get('[data-testid="board-notice"]').text()).toContain('CORE-12')
     expect(wrapper.find('[data-testid="kanban-column-backlog"] [data-testid="kanban-card-7"]').exists()).toBe(true)
   })
 
@@ -455,10 +455,10 @@ describe('the board', () => {
         .map((entry) => entry.text())
 
     expect(wrapper.get('[data-testid="sort-priority"]').attributes('aria-pressed')).toBe('true')
-    expect(numbers()).toEqual(['CORE-T22', 'CORE-T21', 'CORE-T23'])
+    expect(numbers()).toEqual(['CORE-22', 'CORE-21', 'CORE-23'])
 
     await wrapper.get('[data-testid="sort-readiness"]').trigger('click')
-    expect(numbers()).toEqual(['CORE-T21', 'CORE-T23', 'CORE-T22'])
+    expect(numbers()).toEqual(['CORE-21', 'CORE-23', 'CORE-22'])
     expect(wrapper.find('[data-testid="view-drift"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="board-presentation-register"]').trigger('click')
@@ -700,7 +700,7 @@ describe('the board', () => {
     await flushPromises()
 
     const heading = document.querySelector('[role="dialog"] h2')
-    expect(heading?.textContent).toContain('CORE-T12')
+    expect(heading?.textContent).toContain('CORE-12')
     expect(heading?.textContent).toContain('Archive the old exports')
     expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toBe('Ready')
     expect(document.querySelector('[data-testid="drawer-completion"]')?.textContent).toContain(
@@ -724,7 +724,7 @@ describe('the board', () => {
   it('opens the drawer for the Ticket a link names', async () => {
     const { wrapper } = await mounted({}, '/projects/1/board?ticket=8')
 
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T13')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-13')
     expect(wrapper.find('[data-testid="kanban-card-8"]').exists()).toBe(true)
   })
 
@@ -939,7 +939,7 @@ describe('the board', () => {
 
   it('follows the Ticket a link names when only the query changes', async () => {
     const { wrapper, query } = await mounted({}, '/projects/1/board?ticket=7')
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T12')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-12')
 
     await router.push('/projects/1/board?ticket=8')
     await flushPromises()
@@ -947,7 +947,7 @@ describe('the board', () => {
     expect(
       query.mock.calls.filter(([name]) => name === 'ticket.get').map(([, request]) => request),
     ).toContainEqual({ ticket_id: 8 })
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T13')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-13')
 
     // Clearing the link closes the drawer it opened.
     await router.push('/projects/1/board')
@@ -967,7 +967,7 @@ describe('the board', () => {
 
     await router.push('/projects/1/board?ticket=7')
     await flushPromises()
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T12')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-12')
   })
 
   it('ignores a drawer answer for a Ticket the operator has left', async () => {
@@ -991,12 +991,12 @@ describe('the board', () => {
 
     await wrapper.get('[data-testid="open-ticket-8"]').trigger('click')
     await flushPromises()
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T13')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-13')
 
     pending.splice(0).forEach((release) => release())
     await flushPromises()
 
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T13')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-13')
     expect(document.querySelector('[data-testid="drawer-loading"]')).toBeNull()
     expect(document.querySelector('[data-testid="drawer-error"]')).toBeNull()
   })
@@ -1022,7 +1022,7 @@ describe('the board', () => {
     await flushPromises()
 
     expect(document.querySelector('[data-testid="drawer-error"]')).toBeNull()
-    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-T13')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-13')
   })
 
   it('reads the filtered projection again once a move lands', async () => {

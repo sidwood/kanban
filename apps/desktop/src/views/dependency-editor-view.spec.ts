@@ -136,10 +136,10 @@ describe('DependencyEditorView', () => {
     )
     const blockers = wrapper.findAll('[data-testid^="dependency-blocker-"]')
     expect(blockers.map((row) => row.text())).toEqual([
-      'CORE-T1 — active',
+      'CORE-1 — active',
       'The vendor SDK 4 upgrade',
     ])
-    expect(wrapper.find('[data-testid="dependency-row-1"]').text()).toContain('CORE-T1')
+    expect(wrapper.find('[data-testid="dependency-row-1"]').text()).toContain('CORE-1')
     expect(wrapper.find('[data-testid="dependency-row-1"]').text()).toContain('must land first')
     expect(wrapper.find('[data-testid="blocker-row-3"]').text()).toContain(
       'The vendor SDK 4 upgrade',

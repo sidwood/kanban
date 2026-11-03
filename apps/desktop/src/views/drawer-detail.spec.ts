@@ -276,7 +276,7 @@ describe('the drawer detail, derived from authoritative records', () => {
     await openDrawer(transport)
 
     expect(query).toHaveBeenCalledWith('ticket.dependencies', { ticket_id: 8 })
-    expect(text('drawer-dependency-4')).toContain('CORE-T9')
+    expect(text('drawer-dependency-4')).toContain('CORE-9')
     expect(text('drawer-dependency-4')).toContain('active')
     expect(text('drawer-blocker-51')).toContain('The vendor has not shipped the fix.')
   })
@@ -297,9 +297,9 @@ describe('the drawer detail, derived from authoritative records', () => {
     })
     await openDrawer(transport)
 
-    expect(text('drawer-dependency-4')).toContain('EDGE-T9')
-    expect(text('drawer-dependency-4')).not.toContain('CORE-T9')
-    expect(text('drawer-dependency-5')).toContain('CORE-T9')
+    expect(text('drawer-dependency-4')).toContain('EDGE-9')
+    expect(text('drawer-dependency-4')).not.toContain('CORE-9')
+    expect(text('drawer-dependency-5')).toContain('CORE-9')
   })
 
   it('shows the planned and effective profile, the fallback, and the lane and workspace', async () => {
@@ -417,7 +417,7 @@ describe('the drawer detail, derived from authoritative records', () => {
     expect(text('drawer-findings-unreadable')).toContain('could not be read')
     expect(text('drawer-detail-error')).toContain('the core is offline')
     // Every other section still stands on its own authority.
-    expect(text('drawer-dependency-4')).toContain('CORE-T9')
+    expect(text('drawer-dependency-4')).toContain('CORE-9')
     expect(text('drawer-evidence-31')).toContain('repository')
     expect(text('drawer-review-slot-71')).toContain('sol-reviewer')
     expect(text('drawer-execution')).toContain('Run 3')

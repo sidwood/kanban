@@ -26,6 +26,7 @@ import ScheduleEditor from '../components/ScheduleEditor.vue'
 import InlineAlert from '../components/InlineAlert.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { issueDisplayKey } from './board-card'
 
 const transport = inject(kanbanTransportKey)
 const route = useRoute()
@@ -234,7 +235,7 @@ function specId(spec: number): string {
 }
 
 function ticketId(ticket: number): string {
-  return `${projectCode.value}-T${ticket}`
+  return issueDisplayKey(projectCode.value, ticket)
 }
 
 // A Story no Ticket claims is covered by an Implementation on this

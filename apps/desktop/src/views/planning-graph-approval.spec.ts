@@ -260,9 +260,9 @@ describe('planning graph approval', () => {
     const panel = wrapper.get('[data-testid="graph-proposals"]')
     const row = panel.get('[data-testid="graph-proposal-11"]')
     expect(row.text()).toContain('v2')
-    expect(row.get('[data-testid="graph-members-11"]').text()).toContain('CORE-T5')
-    expect(row.get('[data-testid="graph-members-11"]').text()).toContain('CORE-T6')
-    expect(row.get('[data-testid="graph-edges-11"]').text()).toBe('CORE-T5 → CORE-T6')
+    expect(row.get('[data-testid="graph-members-11"]').text()).toContain('CORE-5')
+    expect(row.get('[data-testid="graph-members-11"]').text()).toContain('CORE-6')
+    expect(row.get('[data-testid="graph-edges-11"]').text()).toBe('CORE-5 → CORE-6')
     expect(row.get('[data-testid="graph-state-11"]').text()).toBe('proposed')
   })
 

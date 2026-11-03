@@ -191,6 +191,14 @@ async fn respond<S: rmcp::ServerHandler + Clone + 'static>(
         return Ok(refused(401));
     }
     let path = request.uri().path();
+    if path == "/mcp"
+        && request
+            .uri()
+            .query()
+            .is_some_and(|query| query.split('&').any(|part| part.starts_with("operator=")))
+    {
+        return Ok(refused(404));
+    }
     let operator_route = path == "/mcp/operator";
     if path != "/mcp" && !operator_route {
         return Ok(refused(404));

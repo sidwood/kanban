@@ -77,6 +77,7 @@ import {
   KIND_LABELS,
   STATUS_LABELS,
   STATUS_TONES,
+  issueDisplayKey,
   statusSurfaceClass,
   ticketTimelineId,
 } from './board-card'
@@ -404,7 +405,7 @@ const registerColumns = computed<readonly BoardRegisterColumn[]>(() =>
 )
 
 function cardNumber(card: BoardGlobalCard): string {
-  return `${card.project_code}-T${card.ticket.number}`
+  return issueDisplayKey(card.project_code, card.ticket.number)
 }
 
 function cardTitle(ticket: TicketRecord): string {
@@ -624,7 +625,7 @@ const drawerTitle = computed(() =>
 )
 const drawerNumber = computed(() =>
   drawerTicket.value && drawerProjectCode.value
-    ? `${drawerProjectCode.value}-T${drawerTicket.value.number}`
+    ? issueDisplayKey(drawerProjectCode.value, drawerTicket.value.number)
     : undefined,
 )
 

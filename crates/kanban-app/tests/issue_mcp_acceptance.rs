@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use kanban_app::{Core, IssueStore, OperatorSession};
+use kanban_app::{Core, IssueStore, OperatorSession, ProjectStore};
+use kanban_domain::ProjectRegistration;
 use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::{
     Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore, SqliteSpecStore,
@@ -199,4 +200,154 @@ fn acceptance_retired_label_is_rejected() {
         )
         .expect_err("retired label refused");
     assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn acceptance_add_labels_persist_on_create_and_update() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
+    let session = OperatorSession::new(core);
+
+    let created: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-label-create",
+                    json!({
+                        "project_id": 1,
+                        "title": "Labelled on create",
+                        "add_labels": ["task"],
+                    }),
+                ),
+            )
+            .expect("create with label succeeds"),
+    )
+    .unwrap();
+
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: created.identifier.clone(),
+                })
+                .unwrap(),
+            )
+            .expect("get succeeds"),
+    )
+    .unwrap();
+    assert_eq!(read.labels, vec!["task".to_owned()]);
+
+    session
+        .call(
+            "issue.save",
+            &save_payload(
+                1,
+                "acceptance-label-switch-type",
+                json!({
+                    "identifier": created.identifier,
+                    "add_labels": ["bug"],
+                }),
+            ),
+        )
+        .expect("switch type label succeeds");
+
+    let relisted: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: created.identifier.clone(),
+                })
+                .unwrap(),
+            )
+            .expect("get after label switch succeeds"),
+    )
+    .unwrap();
+    assert_eq!(relisted.labels, vec!["bug".to_owned()]);
+
+    let listed: kanban_dto::IssueListResponse = serde_json::from_value(
+        session
+            .call("issue.list", &json!({}))
+            .expect("list without project_id succeeds"),
+    )
+    .unwrap();
+    let found = listed
+        .issues
+        .iter()
+        .find(|issue| issue.identifier == created.identifier)
+        .expect("issue appears in global list");
+    assert_eq!(found.labels, vec!["bug".to_owned()]);
+}
+
+#[test]
+fn acceptance_list_issues_without_project_id_spans_projects() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+
+    let projects = SqliteProjectStore::new(&h.database);
+    let edge = ProjectRegistration::new(
+        "EDGE",
+        "Edge tooling",
+        "/repositories/edge",
+        "/workspaces/edge.seed",
+        "main",
+        "edge.seed",
+        Some("edge-main"),
+        None,
+    )
+    .expect("edge registration validates");
+    projects
+        .create(&edge, &|id| {
+            kanban_app::TimelineEnvelope::project(
+                id.value(),
+                kanban_dto::TimelineEventKind::Transition,
+                Some(kanban_dto::TimelineEntityRef {
+                    kind: kanban_dto::TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("edge project lands");
+
+    let core = Arc::new(h.core);
+    let session = OperatorSession::new(core);
+
+    let edge_save: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-edge-issue",
+                    json!({
+                        "project_id": 2,
+                        "title": "Edge issue",
+                    }),
+                ),
+            )
+            .expect("edge issue saves"),
+    )
+    .unwrap();
+    assert_eq!(edge_save.identifier, "EDGE-1");
+
+    let listed: kanban_dto::IssueListResponse = serde_json::from_value(
+        session.call("issue.list", &json!({})).expect("global list succeeds"),
+    )
+    .unwrap();
+    assert!(
+        listed
+            .issues
+            .iter()
+            .any(|issue| issue.identifier == edge_save.identifier),
+        "global list includes the edge project issue"
+    );
 }

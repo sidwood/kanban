@@ -31,6 +31,9 @@ use kanban_dto::{
     HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
+    IssueGetQuery, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
+    IssueMilestonesQuery, IssueMilestonesResponse, IssueRecord, IssueSaveRequest,
+    IssueSaveResponse, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
     LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,
     LandingRecord, LandingSeedRequest, LaneCreateRequest, LaneListQuery, LaneListResponse,
     LaneRecord, LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
@@ -2373,6 +2376,83 @@ async fn search_global(
 }
 
 #[tauri::command]
+async fn save_issue(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueSaveRequest,
+) -> Result<IssueSaveResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "save issue", |shell| {
+        forward_command(shell, "issue.save", "save issue", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_issue(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueGetQuery,
+) -> Result<IssueRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "get issue", |shell| {
+        forward_query(shell, "issue.get", "get issue", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issues(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueListQuery,
+) -> Result<IssueListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issues", |shell| {
+        forward_query(shell, "issue.list", "list issues", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issue_statuses(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueWorkflowStatesQuery,
+) -> Result<IssueWorkflowStatesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issue statuses", |shell| {
+        forward_query(
+            shell,
+            "issue.list_workflow_states",
+            "list issue statuses",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issue_labels(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueLabelsQuery,
+) -> Result<IssueLabelsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issue labels", |shell| {
+        forward_query(shell, "issue.list_labels", "list issue labels", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_milestones(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueMilestonesQuery,
+) -> Result<IssueMilestonesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list milestones", |shell| {
+        forward_query(shell, "issue.list_milestones", "list milestones", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn service_stop_warning(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2604,6 +2684,12 @@ shell_handlers::shell_handler_catalogue! {
     shell_preferences,
     shell_preferences_update,
     search_global,
+    save_issue,
+    get_issue,
+    list_issues,
+    list_issue_statuses,
+    list_issue_labels,
+    list_milestones,
 }
 
 /// Build the window, start the core on demand, and supervise the

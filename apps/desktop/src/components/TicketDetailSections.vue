@@ -10,6 +10,7 @@ import type { ReviewSlotRecord, TicketRecord } from '@kanban/contracts'
 import { useTicketDetailStore } from '../stores/ticket-detail'
 import type { DetailSection } from '../stores/ticket-detail'
 import InlineAlert from './InlineAlert.vue'
+import { issueDisplayKey } from '../views/board-card'
 
 const { ticket } = defineProps<{
   ticket: TicketRecord
@@ -47,7 +48,7 @@ function revisionOf(index: number): string {
  * code of the Project that owns it, whichever Project that is
  * (crates/kanban-dto/src/ticket.rs). */
 function dependencyIdentity(projectId: number, number: number): string {
-  return `${detail.projectCode(projectId) ?? '?'}-T${number}`
+  return issueDisplayKey(detail.projectCode(projectId) ?? '?', number)
 }
 
 function slotName(slot: ReviewSlotRecord): string {

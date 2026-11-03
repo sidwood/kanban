@@ -178,6 +178,12 @@ describe('generated client', () => {
       'shell.preferences': 'shell_preferences',
       'shell.preferences.update': 'shell_preferences_update',
       'search.global': 'search_global',
+      'issue.save': 'save_issue',
+      'issue.get': 'get_issue',
+      'issue.list': 'list_issues',
+      'issue.list_workflow_states': 'list_issue_statuses',
+      'issue.list_labels': 'list_issue_labels',
+      'issue.list_milestones': 'list_milestones',
     })
   })
 
@@ -347,6 +353,12 @@ describe('generated client', () => {
       'shell.preferences',
       'shell.preferences.update',
       'search.global',
+      'issue.save',
+      'issue.get',
+      'issue.list',
+      'issue.list_workflow_states',
+      'issue.list_labels',
+      'issue.list_milestones',
     ])
   })
 

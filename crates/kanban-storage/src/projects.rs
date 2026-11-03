@@ -73,8 +73,10 @@ impl ProjectStore for SqliteProjectStore {
                 .map_err(|_| ApiError::internal("the Project identity overflowed"))?,
         );
         append_timeline(&span, &envelope(id))?;
-        crate::linear_issue::seed_project_defaults(&span, id.value() as i64)
-            .map_err(|_| ApiError::internal("issue defaults could not be seeded"))?;
+        if crate::linear_issue::issue_schema_ready(&span) {
+            crate::linear_issue::seed_project_defaults(&span, id.value() as i64)
+                .map_err(|_| ApiError::internal("issue defaults could not be seeded"))?;
+        }
         span.commit().map_err(internal)?;
         Ok(Project::new(id, registration.clone()))
     }

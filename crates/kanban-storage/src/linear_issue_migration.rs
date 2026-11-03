@@ -222,7 +222,37 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              SET due_date = due
              WHERE due IS NOT NULL
                AND due <> ''
-               AND due_date = '2099-12-31';",
+               AND due_date = '2099-12-31';
+             DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
+             DROP TRIGGER IF EXISTS tickets_bug_shape_update;
+             CREATE TRIGGER tickets_bug_shape_insert
+             BEFORE INSERT ON tickets
+             WHEN (NEW.kind = 'bug'
+                     AND (NEW.actual_behaviour IS NULL
+                         OR NEW.reporter_evidence IS NULL
+                         OR NEW.bug_facts IS NULL))
+                 OR (NEW.kind <> 'bug'
+                     AND (NEW.actual_behaviour IS NOT NULL
+                         OR NEW.reporter_evidence IS NOT NULL
+                         OR NEW.bug_qualification IS NOT NULL
+                         OR NEW.bug_facts IS NOT NULL))
+             BEGIN
+                 SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
+             END;
+             CREATE TRIGGER tickets_bug_shape_update
+             BEFORE UPDATE ON tickets
+             WHEN (NEW.kind = 'bug'
+                     AND (NEW.actual_behaviour IS NULL
+                         OR NEW.reporter_evidence IS NULL
+                         OR NEW.bug_facts IS NULL))
+                 OR (NEW.kind <> 'bug'
+                     AND (NEW.actual_behaviour IS NOT NULL
+                         OR NEW.reporter_evidence IS NOT NULL
+                         OR NEW.bug_qualification IS NOT NULL
+                         OR NEW.bug_facts IS NOT NULL))
+             BEGIN
+                 SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
+             END;",
         )?;
         return Ok(());
     }
@@ -270,7 +300,36 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
              version INTEGER NOT NULL CHECK (version > 0),
              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-             UNIQUE (project_id, number)
+             UNIQUE (project_id, number),
+             CHECK (
+                 (kind = 'implementation'
+                     AND spec_id IS NOT NULL
+                     AND slice IS NOT NULL
+                     AND title IS NULL
+                     AND criteria <> '[]'
+                     AND subtype IS NULL
+                     AND mode IS NULL
+                     AND completion = '[]'
+                     AND scheduled_for IS NULL
+                     AND due IS NULL)
+                 OR (kind = 'bug'
+                     AND title IS NOT NULL
+                     AND slice IS NULL
+                     AND criteria = '[]'
+                     AND subtype IS NULL
+                     AND mode IS NULL
+                     AND completion = '[]'
+                     AND scheduled_for IS NULL
+                     AND due IS NULL)
+                 OR (kind = 'task'
+                     AND title IS NOT NULL
+                     AND slice IS NULL
+                     AND criteria = '[]'
+                     AND subtype IN ('operational', 'investigative', 'administrative',
+                                     'research', 'prototype', 'migration', 'manual')
+                     AND mode IN ('human', 'agent')
+                     AND completion <> '[]')
+             )
          );
          INSERT INTO tickets_relaxed (
              id, project_id, number, kind, priority, state, spec_id, title, slice,
@@ -294,6 +353,36 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
          BEFORE DELETE ON tickets
          BEGIN
              SELECT RAISE(ABORT, 'tickets are never deleted; supersede or cancel them');
+         END;
+         DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
+         DROP TRIGGER IF EXISTS tickets_bug_shape_update;
+         CREATE TRIGGER tickets_bug_shape_insert
+         BEFORE INSERT ON tickets
+         WHEN (NEW.kind = 'bug'
+                 AND (NEW.actual_behaviour IS NULL
+                     OR NEW.reporter_evidence IS NULL
+                     OR NEW.bug_facts IS NULL))
+             OR (NEW.kind <> 'bug'
+                 AND (NEW.actual_behaviour IS NOT NULL
+                     OR NEW.reporter_evidence IS NOT NULL
+                     OR NEW.bug_qualification IS NOT NULL
+                     OR NEW.bug_facts IS NOT NULL))
+         BEGIN
+             SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
+         END;
+         CREATE TRIGGER tickets_bug_shape_update
+         BEFORE UPDATE ON tickets
+         WHEN (NEW.kind = 'bug'
+                 AND (NEW.actual_behaviour IS NULL
+                     OR NEW.reporter_evidence IS NULL
+                     OR NEW.bug_facts IS NULL))
+             OR (NEW.kind <> 'bug'
+                 AND (NEW.actual_behaviour IS NOT NULL
+                     OR NEW.reporter_evidence IS NOT NULL
+                     OR NEW.bug_qualification IS NOT NULL
+                     OR NEW.bug_facts IS NOT NULL))
+         BEGIN
+             SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
          END;
          UPDATE tickets
          SET due_date = due

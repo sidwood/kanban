@@ -137,9 +137,9 @@ describe('board cards', () => {
     const { wrapper } = await mounted()
 
     for (const [id, number, kindLabel, title] of [
-      [7, 'CORE-T12', 'Task Ticket', 'Archive the old exports'],
-      [8, 'CORE-T13', 'Implementation Ticket', 'Serve the lifecycle command surface'],
-      [9, 'CORE-T14', 'Bug Ticket', 'Clone guard misses a dirty tree'],
+      [7, 'CORE-12', 'Task Ticket', 'Archive the old exports'],
+      [8, 'CORE-13', 'Implementation Ticket', 'Serve the lifecycle command surface'],
+      [9, 'CORE-14', 'Bug Ticket', 'Clone guard misses a dirty tree'],
     ] as const) {
       expect(wrapper.find(`[data-testid="card-number-${id}"]`).text()).toBe(number)
       expect(wrapper.find(`[data-testid="card-kind-${id}"]`).text()).toBe(kindLabel)

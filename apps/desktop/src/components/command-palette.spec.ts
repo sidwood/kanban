@@ -41,7 +41,7 @@ describe('CommandPalette', () => {
           {
             kind: 'ticket',
             id: 1,
-            identifier: 'CORE-T1',
+            identifier: 'CORE-1',
             label: 'Archive the register',
             project_id: 1,
           },
@@ -66,6 +66,6 @@ describe('CommandPalette', () => {
 
     expect(queries).toEqual([{ name: 'search.global', request: { q: 'archive' } }])
     expect(commands).toEqual([])
-    expect(wrapper.text()).toContain('CORE-T1')
+    expect(wrapper.text()).toContain('CORE-1')
   })
 })

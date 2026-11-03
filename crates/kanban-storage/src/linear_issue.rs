@@ -87,6 +87,17 @@ pub fn linear_priority_for_ticket(
     Ok(value.and_then(|v| LinearPriority::new(v as u8)))
 }
 
+/// Whether Linear issue tables from migration 0053 are present.
+pub(crate) fn issue_schema_ready(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master
+         WHERE type = 'table' AND name = 'issue_workflow_states' LIMIT 1",
+        [],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
     ("Draft", "backlog", "draft", 0),
     ("Parked", "backlog", "parked", 1),
@@ -103,7 +114,7 @@ const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
 ];
 
 /// Seed default workflow, Type labels, and label group for a new project.
-pub fn seed_project_defaults(span: &WriteSpan<'_>, project_id: i64) -> Result<(), StorageError> {
+pub(crate) fn seed_project_defaults(span: &WriteSpan<'_>, project_id: i64) -> Result<(), StorageError> {
     for (name, kind, legacy, position) in DEFAULT_WORKFLOW {
         span.execute(
             "INSERT OR IGNORE INTO issue_workflow_states

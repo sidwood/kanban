@@ -60,7 +60,7 @@ describe('palette navigation', () => {
     expect(routeForSearchHit({
       kind: 'ticket',
       id: 2,
-      identifier: 'CORE-T2',
+      identifier: 'CORE-2',
       label: 'Archive the register',
       project_id: 1,
     })).toBe('/projects/1/board?ticket=2')
@@ -97,7 +97,7 @@ describe('palette navigation', () => {
     expect(routeForSearchHit({
       kind: 'ticket',
       id: 9,
-      identifier: 'CORE-T9',
+      identifier: 'CORE-9',
       label: 'Orphaned',
     })).toBe('/board')
     expect(routeForSearchHit({

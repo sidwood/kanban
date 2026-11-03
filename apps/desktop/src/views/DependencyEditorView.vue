@@ -10,6 +10,7 @@ import type { TicketReadinessBlocker } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { useDependencyEditorStore } from '../stores/dependency-editor'
+import { issueDisplayKey } from './board-card'
 
 const transport = inject(kanbanTransportKey)
 const projects = useProjectRegisterStore()
@@ -70,7 +71,7 @@ const codes = computed(() => {
 })
 
 function ticketId(projectId: number, number: number): string {
-  return `${codes.value.get(projectId) ?? '?'}-T${number}`
+  return issueDisplayKey(codes.value.get(projectId) ?? '?', number)
 }
 
 // One line per readiness blocker: the blocking Ticket's identity and

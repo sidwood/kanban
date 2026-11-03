@@ -279,6 +279,16 @@ fn create_issue(
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id as i64, project_id, state, effects)?;
     }
+    if let Some(milestone) = request.milestone_id.as_ref() {
+        ctx.issues
+            .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
+    }
+    apply_label_changes(
+        ctx,
+        project_id as i64,
+        ticket_id as i64,
+        request,
+    )?;
     finish_save_response(ctx, ticket_id)
 }
 
@@ -319,19 +329,27 @@ fn update_issue(
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id, project_id, state, effects)?;
     }
+    apply_label_changes(ctx, project_id as i64, ticket_id, request)?;
+    finish_save_response(ctx, ticket_id as u64)
+}
+
+fn apply_label_changes(
+    ctx: &IssueContext,
+    project_id: i64,
+    ticket_id: i64,
+    request: &IssueSaveRequest,
+) -> Result<(), ApiError> {
     if let Some(add) = request.add_labels.as_ref() {
         for label in add {
-            ctx.issues
-                .add_label(project_id as i64, ticket_id, label)?;
+            ctx.issues.add_label(project_id, ticket_id, label)?;
         }
     }
     if let Some(remove) = request.remove_labels.as_ref() {
         for label in remove {
-            ctx.issues
-                .remove_label(project_id as i64, ticket_id, label)?;
+            ctx.issues.remove_label(project_id, ticket_id, label)?;
         }
     }
-    finish_save_response(ctx, ticket_id as u64)
+    Ok(())
 }
 
 fn apply_named_state(
@@ -400,32 +418,94 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
 }
 
 fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueListResponse, ApiError> {
-    let project_id = request
-        .project_id
-        .ok_or_else(|| ApiError::invalid_request("project_id is required"))?;
-    let limit = request.limit.clamp(1, 100);
-    let tickets = ctx
-        .tickets
-        .list(ProjectId::new(project_id))?
-        .into_iter()
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    let mut issues = Vec::new();
-    for ticket in tickets {
-        let key = ctx.issues.load_issue_key(ticket.id().value() as i64)?;
-        if let Some(state) = request.state.as_deref() {
-            let workflow = ctx
-                .issues
-                .workflow_state_for_ticket(ticket.id().value() as i64)?;
-            if workflow.as_ref().is_none_or(|value| value.name != state) {
-                continue;
+    let limit = if request.limit == 0 {
+        50
+    } else {
+        request.limit.clamp(1, 100)
+    };
+    let cursor_ticket = request
+        .cursor
+        .as_deref()
+        .and_then(|value| value.parse::<u64>().ok());
+    let project_ids: Vec<u64> = match request.project_id {
+        Some(project_id) => vec![project_id],
+        None => ctx
+            .projects
+            .list()?
+            .into_iter()
+            .map(|project| project.id().value())
+            .collect(),
+    };
+
+    let mut matches = Vec::new();
+    for project_id in project_ids {
+        for ticket in ctx.tickets.list(ProjectId::new(project_id))? {
+            let ticket_id = ticket.id().value();
+            if let Some(state) = request.state.as_deref() {
+                let workflow = ctx
+                    .issues
+                    .workflow_state_for_ticket(ticket_id as i64)?;
+                if workflow.as_ref().is_none_or(|value| value.name != state) {
+                    continue;
+                }
             }
+            if let Some(label) = request.label.as_deref() {
+                let labels = ctx.issues.list_labels(ticket_id as i64)?;
+                if !labels.iter().any(|held| held == label) {
+                    continue;
+                }
+            }
+            let record = load_issue_record(
+                ctx,
+                &ctx
+                    .issues
+                    .load_issue_key(ticket_id as i64)?
+                    .display(),
+            )?;
+            if let Some(since) = request.updated_since.as_deref() {
+                if record.updated_at.as_str() < since {
+                    continue;
+                }
+            }
+            if let Some(query) = request.query.as_deref() {
+                let needle = query.to_lowercase();
+                let haystack = format!(
+                    "{} {} {}",
+                    record.identifier, record.title, record.description
+                )
+                .to_lowercase();
+                if !haystack.contains(&needle) {
+                    continue;
+                }
+            }
+            matches.push(record);
         }
-        issues.push(load_issue_record(ctx, &key.display())?);
     }
+    matches.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| right.ticket_id.cmp(&left.ticket_id))
+    });
+    let start = if let Some(cursor) = cursor_ticket {
+        matches
+            .iter()
+            .position(|record| record.ticket_id == cursor)
+            .map(|index| index + 1)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let page: Vec<IssueRecord> = matches.into_iter().skip(start).collect();
+    let next_cursor = if page.len() > limit as usize {
+        Some(page[limit as usize].ticket_id.to_string())
+    } else {
+        None
+    };
+    let issues = page.into_iter().take(limit as usize).collect();
     Ok(IssueListResponse {
         issues,
-        next_cursor: None,
+        next_cursor,
     })
 }
 

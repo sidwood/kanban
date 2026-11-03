@@ -22,6 +22,7 @@ import EmptyState from '../components/EmptyState.vue'
 import InlineAlert from '../components/InlineAlert.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { issueDisplayKey } from './board-card'
 
 const transport = inject(kanbanTransportKey)
 const profiles = useProfilesStore()
@@ -93,7 +94,7 @@ const assignable = computed(() => profiles.profiles.filter((entry) => !entry.ret
 
 function ticketLabel(ticket: { number: number; slice?: string | null; title?: string | null }): string {
   const summary = ticket.slice ?? ticket.title ?? 'Untitled Ticket'
-  return `${projectCode.value}-T${ticket.number} — ${summary}`
+  return `${issueDisplayKey(projectCode.value, ticket.number)} — ${summary}`
 }
 
 // The walk the core would take for one entry, stated exactly as

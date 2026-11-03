@@ -658,6 +658,18 @@ fn sample_request(schema: &str) -> Value {
             json!({ "mutation": mutation, "instance_id": "fixture", "enabled": true })
         }
         "SearchGlobalQuery" => json!({ "q": "core-t1" }),
+        "IssueSaveRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "title": "Operator fixture issue",
+            "state": "Draft",
+            "priority": 3,
+        }),
+        "IssueGetQuery" => json!({ "identifier": "CORE-1" }),
+        "IssueListQuery" => json!({ "project_id": 1, "limit": 10 }),
+        "IssueWorkflowStatesQuery" => json!({ "project_id": 1 }),
+        "IssueLabelsQuery" => json!({ "project_id": 1 }),
+        "IssueMilestonesQuery" => json!({ "project_id": 1 }),
         "ShellPreferencesUpdateRequest" => json!({
             "mutation": mutation,
             "rail_open": true,

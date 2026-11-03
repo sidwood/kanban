@@ -398,6 +398,7 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         .ok_or_else(|| ApiError::internal("workflow state missing"))?;
     let fields = ctx.issues.issue_fields(ticket_id)?;
     let labels = ctx.issues.list_labels(ticket_id)?;
+    let relations = ctx.issues.list_relations(ticket_id)?;
     Ok(IssueRecord {
         identifier: key.display(),
         url: key.deep_link(),
@@ -411,7 +412,7 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         due_date: (fields.due_date != "2099-12-31").then_some(fields.due_date),
         milestone_id: fields.milestone_id.map(|value| value as u64),
         labels,
-        relations: vec![],
+        relations,
         state_history: vec![],
         updated_at: fields.updated_at,
     })
@@ -462,10 +463,10 @@ fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueList
                     .load_issue_key(ticket_id as i64)?
                     .display(),
             )?;
-            if let Some(since) = request.updated_since.as_deref() {
-                if record.updated_at.as_str() < since {
-                    continue;
-                }
+            if let Some(since) = request.updated_since.as_deref()
+                && record.updated_at.as_str() < since
+            {
+                continue;
             }
             if let Some(query) = request.query.as_deref() {
                 let needle = query.to_lowercase();
@@ -513,7 +514,9 @@ fn ticket_title(ticket: &Ticket) -> String {
     match ticket.body() {
         kanban_domain::TicketBody::Task(task) => task.title().to_owned(),
         kanban_domain::TicketBody::Bug(bug) => bug.title().to_owned(),
-        kanban_domain::TicketBody::Implementation(_) => ticket.id().to_string(),
+        kanban_domain::TicketBody::Implementation(implementation) => {
+            implementation.slice().to_owned()
+        }
     }
 }
 

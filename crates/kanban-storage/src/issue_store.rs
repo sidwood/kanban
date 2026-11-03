@@ -2,7 +2,7 @@
 
 use kanban_app::TimelineEnvelope;
 use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState};
-use kanban_dto::ApiError;
+use kanban_dto::{ApiError, IssueRelationRecord};
 use rusqlite::{params, OptionalExtension};
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -429,6 +429,37 @@ impl SqliteIssueStore {
         )
         .map_err(not_found_ticket)
     }
+
+    pub fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare(
+                "SELECT 'blocks' AS kind, p.code, t.number
+                 FROM issue_relations AS r
+                 JOIN tickets AS t ON t.id = r.to_ticket_id
+                 JOIN projects AS p ON p.id = t.project_id
+                 WHERE r.from_ticket_id = ?1 AND r.kind = 'blocks'
+                 UNION ALL
+                 SELECT 'blocked-by', p.code, t.number
+                 FROM issue_relations AS r
+                 JOIN tickets AS t ON t.id = r.from_ticket_id
+                 JOIN projects AS p ON p.id = t.project_id
+                 WHERE r.to_ticket_id = ?1 AND r.kind = 'blocks'
+                 ORDER BY kind, code, number",
+            )
+            .map_err(internal)?;
+        let rows = statement
+            .query_map([ticket_id], |row| {
+                let code: String = row.get(1)?;
+                let number: i64 = row.get(2)?;
+                Ok(IssueRelationRecord {
+                    kind: row.get(0)?,
+                    identifier: format!("{code}-{number}"),
+                })
+            })
+            .map_err(internal)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(internal)
+    }
 }
 
 fn map_workflow_state(record: WorkflowStateRecord) -> kanban_app::IssueWorkflowState {
@@ -541,6 +572,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         SqliteIssueStore::issue_fields(self, ticket_id)
+    }
+
+    fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError> {
+        SqliteIssueStore::list_relations(self, ticket_id)
     }
 }
 

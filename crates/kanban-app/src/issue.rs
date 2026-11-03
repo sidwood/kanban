@@ -1,7 +1,7 @@
 //! Linear issue persistence port (operator MCP and UI adapters).
 
 use kanban_domain::{IssueKey, WorkflowStateType};
-use kanban_dto::ApiError;
+use kanban_dto::{ApiError, IssueRelationRecord};
 
 use crate::TimelineEnvelope;
 
@@ -74,4 +74,5 @@ pub trait IssueStore: Send + Sync {
         name: &str,
     ) -> Result<IssueWorkflowState, ApiError>;
     fn issue_fields(&self, ticket_id: i64) -> Result<IssueTicketFields, ApiError>;
+    fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError>;
 }

@@ -1,6 +1,6 @@
 //! Idempotent application of migration 53 for recovery re-runs.
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::WriteSpan;
 
@@ -254,6 +254,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
                  SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
              END;",
         )?;
+        backfill_issue_descriptions(conn)?;
         return Ok(());
     }
     conn.execute_batch(
@@ -390,6 +391,198 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
            AND due <> ''
            AND due_date = '2099-12-31';",
     )?;
+    backfill_issue_descriptions(conn)?;
+    Ok(())
+}
+
+struct SpecVersionSections {
+    name: String,
+    short_description: String,
+    problem_statement: String,
+    solution: String,
+    user_stories: String,
+    implementation_decisions: String,
+    testing_decisions: String,
+    out_of_scope: String,
+    further_notes: String,
+}
+
+fn load_approved_spec_sections(
+    conn: &Connection,
+    spec_id: i64,
+    pinned_version: Option<i64>,
+) -> rusqlite::Result<Option<SpecVersionSections>> {
+    let version_number: Option<i64> = if let Some(number) = pinned_version {
+        Some(number)
+    } else {
+        conn.query_row(
+            "SELECT MAX(number) FROM spec_versions
+             WHERE spec_id = ?1 AND state = 'approved'",
+            [spec_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten()
+    };
+    let Some(number) = version_number else {
+        return Ok(None);
+    };
+    match conn.query_row(
+        "SELECT name, short_description, problem_statement, solution, user_stories,
+                implementation_decisions, testing_decisions, out_of_scope, further_notes
+         FROM spec_versions
+         WHERE spec_id = ?1 AND number = ?2",
+        params![spec_id, number],
+        |row| {
+            Ok(SpecVersionSections {
+                name: row.get(0)?,
+                short_description: row.get(1)?,
+                problem_statement: row.get(2)?,
+                solution: row.get(3)?,
+                user_stories: row.get(4)?,
+                implementation_decisions: row.get(5)?,
+                testing_decisions: row.get(6)?,
+                out_of_scope: row.get(7)?,
+                further_notes: row.get(8)?,
+            })
+        },
+    ) {
+        Ok(sections) => Ok(Some(sections)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn push_section(document: &mut String, heading: &str, body: &str) {
+    document.push_str(&format!("\n### {heading}\n\n{body}\n"));
+}
+
+fn render_spec_sections(sections: &SpecVersionSections) -> String {
+    let mut document = format!("\n## Spec — {}\n", sections.name);
+    push_section(&mut document, "Short description", &sections.short_description);
+    push_section(&mut document, "Problem statement", &sections.problem_statement);
+    push_section(&mut document, "Solution", &sections.solution);
+    push_section(&mut document, "User stories", &sections.user_stories);
+    push_section(
+        &mut document,
+        "Implementation decisions",
+        &sections.implementation_decisions,
+    );
+    push_section(&mut document, "Testing decisions", &sections.testing_decisions);
+    push_section(&mut document, "Out of scope", &sections.out_of_scope);
+    push_section(&mut document, "Further notes", &sections.further_notes);
+    document
+}
+
+struct TicketDescriptionSource {
+    kind: String,
+    slice: Option<String>,
+    title: Option<String>,
+    spec_id: Option<i64>,
+    pinned_version: Option<i64>,
+    actual_behaviour: Option<String>,
+    reporter_evidence: Option<String>,
+}
+
+fn build_issue_description(
+    conn: &Connection,
+    source: &TicketDescriptionSource,
+) -> rusqlite::Result<String> {
+    let mut document = String::new();
+    match source.kind.as_str() {
+        "implementation" => {
+            if let Some(slice) = source.slice.as_ref().filter(|value| !value.is_empty()) {
+                document.push_str(&format!("\n## Slice\n\n{slice}\n"));
+            }
+            if let Some(spec_id) = source.spec_id
+                && let Some(sections) =
+                    load_approved_spec_sections(conn, spec_id, source.pinned_version)?
+            {
+                document.push_str(&render_spec_sections(&sections));
+            }
+        }
+        "bug" => {
+            if let Some(title) = source.title.as_ref().filter(|value| !value.is_empty()) {
+                document.push_str(&format!("\n## Title\n\n{title}\n"));
+            }
+            if let Some(actual) = source
+                .actual_behaviour
+                .as_ref()
+                .filter(|value| !value.is_empty())
+            {
+                push_section(&mut document, "Actual behaviour", actual);
+            }
+            if let Some(evidence) = source
+                .reporter_evidence
+                .as_ref()
+                .filter(|value| !value.is_empty())
+            {
+                push_section(&mut document, "Reporter evidence", evidence);
+            }
+        }
+        "task" => {
+            if let Some(title) = source.title.as_ref().filter(|value| !value.is_empty()) {
+                document.push_str(&format!("\n## Title\n\n{title}\n"));
+            }
+        }
+        _ => {}
+    }
+    Ok(document.trim_start().to_owned())
+}
+
+/// Fills empty issue descriptions from legacy ticket and spec content.
+pub(crate) fn backfill_issue_descriptions(conn: &Connection) -> rusqlite::Result<()> {
+    if !tickets_table_has_column(conn, "description")? {
+        return Ok(());
+    }
+    let mut statement = conn.prepare(
+        "SELECT id, kind, slice, title, spec_id, pinned_version, actual_behaviour, reporter_evidence
+         FROM tickets
+         WHERE description = ''",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+        ))
+    })?;
+    for row in rows {
+        let (
+            ticket_id,
+            kind,
+            slice,
+            title,
+            spec_id,
+            pinned_version,
+            actual_behaviour,
+            reporter_evidence,
+        ) = row?;
+        let description = build_issue_description(
+            conn,
+            &TicketDescriptionSource {
+                kind,
+                slice,
+                title,
+                spec_id,
+                pinned_version,
+                actual_behaviour,
+                reporter_evidence,
+            },
+        )?;
+        if description.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "UPDATE tickets SET description = ?2 WHERE id = ?1",
+            params![ticket_id, description],
+        )?;
+    }
     Ok(())
 }
 
@@ -399,8 +592,199 @@ pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rus
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+    use std::sync::Arc;
+
+    use kanban_app::catalog::exposed_operations;
+    use kanban_app::events::NoopEventSink;
+    use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
+    use kanban_domain::{CommentId, ProjectRegistration};
+    use kanban_dto::{IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
+    use serde_json::json;
+
     use super::*;
-    use crate::migrations;
+    use crate::comments::SqliteCommentStore;
+    use crate::db::Database;
+    use crate::evidence::SqliteEvidenceStore;
+    use crate::idempotency::{RetentionPolicy, SqliteIdempotencyStore};
+    use crate::issue_store::SqliteIssueStore as IssueStoreImpl;
+    use crate::migrations::{self, AllowAllMigrations};
+    use crate::plan::SqlitePlanStore;
+    use crate::projects::SqliteProjectStore;
+    use crate::spec::SqliteSpecStore;
+    use crate::tickets::SqliteTicketStore;
+
+    const PROBLEM: &str = "Approved PRD problem line for migration";
+    const COMMENT_AUTHOR: &str = "ada";
+    const COMMENT_CREATED: &str = "2020-06-01T10:00:00.000000Z";
+    const COMMENT_EDITED: &str = "2020-06-02T11:00:00.000000Z";
+
+    fn seed_project(database: &Database) {
+        let projects = SqliteProjectStore::new(database);
+        let registration = ProjectRegistration::new(
+            "CORE",
+            "Control plane",
+            "/repositories/kanban",
+            "/workspaces/kanban.seed",
+            "main",
+            "kanban.seed",
+            Some("kanban-main"),
+            None,
+        )
+        .unwrap();
+        projects
+            .create(&registration, &|id| {
+                kanban_app::TimelineEnvelope::project(
+                    id.value(),
+                    TimelineEventKind::Transition,
+                    Some(TimelineEntityRef {
+                        kind: TimelineEntityKind::Project,
+                        id: id.value().to_string(),
+                    }),
+                    json!({ "action": "registered" }),
+                )
+            })
+            .unwrap();
+    }
+
+    fn seed_schema_52_fixture(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO specs (id, project_id, number, execution, plan_id, version)
+             VALUES (1, 1, 1, 'planned', NULL, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO spec_versions (
+                 spec_id, number, state, name, short_description, problem_statement,
+                 solution, user_stories, implementation_decisions, testing_decisions,
+                 out_of_scope, further_notes
+             ) VALUES (
+                 1, 1, 'approved', 'Login PRD', 'Short scope', ?1,
+                 'Build login', 'As a user', 'Use OAuth', 'Integration tests',
+                 'Nothing', 'None'
+             )",
+            [PROBLEM],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, spec_id, title, slice,
+                 criteria, subtype, mode, completion, version, created_at
+             ) VALUES (
+                 1, 1, 1, 'implementation', 'normal', 'draft', 1, NULL, 'Login flow',
+                 '[{\"outcome\":\"User logs in\",\"stories\":[{\"spec\":1,\"story\":1}]}]', NULL, NULL, '[]', 1,
+                 '2019-01-01T00:00:00.000000Z'
+             );
+             INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, spec_id, title, slice,
+                 criteria, subtype, mode, completion, version, created_at
+             ) VALUES (
+                 2, 1, 2, 'task', 'normal', 'draft', NULL, 'Wait on login', NULL,
+                 '[]', 'operational', 'human', '[\"Shipped\"]', 1,
+                 '2019-01-02T00:00:00.000000Z'
+             );
+             INSERT INTO ticket_dependencies (from_ticket, to_ticket) VALUES (1, 2);
+             INSERT INTO comments (id, project_id, entity_kind, entity_id, version, created_at)
+             VALUES (1, '1', 'ticket', '2', 2, '2020-06-01T10:00:00.000000Z');
+             INSERT INTO comment_revisions (comment_id, revision, text, recorded_at)
+             VALUES (1, 1, 'First note', '2020-06-01T10:00:00.000000Z');
+             INSERT INTO comment_revisions (comment_id, revision, text, recorded_at)
+             VALUES (1, 2, 'Edited note', '2020-06-02T11:00:00.000000Z');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (kind, detail, recorded_at, project_id, entity_kind, entity_id)
+             VALUES (
+                 'comment',
+                 '{\"comment_id\":1,\"text\":\"First note\",\"revision\":1,\"recorded_at\":\"2020-06-01T10:00:00.000000Z\",\"author\":\"ada\"}',
+                 '2020-06-01T10:00:00.000000Z', '1', 'ticket', '2'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (kind, detail, recorded_at, project_id, entity_kind, entity_id)
+             VALUES ('comment', ?1, ?2, '1', 'ticket', '2')",
+            [format!(
+                "{{\"comment_id\":1,\"text\":\"Edited note\",\"revision\":2,\"recorded_at\":\"{COMMENT_EDITED}\",\"author\":\"{COMMENT_AUTHOR}\"}}"
+            ), COMMENT_EDITED.to_owned()],
+        )
+        .unwrap();
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct MigratedComment {
+        text: String,
+        author: String,
+        created_at: String,
+        edited_at: Option<String>,
+        edited: bool,
+    }
+
+    fn load_migrated_comment(conn: &Connection, comment_id: i64) -> MigratedComment {
+        let (version, created_at): (i64, String) = conn
+            .query_row(
+                "SELECT version, created_at FROM comments WHERE id = ?1",
+                [comment_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let (text, edited_at): (String, String) = conn
+            .query_row(
+                "SELECT text, recorded_at FROM comment_revisions
+                 WHERE comment_id = ?1 ORDER BY revision DESC LIMIT 1",
+                [comment_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let detail: String = conn
+            .query_row(
+                "SELECT detail FROM timeline_events
+                 WHERE kind = 'comment' AND detail LIKE '%\"comment_id\":1%'
+                 ORDER BY recorded_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let author = serde_json::from_str::<serde_json::Value>(&detail).unwrap()["author"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        MigratedComment {
+            text,
+            author,
+            created_at,
+            edited_at: (version > 1).then_some(edited_at),
+            edited: version > 1,
+        }
+    }
+
+    fn register_operator_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
+        let projects = Arc::new(SqliteProjectStore::new(database));
+        let tickets = Arc::new(SqliteTicketStore::new(database));
+        let specs = Arc::new(SqliteSpecStore::new(database));
+        let plans = Arc::new(SqlitePlanStore::new(database));
+        let issues: Arc<dyn IssueStore> = Arc::new(IssueStoreImpl::new(database));
+        core.register_plans(plans.clone(), projects.clone(), specs.clone())
+            .unwrap();
+        core.register_specs(specs.clone(), projects.clone(), plans)
+            .unwrap();
+        core.register_tickets(
+            tickets.clone(),
+            projects.clone(),
+            specs.clone(),
+            Arc::new(SqliteEvidenceStore::new(database, attachments.to_path_buf())),
+        )
+        .unwrap();
+        core.register_issue_operator(tickets, projects, specs, issues)
+            .unwrap();
+        core.register_comments(
+            Arc::new(SqliteCommentStore::new(database)),
+            Arc::new(SqliteProjectStore::new(database)),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn migration_0053_reapply_is_idempotent() {
@@ -428,5 +812,92 @@ mod tests {
             )
             .unwrap();
         assert_eq!(columns, 1);
+    }
+
+    #[test]
+    fn migration_52_to_54_preserves_spec_description_comments_and_relations() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        seed_schema_52_fixture(&database.connection());
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let description: String = conn
+            .query_row(
+                "SELECT description FROM tickets WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(description.contains("Login flow"));
+        assert!(description.contains(PROBLEM));
+
+        let comment = load_migrated_comment(&conn, 1);
+        assert_eq!(comment.text, "Edited note");
+        assert_eq!(comment.author, COMMENT_AUTHOR);
+        assert_eq!(comment.created_at, COMMENT_CREATED);
+        assert_eq!(comment.edited_at.as_deref(), Some(COMMENT_EDITED));
+        assert!(comment.edited);
+
+        let attachments = dir.path().join("attachments");
+        std::fs::create_dir_all(&attachments).unwrap();
+        let idempotency = Arc::new(SqliteIdempotencyStore::new(
+            &database,
+            RetentionPolicy::keep_most_recent(NonZeroU32::new(100).unwrap()),
+        ));
+        let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
+        register_operator_stack(&mut core, &database, &attachments);
+        let session = OperatorSession::new(Arc::new(core));
+
+        let blocker: IssueRecord = serde_json::from_value(
+            session
+                .call(
+                    "issue.get",
+                    &serde_json::to_value(IssueGetQuery {
+                        identifier: "CORE-1".into(),
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let waiting: IssueRecord = serde_json::from_value(
+            session
+                .call(
+                    "issue.get",
+                    &serde_json::to_value(IssueGetQuery {
+                        identifier: "CORE-2".into(),
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            blocker
+                .relations
+                .iter()
+                .any(|relation| relation.kind == "blocks" && relation.identifier == "CORE-2")
+        );
+        assert!(
+            waiting
+                .relations
+                .iter()
+                .any(|relation| relation.kind == "blocked-by" && relation.identifier == "CORE-1")
+        );
+        assert_eq!(blocker.title, "Login flow");
+
+        let comment_store = SqliteCommentStore::new(&database);
+        let revisions = comment_store
+            .revisions(CommentId::new(1))
+            .expect("comment history loads");
+        assert_eq!(revisions.0.text, "Edited note");
+        assert_eq!(revisions.1.len(), 2);
+        assert_eq!(revisions.1[0].recorded_at, COMMENT_CREATED);
+        assert_eq!(revisions.1[1].recorded_at, COMMENT_EDITED);
     }
 }

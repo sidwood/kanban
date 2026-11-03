@@ -40048,5 +40048,697 @@
       "title": "SearchGlobalResponse",
       "type": "object"
     }
+  },
+  {
+    "description": "Create or update one Linear-shaped issue and return its key and deep link.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Create or update one issue (`save_issue`).",
+      "properties": {
+        "add_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description_patch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "due_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identifier": {
+          "description": "Existing issue key (`CODE-123`) when updating.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "milestone_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "priority": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "Target project when creating; required without `identifier`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "remove_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mutation"
+      ],
+      "title": "IssueSaveRequest",
+      "type": "object"
+    },
+    "name": "save_issue",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "ticket_id",
+        "url"
+      ],
+      "title": "IssueSaveResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Read one issue by key with relations and state history.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "title": "IssueGetQuery",
+      "type": "object"
+    },
+    "name": "get_issue",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueRelationRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "identifier",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "IssueStateHistoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "ended_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "state_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "started_at",
+            "state",
+            "state_type"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "due_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identifier": {
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "milestone_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "priority": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "relations": {
+          "items": {
+            "$ref": "#/definitions/IssueRelationRecord"
+          },
+          "type": "array"
+        },
+        "state": {
+          "type": "string"
+        },
+        "state_history": {
+          "items": {
+            "$ref": "#/definitions/IssueStateHistoryRecord"
+          },
+          "type": "array"
+        },
+        "state_type": {
+          "type": "string"
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "identifier",
+        "labels",
+        "priority",
+        "project_id",
+        "relations",
+        "state",
+        "state_history",
+        "state_type",
+        "ticket_id",
+        "title",
+        "updated_at",
+        "url"
+      ],
+      "title": "IssueRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List issues with Linear-style filters and pagination.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "IssueListQuery",
+      "type": "object"
+    },
+    "name": "list_issues",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "due_date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "identifier": {
+              "type": "string"
+            },
+            "labels": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "milestone_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "priority": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "project_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "relations": {
+              "items": {
+                "$ref": "#/definitions/IssueRelationRecord"
+              },
+              "type": "array"
+            },
+            "state": {
+              "type": "string"
+            },
+            "state_history": {
+              "items": {
+                "$ref": "#/definitions/IssueStateHistoryRecord"
+              },
+              "type": "array"
+            },
+            "state_type": {
+              "type": "string"
+            },
+            "ticket_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "identifier",
+            "labels",
+            "priority",
+            "project_id",
+            "relations",
+            "state",
+            "state_history",
+            "state_type",
+            "ticket_id",
+            "title",
+            "updated_at",
+            "url"
+          ],
+          "type": "object"
+        },
+        "IssueRelationRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "identifier",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "IssueStateHistoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "ended_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "state_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "started_at",
+            "state",
+            "state_type"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "issues": {
+          "items": {
+            "$ref": "#/definitions/IssueRecord"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issues"
+      ],
+      "title": "IssueListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List workflow states with names and Linear types for one project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "IssueWorkflowStatesQuery",
+      "type": "object"
+    },
+    "name": "list_issue_statuses",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueWorkflowStateRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "state_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "state_type"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "states": {
+          "items": {
+            "$ref": "#/definitions/IssueWorkflowStateRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "states"
+      ],
+      "title": "IssueWorkflowStatesResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List labels and groups for one project, including retired labels.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "IssueLabelsQuery",
+      "type": "object"
+    },
+    "name": "list_issue_labels",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueLabelRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "group": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "retired": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "color",
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "labels": {
+          "items": {
+            "$ref": "#/definitions/IssueLabelRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "labels"
+      ],
+      "title": "IssueLabelsResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List milestones for one project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "title": "IssueMilestonesQuery",
+      "type": "object"
+    },
+    "name": "list_milestones",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueMilestoneRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "target_date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "milestones": {
+          "items": {
+            "$ref": "#/definitions/IssueMilestoneRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "milestones"
+      ],
+      "title": "IssueMilestonesResponse",
+      "type": "object"
+    }
   }
 ]

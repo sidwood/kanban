@@ -34,11 +34,47 @@ pub struct LoopbackHttp {
     stop: CancellationToken,
     worker: Option<JoinHandle<io::Result<()>>>,
 }
+
+/// Run-scoped agent MCP and optional installation operator MCP.
+pub struct LoopbackHttpHandlers<S> {
+    agent: Arc<dyn Fn(u64) -> Result<S, ApiError> + Send + Sync>,
+    operator: Option<Arc<dyn Fn() -> Result<S, ApiError> + Send + Sync>>,
+}
+
+impl<S> LoopbackHttpHandlers<S> {
+    pub fn agent_only(
+        agent: impl Fn(u64) -> Result<S, ApiError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            agent: Arc::new(agent),
+            operator: None,
+        }
+    }
+
+    pub fn with_operator(
+        agent: impl Fn(u64) -> Result<S, ApiError> + Send + Sync + 'static,
+        operator: impl Fn() -> Result<S, ApiError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            agent: Arc::new(agent),
+            operator: Some(Arc::new(operator)),
+        }
+    }
+}
+
 impl LoopbackHttp {
     pub fn start<S: rmcp::ServerHandler + Clone + 'static>(
         config: LoopbackHttpConfig,
         secret: Option<Arc<InstallationSecret>>,
         session: impl Fn(u64) -> Result<S, ApiError> + Send + Sync + 'static,
+    ) -> io::Result<Self> {
+        Self::start_with_handlers(config, secret, LoopbackHttpHandlers::agent_only(session))
+    }
+
+    pub fn start_with_handlers<S: rmcp::ServerHandler + Clone + 'static>(
+        config: LoopbackHttpConfig,
+        secret: Option<Arc<InstallationSecret>>,
+        handlers: LoopbackHttpHandlers<S>,
     ) -> io::Result<Self> {
         let mut handle = Self {
             address: None,
@@ -66,7 +102,7 @@ impl LoopbackHttp {
             tokio::net::TcpListener::from_std(listener)?
         };
         let stop = handle.stop.clone();
-        let session = Arc::new(session);
+        let handlers = Arc::new(handlers);
         handle.worker = Some(std::thread::Builder::new().name("kanban-http".into()).spawn(move || {
             runtime.block_on(async move {
                 let mut connections = tokio::task::JoinSet::new();
@@ -78,11 +114,11 @@ impl LoopbackHttp {
                         incoming = listener.accept() => {
                             let (stream, _) = incoming?;
                             let secret = secret.clone();
-                            let session = session.clone();
+                            let handlers = handlers.clone();
                             let stop = stop.clone();
                             connections.spawn(async move {
                                 let service = service_fn(move |request| {
-                                    respond(request, secret.clone(), session.clone(), stop.clone(), bound)
+                                    respond(request, secret.clone(), handlers.clone(), stop.clone(), bound)
                                 });
                                 let _ = hyper::server::conn::http1::Builder::new()
                                     .timer(TokioTimer::new())
@@ -124,7 +160,7 @@ impl Drop for LoopbackHttp {
 async fn respond<S: rmcp::ServerHandler + Clone + 'static>(
     request: Request<Incoming>,
     secret: Arc<InstallationSecret>,
-    session: Arc<impl Fn(u64) -> Result<S, ApiError> + Send + Sync>,
+    handlers: Arc<LoopbackHttpHandlers<S>>,
     stop: CancellationToken,
     bound: SocketAddr,
 ) -> Result<Response<Body>, Infallible> {
@@ -154,7 +190,9 @@ async fn respond<S: rmcp::ServerHandler + Clone + 'static>(
     if !bool::from(credential.as_bytes().ct_eq(secret.expose().as_bytes())) {
         return Ok(refused(401));
     }
-    if request.uri() != "/mcp" {
+    let path = request.uri().path();
+    let operator_route = path == "/mcp/operator";
+    if path != "/mcp" && !operator_route {
         return Ok(refused(404));
     }
     if request.method() != hyper::Method::POST {
@@ -200,18 +238,32 @@ async fn respond<S: rmcp::ServerHandler + Clone + 'static>(
     // Forward exactly what was checked, not shadowed fields from the raw envelope.
     parts.headers.remove("content-length");
     let request = Request::from_parts(parts, Full::new(Bytes::from(normalized)));
-    let capability = request
-        .headers()
-        .get("x-kanban-capability")
-        .and_then(|h| h.to_str().ok())
-        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|s| s.parse::<u64>().ok())
-        .filter(|id| *id != 0);
-    let Some(capability) = capability else {
-        return Ok(refused(400));
-    };
-    let Ok(adapter) = session(capability) else {
-        return Ok(refused(403));
+    let adapter = if operator_route {
+        if request.headers().contains_key("x-kanban-capability") {
+            return Ok(refused(400));
+        }
+        let Some(operator) = handlers.operator.as_ref() else {
+            return Ok(refused(404));
+        };
+        match operator() {
+            Ok(adapter) => adapter,
+            Err(_) => return Ok(refused(403)),
+        }
+    } else {
+        let capability = request
+            .headers()
+            .get("x-kanban-capability")
+            .and_then(|h| h.to_str().ok())
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|id| *id != 0);
+        let Some(capability) = capability else {
+            return Ok(refused(400));
+        };
+        match (handlers.agent)(capability) {
+            Ok(adapter) => adapter,
+            Err(_) => return Ok(refused(403)),
+        }
     };
     let service: StreamableHttpService<S, LocalSessionManager> = StreamableHttpService::new(
         move || Ok(adapter.clone()),

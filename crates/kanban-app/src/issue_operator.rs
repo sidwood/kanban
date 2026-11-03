@@ -1,0 +1,447 @@
+//! Operator Linear issue commands (MCP parity).
+
+use std::sync::Arc;
+
+use kanban_domain::{ProjectId, Ticket, TicketId};
+use kanban_dto::{
+    ApiError, IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse,
+    IssueListQuery, IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery,
+    IssueMilestonesResponse, IssueRecord, IssueSaveRequest, IssueSaveResponse,
+    IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
+    TaskMode as WireMode, TaskSubtype as WireSubtype, TicketCreateRequest, TicketKind,
+    TicketPriority,
+};
+use serde_json::{Value, json};
+
+use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::issue::IssueStore;
+use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
+use crate::project::ProjectStore;
+use crate::spec::SpecStore;
+use crate::ticket::{TicketStore, create_ticket, transition};
+
+/// MCP operations granted to installation-authenticated operator clients.
+pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
+    "issue.get",
+    "issue.list",
+    "issue.list_labels",
+    "issue.list_milestones",
+    "issue.list_workflow_states",
+    "issue.save",
+];
+
+struct IssueContext {
+    tickets: Arc<dyn TicketStore>,
+    projects: Arc<dyn ProjectStore>,
+    specs: Arc<dyn SpecStore>,
+    issues: Arc<dyn IssueStore>,
+}
+
+impl Core {
+    pub fn register_issue_operator(
+        &mut self,
+        tickets: Arc<dyn TicketStore>,
+        projects: Arc<dyn ProjectStore>,
+        specs: Arc<dyn SpecStore>,
+        issues: Arc<dyn IssueStore>,
+    ) -> Result<(), RegistrationError> {
+        self.register_command(
+            "issue.save",
+            Arc::new(SaveIssue(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.get",
+            Arc::new(GetIssue(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.list",
+            Arc::new(ListIssues(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.list_workflow_states",
+            Arc::new(ListWorkflowStates(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.list_labels",
+            Arc::new(ListLabels(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.list_milestones",
+            Arc::new(ListMilestones(IssueContext {
+                tickets,
+                projects,
+                specs,
+                issues,
+            })),
+        )?;
+        Ok(())
+    }
+}
+
+struct SaveIssue(IssueContext);
+
+impl CommandHandler for SaveIssue {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<IssueSaveRequest>(payload)?;
+        ParsedCommand::lift("issue", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: IssueSaveRequest = parse_payload(&command.payload)?;
+        if let Some(identifier) = request.identifier.as_deref() {
+            let (_, ticket_id) = self
+                .0
+                .issues
+                .resolve_identifier(identifier)?
+                .ok_or_else(|| ApiError::not_found(identifier))?;
+            return Ok(
+                self.0
+                    .tickets
+                    .find(TicketId::new(ticket_id as u64))?
+                    .ok_or_else(|| ApiError::not_found(identifier))?
+                    .version(),
+            );
+        }
+        Ok(0)
+    }
+
+    fn apply(&self, command: &ParsedCommand, effects: &dyn CommandEffects) -> Result<Value, ApiError> {
+        let request: IssueSaveRequest = parse_payload(&command.payload)?;
+        if request.identifier.is_some() {
+            update_issue(&self.0, &request, effects)
+        } else {
+            create_issue(&self.0, &request, effects)
+        }
+    }
+}
+
+struct GetIssue(IssueContext);
+
+impl QueryHandler for GetIssue {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let request: IssueGetQuery = parse_payload(payload)?;
+        let record = load_issue_record(&self.0, &request.identifier)?;
+        serde_json::to_value(record).map_err(|_| ApiError::internal("issue response invalid"))
+    }
+}
+
+struct ListIssues(IssueContext);
+
+impl QueryHandler for ListIssues {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let request: IssueListQuery = parse_payload(payload)?;
+        let response = list_issues(&self.0, &request)?;
+        serde_json::to_value(response).map_err(|_| ApiError::internal("issue list invalid"))
+    }
+}
+
+struct ListWorkflowStates(IssueContext);
+
+impl QueryHandler for ListWorkflowStates {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let request: IssueWorkflowStatesQuery = parse_payload(payload)?;
+        let states = self
+            .0
+            .issues
+            .list_workflow_states(request.project_id as i64)?;
+        let response = IssueWorkflowStatesResponse {
+            states: states
+                .into_iter()
+                .map(|state| IssueWorkflowStateRecord {
+                    name: state.name,
+                    state_type: state.state_type.wire_name().to_owned(),
+                })
+                .collect(),
+        };
+        serde_json::to_value(response).map_err(|_| ApiError::internal("states response invalid"))
+    }
+}
+
+struct ListLabels(IssueContext);
+
+impl QueryHandler for ListLabels {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let request: IssueLabelsQuery = parse_payload(payload)?;
+        let labels = self
+            .0
+            .issues
+            .list_project_labels(request.project_id as i64)?
+            .into_iter()
+            .map(|label| IssueLabelRecord {
+                name: label.name,
+                color: label.color,
+                group: label.group,
+                retired: label.retired,
+            })
+            .collect();
+        serde_json::to_value(IssueLabelsResponse { labels })
+            .map_err(|_| ApiError::internal("labels response invalid"))
+    }
+}
+
+struct ListMilestones(IssueContext);
+
+impl QueryHandler for ListMilestones {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let request: IssueMilestonesQuery = parse_payload(payload)?;
+        let milestones = self
+            .0
+            .issues
+            .list_project_milestones(request.project_id as i64)?
+            .into_iter()
+            .map(|milestone| IssueMilestoneRecord {
+                id: milestone.id,
+                name: milestone.name,
+                target_date: milestone.target_date,
+            })
+            .collect();
+        serde_json::to_value(IssueMilestonesResponse { milestones })
+            .map_err(|_| ApiError::internal("milestones response invalid"))
+    }
+}
+
+fn create_issue(
+    ctx: &IssueContext,
+    request: &IssueSaveRequest,
+    effects: &dyn CommandEffects,
+) -> Result<Value, ApiError> {
+    let project_id = request
+        .project_id
+        .ok_or_else(|| ApiError::invalid_request("project_id is required when creating"))?;
+    let title = request
+        .title
+        .as_deref()
+        .filter(|title| !title.is_empty())
+        .ok_or_else(|| ApiError::invalid_request("title is required when creating"))?;
+    let create = TicketCreateRequest {
+        mutation: request.mutation.clone(),
+        project_id,
+        kind: TicketKind::Task,
+        priority: linear_to_wire_priority(request.priority.unwrap_or(3)),
+        spec_id: None,
+        title: Some(title.to_owned()),
+        actual_behaviour: None,
+        reporter_evidence: None,
+        slice: None,
+        criteria: None,
+        subtype: Some(WireSubtype::Operational),
+        mode: Some(WireMode::Human),
+        completion: Some(vec!["Issue tracked".into()]),
+        scheduled_for: None,
+        due: None,
+    };
+    let value = create_ticket(
+        &create,
+        ctx.projects.as_ref(),
+        ctx.tickets.as_ref(),
+        ctx.specs.as_ref(),
+        effects,
+    )?;
+    let ticket_id = value["id"]
+        .as_u64()
+        .ok_or_else(|| ApiError::internal("ticket id missing"))?;
+    if let Some(description) = request.description.as_deref() {
+        ctx.issues.set_description(ticket_id as i64, description)?;
+    }
+    if let Some(priority) = request.priority {
+        ctx.issues
+            .set_linear_priority(ticket_id as i64, priority)?;
+    }
+    if let Some(due) = request.due_date.as_ref() {
+        ctx.issues
+            .set_due_date(ticket_id as i64, due.as_deref())?;
+    }
+    if let Some(state) = request.state.as_deref() {
+        apply_named_state(ctx, ticket_id as i64, project_id, state, effects)?;
+    }
+    finish_save_response(ctx, ticket_id)
+}
+
+fn update_issue(
+    ctx: &IssueContext,
+    request: &IssueSaveRequest,
+    effects: &dyn CommandEffects,
+) -> Result<Value, ApiError> {
+    let identifier = request
+        .identifier
+        .as_deref()
+        .ok_or_else(|| ApiError::invalid_request("identifier is required when updating"))?;
+    let (_, ticket_id) = ctx
+        .issues
+        .resolve_identifier(identifier)?
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    let project_id = ctx
+        .tickets
+        .find(TicketId::new(ticket_id as u64))?
+        .ok_or_else(|| ApiError::not_found(identifier))?
+        .project()
+        .value();
+    if let Some(description) = request.description.as_deref() {
+        ctx.issues.set_description(ticket_id, description)?;
+    } else if let Some(patch) = request.description_patch.as_deref() {
+        ctx.issues.patch_description(ticket_id, patch)?;
+    }
+    if let Some(priority) = request.priority {
+        ctx.issues.set_linear_priority(ticket_id, priority)?;
+    }
+    if let Some(due) = request.due_date.as_ref() {
+        ctx.issues.set_due_date(ticket_id, due.as_deref())?;
+    }
+    if let Some(milestone) = request.milestone_id.as_ref() {
+        ctx.issues
+            .set_milestone(ticket_id, milestone.map(|value| value as i64))?;
+    }
+    if let Some(state) = request.state.as_deref() {
+        apply_named_state(ctx, ticket_id, project_id, state, effects)?;
+    }
+    if let Some(add) = request.add_labels.as_ref() {
+        for label in add {
+            ctx.issues
+                .add_label(project_id as i64, ticket_id, label)?;
+        }
+    }
+    if let Some(remove) = request.remove_labels.as_ref() {
+        for label in remove {
+            ctx.issues
+                .remove_label(project_id as i64, ticket_id, label)?;
+        }
+    }
+    finish_save_response(ctx, ticket_id as u64)
+}
+
+fn apply_named_state(
+    ctx: &IssueContext,
+    ticket_id: i64,
+    project_id: u64,
+    state_name: &str,
+    _effects: &dyn CommandEffects,
+) -> Result<(), ApiError> {
+    let to = ctx
+        .issues
+        .resolve_state_by_name(project_id as i64, state_name)?;
+    let envelope = transition(
+        ProjectId::new(project_id),
+        TicketId::new(ticket_id as u64),
+        "state.changed",
+        json!({ "state": state_name }),
+    );
+    ctx.issues
+        .apply_free_state(ticket_id, project_id as i64, &to, envelope)
+}
+
+fn finish_save_response(ctx: &IssueContext, ticket_id: u64) -> Result<Value, ApiError> {
+    let key = ctx.issues.load_issue_key(ticket_id as i64)?;
+    let response = IssueSaveResponse {
+        identifier: key.display(),
+        url: key.deep_link(),
+        ticket_id,
+    };
+    serde_json::to_value(response).map_err(|_| ApiError::internal("save response invalid"))
+}
+
+fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord, ApiError> {
+    let (_, ticket_id) = ctx
+        .issues
+        .resolve_identifier(identifier)?
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    let ticket = ctx
+        .tickets
+        .find(TicketId::new(ticket_id as u64))?
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    let key = ctx.issues.load_issue_key(ticket_id)?;
+    let state = ctx
+        .issues
+        .workflow_state_for_ticket(ticket_id)?
+        .ok_or_else(|| ApiError::internal("workflow state missing"))?;
+    let fields = ctx.issues.issue_fields(ticket_id)?;
+    let labels = ctx.issues.list_labels(ticket_id)?;
+    Ok(IssueRecord {
+        identifier: key.display(),
+        url: key.deep_link(),
+        ticket_id: ticket_id as u64,
+        project_id: ticket.project().value(),
+        title: ticket_title(&ticket),
+        description: fields.description,
+        state: state.name,
+        state_type: state.state_type.wire_name().to_owned(),
+        priority: fields.linear_priority,
+        due_date: (fields.due_date != "2099-12-31").then_some(fields.due_date),
+        milestone_id: fields.milestone_id.map(|value| value as u64),
+        labels,
+        relations: vec![],
+        state_history: vec![],
+        updated_at: fields.updated_at,
+    })
+}
+
+fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueListResponse, ApiError> {
+    let project_id = request
+        .project_id
+        .ok_or_else(|| ApiError::invalid_request("project_id is required"))?;
+    let limit = request.limit.clamp(1, 100);
+    let tickets = ctx
+        .tickets
+        .list(ProjectId::new(project_id))?
+        .into_iter()
+        .take(limit as usize)
+        .collect::<Vec<_>>();
+    let mut issues = Vec::new();
+    for ticket in tickets {
+        let key = ctx.issues.load_issue_key(ticket.id().value() as i64)?;
+        if let Some(state) = request.state.as_deref() {
+            let workflow = ctx
+                .issues
+                .workflow_state_for_ticket(ticket.id().value() as i64)?;
+            if workflow.as_ref().is_none_or(|value| value.name != state) {
+                continue;
+            }
+        }
+        issues.push(load_issue_record(ctx, &key.display())?);
+    }
+    Ok(IssueListResponse {
+        issues,
+        next_cursor: None,
+    })
+}
+
+fn ticket_title(ticket: &Ticket) -> String {
+    match ticket.body() {
+        kanban_domain::TicketBody::Task(task) => task.title().to_owned(),
+        kanban_domain::TicketBody::Bug(bug) => bug.title().to_owned(),
+        kanban_domain::TicketBody::Implementation(_) => ticket.id().to_string(),
+    }
+}
+
+fn linear_to_wire_priority(value: u8) -> TicketPriority {
+    match value {
+        1 => TicketPriority::Urgent,
+        2 => TicketPriority::High,
+        4 => TicketPriority::Low,
+        _ => TicketPriority::Normal,
+    }
+}

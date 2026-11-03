@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "color": {
+      "type": "string"
+    },
+    "group": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "retired": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "color",
+    "name"
+  ],
+  "title": "IssueLabelRecord",
+  "type": "object"
+}

@@ -27,6 +27,9 @@ pub mod findings;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
+pub mod issue;
+pub mod issue_operator;
+pub mod operator_authorization;
 pub mod landing;
 pub mod lane;
 pub mod lifecycle;
@@ -102,6 +105,8 @@ pub use herdr::{
     HerdrDiagnostics, HerdrProjectObserver, HerdrSettingsStore, NoopHerdrProjectObserver,
 };
 pub use initiative::InitiativeStore;
+pub use issue::{IssueLabelRow, IssueMilestoneRow, IssueStore, IssueTicketFields, IssueWorkflowState};
+pub use operator_authorization::OperatorSession;
 pub use landing::{GitLanding, LandingStore};
 pub use lane::LaneStore;
 #[cfg(any(test, feature = "test-support"))]

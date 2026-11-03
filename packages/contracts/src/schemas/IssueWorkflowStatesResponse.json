@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "IssueWorkflowStateRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "state_type"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "states": {
+      "items": {
+        "$ref": "#/definitions/IssueWorkflowStateRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "states"
+  ],
+  "title": "IssueWorkflowStatesResponse",
+  "type": "object"
+}

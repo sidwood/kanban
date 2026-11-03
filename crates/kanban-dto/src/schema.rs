@@ -86,6 +86,13 @@ use crate::initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
 };
+use crate::issue::{
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
+    IssueStateHistoryRecord, IssueWorkflowStateRecord, IssueWorkflowStatesQuery,
+    IssueWorkflowStatesResponse,
+};
 use crate::lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
     LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
@@ -410,6 +417,38 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         (
             "InitiativeRenameRequest",
             schema_for!(InitiativeRenameRequest),
+        ),
+        ("IssueGetQuery", schema_for!(IssueGetQuery)),
+        ("IssueLabelRecord", schema_for!(IssueLabelRecord)),
+        ("IssueLabelsQuery", schema_for!(IssueLabelsQuery)),
+        ("IssueLabelsResponse", schema_for!(IssueLabelsResponse)),
+        ("IssueListQuery", schema_for!(IssueListQuery)),
+        ("IssueListResponse", schema_for!(IssueListResponse)),
+        ("IssueMilestoneRecord", schema_for!(IssueMilestoneRecord)),
+        ("IssueMilestonesQuery", schema_for!(IssueMilestonesQuery)),
+        (
+            "IssueMilestonesResponse",
+            schema_for!(IssueMilestonesResponse),
+        ),
+        ("IssueRecord", schema_for!(IssueRecord)),
+        ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
+        ("IssueSaveRequest", schema_for!(IssueSaveRequest)),
+        ("IssueSaveResponse", schema_for!(IssueSaveResponse)),
+        (
+            "IssueStateHistoryRecord",
+            schema_for!(IssueStateHistoryRecord),
+        ),
+        (
+            "IssueWorkflowStateRecord",
+            schema_for!(IssueWorkflowStateRecord),
+        ),
+        (
+            "IssueWorkflowStatesQuery",
+            schema_for!(IssueWorkflowStatesQuery),
+        ),
+        (
+            "IssueWorkflowStatesResponse",
+            schema_for!(IssueWorkflowStatesResponse),
         ),
         ("McpHealth", schema_for!(McpHealth)),
         ("MutationContext", schema_for!(MutationContext)),

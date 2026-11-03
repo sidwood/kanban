@@ -23,6 +23,7 @@ pub mod landing;
 pub mod lanes;
 pub mod linear_issue;
 mod linear_issue_migration;
+pub mod issue_store;
 pub mod migrations;
 pub mod paths;
 pub mod plan;
@@ -73,6 +74,7 @@ pub use graph_proposals::SqliteGraphProposalStore;
 pub use herdr::SqliteHerdrSettingsStore;
 pub use idempotency::{RetentionPolicy, SqliteIdempotencyStore};
 pub use initiatives::SqliteInitiativeStore;
+pub use issue_store::SqliteIssueStore;
 pub use landing::SqliteLandingStore;
 pub use lanes::SqliteLaneStore;
 pub use migrations::{

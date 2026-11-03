@@ -90,9 +90,45 @@ impl IssueKey {
     }
 }
 
+/// Side effects when an issue enters a workflow state type.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueStateTimestamps {
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub canceled_at: Option<String>,
+}
+
+impl IssueStateTimestamps {
+    /// Stamp Linear lifecycle timestamps when `state_type` is entered.
+    pub fn stamp_entry(&mut self, state_type: WorkflowStateType, at: &str) {
+        match state_type {
+            WorkflowStateType::Started => {
+                if self.started_at.is_none() {
+                    self.started_at = Some(at.to_owned());
+                }
+            }
+            WorkflowStateType::Completed => self.completed_at = Some(at.to_owned()),
+            WorkflowStateType::Canceled | WorkflowStateType::Duplicate => {
+                self.canceled_at = Some(at.to_owned());
+            }
+            WorkflowStateType::Backlog | WorkflowStateType::Unstarted => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_timestamps_follow_linear_type_rules() {
+        let mut stamps = IssueStateTimestamps::default();
+        stamps.stamp_entry(WorkflowStateType::Started, "2026-11-03T12:00:00Z");
+        stamps.stamp_entry(WorkflowStateType::Started, "2026-11-03T13:00:00Z");
+        assert_eq!(stamps.started_at.as_deref(), Some("2026-11-03T12:00:00Z"));
+        stamps.stamp_entry(WorkflowStateType::Completed, "2026-11-03T14:00:00Z");
+        assert_eq!(stamps.completed_at.as_deref(), Some("2026-11-03T14:00:00Z"));
+    }
 
     #[test]
     fn issue_key_formats_identifier_and_deep_link() {

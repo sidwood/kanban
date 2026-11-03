@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "ended_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "state_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "started_at",
+    "state",
+    "state_type"
+  ],
+  "title": "IssueStateHistoryRecord",
+  "type": "object"
+}

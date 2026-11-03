@@ -314,6 +314,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "walkthrough bindings",
         sql: include_str!("../migrations/0052_walkthrough_bindings.sql"),
     },
+    Migration {
+        version: 53,
+        name: "linear issue model",
+        sql: include_str!("../migrations/0053_linear_issue_model.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -441,12 +446,21 @@ fn apply_one(conn: &Connection, migration: &Migration) -> Result<(), StorageErro
 /// that gates the commit.
 fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), StorageError> {
     let span = WriteSpan::begin(conn)?;
-    span.execute_batch(migration.sql)
-        .map_err(|source| StorageError::Migration {
+    if migration.version == 53 {
+        crate::linear_issue_migration::apply_linear_issue_model_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else {
+        span.execute_batch(migration.sql).map_err(|source| StorageError::Migration {
             version: migration.version,
             name: migration.name,
             source,
         })?;
+    }
     crate::audit::insert_event(
         &span,
         "migration.applied",
@@ -1913,6 +1927,10 @@ mod tests {
                 PendingMigration {
                     version: 52,
                     name: "walkthrough bindings"
+                },
+                PendingMigration {
+                    version: 53,
+                    name: "linear issue model"
                 },
             ]]
         );

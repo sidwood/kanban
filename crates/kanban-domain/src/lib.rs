@@ -39,6 +39,7 @@ pub mod search;
 pub mod shell_preference;
 pub mod spec;
 pub mod ticket;
+pub mod issue;
 pub mod timeline;
 pub mod timeline_time;
 pub mod tip_binding;
@@ -142,6 +143,7 @@ pub use ticket::{
     TaskSubtype, TaskTicket, TaskTiming, Ticket, TicketBody, TicketError, TicketId, TicketKind,
     TicketNumber, TicketNumberError, TicketState,
 };
+pub use issue::{IssueKey, LinearPriority, WorkflowStateType};
 pub use timeline::{ENTITY_KINDS, is_entity_kind};
 pub use timeline_time::{
     TimelineTimeError, normalise_timeline_bound, validate_timeline_time_window,

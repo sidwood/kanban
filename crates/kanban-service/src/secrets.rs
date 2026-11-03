@@ -192,9 +192,7 @@ mod file_installation_secret {
             verify_regular_file(&file, 0o600)?;
             drop(file);
             publish_new_key(&temp, path)?;
-            #[allow(clippy::explicit_auto_deref)]
-            let key_ref: &[u8; 32] = &*key;
-            Ok(InstallationSecret::from_key(key_ref))
+            Ok(InstallationSecret::from_key(key))
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temp);
@@ -227,9 +225,7 @@ mod file_installation_secret {
         }
         let mut key = zeroize::Zeroizing::new([0u8; 32]);
         file.read_exact(&mut *key).map_err(|_| unavailable())?;
-        #[allow(clippy::explicit_auto_deref)]
-        let key_ref: &[u8; 32] = &*key;
-        Ok(InstallationSecret::from_key(key_ref))
+        Ok(InstallationSecret::from_key(&key))
     }
 
     fn require_directory_mode(metadata: &fs::Metadata) -> Result<(), ApiError> {
@@ -375,20 +371,39 @@ mod tests {
         );
     }
 
+    const UMASK_ISOLATED_TEST: &str =
+        "secrets::tests::file_store_honours_0700_and_0600_when_umask_is_zero_isolated";
+
     #[test]
     fn file_store_honours_0700_and_0600_when_umask_is_zero() {
         let exe = std::env::current_exe().expect("test executable");
-        let status = std::process::Command::new(exe)
+        let output = std::process::Command::new(exe)
             .env("KANBAN_FILE_STORE_UMASK_TEST", "1")
             .args([
                 "--exact",
-                "file_store_honours_0700_and_0600_when_umask_is_zero_isolated",
+                UMASK_ISOLATED_TEST,
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .status()
+            .output()
             .expect("spawn isolated umask test");
-        assert!(status.success(), "isolated umask test failed");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            output.status.success(),
+            "isolated umask test failed:\n{combined}",
+        );
+        assert!(
+            combined.contains("running 1 test"),
+            "child must run exactly one test, output:\n{combined}",
+        );
+        assert!(
+            combined.contains("test result: ok. 1 passed"),
+            "child must report exactly one passing test, output:\n{combined}",
+        );
     }
 
     #[test]

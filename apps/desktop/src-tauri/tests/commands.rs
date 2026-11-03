@@ -41,6 +41,8 @@ use kanban_dto::{
     TicketPrioritiseRequest, TicketReadinessQuery, TicketReassignRequest, TicketReviewConfigQuery,
     TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
     TicketSpecMoveRequest, TicketTransitionRequest, TicketTransitionsQuery, TicketUnparkRequest,
+    IssueGetQuery, IssueLabelsQuery, IssueListQuery, IssueMilestonesQuery, IssueSaveRequest,
+    IssueWorkflowStatesQuery,
     TimelineEntityKind, TimelineEntityRef, TimelineQuery, TimelineScope, ViewCreateRequest,
     ViewListQuery, ViewRemoveRequest, ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery,
     WorkspaceObserveRequest, WorkspaceRegisterRequest, WorkspaceRetireRequest,
@@ -1073,6 +1075,14 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ShellPreferencesUpdateRequest" => {
             decode_invoke_args::<ShellPreferencesUpdateRequest>(request).is_err()
         }
+        "IssueSaveRequest" => decode_invoke_args::<IssueSaveRequest>(request).is_err(),
+        "IssueGetQuery" => decode_invoke_args::<IssueGetQuery>(request).is_err(),
+        "IssueListQuery" => decode_invoke_args::<IssueListQuery>(request).is_err(),
+        "IssueWorkflowStatesQuery" => {
+            decode_invoke_args::<IssueWorkflowStatesQuery>(request).is_err()
+        }
+        "IssueLabelsQuery" => decode_invoke_args::<IssueLabelsQuery>(request).is_err(),
+        "IssueMilestonesQuery" => decode_invoke_args::<IssueMilestonesQuery>(request).is_err(),
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

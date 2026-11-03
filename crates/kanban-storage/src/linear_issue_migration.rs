@@ -278,15 +278,15 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
             continue;
         }
         for (index, (recorded_at, from, to)) in events.iter().enumerate() {
-            if index == 0 {
-                if let Some(from_id) = workflow_id_for_legacy(conn, project_id, from)? {
-                    conn.execute(
-                        "INSERT INTO issue_state_history
-                             (ticket_id, workflow_state_id, started_at, ended_at)
-                         VALUES (?1, ?2, ?3, ?4)",
-                        params![ticket_id, from_id, created_at, recorded_at],
-                    )?;
-                }
+            if index == 0
+                && let Some(from_id) = workflow_id_for_legacy(conn, project_id, from)?
+            {
+                conn.execute(
+                    "INSERT INTO issue_state_history
+                         (ticket_id, workflow_state_id, started_at, ended_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![ticket_id, from_id, created_at, recorded_at],
+                )?;
             }
             let ended_at = events.get(index + 1).map(|(time, _, _)| time.as_str());
             if let Some(to_id) = workflow_id_for_legacy(conn, project_id, to)? {

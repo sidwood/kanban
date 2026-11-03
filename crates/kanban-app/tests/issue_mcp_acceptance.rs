@@ -447,7 +447,7 @@ fn acceptance_state_history_lists_each_move() {
             .unwrap(),
     )
     .unwrap();
-    assert!(read.state_history.len() >= 1);
+    assert!(!read.state_history.is_empty());
 }
 
 #[test]

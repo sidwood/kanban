@@ -50,6 +50,7 @@ impl Core {
         issues: Arc<dyn IssueStore>,
         comments: Arc<dyn CommentStore>,
     ) -> Result<(), RegistrationError> {
+        let _comments = comments;
         self.register_command(
             "issue.save",
             Arc::new(SaveIssue(IssueContext {

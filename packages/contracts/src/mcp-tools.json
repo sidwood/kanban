@@ -40077,7 +40077,25 @@
       },
       "description": "Create or update one issue (`save_issue`).",
       "properties": {
+        "add_blocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "add_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "add_related": {
           "items": {
             "type": "string"
           },
@@ -40104,6 +40122,12 @@
             "null"
           ]
         },
+        "duplicate_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "identifier": {
           "description": "Existing issue key (`CODE-123`) when updating.",
           "type": [
@@ -40122,6 +40146,14 @@
         "mutation": {
           "$ref": "#/definitions/MutationContext"
         },
+        "parent_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "priority": {
           "format": "uint8",
           "minimum": 0.0,
@@ -40139,7 +40171,25 @@
             "null"
           ]
         },
+        "remove_blocks": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "remove_labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "remove_related": {
           "items": {
             "type": "string"
           },
@@ -40214,6 +40264,31 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "IssueChildRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "sort_order": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "state": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "identifier",
+            "sort_order",
+            "state",
+            "title"
+          ],
+          "type": "object"
+        },
         "IssueRelationRecord": {
           "additionalProperties": false,
           "properties": {
@@ -40258,6 +40333,18 @@
         }
       },
       "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/definitions/IssueChildRecord"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
         "description": {
           "type": "string"
         },
@@ -40281,6 +40368,12 @@
           "minimum": 0.0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "parent": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -40325,9 +40418,15 @@
         },
         "url": {
           "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
         }
       },
       "required": [
+        "created_at",
         "description",
         "identifier",
         "labels",
@@ -40340,7 +40439,8 @@
         "ticket_id",
         "title",
         "updated_at",
-        "url"
+        "url",
+        "version"
       ],
       "title": "IssueRecord",
       "type": "object"
@@ -40369,6 +40469,14 @@
           "format": "uint32",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "parent_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "project_id": {
           "format": "uint64",
@@ -40405,9 +40513,46 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "definitions": {
+        "IssueChildRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "sort_order": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "state": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "identifier",
+            "sort_order",
+            "state",
+            "title"
+          ],
+          "type": "object"
+        },
         "IssueRecord": {
           "additionalProperties": false,
           "properties": {
+            "children": {
+              "items": {
+                "$ref": "#/definitions/IssueChildRecord"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "created_at": {
+              "type": "string"
+            },
             "description": {
               "type": "string"
             },
@@ -40431,6 +40576,12 @@
               "minimum": 0.0,
               "type": [
                 "integer",
+                "null"
+              ]
+            },
+            "parent": {
+              "type": [
+                "string",
                 "null"
               ]
             },
@@ -40475,9 +40626,15 @@
             },
             "url": {
               "type": "string"
+            },
+            "version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
             }
           },
           "required": [
+            "created_at",
             "description",
             "identifier",
             "labels",
@@ -40490,7 +40647,8 @@
             "ticket_id",
             "title",
             "updated_at",
-            "url"
+            "url",
+            "version"
           ],
           "type": "object"
         },

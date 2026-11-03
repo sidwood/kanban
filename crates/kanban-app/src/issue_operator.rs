@@ -13,6 +13,7 @@ use kanban_dto::{
 };
 use serde_json::{Value, json};
 
+use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::issue::IssueStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
@@ -28,6 +29,9 @@ pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
     "issue.list_milestones",
     "issue.list_workflow_states",
     "issue.save",
+    "comment.create",
+    "comment.edit",
+    "comment.revisions",
 ];
 
 struct IssueContext {
@@ -44,6 +48,7 @@ impl Core {
         projects: Arc<dyn ProjectStore>,
         specs: Arc<dyn SpecStore>,
         issues: Arc<dyn IssueStore>,
+        comments: Arc<dyn CommentStore>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "issue.save",
@@ -289,7 +294,8 @@ fn create_issue(
         ticket_id as i64,
         request,
     )?;
-    finish_save_response(ctx, ticket_id)
+    apply_issue_extensions(ctx, ticket_id as i64, request)?;
+    finish_save_response(ctx, ticket_id as u64)
 }
 
 fn update_issue(
@@ -329,8 +335,48 @@ fn update_issue(
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id, project_id, state, effects)?;
     }
+    if let Some(title) = request.title.as_deref().filter(|value| !value.is_empty()) {
+        ctx.issues.set_title(ticket_id, title)?;
+    }
     apply_label_changes(ctx, project_id as i64, ticket_id, request)?;
+    apply_issue_extensions(ctx, ticket_id, request)?;
     finish_save_response(ctx, ticket_id as u64)
+}
+
+fn apply_issue_extensions(
+    ctx: &IssueContext,
+    ticket_id: i64,
+    request: &IssueSaveRequest,
+) -> Result<(), ApiError> {
+    if let Some(parent) = request.parent_id.as_ref() {
+        ctx.issues
+            .set_parent(ticket_id, parent.map(|value| value as i64))?;
+    }
+    if let Some(duplicate) = request.duplicate_of.as_ref() {
+        ctx.issues
+            .set_duplicate_of(ticket_id, duplicate.as_deref())?;
+    }
+    if let Some(add) = request.add_blocks.as_ref() {
+        for target in add {
+            ctx.issues.add_relation(ticket_id, target, "blocks")?;
+        }
+    }
+    if let Some(remove) = request.remove_blocks.as_ref() {
+        for target in remove {
+            ctx.issues.remove_relation(ticket_id, target, "blocks")?;
+        }
+    }
+    if let Some(add) = request.add_related.as_ref() {
+        for target in add {
+            ctx.issues.add_relation(ticket_id, target, "related")?;
+        }
+    }
+    if let Some(remove) = request.remove_related.as_ref() {
+        for target in remove {
+            ctx.issues.remove_relation(ticket_id, target, "related")?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_label_changes(
@@ -399,6 +445,13 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     let fields = ctx.issues.issue_fields(ticket_id)?;
     let labels = ctx.issues.list_labels(ticket_id)?;
     let relations = ctx.issues.list_relations(ticket_id)?;
+    let state_history = ctx.issues.list_state_history(ticket_id)?;
+    let parent = if let Some(parent_id) = fields.parent_ticket_id {
+        Some(ctx.issues.load_issue_key(parent_id)?.display())
+    } else {
+        None
+    };
+    let children = ctx.issues.list_children(ticket_id)?;
     Ok(IssueRecord {
         identifier: key.display(),
         url: key.deep_link(),
@@ -413,8 +466,12 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         milestone_id: fields.milestone_id.map(|value| value as u64),
         labels,
         relations,
-        state_history: vec![],
+        state_history,
+        version: fields.version,
+        created_at: fields.created_at,
         updated_at: fields.updated_at,
+        parent,
+        children: (!children.is_empty()).then_some(children),
     })
 }
 
@@ -453,6 +510,12 @@ fn list_issues(ctx: &IssueContext, request: &IssueListQuery) -> Result<IssueList
             if let Some(label) = request.label.as_deref() {
                 let labels = ctx.issues.list_labels(ticket_id as i64)?;
                 if !labels.iter().any(|held| held == label) {
+                    continue;
+                }
+            }
+            if let Some(parent_id) = request.parent_id {
+                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
+                if fields.parent_ticket_id != Some(parent_id as i64) {
                     continue;
                 }
             }

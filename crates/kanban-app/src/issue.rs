@@ -40,6 +40,9 @@ pub struct IssueTicketFields {
     pub due_date: String,
     pub milestone_id: Option<i64>,
     pub updated_at: String,
+    pub created_at: String,
+    pub version: u64,
+    pub parent_ticket_id: Option<i64>,
 }
 
 /// Loads and mutates Linear-shaped issue fields beside the Ticket port.
@@ -75,4 +78,29 @@ pub trait IssueStore: Send + Sync {
     ) -> Result<IssueWorkflowState, ApiError>;
     fn issue_fields(&self, ticket_id: i64) -> Result<IssueTicketFields, ApiError>;
     fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError>;
+    fn list_state_history(
+        &self,
+        ticket_id: i64,
+    ) -> Result<Vec<kanban_dto::IssueStateHistoryRecord>, ApiError>;
+    fn set_title(&self, ticket_id: i64, title: &str) -> Result<(), ApiError>;
+    fn bump_version(&self, ticket_id: i64) -> Result<u64, ApiError>;
+    fn set_parent(&self, ticket_id: i64, parent_id: Option<i64>) -> Result<(), ApiError>;
+    fn list_children(&self, ticket_id: i64) -> Result<Vec<kanban_dto::IssueChildRecord>, ApiError>;
+    fn add_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError>;
+    fn remove_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError>;
+    fn set_duplicate_of(
+        &self,
+        ticket_id: i64,
+        target_identifier: Option<&str>,
+    ) -> Result<(), ApiError>;
 }

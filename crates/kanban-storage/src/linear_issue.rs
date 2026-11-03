@@ -111,6 +111,7 @@ const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
     ("Done", "completed", "done", 9),
     ("Cancelled", "canceled", "cancelled", 10),
     ("Superseded", "canceled", "superseded", 11),
+    ("Duplicate", "duplicate", "superseded", 12),
 ];
 
 /// Seed default workflow, Type labels, and label group for a new project.

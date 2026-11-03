@@ -197,12 +197,109 @@ pub(crate) fn apply_linear_issue_model(conn: &Connection) -> rusqlite::Result<()
         SELECT from_ticket, to_ticket, 'blocks'
         FROM ticket_dependencies;",
     )?;
+    backfill_issue_state_history_from_timeline(conn)?;
 
     Ok(())
 }
 
 pub(crate) fn apply_linear_issue_model_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     apply_linear_issue_model(span)
+}
+
+fn workflow_id_for_legacy(
+    conn: &Connection,
+    project_id: i64,
+    legacy: &str,
+) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM issue_workflow_states
+         WHERE project_id = ?1 AND legacy_state = ?2",
+        params![project_id, legacy],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Rebuilds per-ticket state history from legacy timeline transitions.
+fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM issue_state_history", [])?;
+    let mut tickets = conn.prepare("SELECT id, project_id, created_at FROM tickets ORDER BY id")?;
+    let rows = tickets.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for ticket in rows {
+        let (ticket_id, project_id, created_at) = ticket?;
+        let mut transitions = conn.prepare(
+            "SELECT recorded_at, detail FROM timeline_events
+             WHERE kind = 'transition' AND entity_kind = 'ticket' AND entity_id = ?1
+             ORDER BY recorded_at ASC, rowid ASC",
+        )?;
+        let events: Vec<(String, String, String)> = transitions
+            .query_map([ticket_id.to_string()], |row| {
+                let detail_raw: String = row.get(1)?;
+                let detail: serde_json::Value =
+                    serde_json::from_str(&detail_raw).unwrap_or(serde_json::Value::Null);
+                let from = detail
+                    .get("from")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let to = detail
+                    .get("to")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                Ok((row.get(0)?, from, to))
+            })?
+            .filter_map(|row| row.ok())
+            .filter(|(_, from, to)| !from.is_empty() && !to.is_empty())
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            let workflow_state_id: Option<i64> = conn
+                .query_row(
+                    "SELECT workflow_state_id FROM tickets WHERE id = ?1",
+                    [ticket_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            if let Some(workflow_state_id) = workflow_state_id {
+                conn.execute(
+                    "INSERT INTO issue_state_history
+                         (ticket_id, workflow_state_id, started_at, ended_at)
+                     VALUES (?1, ?2, ?3, NULL)",
+                    params![ticket_id, workflow_state_id, created_at],
+                )?;
+            }
+            continue;
+        }
+        for (index, (recorded_at, from, to)) in events.iter().enumerate() {
+            if index == 0 {
+                if let Some(from_id) = workflow_id_for_legacy(conn, project_id, from)? {
+                    conn.execute(
+                        "INSERT INTO issue_state_history
+                             (ticket_id, workflow_state_id, started_at, ended_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![ticket_id, from_id, created_at, recorded_at],
+                    )?;
+                }
+            }
+            let ended_at = events.get(index + 1).map(|(time, _, _)| time.as_str());
+            if let Some(to_id) = workflow_id_for_legacy(conn, project_id, to)? {
+                conn.execute(
+                    "INSERT INTO issue_state_history
+                         (ticket_id, workflow_state_id, started_at, ended_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![ticket_id, to_id, recorded_at, ended_at],
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn tickets_table_has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
@@ -216,6 +313,18 @@ fn tickets_table_has_column(conn: &Connection, column: &str) -> rusqlite::Result
 
 /// Relaxes kind shape triggers/CHECK and adds issue description metadata.
 pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "tickets",
+        "parent_ticket_id",
+        "parent_ticket_id INTEGER REFERENCES tickets (id)",
+    )?;
+    add_column(
+        conn,
+        "tickets",
+        "sub_issue_sort",
+        "sub_issue_sort REAL NOT NULL DEFAULT 0",
+    )?;
     if tickets_table_has_column(conn, "description")? {
         conn.execute_batch(
             "UPDATE tickets
@@ -255,6 +364,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              END;",
         )?;
         backfill_issue_descriptions(conn)?;
+        backfill_issue_state_history_from_timeline(conn)?;
         return Ok(());
     }
     conn.execute_batch(
@@ -297,6 +407,8 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              completed_at TEXT,
              canceled_at TEXT,
              duplicate_of_ticket_id INTEGER REFERENCES tickets (id),
+             parent_ticket_id INTEGER REFERENCES tickets (id),
+             sub_issue_sort REAL NOT NULL DEFAULT 0,
              description TEXT NOT NULL DEFAULT '',
              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
              version INTEGER NOT NULL CHECK (version > 0),
@@ -338,6 +450,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              subtype, mode, completion, scheduled_for, due, profile, pinned_version,
              predecessor_id, workflow_state_id, linear_priority, due_date, estimate,
              milestone_id, started_at, completed_at, canceled_at, duplicate_of_ticket_id,
+             parent_ticket_id, sub_issue_sort,
              description, updated_at, version, created_at
          )
          SELECT
@@ -346,6 +459,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              subtype, mode, completion, scheduled_for, due, profile, pinned_version,
              predecessor_id, workflow_state_id, linear_priority, due_date, estimate,
              milestone_id, started_at, completed_at, canceled_at, duplicate_of_ticket_id,
+             NULL, 0,
              '', created_at, version, created_at
          FROM tickets;
          DROP TABLE tickets;
@@ -392,6 +506,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
            AND due_date = '2099-12-31';",
     )?;
     backfill_issue_descriptions(conn)?;
+    backfill_issue_state_history_from_timeline(conn)?;
     Ok(())
 }
 
@@ -766,6 +881,7 @@ mod tests {
         let specs = Arc::new(SqliteSpecStore::new(database));
         let plans = Arc::new(SqlitePlanStore::new(database));
         let issues: Arc<dyn IssueStore> = Arc::new(IssueStoreImpl::new(database));
+        let comments: Arc<dyn CommentStore> = Arc::new(SqliteCommentStore::new(database));
         core.register_plans(plans.clone(), projects.clone(), specs.clone())
             .unwrap();
         core.register_specs(specs.clone(), projects.clone(), plans)
@@ -777,13 +893,16 @@ mod tests {
             Arc::new(SqliteEvidenceStore::new(database, attachments.to_path_buf())),
         )
         .unwrap();
-        core.register_issue_operator(tickets, projects, specs, issues)
-            .unwrap();
-        core.register_comments(
-            Arc::new(SqliteCommentStore::new(database)),
-            Arc::new(SqliteProjectStore::new(database)),
+        core.register_issue_operator(
+            tickets,
+            projects.clone(),
+            specs,
+            issues,
+            comments.clone(),
         )
         .unwrap();
+        core.register_comments(comments, projects)
+            .unwrap();
     }
 
     #[test]

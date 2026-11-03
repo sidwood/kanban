@@ -24,7 +24,25 @@
   },
   "description": "Create or update one issue (`save_issue`).",
   "properties": {
+    "add_blocks": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "add_labels": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "add_related": {
       "items": {
         "type": "string"
       },
@@ -51,6 +69,12 @@
         "null"
       ]
     },
+    "duplicate_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "identifier": {
       "description": "Existing issue key (`CODE-123`) when updating.",
       "type": [
@@ -69,6 +93,14 @@
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },
+    "parent_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "priority": {
       "format": "uint8",
       "minimum": 0.0,
@@ -86,7 +118,25 @@
         "null"
       ]
     },
+    "remove_blocks": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "remove_labels": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "remove_related": {
       "items": {
         "type": "string"
       },

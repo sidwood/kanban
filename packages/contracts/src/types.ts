@@ -568,6 +568,7 @@ export type IssueListQuery = {
   cursor?: string | null;
   label?: string | null;
   limit?: number;
+  parent_id?: number | null;
   project_id?: number | null;
   query?: string | null;
   state?: string | null;
@@ -589,11 +590,14 @@ export type IssueMilestonesResponse = {
   milestones: IssueMilestoneRecord[];
 };
 export type IssueRecord = {
+  children?: IssueChildRecord[] | null;
+  created_at: string;
   description: string;
   due_date?: string | null;
   identifier: string;
   labels: string[];
   milestone_id?: number | null;
+  parent?: string | null;
   priority: number;
   project_id: number;
   relations: IssueRelationRecord[];
@@ -604,22 +608,29 @@ export type IssueRecord = {
   title: string;
   updated_at: string;
   url: string;
+  version: number;
 };
 export type IssueRelationRecord = {
   identifier: string;
   kind: string;
 };
 export type IssueSaveRequest = {
+  add_blocks?: string[] | null;
   add_labels?: string[] | null;
+  add_related?: string[] | null;
   description?: string | null;
   description_patch?: string | null;
   due_date?: string | null;
+  duplicate_of?: string | null;
   identifier?: string | null;
   milestone_id?: number | null;
   mutation: MutationContext;
+  parent_id?: number | null;
   priority?: number | null;
   project_id?: number | null;
+  remove_blocks?: string[] | null;
   remove_labels?: string[] | null;
+  remove_related?: string[] | null;
   state?: string | null;
   title?: string | null;
 };

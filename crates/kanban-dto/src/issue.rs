@@ -34,6 +34,18 @@ pub struct IssueSaveRequest {
     pub add_labels: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_labels: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Option<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_of: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_blocks: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_blocks: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_related: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_related: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -67,7 +79,16 @@ pub struct IssueStateHistoryRecord {
     pub ended_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueChildRecord {
+    pub identifier: String,
+    pub title: String,
+    pub state: String,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueRecord {
     pub identifier: String,
@@ -86,7 +107,13 @@ pub struct IssueRecord {
     pub labels: Vec<String>,
     pub relations: Vec<IssueRelationRecord>,
     pub state_history: Vec<IssueStateHistoryRecord>,
+    pub version: u64,
+    pub created_at: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<IssueChildRecord>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -102,13 +129,15 @@ pub struct IssueListQuery {
     pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<u64>,
     #[serde(default)]
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueListResponse {
     pub issues: Vec<IssueRecord>,

@@ -146,7 +146,7 @@ pub use initiative::{
 pub use issue::{
     IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
     IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
-    IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
+    IssueChildRecord, IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
     IssueStateHistoryRecord, IssueWorkflowStateRecord, IssueWorkflowStatesQuery,
     IssueWorkflowStatesResponse,
 };

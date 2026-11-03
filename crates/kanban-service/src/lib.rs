@@ -328,6 +328,7 @@ fn assemble_core_with_secret(
         projects.clone(),
         spec_store.clone(),
         issue_store,
+        comment_store.clone(),
     )?;
     core.register_lanes(
         lane_store.clone(),

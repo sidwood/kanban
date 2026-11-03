@@ -3,13 +3,14 @@
 
 use std::sync::Arc;
 
-use kanban_app::{Core, IssueStore, OperatorSession, ProjectStore};
+use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
 use kanban_domain::ProjectRegistration;
 use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::{
     Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore, SqliteSpecStore,
     SqliteTicketStore,
 };
+use kanban_storage::SqliteCommentStore;
 use serde_json::json;
 
 mod common;
@@ -31,6 +32,7 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
     let specs = Arc::new(SqliteSpecStore::new(database));
     let plans = Arc::new(SqlitePlanStore::new(database));
     let issues: Arc<dyn IssueStore> = Arc::new(SqliteIssueStore::new(database));
+    let comments: Arc<dyn CommentStore> = Arc::new(SqliteCommentStore::new(database));
     core.register_plans(plans.clone(), projects.clone(), specs.clone())
         .expect("plans register");
     core.register_specs(specs.clone(), projects.clone(), plans)
@@ -46,8 +48,10 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
         )),
     )
     .expect("tickets register");
-    core.register_issue_operator(tickets, projects, specs, issues)
+    core.register_issue_operator(tickets, projects.clone(), specs, issues, comments.clone())
         .expect("issue operator registers");
+    core.register_comments(comments, projects)
+        .expect("comments register");
 }
 
 #[test]
@@ -350,4 +354,312 @@ fn acceptance_list_issues_without_project_id_spans_projects() {
             .any(|issue| issue.identifier == edge_save.identifier),
         "global list includes the edge project issue"
     );
+}
+
+#[test]
+fn acceptance_title_update_changes_read_back_and_version() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+
+    let saved: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-title",
+                    json!({ "project_id": 1, "title": "Original" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    session
+        .call(
+            "issue.save",
+            &save_payload(
+                1,
+                "acceptance-title-rename",
+                json!({ "identifier": saved.identifier, "title": "Renamed" }),
+            ),
+        )
+        .unwrap();
+
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: saved.identifier,
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read.title, "Renamed");
+    assert!(read.version >= 2);
+}
+
+#[test]
+fn acceptance_state_history_lists_each_move() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+
+    let saved: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-history",
+                    json!({ "project_id": 1, "title": "History" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    session
+        .call(
+            "issue.save",
+            &save_payload(
+                1,
+                "acceptance-history-active",
+                json!({ "identifier": saved.identifier, "state": "Active" }),
+            ),
+        )
+        .unwrap();
+
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: saved.identifier,
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(read.state_history.len() >= 1);
+}
+
+#[test]
+fn acceptance_cross_project_milestone_is_rejected() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let edge = ProjectRegistration::new(
+        "EDGE",
+        "Edge tooling",
+        "/repositories/edge",
+        "/workspaces/edge.seed",
+        "main",
+        "edge.seed",
+        Some("edge-main"),
+        None,
+    )
+    .unwrap();
+    projects
+        .create(&edge, &|id| {
+            kanban_app::TimelineEnvelope::project(
+                id.value(),
+                kanban_dto::TimelineEventKind::Transition,
+                Some(kanban_dto::TimelineEntityRef {
+                    kind: kanban_dto::TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .unwrap();
+    let conn = rusqlite::Connection::open(&h.database_path).unwrap();
+    conn.execute(
+        "INSERT INTO issue_milestones (project_id, name, sort_order) VALUES (2, 'Edge', 0)",
+        [],
+    )
+    .unwrap();
+    let milestone_id: i64 = conn
+        .query_row(
+            "SELECT id FROM issue_milestones WHERE name = 'Edge'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+
+    let session = OperatorSession::new(Arc::new(h.core));
+    let saved: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-milestone-target",
+                    json!({ "project_id": 1, "title": "Milestone test" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let error = session
+        .call(
+            "issue.save",
+            &save_payload(
+                1,
+                "acceptance-milestone-bad",
+                json!({
+                    "identifier": saved.identifier,
+                    "milestone_id": milestone_id,
+                }),
+            ),
+        )
+        .expect_err("cross-project milestone refused");
+    assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn acceptance_comment_tools_round_trip() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let saved: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-comment-issue",
+                    json!({ "project_id": 1, "title": "Comment host" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "acceptance-comment"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": saved.ticket_id.to_string() },
+                "text": "Ship report",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().expect("comment id");
+
+    session
+        .call(
+            "comment.edit",
+            &json!({
+                "mutation": mutation(1, "acceptance-comment-edit"),
+                "comment_id": comment_id,
+                "text": "Ship report v2",
+            }),
+        )
+        .unwrap();
+
+    let revisions = session
+        .call("comment.revisions", &json!({ "comment_id": comment_id }))
+        .unwrap();
+    assert_eq!(revisions["revisions"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn acceptance_unknown_issue_key_is_not_found() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let error = session
+        .call(
+            "issue.get",
+            &serde_json::to_value(IssueGetQuery {
+                identifier: "CORE-404".into(),
+            })
+            .unwrap(),
+        )
+        .expect_err("missing issue");
+    assert_eq!(error.code, kanban_dto::ErrorCode::NotFound);
+}
+
+#[test]
+fn acceptance_sub_issue_links_parent_and_lists_children() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+
+    let parent: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-parent",
+                    json!({ "project_id": 1, "title": "Parent" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    let child: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-child",
+                    json!({
+                        "project_id": 1,
+                        "title": "Child",
+                        "parent_id": parent.ticket_id,
+                    }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    let read_parent: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: parent.identifier.clone(),
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        read_parent.children.as_ref().unwrap()[0].identifier,
+        child.identifier
+    );
+
+    let read_child: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: child.identifier,
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read_child.parent.as_deref(), Some(parent.identifier.as_str()));
 }

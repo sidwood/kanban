@@ -2,9 +2,46 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "IssueChildRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "sort_order": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "state": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "sort_order",
+        "state",
+        "title"
+      ],
+      "type": "object"
+    },
     "IssueRecord": {
       "additionalProperties": false,
       "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/definitions/IssueChildRecord"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
         "description": {
           "type": "string"
         },
@@ -28,6 +65,12 @@
           "minimum": 0.0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "parent": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -72,9 +115,15 @@
         },
         "url": {
           "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
         }
       },
       "required": [
+        "created_at",
         "description",
         "identifier",
         "labels",
@@ -87,7 +136,8 @@
         "ticket_id",
         "title",
         "updated_at",
-        "url"
+        "url",
+        "version"
       ],
       "type": "object"
     },

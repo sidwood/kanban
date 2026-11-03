@@ -19,6 +19,14 @@ Requires Rust, Node.js, pnpm, `just`, and `pre-commit` on `PATH`.
 - `just build` — debug builds of the core and the desktop app.
 - `just dev` — run the core and the desktop app.
 
+## Linear issue operator MCP
+
+Installation-authenticated operator tools (`save_issue`, `get_issue`, comments,
+relations, and sub-issues) are documented in [`docs/mcp-operator.md`](docs/mcp-operator.md).
+Acceptance scenarios are listed in
+[`docs/mcp-acceptance-tests.md`](docs/mcp-acceptance-tests.md). Sub-issue usage
+is in [`docs/sub-issues.md`](docs/sub-issues.md).
+
 ## Local MCP clients
 
 Build the service and adapter together with `just build` or `just dev`.

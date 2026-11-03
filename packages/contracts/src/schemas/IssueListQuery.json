@@ -20,6 +20,14 @@
       "minimum": 0.0,
       "type": "integer"
     },
+    "parent_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "project_id": {
       "format": "uint64",
       "minimum": 0.0,

@@ -42,7 +42,7 @@ impl SqliteIssueStore {
     pub fn set_description(&self, ticket_id: i64, description: &str) -> Result<(), ApiError> {
         let conn = self.lock();
         conn.execute(
-            "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, description],
         )
         .map_err(internal)?;
@@ -64,7 +64,7 @@ impl SqliteIssueStore {
             .map_err(not_found_ticket)?;
         let merged = format!("{current}{patch}");
         conn.execute(
-            "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, &merged],
         )
         .map_err(internal)?;
@@ -74,7 +74,7 @@ impl SqliteIssueStore {
     pub fn set_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError> {
         let conn = self.lock();
         conn.execute(
-            "UPDATE tickets SET linear_priority = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            "UPDATE tickets SET linear_priority = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, i64::from(priority)],
         )
         .map_err(internal)?;
@@ -85,7 +85,7 @@ impl SqliteIssueStore {
         let conn = self.lock();
         let stored = due_date.unwrap_or("2099-12-31");
         conn.execute(
-            "UPDATE tickets SET due_date = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            "UPDATE tickets SET due_date = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, stored],
         )
         .map_err(internal)?;
@@ -94,8 +94,33 @@ impl SqliteIssueStore {
 
     pub fn set_milestone(&self, ticket_id: i64, milestone_id: Option<i64>) -> Result<(), ApiError> {
         let conn = self.lock();
+        if let Some(milestone_id) = milestone_id {
+            let milestone_project: Option<i64> = conn
+                .query_row(
+                    "SELECT project_id FROM issue_milestones WHERE id = ?1",
+                    [milestone_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?;
+            let Some(milestone_project) = milestone_project else {
+                return Err(ApiError::invalid_request("unknown milestone"));
+            };
+            let ticket_project: i64 = conn
+                .query_row(
+                    "SELECT project_id FROM tickets WHERE id = ?1",
+                    [ticket_id],
+                    |row| row.get(0),
+                )
+                .map_err(not_found_ticket)?;
+            if milestone_project != ticket_project {
+                return Err(ApiError::invalid_request(
+                    "milestone belongs to a different project",
+                ));
+            }
+        }
         conn.execute(
-            "UPDATE tickets SET milestone_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            "UPDATE tickets SET milestone_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, milestone_id],
         )
         .map_err(internal)?;
@@ -414,7 +439,7 @@ impl SqliteIssueStore {
     pub fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         let conn = self.lock();
         conn.query_row(
-            "SELECT description, linear_priority, due_date, milestone_id, updated_at
+            "SELECT description, linear_priority, due_date, milestone_id, updated_at, created_at, version, parent_ticket_id
              FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| {
@@ -424,10 +449,257 @@ impl SqliteIssueStore {
                     due_date: row.get(2)?,
                     milestone_id: row.get(3)?,
                     updated_at: row.get(4)?,
+                    created_at: row.get(5)?,
+                    version: row.get::<_, i64>(6)? as u64,
+                    parent_ticket_id: row.get(7)?,
                 })
             },
         )
         .map_err(not_found_ticket)
+    }
+
+    pub fn list_state_history(
+        &self,
+        ticket_id: i64,
+    ) -> Result<Vec<kanban_dto::IssueStateHistoryRecord>, ApiError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare(
+                "SELECT s.name, s.type, h.started_at, h.ended_at
+                 FROM issue_state_history AS h
+                 JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+                 WHERE h.ticket_id = ?1
+                 ORDER BY h.started_at ASC, h.id ASC",
+            )
+            .map_err(internal)?;
+        statement
+            .query_map([ticket_id], |row| {
+                Ok(kanban_dto::IssueStateHistoryRecord {
+                    state: row.get(0)?,
+                    state_type: row.get(1)?,
+                    started_at: row.get(2)?,
+                    ended_at: row.get(3)?,
+                })
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)
+    }
+
+    pub fn set_title(&self, ticket_id: i64, title: &str) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let kind: String = conn
+            .query_row(
+                "SELECT kind FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(not_found_ticket)?;
+        let changed = if kind == "implementation" {
+            conn.execute(
+                "UPDATE tickets SET slice = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+                 WHERE id = ?1",
+                params![ticket_id, title],
+            )
+            .map_err(internal)?
+        } else {
+            conn.execute(
+                "UPDATE tickets SET title = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+                 WHERE id = ?1",
+                params![ticket_id, title],
+            )
+            .map_err(internal)?
+        };
+        if changed == 0 {
+            return Err(not_found_ticket(rusqlite::Error::QueryReturnedNoRows));
+        }
+        Ok(())
+    }
+
+    pub fn bump_version(&self, ticket_id: i64) -> Result<u64, ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tickets SET version = version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+            [ticket_id],
+        )
+        .map_err(internal)?;
+        let version: i64 = conn
+            .query_row(
+                "SELECT version FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(not_found_ticket)?;
+        Ok(version as u64)
+    }
+
+    pub fn set_parent(&self, ticket_id: i64, parent_id: Option<i64>) -> Result<(), ApiError> {
+        if parent_id == Some(ticket_id) {
+            return Err(ApiError::invalid_request("an issue cannot be its own parent"));
+        }
+        if let Some(parent_id) = parent_id {
+            let conn = self.lock();
+            let exists: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM tickets WHERE id = ?1",
+                    [parent_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?;
+            if exists.is_none() {
+                return Err(ApiError::not_found("parent issue"));
+            }
+            drop(conn);
+        }
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tickets SET parent_ticket_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+             WHERE id = ?1",
+            params![ticket_id, parent_id],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+
+    pub fn list_children(
+        &self,
+        ticket_id: i64,
+    ) -> Result<Vec<kanban_dto::IssueChildRecord>, ApiError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare(
+                "SELECT p.code, t.number, t.title, t.slice, t.kind, s.name, t.sub_issue_sort
+                 FROM tickets AS t
+                 JOIN projects AS p ON p.id = t.project_id
+                 LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.parent_ticket_id = ?1
+                 ORDER BY t.sub_issue_sort, t.number",
+            )
+            .map_err(internal)?;
+        statement
+            .query_map([ticket_id], |row| {
+                let code: String = row.get(0)?;
+                let number: i64 = row.get(1)?;
+                let title: Option<String> = row.get(2)?;
+                let slice: Option<String> = row.get(3)?;
+                let kind: String = row.get(4)?;
+                let state: Option<String> = row.get(5)?;
+                let sort: f64 = row.get(6)?;
+                let title = if kind == "implementation" {
+                    slice.unwrap_or_default()
+                } else {
+                    title.unwrap_or_default()
+                };
+                Ok(kanban_dto::IssueChildRecord {
+                    identifier: format!("{code}-{number}"),
+                    title,
+                    state: state.unwrap_or_else(|| "Draft".to_owned()),
+                    sort_order: sort as i64,
+                })
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)
+    }
+
+    pub fn add_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let Some((_, to_ticket_id)) =
+            super::linear_issue::resolve_issue_key(&conn, to_identifier).map_err(internal_storage)?
+        else {
+            return Err(ApiError::not_found(to_identifier));
+        };
+        if !matches!(kind, "blocks" | "related" | "duplicate") {
+            return Err(ApiError::invalid_request(&format!(
+                "unsupported relation kind `{kind}`"
+            )));
+        }
+        conn.execute(
+            "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+             VALUES (?1, ?2, ?3)",
+            params![from_ticket_id, to_ticket_id, kind],
+        )
+        .map_err(internal)?;
+        self.bump_version(from_ticket_id)?;
+        Ok(())
+    }
+
+    pub fn remove_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let Some((_, to_ticket_id)) =
+            super::linear_issue::resolve_issue_key(&conn, to_identifier).map_err(internal_storage)?
+        else {
+            return Err(ApiError::not_found(to_identifier));
+        };
+        conn.execute(
+            "DELETE FROM issue_relations
+             WHERE from_ticket_id = ?1 AND to_ticket_id = ?2 AND kind = ?3",
+            params![from_ticket_id, to_ticket_id, kind],
+        )
+        .map_err(internal)?;
+        self.bump_version(from_ticket_id)?;
+        Ok(())
+    }
+
+    pub fn set_duplicate_of(
+        &self,
+        ticket_id: i64,
+        target_identifier: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let target_id = if let Some(identifier) = target_identifier {
+            let Some((_, id)) =
+                super::linear_issue::resolve_issue_key(&conn, identifier).map_err(internal_storage)?
+            else {
+                return Err(ApiError::not_found(identifier));
+            };
+            Some(id)
+        } else {
+            None
+        };
+        conn.execute(
+            "UPDATE tickets SET duplicate_of_ticket_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+             WHERE id = ?1",
+            params![ticket_id, target_id],
+        )
+        .map_err(internal)?;
+        if let Some(target_id) = target_id {
+            conn.execute(
+                "UPDATE issue_relations SET from_ticket_id = ?2 WHERE from_ticket_id = ?1",
+                params![ticket_id, target_id],
+            )
+            .map_err(internal)?;
+            let project_id: i64 = conn
+                .query_row(
+                    "SELECT project_id FROM tickets WHERE id = ?1",
+                    [ticket_id],
+                    |row| row.get(0),
+                )
+                .map_err(not_found_ticket)?;
+            if let Some(duplicate_state) =
+                super::linear_issue::workflow_state_by_name(&conn, project_id, "Duplicate")
+                    .map_err(internal_storage)?
+            {
+                conn.execute(
+                    "UPDATE tickets SET workflow_state_id = ?2 WHERE id = ?1",
+                    params![ticket_id, duplicate_state.id],
+                )
+                .map_err(internal)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError> {
@@ -576,6 +848,55 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError> {
         SqliteIssueStore::list_relations(self, ticket_id)
+    }
+
+    fn list_state_history(
+        &self,
+        ticket_id: i64,
+    ) -> Result<Vec<kanban_dto::IssueStateHistoryRecord>, ApiError> {
+        SqliteIssueStore::list_state_history(self, ticket_id)
+    }
+
+    fn set_title(&self, ticket_id: i64, title: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::set_title(self, ticket_id, title)
+    }
+
+    fn bump_version(&self, ticket_id: i64) -> Result<u64, ApiError> {
+        SqliteIssueStore::bump_version(self, ticket_id)
+    }
+
+    fn set_parent(&self, ticket_id: i64, parent_id: Option<i64>) -> Result<(), ApiError> {
+        SqliteIssueStore::set_parent(self, ticket_id, parent_id)
+    }
+
+    fn list_children(&self, ticket_id: i64) -> Result<Vec<kanban_dto::IssueChildRecord>, ApiError> {
+        SqliteIssueStore::list_children(self, ticket_id)
+    }
+
+    fn add_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError> {
+        SqliteIssueStore::add_relation(self, from_ticket_id, to_identifier, kind)
+    }
+
+    fn remove_relation(
+        &self,
+        from_ticket_id: i64,
+        to_identifier: &str,
+        kind: &str,
+    ) -> Result<(), ApiError> {
+        SqliteIssueStore::remove_relation(self, from_ticket_id, to_identifier, kind)
+    }
+
+    fn set_duplicate_of(
+        &self,
+        ticket_id: i64,
+        target_identifier: Option<&str>,
+    ) -> Result<(), ApiError> {
+        SqliteIssueStore::set_duplicate_of(self, ticket_id, target_identifier)
     }
 }
 

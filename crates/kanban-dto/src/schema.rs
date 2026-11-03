@@ -431,7 +431,6 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "IssueMilestonesResponse",
             schema_for!(IssueMilestonesResponse),
         ),
-        ("IssueChildRecord", schema_for!(IssueChildRecord)),
         ("IssueRecord", schema_for!(IssueRecord)),
         ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
         ("IssueSaveRequest", schema_for!(IssueSaveRequest)),

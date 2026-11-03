@@ -56,8 +56,6 @@ const recoveryWhy = ref('')
 
 // Issues move through the project workflow; park and unpark remain
 // named human commands beside free state moves.
-const agentOwned = computed(() => false)
-
 // The human slot the core is waiting on in the stage it is resolving
 // now; a slot in a later stage is not open to a verdict and the core
 // refuses one.

@@ -218,6 +218,33 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       await this.refresh(transport, projectId)
       return true
     },
+    async updateIssue(
+      transport: ShellTransport,
+      identifier: string,
+      optimisticVersion: number,
+      draft: IssueCreateDraft,
+    ): Promise<boolean> {
+      const request: IssueSaveRequest = {
+        mutation: {
+          optimistic_version: optimisticVersion,
+          idempotency_key: crypto.randomUUID(),
+        },
+        identifier,
+        title: draft.title.trim(),
+        description: draft.description,
+        priority: draft.priority,
+      }
+      const due = draft.dueDate.trim()
+      request.due_date = due === '' ? null : due
+      try {
+        await new KanbanClient(transport).commandIssueSave(request)
+        this.error = null
+        return true
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return false
+      }
+    },
     // Create one Ticket under its kind's schema. Reports whether the
     // Ticket landed; a refusal is reported and the list stands.
     async create(

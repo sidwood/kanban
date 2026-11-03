@@ -547,7 +547,7 @@ describe('the drawer footer actions', () => {
     const state = harness({ tickets: [ticket({ id: 7, state: 'ready' })] })
     await openDrawer(state, 7)
 
-    const move = document.querySelector('[data-testid="drawer-move"]') as HTMLSelectElement
+    void document.querySelector('[data-testid="drawer-move"]')
     await type('drawer-move', 'Active')
 
     expect(issued(state, 'issue.save')[0]).toMatchObject({

@@ -500,7 +500,7 @@ describe('the board', () => {
   })
 
   it('offers the register only the moves the core says are legal', async () => {
-    const { wrapper, query } = await mounted({
+    const { wrapper } = await mounted({
       tickets: [...boardTickets(), ticket({ id: 12, number: 16, state: 'draft' })],
     })
     await wrapper.get('[data-testid="board-presentation-register"]').trigger('click')

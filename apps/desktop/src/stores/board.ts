@@ -24,7 +24,6 @@ import type {
   IssueWorkflowStateRecord,
   RunRecord,
   TicketReadinessBlocker,
-  TicketRecord,
   TicketReviewConfigRecord,
   TicketState,
 } from '@kanban/contracts'
@@ -335,7 +334,7 @@ export const useBoardStore = defineStore('board', {
       await Promise.all(
         projectIds.map(async (projectId) => {
           try {
-            const response = await client.queryIssueList_workflowStates({ project_id: projectId })
+            const response = await client.queryIssueList_workflow_states({ project_id: projectId })
             statesByProject[projectId] =
               response.states.length > 0 ? response.states : defaultWorkflowStates()
           } catch {

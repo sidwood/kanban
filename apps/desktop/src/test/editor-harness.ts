@@ -226,7 +226,7 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
         }
         const project_id = save.project_id ?? 4
         const project = projects.find((entry) => entry.id === project_id)
-        const code = project?.code ?? 'CORE'
+        void project
         const created: TicketRecord = {
           id: 100 + tickets.length,
           project_id,

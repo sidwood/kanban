@@ -7,9 +7,10 @@ use std::collections::HashMap;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
-use kanban_dto::{ApiError, ErrorCode, MutationContext};
+use kanban_dto::{ApiError, MutationContext};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use serde_path_to_error::Segment;
 
 use crate::events::EventSink;
 
@@ -33,57 +34,33 @@ fn translate_error(error: serde_json::Error) -> ApiError {
         None => ApiError::invalid_request(&message),
     }
 }
-/// Deserialize an operator issue-tool payload. Decode rejections keep
-/// the stable codes and messages while naming the request field they
-/// are about. Types must derive `deny_unknown_fields` for
-/// unknown-field rejection to fire.
+
 pub fn parse_issue_payload<Request: DeserializeOwned>(
     payload: &Value,
 ) -> Result<Request, ApiError> {
-    parse_payload::<Request>(payload).map_err(|error| name_decoded_field::<Request>(payload, error))
+    serde_path_to_error::deserialize(payload.clone()).map_err(path_decode_error)
 }
 
-/// Name the field a decode rejection is about: serde's message names
-/// an absent field itself, and any other rejection belongs to the
-/// field whose removal lets the remaining payload decode.
-fn name_decoded_field<Request: DeserializeOwned>(payload: &Value, error: ApiError) -> ApiError {
-    if error.code != ErrorCode::InvalidRequest || error.field.is_some() {
-        return error;
-    }
-    if let Some(field) = quoted_name(&error.message, "missing field `") {
-        return ApiError::invalid_request_field(field, &error.message);
-    }
-    let Some(object) = payload.as_object() else {
-        return error;
+fn path_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -> ApiError {
+    let decoded_field = match error.path().iter().next() {
+        Some(Segment::Map { key }) => Some(key.clone()),
+        _ => None,
     };
-    let rejected = without_position(&error.message);
-    for field in object.keys() {
-        let mut rest = object.clone();
-        rest.remove(field);
-        let differs = match serde_json::from_value::<Request>(Value::Object(rest)) {
-            Ok(_) => true,
-            Err(retry) => without_position(&retry.to_string()) != rejected,
-        };
-        if differs {
-            return ApiError::invalid_request_field(field, &error.message);
-        }
+    let decoded = translate_error(error.into_inner());
+    if decoded.field.is_some() {
+        return decoded;
     }
-    error
+    let field = decoded_field
+        .or_else(|| missing_field_name(&decoded.message))
+        .unwrap_or_else(|| "payload".to_owned());
+    ApiError::invalid_request_field(&field, &decoded.message)
 }
 
-/// Strip serde's trailing position, which moves with the payload's
-/// shape and says nothing about which field failed.
-fn without_position(message: &str) -> &str {
-    match message.rfind(" at line ") {
-        Some(index) => &message[..index],
-        None => message,
-    }
-}
-
-/// The name a serde message quotes after `prefix`, like the field a
-/// missing-field rejection names.
-fn quoted_name<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
-    message.strip_prefix(prefix)?.split('`').next()
+fn missing_field_name(message: &str) -> Option<String> {
+    message
+        .strip_prefix("missing field `")
+        .and_then(|rest| rest.split('`').next())
+        .map(str::to_owned)
 }
 
 /// The prefix opening every operation-aware fingerprint. A recorded

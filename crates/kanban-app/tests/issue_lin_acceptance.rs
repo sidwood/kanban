@@ -2039,6 +2039,18 @@ fn issue_save_errors_carry_the_offending_field() {
             "description_patch",
             ErrorCode::InvalidRequest,
         ),
+        (
+            "field-decode-identical-text-pair",
+            json!({ "identifier": host.identifier, "state": {}, "title": {} }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-identical-list-pair",
+            json!({ "identifier": host.identifier, "add_labels": [{}], "remove_labels": [{}] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
     ] {
         let error = session
             .call("issue.save", &save_payload(version, key, fields))
@@ -2052,6 +2064,11 @@ fn issue_save_errors_carry_the_offending_field() {
         .expect_err("a non-numeric cursor is refused");
     assert_eq!(cursor.code, ErrorCode::InvalidRequest);
     assert_eq!(cursor.field.as_deref(), Some("cursor"));
+    let scalar = session
+        .call("issue.get", &json!(5))
+        .expect_err("a payload that is not an object is refused");
+    assert_eq!(scalar.code, ErrorCode::InvalidRequest);
+    assert_eq!(scalar.field.as_deref(), Some("payload"));
 
     let bare = session
         .call(

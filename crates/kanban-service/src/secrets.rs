@@ -104,6 +104,15 @@ mod file_installation_secret {
         account: &str,
         rename: AtomicRenameFn,
     ) -> Result<InstallationSecret, ApiError> {
+        load_or_create_with(data_dir, account, rename, sync_store_directory)
+    }
+
+    pub(super) fn load_or_create_with(
+        data_dir: &Path,
+        account: &str,
+        rename: AtomicRenameFn,
+        sync_directory: DirectorySyncFn,
+    ) -> Result<InstallationSecret, ApiError> {
         let store_dir = data_dir.join(CREDENTIAL_DIR);
         ensure_store_dir(&store_dir)?;
         remove_stale_partials(&store_dir, account)?;
@@ -113,7 +122,7 @@ mod file_installation_secret {
             Ok(_) => read_existing(&store_dir, &path, account),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let key = random_key()?;
-                install_new_key(&store_dir, &path, account, &key, rename)
+                install_new_key(&store_dir, &path, account, &key, rename, sync_directory)
             }
             Err(_) => Err(unavailable()),
         }
@@ -128,7 +137,12 @@ mod file_installation_secret {
 
     pub(super) type AtomicRenameFn = fn(&Path, &Path) -> Result<(), AtomicRenameError>;
 
-    fn sys_renameat2_noreplace(temp: &Path, path: &Path) -> Result<(), AtomicRenameError> {
+    pub(super) type DirectorySyncFn = fn(&Path) -> Result<(), ApiError>;
+
+    pub(super) fn sys_renameat2_noreplace(
+        temp: &Path,
+        path: &Path,
+    ) -> Result<(), AtomicRenameError> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         let temp_c =
@@ -300,6 +314,7 @@ mod file_installation_secret {
         account: &str,
         key: &zeroize::Zeroizing<[u8; 32]>,
         rename: AtomicRenameFn,
+        sync_directory: DirectorySyncFn,
     ) -> Result<InstallationSecret, ApiError> {
         let temp = partial_temp_path(store_dir, path)?;
         let result: Result<InstallationSecret, ApiError> = (|| {
@@ -317,21 +332,22 @@ mod file_installation_secret {
             verify_regular_file(&file, 0o600)?;
             drop(file);
             publish_new_key(&temp, path, rename)?;
-            sync_store_directory(store_dir)?;
             Ok(InstallationSecret::from_key(key))
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temp);
         }
-        match result {
-            Ok(secret) => Ok(secret),
+        let secret = match result {
+            Ok(secret) => secret,
             Err(_) => match path.symlink_metadata() {
                 Ok(metadata) if !metadata.file_type().is_symlink() => {
-                    read_existing(store_dir, path, account)
+                    read_existing(store_dir, path, account)?
                 }
-                _ => Err(unavailable()),
+                _ => return Err(unavailable()),
             },
-        }
+        };
+        sync_directory(store_dir)?;
+        Ok(secret)
     }
 
     fn read_existing(
@@ -539,6 +555,10 @@ mod tests {
         )))
     }
 
+    fn store_directory_sync_fails(_store_dir: &Path) -> Result<(), ApiError> {
+        Err(unavailable())
+    }
+
     #[test]
     fn file_store_provisions_when_renameat2_is_unavailable() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -565,6 +585,27 @@ mod tests {
         .expect("the hard-link publish covers kernels without renameat2");
         let second = store.load_or_create().expect("second read");
         assert!(credentials_match(&first, &second));
+    }
+
+    #[test]
+    fn file_store_refuses_an_unsynced_credential_publication() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        let result = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            store_directory_sync_fails,
+        );
+        assert!(
+            result.is_err(),
+            "a publication whose directory entry cannot be synced must refuse startup"
+        );
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        assert!(
+            path.is_file(),
+            "the credential itself was published; only its directory sync failed"
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ describe('issue workflow helpers', () => {
     expect(targets).not.toContain('Draft')
     expect(targets).toContain('Done')
     expect(targets).toContain('Active')
-    expect(targets.length).toBe(11)
+    expect(targets.length).toBe(12)
   })
 
   it('maps legacy states to workflow names for moves', () => {

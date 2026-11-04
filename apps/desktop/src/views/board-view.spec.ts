@@ -704,11 +704,9 @@ describe('the board', () => {
     expect(heading?.textContent).toContain('CORE-12')
     expect(heading?.textContent).toContain('Archive the old exports')
     expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toBe('Ready')
-    expect(document.querySelector('[data-testid="drawer-completion"]')?.textContent).toContain(
-      'The old exports are archived.',
-    )
-    expect(document.querySelector('[data-testid="drawer-attempts"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="drawer-timeline"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="issue-detail-panel"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="drawer-completion"]')).toBeFalsy()
+    expect(document.querySelector('[data-testid="drawer-timeline"]')).toBeFalsy()
     ;(document.querySelector('[aria-label="Close panel"]') as HTMLElement).click()
     await flushPromises()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -850,20 +848,17 @@ describe('the board', () => {
     expect(wrapper.get('#kanban-heading-backlog').classes()).toContain('font-display')
   })
 
-  it('wears the Spec and Lane the projection resolved, never a row id', async () => {
+  it('shows workflow state on cards and omits legacy spec chips', async () => {
     const { wrapper } = await mounted({ extras: { 8: { lane_id: 5, spec_number: 9 } } })
-    expect(wrapper.get('[data-testid="card-chip-lane-8"]').text()).toContain('Lane 5')
-    expect(wrapper.get('[data-testid="card-chip-spec-8"]').text()).toContain('CORE-S9')
-    expect(wrapper.text()).not.toContain('CORE-S4')
-    expect(projection([ticket()])[0].group).toBe('backlog')
-    expect(boardOptions.lanes[0].label).toBe('CORE lane 5')
+    expect(wrapper.get('[data-testid="card-chip-lane-8"]').text()).toContain('Active')
+    expect(wrapper.find('[data-testid="card-chip-spec-8"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="open-ticket-8"]').trigger('click')
     await flushPromises()
-    expect(document.querySelector('[data-testid="drawer-spec"]')).toBeNull()
+    expect(document.querySelector('[data-testid="issue-detail-panel"]')).toBeTruthy()
   })
 
-  it('wears the reviewers configured on an Implementation, and none when none are', async () => {
+  it('does not wear legacy reviewer chips on cards', async () => {
     const { wrapper } = await mounted({
       override: (name, request) => {
         if (name !== 'ticket.review.config') return undefined
@@ -888,7 +883,7 @@ describe('the board', () => {
         })
       },
     })
-    expect(wrapper.get('[data-testid="card-chip-reviewers-8"]').text()).toContain('review-strict, Human +1')
+    expect(wrapper.find('[data-testid="card-chip-reviewers-8"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="card-chip-reviewers-9"]').exists()).toBe(false)
   })
   // KAN-T137 fix round 1 regressions.

@@ -68,6 +68,7 @@ describe('the eight board filters', () => {
       'approved',
       'landing',
       'done',
+      'duplicate',
     ])
     expect(axes[4].options.map((option) => option.value)).toEqual(['urgent', 'high', 'normal', 'low'])
     expect(axes[5].options).toEqual([{ value: '5', label: 'CORE lane 5' }])

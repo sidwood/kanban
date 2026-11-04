@@ -697,6 +697,9 @@ async function loadDrawer(ticketId: number): Promise<void> {
         drawerIssue.value = issueOverlay.issueFor(ticketId)
       }
     }
+    // Footer actions (park, human review) still read authoritative detail
+    // beside the issue panel; legacy sections stay off the drawer face.
+    await detail.load(transport, record)
   } catch (failure) {
     if (attempt !== drawerRequest) return
     drawerTicket.value = null
@@ -804,10 +807,9 @@ function drawerReviewed(): void {
 // row id it carries (KAN-T126-AC2).
 const drawerFacts = computed(() => {
   const ticket = drawerTicket.value
-  const issue = drawerIssue.value
   if (!ticket) return []
   return [
-    { label: 'State', value: issue?.state ?? STATUS_LABELS[ticket.state] },
+    { label: 'State', value: legacyStateToWorkflowName(ticket.state) },
     { label: 'Priority', value: PRIORITY_LABELS[ticket.priority] },
     {
       label: 'Project',

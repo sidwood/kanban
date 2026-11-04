@@ -665,3 +665,66 @@ fn acceptance_sub_issue_links_parent_and_lists_children() {
         Some(parent.identifier.as_str())
     );
 }
+
+#[test]
+fn acceptance_parent_cycle_is_rejected() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+
+    let parent: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-cycle-parent",
+                    json!({ "project_id": 1, "title": "Parent" }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let child: IssueSaveResponse = serde_json::from_value(
+        session
+            .call(
+                "issue.save",
+                &save_payload(
+                    0,
+                    "acceptance-cycle-child",
+                    json!({ "project_id": 1, "title": "Child", "parent_id": parent.ticket_id }),
+                ),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    let read_parent: IssueRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.get",
+                &serde_json::to_value(IssueGetQuery {
+                    identifier: parent.identifier.clone(),
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+
+    let error = session
+        .call(
+            "issue.save",
+            &save_payload(
+                read_parent.version,
+                "acceptance-cycle-attempt",
+                json!({
+                    "identifier": parent.identifier,
+                    "parent_id": child.ticket_id,
+                }),
+            ),
+        )
+        .expect_err("cycle refused");
+    assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+}

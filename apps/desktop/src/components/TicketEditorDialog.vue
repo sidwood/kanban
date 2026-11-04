@@ -122,7 +122,12 @@ async function submitCreate(): Promise<void> {
     return
   }
   readError.value = null
-  const landed = await editor.createIssue(transport, projectId.value, issueDraft.value)
+  const landed = await editor.createIssue(
+    transport,
+    projectId.value,
+    issueDraft.value,
+    dialog.editor?.parentTicketId ?? null,
+  )
   if (landed) dialog.closeEditor()
 }
 

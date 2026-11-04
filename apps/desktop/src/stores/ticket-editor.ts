@@ -195,6 +195,7 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       transport: ShellTransport,
       projectId: number,
       draft: IssueCreateDraft,
+      parentTicketId: number | null = null,
     ): Promise<boolean> {
       const request: IssueSaveRequest = {
         mutation: { optimistic_version: 0, idempotency_key: crypto.randomUUID() },
@@ -203,6 +204,9 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
         description: draft.description,
         priority: draft.priority,
         state: 'Draft',
+      }
+      if (parentTicketId !== null) {
+        request.parent_id = parentTicketId
       }
       const due = draft.dueDate.trim()
       if (due !== '') {

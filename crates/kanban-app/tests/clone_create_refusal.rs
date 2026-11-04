@@ -5,9 +5,10 @@
 //! through the real Core dispatch, the shipped filesystem probe, and
 //! the SQLite clone-guard timeline.
 
+mod common;
+
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use kanban_app::FleetCloneTool;
@@ -138,12 +139,7 @@ fn create_project(projects: &SqliteProjectStore, repository: &str, seed_workspac
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
+    common::git_test::git(dir, args);
 }
 
 fn init_repo(dir: &Path) -> String {

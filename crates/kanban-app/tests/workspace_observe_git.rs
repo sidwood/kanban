@@ -159,10 +159,10 @@ fn create_project(projects: &SqliteProjectStore, repository: &str, seed_workspac
 #[test]
 fn shipped_observer_fixture_pins_main_under_a_hostile_default_branch() {
     let git_dir = TempDir::new().expect("a scratch directory is available");
-    let repository = init_repo(git_dir.path());
+    let _repository = init_repo(git_dir.path());
 
     let branch =
-        common::git_test::git_command(Path::new(&repository), &["symbolic-ref", "--short", "HEAD"])
+        common::git_test::git_command(git_dir.path(), &["symbolic-ref", "--short", "HEAD"])
             .output()
             .expect("the fixture branch reads");
 

@@ -393,8 +393,8 @@ describe('the board', () => {
     command.mockImplementation((name: string) =>
       name === 'issue.save'
         ? Promise.reject({
-            code: 'invalid_request',
-            message: 'bug transitions are agent-owned; a human may drag only Task Tickets',
+            code: 'stale_version',
+            message: 'the issue moved on while you were editing',
           })
         : Promise.resolve({}),
     )
@@ -409,7 +409,7 @@ describe('the board', () => {
       'issue.save',
       expect.objectContaining({ identifier: 'CORE-14', state: 'Active' }),
     )
-    expect(wrapper.get('[data-testid="board-error"]').text()).toContain('agent-owned')
+    expect(wrapper.get('[data-testid="board-error"]').text()).toContain('the issue moved on')
     expect(wrapper.find('[data-testid="kanban-column-staged"] [data-testid="kanban-card-9"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="kanban-card-9"]').attributes('data-state')).toBe('approved')
   })
@@ -860,7 +860,7 @@ describe('the board', () => {
 
     await wrapper.get('[data-testid="open-ticket-8"]').trigger('click')
     await flushPromises()
-    expect(document.querySelector('[data-testid="drawer-spec"]')?.textContent).toBe('CORE-S9')
+    expect(document.querySelector('[data-testid="drawer-spec"]')).toBeNull()
   })
 
   it('wears the reviewers configured on an Implementation, and none when none are', async () => {

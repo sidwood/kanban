@@ -110,13 +110,13 @@ describe('lifecycle actions store', () => {
     expect(actions.ticket?.version).toBe(5)
   })
 
-  it('a drag refused as agent-owned reports the explanation and keeps the Ticket', async () => {
+  it('a refused workflow move reports the explanation and keeps the Ticket', async () => {
     setActivePinia(createPinia())
     const { transport, query, command } = harness()
     query.mockResolvedValue(openTask satisfies TicketRecord)
     command.mockRejectedValue({
-      code: 'invalid_request',
-      message: 'bug transitions are agent-owned; a human may drag only Task Tickets',
+      code: 'stale_version',
+      message: 'the issue moved on while you were editing',
     })
     const actions = useLifecycleActionsStore()
     await actions.open(transport, 2)
@@ -124,9 +124,7 @@ describe('lifecycle actions store', () => {
     const landed = await actions.transition(transport, 'ready')
 
     expect(landed).toBe(false)
-    expect(actions.error).toBe(
-      'bug transitions are agent-owned; a human may drag only Task Tickets',
-    )
+    expect(actions.error).toBe('the issue moved on while you were editing')
     expect(actions.ticket).toEqual(openTask)
   })
 

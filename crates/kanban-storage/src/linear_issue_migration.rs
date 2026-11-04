@@ -1021,6 +1021,10 @@ mod tests {
                 .any(|relation| relation.kind == "blocked-by" && relation.identifier == "CORE-1")
         );
         assert_eq!(blocker.title, "Login flow");
+        assert!(
+            !blocker.state_history.is_empty(),
+            "state history should be backfilled from legacy transitions"
+        );
 
         let comment_store = SqliteCommentStore::new(&database);
         let revisions = comment_store

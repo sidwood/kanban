@@ -25,6 +25,22 @@ const MALICIOUS_OVERRIDE: &str = "/malicious/kanban-service-override";
 
 /// The release probe is built outside the test crate graph so it
 /// carries `not(debug_assertions)` path resolution.
+fn cargo_target_dir(manifest: &Path) -> PathBuf {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
+        .arg(manifest)
+        .output()
+        .expect("cargo metadata runs");
+    assert!(output.status.success(), "cargo metadata must succeed");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata is JSON");
+    PathBuf::from(
+        metadata["target_directory"]
+            .as_str()
+            .expect("target_directory in cargo metadata"),
+    )
+}
+
 fn release_probe_exe() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let status = Command::new("cargo")

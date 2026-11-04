@@ -32,6 +32,7 @@ import InlineAlert from '../components/InlineAlert.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import TicketDetailSections from '../components/TicketDetailSections.vue'
+import IssueSubIssues from '../components/IssueSubIssues.vue'
 import TicketDrawerActions from '../components/TicketDrawerActions.vue'
 import TimelineSurface from '../components/TimelineSurface.vue'
 import { kanbanTransportKey, asApiError } from '../core/transport'
@@ -765,8 +766,7 @@ function drawerReviewed(): void {
 const drawerFacts = computed(() => {
   const ticket = drawerTicket.value
   if (!ticket) return []
-  const facts: { label: string; value: string }[] = [
-    { label: 'Kind', value: KIND_LABELS[ticket.kind] },
+  return [
     { label: 'State', value: STATUS_LABELS[ticket.state] },
     { label: 'Priority', value: PRIORITY_LABELS[ticket.priority] },
     {
@@ -776,15 +776,6 @@ const drawerFacts = computed(() => {
         : drawerProjectCode.value,
     },
   ]
-  const specNumber = drawerCard.value?.spec_number
-  if (specNumber != null) {
-    facts.push({ label: 'Spec', value: `${drawerProjectCode.value}-S${specNumber}` })
-  }
-  if (ticket.subtype) facts.push({ label: 'Subtype', value: ticket.subtype })
-  if (ticket.mode) facts.push({ label: 'Mode', value: ticket.mode })
-  if (ticket.scheduled_for) facts.push({ label: 'Scheduled for', value: ticket.scheduled_for })
-  if (ticket.due) facts.push({ label: 'Due', value: ticket.due })
-  return facts
 })
 
 // The empty states: a scope with nothing in it points at planning; a
@@ -833,8 +824,8 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
             {{ boardTitle }}
           </h1>
           <p class="mt-1.5 max-w-[62ch] text-sm text-ink-muted">
-            Implementation and Bug lifecycles are agent-owned; Task Tickets move freely. A refused
-            move keeps the ticket in its authoritative state.
+            Drag cards between workflow columns; moves land through the issue model and a refused
+            change keeps the ticket in its authoritative state.
           </p>
           <p
             class="mt-1.5 text-xs text-ink-subtle"
@@ -1487,13 +1478,6 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
               </StatusBadge>
             </dd>
             <dd
-              v-else-if="fact.label === 'Spec'"
-              data-testid="drawer-spec"
-              class="text-sm text-ink"
-            >
-              {{ fact.value }}
-            </dd>
-            <dd
               v-else
               class="text-sm text-ink"
             >
@@ -1501,6 +1485,14 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
             </dd>
           </div>
         </dl>
+
+        <IssueSubIssues
+          v-if="drawerProjectCode"
+          class="mt-6"
+          :project-code="drawerProjectCode"
+          :project-id="drawerTicket.project_id"
+          :ticket-id="drawerTicket.id"
+        />
 
         <TicketDetailSections
           class="mt-6"

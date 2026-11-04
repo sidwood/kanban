@@ -239,9 +239,22 @@ fn create_issue(
     request: &IssueSaveRequest,
     effects: &dyn CommandEffects,
 ) -> Result<Value, ApiError> {
-    let project_id = request
+    let mut project_id = request
         .project_id
         .ok_or_else(|| ApiError::invalid_request("project_id is required when creating"))?;
+    if let Some(parent_id) = request.parent_id.flatten() {
+        let parent = ctx
+            .tickets
+            .find(TicketId::new(parent_id))?
+            .ok_or_else(|| ApiError::not_found("parent issue"))?;
+        let parent_project = parent.project().value();
+        if request.project_id.is_some() && project_id != parent_project {
+            return Err(ApiError::invalid_request(
+                "sub-issues must belong to the parent's project",
+            ));
+        }
+        project_id = parent_project;
+    }
     let title = request
         .title
         .as_deref()
@@ -289,6 +302,12 @@ fn create_issue(
     if let Some(milestone) = request.milestone_id.as_ref() {
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
+    } else if let Some(parent_id) = request.parent_id.flatten() {
+        let fields = ctx.issues.issue_fields(parent_id as i64)?;
+        if let Some(milestone_id) = fields.milestone_id {
+            ctx.issues
+                .set_milestone(ticket_id as i64, Some(milestone_id))?;
+        }
     }
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;

@@ -1,8 +1,10 @@
 //! SQLite-backed Linear issue fields and history.
 
 use kanban_app::TimelineEnvelope;
-use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState};
-use kanban_dto::{ApiError, IssueRelationRecord};
+use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState, WorkflowStateType};
+use kanban_dto::{
+    ApiError, IssueRelationRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+};
 use rusqlite::{OptionalExtension, params};
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -203,9 +205,95 @@ impl SqliteIssueStore {
         )
         .map_err(internal)?;
         insert_event(&span, &envelope).map_err(|error| ApiError::internal(&error.to_string()))?;
+        let parent_id: Option<i64> = span
+            .query_row(
+                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten();
         let _ = project_id;
         span.commit().map_err(internal)?;
+        if to_state.state_type == WorkflowStateType::Completed
+            && let Some(parent_id) = parent_id
+        {
+            self.try_auto_close_parent_when_children_done(parent_id)?;
+        }
         Ok(())
+    }
+
+    fn try_auto_close_parent_when_children_done(&self, parent_id: i64) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let child_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ?1",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        if child_count == 0 {
+            return Ok(());
+        }
+        let open: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM tickets AS t
+                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.parent_ticket_id = ?1
+                   AND s.type NOT IN ('completed', 'canceled', 'duplicate')",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        drop(conn);
+        if open > 0 {
+            return Ok(());
+        }
+        let project_id: i64 = self
+            .lock()
+            .query_row(
+                "SELECT project_id FROM tickets WHERE id = ?1",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .map_err(not_found_ticket)?;
+        let conn = self.lock();
+        let done = workflow_state_by_name(&conn, project_id, "Done")
+            .map_err(internal_storage)?
+            .ok_or_else(|| ApiError::internal("Done workflow state missing"))?;
+        drop(conn);
+        let envelope = TimelineEnvelope::project(
+            project_id as u64,
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: parent_id.to_string(),
+            }),
+            serde_json::json!({ "action": "auto_close_sub_issues", "state": "Done" }),
+        );
+        self.apply_free_state(parent_id, project_id, &done, envelope)
+    }
+
+    fn parent_would_cycle(&self, ticket_id: i64, parent_id: i64) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        let mut current = Some(parent_id);
+        while let Some(id) = current {
+            if id == ticket_id {
+                return Ok(true);
+            }
+            current = conn
+                .query_row(
+                    "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?
+                .flatten();
+        }
+        Ok(false)
     }
 
     pub fn list_labels(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {
@@ -543,6 +631,11 @@ impl SqliteIssueStore {
             ));
         }
         if let Some(parent_id) = parent_id {
+            if self.parent_would_cycle(ticket_id, parent_id)? {
+                return Err(ApiError::invalid_request(
+                    "setting this parent would create a cycle",
+                ));
+            }
             let conn = self.lock();
             let exists: Option<i64> = conn
                 .query_row("SELECT id FROM tickets WHERE id = ?1", [parent_id], |row| {

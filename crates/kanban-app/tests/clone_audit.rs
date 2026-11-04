@@ -5,6 +5,8 @@
 //! invocation, and an archived-Project refusal lands durably while
 //! invoking nothing.
 
+mod common;
+
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -546,16 +548,7 @@ fn clone_adoption_failure_keeps_repair_evidence_without_workspace_or_success() {
 }
 
 fn git(root: &Path, args: &[&str]) {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    common::git_test::git(root, args);
 }
 
 #[test]

@@ -77,7 +77,7 @@ prove_clean_clone_enforces_hooks() {
   mkdir -p "$probe_bin"
   ln -s "$(command -v just)" "$probe_bin/just"
   ln -s "$(command -v git)" "$probe_bin/git"
-  ln -s /bin/bash "$probe_bin/bash"
+  ln -s "$(command -v bash)" "$probe_bin/bash"
   expect_failure "pre-commit runner" "bootstrap without the hook runner" \
     env PATH="$probe_bin" "${clone_just[@]}" bootstrap
 

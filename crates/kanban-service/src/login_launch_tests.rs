@@ -68,9 +68,12 @@ fn login_launch_is_unavailable_off_macos() {
         "dev.kanban.test.unavailable".into(),
         dir.path().join("launchctl-fixture"),
     );
-    assert!(adapter.enabled().is_err());
-    assert!(adapter.set_enabled(true).is_err());
-    assert!(adapter.set_enabled(false).is_err());
+    let enabled = adapter.enabled().unwrap_err();
+    assert_eq!(enabled.message, "launch at login requires macOS");
+    let set_true = adapter.set_enabled(true).unwrap_err();
+    assert_eq!(set_true.message, "launch at login requires macOS");
+    let set_false = adapter.set_enabled(false).unwrap_err();
+    assert_eq!(set_false.message, "launch at login requires macOS");
 }
 
 #[test]

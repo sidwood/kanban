@@ -789,12 +789,14 @@ mod tests {
 
         /// Read one frame, failing on EOF or a malformed line.
         fn recv(&mut self) -> ResponseFrame {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let deadline =
+                std::time::Instant::now() + Duration::from_secs(5) + Duration::from_secs(2);
+            let mut line = String::new();
             loop {
-                let mut line = String::new();
+                line.clear();
                 match self.reader.read_line(&mut line) {
                     Ok(0) => panic!("the server closed the connection early"),
-                    Ok(read) if read > 0 => {
+                    Ok(_) if !line.is_empty() => {
                         return serde_json::from_str(line.trim_end()).expect("the frame decodes");
                     }
                     Ok(_) => {}

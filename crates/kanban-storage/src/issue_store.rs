@@ -1,5 +1,7 @@
 //! SQLite-backed Linear issue fields and history.
 
+use std::collections::HashMap;
+
 use kanban_app::TimelineEnvelope;
 use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState, WorkflowStateType};
 use kanban_dto::{
@@ -1354,7 +1356,7 @@ impl SqliteIssueStore {
     /// group, in the order the caller listed them.
     pub fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError> {
         let conn = self.lock();
-        let mut held: Option<(String, String)> = None;
+        let mut held: HashMap<String, String> = HashMap::new();
         for name in names {
             let row: Option<(Option<String>, i64, Option<String>)> = conn
                 .query_row(
@@ -1381,14 +1383,13 @@ impl SqliteIssueStore {
             }
             if single_select == 1
                 && let Some(group_name) = group.as_deref()
-                && let Some((held_group, held_label)) = held.as_ref()
-                && held_group == group_name
-                && held_label != name
+                && let Some(first_label) = held.get(group_name)
+                && first_label != name
             {
                 return Err(ApiError::invalid_request_field(
                     "add_labels",
                     &format!(
-                        "labels `{held_label}` and `{name}` are both from the \
+                        "labels `{first_label}` and `{name}` are both from the \
                          single-select group `{group_name}`; add one of them"
                     ),
                 ));
@@ -1396,7 +1397,7 @@ impl SqliteIssueStore {
             if single_select == 1
                 && let Some(group_name) = group
             {
-                held = Some((group_name, name.clone()));
+                held.entry(group_name).or_insert_with(|| name.clone());
             }
         }
         Ok(())

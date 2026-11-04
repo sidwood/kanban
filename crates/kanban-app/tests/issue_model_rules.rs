@@ -1110,6 +1110,111 @@ fn one_label_per_single_select_group_in_one_call() {
         "multi-select groups and ungrouped labels keep every label"
     );
 }
+#[test]
+fn single_select_conflicts_surface_across_a_whole_batch() {
+    let h = rules_harness();
+    let session = &h.session;
+    for (name, key) in [("small", "batch-tier-small"), ("large", "batch-tier-large")] {
+        session
+            .call(
+                "issue.create_label",
+                &json!({
+                    "mutation": mutation(0, key),
+                    "project_id": 1,
+                    "name": name,
+                    "color": "#336699",
+                    "group": "Model tier",
+                    "group_single_select": true,
+                }),
+            )
+            .expect("the tier label is created");
+    }
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "batch-mode-agent"),
+                "project_id": 1,
+                "name": "agent",
+                "color": "#336699",
+                "group": "Run mode",
+                "group_single_select": true,
+            }),
+        )
+        .expect("the mode label is created");
+
+    let saved = save_issue(
+        session,
+        0,
+        "batch-single-select-host",
+        json!({ "project_id": 1, "title": "Interleaved tiers" }),
+    );
+    let version = issue_version(session, &saved.identifier);
+
+    let error = try_save(
+        session,
+        version,
+        "batch-interleaved-conflict",
+        json!({
+            "identifier": saved.identifier,
+            "add_labels": ["small", "agent", "large"],
+        }),
+    )
+    .expect_err("two tier labels separated by a mode label are refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("add_labels"));
+    assert!(
+        error.message.contains("small") && error.message.contains("large"),
+        "the message names both tier labels: {}",
+        error.message
+    );
+    let untouched = read_issue(session, &saved.identifier);
+    assert!(
+        untouched.labels.is_empty(),
+        "the refused call adds neither label"
+    );
+    assert_eq!(
+        untouched.version, version,
+        "the refused call writes nothing"
+    );
+
+    save_issue(
+        session,
+        version,
+        "batch-distinct-groups",
+        json!({
+            "identifier": saved.identifier,
+            "add_labels": ["small", "agent"],
+        }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert!(
+        read.labels.contains(&"small".to_owned()) && read.labels.contains(&"agent".to_owned()),
+        "both distinct-group labels are held: {:?}",
+        read.labels
+    );
+
+    save_issue(
+        session,
+        read.version,
+        "batch-repeated-label",
+        json!({
+            "identifier": saved.identifier,
+            "add_labels": ["agent", "agent"],
+        }),
+    );
+    let repeated = read_issue(session, &saved.identifier);
+    assert_eq!(
+        repeated
+            .labels
+            .iter()
+            .filter(|label| label.as_str() == "agent")
+            .count(),
+        1,
+        "the repeated label is held once: {:?}",
+        repeated.labels
+    );
+}
 
 #[test]
 fn created_issues_without_a_priority_carry_no_priority() {

@@ -706,17 +706,21 @@ fn normalise_legacy_due_dates(conn: &Connection) -> rusqlite::Result<()> {
 /// Truncates datetime-shaped due dates to their calendar date.
 ///
 /// An earlier build copied legacy `due` timestamps into `due_date`
-/// verbatim. Converting those values shares one rule with the initial
-/// migration, but unlike it the forward repair must never fall back to
-/// the legacy `due` column: once migration has finished, a due date
-/// cleared through the issue store is stored as the no-date value
-/// while `due` keeps its historical timestamp, and restoring that
-/// timestamp would undo a deliberate edit.
+/// verbatim. The old model normalised every stored instant to one
+/// exact UTC shape, `YYYY-MM-DDTHH:MM:SS.mmmZ`, so the repair
+/// converts only that shape. Any other stored text is a deliberate
+/// post-migration edit the issue store's calendar validation accepted
+/// verbatim, such as `2027-1-5`, ` 2027-01-05` or a signed year, and
+/// it keeps its bytes. The repair also never
+/// falls back to the legacy `due` column: once migration has finished,
+/// a due date cleared through the issue store is stored as the
+/// no-date value while `due` keeps its historical timestamp, and
+/// restoring that timestamp would undo a deliberate edit.
 fn truncate_datetime_due_dates(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "UPDATE tickets
          SET due_date = substr(due_date, 1, 10)
-         WHERE length(due_date) > 10;",
+         WHERE due_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z';",
     )
 }
 
@@ -1928,6 +1932,37 @@ mod tests {
             "2099-12-31",
             "a due date cleared through the issue store stays cleared"
         );
+    }
+    #[test]
+    fn repair_migration_preserves_due_dates_the_store_accepts() {
+        let (_dir, mut database) = earlier_build_database();
+        let accepted = [
+            (2_i64, " 2027-01-05"),
+            (3, "2027-01- 05"),
+            (5, "-0001-01-01"),
+            (6, "+10000-01-01"),
+            (7, "2027-1-5"),
+            (8, "2027- 1- 5"),
+        ];
+        for (ticket_id, raw) in accepted {
+            IssueStoreImpl::new(&database)
+                .set_due_date(ticket_id, Some(raw))
+                .unwrap_or_else(|error| panic!("the store accepts {raw:?}: {error:?}"));
+            assert_eq!(migrated_due_date(&database.connection(), ticket_id), raw);
+        }
+
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        for (ticket_id, raw) in accepted {
+            assert_eq!(
+                migrated_due_date(&database.connection(), ticket_id),
+                raw,
+                "a due date the store accepted verbatim keeps its stored text"
+            );
+            IssueStoreImpl::new(&database)
+                .set_due_date(ticket_id, Some(raw))
+                .unwrap_or_else(|error| panic!("the store still accepts {raw:?}: {error:?}"));
+        }
     }
 
     #[test]

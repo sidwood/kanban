@@ -1244,10 +1244,16 @@ fn legacy_state_moves_stamp_the_issue_update_time() {
     let moved = read_issue(session, &identifier);
     assert_eq!(moved.state, "Cancelled");
     assert!(
-        moved.updated_at > moved_at,
-        "the legacy move stamps updated_at ({} must pass {})",
+        moved.updated_at >= moved_at,
+        "the legacy move stamps updated_at ({} may share the sampled millisecond {})",
         moved.updated_at,
         moved_at
+    );
+    assert!(
+        moved.updated_at > before.updated_at,
+        "the stamped update time advances past the pre-move update time ({} must pass {})",
+        moved.updated_at,
+        before.updated_at
     );
     assert_eq!(
         moved.version,

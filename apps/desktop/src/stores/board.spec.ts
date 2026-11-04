@@ -49,6 +49,7 @@ const GROUP_OF: Record<TicketRecord['state'], BoardGlobalCard['group'] | null> =
   done: 'done',
   cancelled: null,
   superseded: null,
+  duplicate: null,
 }
 
 // The projection the core returns for a set of Tickets: grouped by

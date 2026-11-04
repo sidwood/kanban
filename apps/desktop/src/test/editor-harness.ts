@@ -131,7 +131,11 @@ function ticketByIdentifier(
   return undefined
 }
 
-function ticketToIssue(project: ProjectRecord, ticket: TicketRecord): IssueRecord {
+function ticketToIssue(
+  project: ProjectRecord,
+  ticket: TicketRecord,
+  priority: number = LINEAR_PRIORITY[ticket.priority],
+): IssueRecord {
   const identifier = issueIdentifier(project, ticket)
   return {
     identifier,
@@ -139,7 +143,7 @@ function ticketToIssue(project: ProjectRecord, ticket: TicketRecord): IssueRecor
     project_id: ticket.project_id,
     title: ticket.title ?? '',
     description: ticket.slice ?? '',
-    priority: LINEAR_PRIORITY[ticket.priority],
+    priority,
     state: 'Draft',
     state_type: 'unstarted',
     labels: [],
@@ -202,6 +206,10 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
   const projects = options.projects ?? [editorProject]
   const specs = options.specs ?? [editorSpec]
   const tickets: TicketRecord[] = [...(options.tickets ?? [])]
+  // An issue's priority lives on the issue: a save sets it there and
+  // leaves the legacy Ticket priority as it stood. A Ticket no save
+  // has touched reads the priority it was migrated with.
+  const issuePriorities = new Map<number, number>()
 
   function held(ticketId: number): TicketRecord | undefined {
     return tickets.find((entry) => entry.id === ticketId)
@@ -242,7 +250,9 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
         const { identifier } = request as { identifier: string }
         const match = ticketByIdentifier(identifier, projects, tickets)
         return match
-          ? Promise.resolve(ticketToIssue(match.project, match.ticket))
+          ? Promise.resolve(
+              ticketToIssue(match.project, match.ticket, issuePriorities.get(match.ticket.id)),
+            )
           : Promise.reject({ code: 'not_found', message: `issue ${identifier}` })
       }
       default:
@@ -295,19 +305,14 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
           if (expected !== undefined && expected !== standing.version) {
             return Promise.reject({ code: 'stale_version', message: 'the Ticket moved on' })
           }
-          const priority =
-            save.priority === undefined
-              ? standing.priority
-              : (Object.entries(LINEAR_PRIORITY).find(([, value]) => value === save.priority)?.[0] ??
-                  standing.priority) as TicketPriority
           const updated = replace({
             ...standing,
             title: save.title ?? standing.title,
             slice: save.description ?? standing.slice,
-            priority,
             due: save.due_date === null ? null : (save.due_date ?? standing.due),
             version: standing.version + 1,
           })
+          if (save.priority !== undefined) issuePriorities.set(updated.id, save.priority)
           return Promise.resolve({
             identifier: save.identifier,
             ticket_id: updated.id,

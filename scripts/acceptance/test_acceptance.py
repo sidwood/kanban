@@ -30,6 +30,21 @@ class BearerTests(unittest.TestCase):
         self.assertEqual(redact("nothing here"), "nothing here")
 
 
+class CoreProcessTests(unittest.TestCase):
+    def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):
+        import sys
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            data_dir = Path(root) / ("d" * 120) / "Kanban"
+            core = harness.CoreProcess(sys.executable, data_dir, 1, Path(root) / "core.log")
+            with self.assertRaises(harness.HarnessError) as raised:
+                core.start()
+            self.assertIn("too long for a Unix socket", str(raised.exception))
+            self.assertIsNone(core.process)
+            self.assertFalse(data_dir.parent.exists())
+
+
 class RpcBodyTests(unittest.TestCase):
     def test_json_body_is_decoded(self):
         body = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {}}).encode()

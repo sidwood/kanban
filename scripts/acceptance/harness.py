@@ -13,10 +13,14 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
+# A Unix socket path, with its terminating NUL, must fit in 104 bytes on
+# macOS and 108 on Linux.
+SOCKET_PATH_LIMIT = 104 if sys.platform == "darwin" else 108
 
 
 class HarnessError(Exception):
@@ -306,11 +310,22 @@ class CoreProcess:
     def socket_path(self):
         return self.data_dir / "core.sock"
 
+    def last_log_line(self):
+        try:
+            lines = self.log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        except OSError:
+            return "no log"
+        return lines[-1] if lines else "empty log"
+
     def start(self, wait_seconds=60):
         if not self.binary.is_file():
             raise HarnessError(f"core binary not found: {self.binary}")
         if port_in_use(self.host, self.port):
             raise HarnessError(f"something already listens on {self.host}:{self.port}; pick --port")
+        length = len(str(self.socket_path).encode())
+        if length >= SOCKET_PATH_LIMIT:
+            raise HarnessError(f"{self.socket_path} is {length} bytes, too long for a Unix socket "
+                               f"(at most {SOCKET_PATH_LIMIT - 1}); choose a shorter --data-dir")
         self.data_dir.parent.mkdir(parents=True, exist_ok=True)
         environment = dict(os.environ)
         environment["XDG_DATA_HOME"] = str(self.data_dir.parent)
@@ -329,7 +344,8 @@ class CoreProcess:
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise HarnessError(f"the core exited with {self.process.returncode}; see {self.log_path}")
+                raise HarnessError(f"the core exited with {self.process.returncode}: "
+                                   f"{self.last_log_line()} (log {self.log_path})")
             if self.socket_path.exists() and port_in_use(self.host, self.port):
                 return
             time.sleep(0.25)

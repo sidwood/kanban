@@ -55,9 +55,11 @@ access, and they are included in home-directory backups. See
 [`docs/decisions/linux-file-installation-credential.md`](decisions/linux-file-installation-credential.md).
 
 The store opens the directory with `O_DIRECTORY|O_NOFOLLOW`, verifies owner and
-exact mode **`0700`**, and refuses symlinks, FIFOs, hard-linked credential
-files, or credential files whose mode is not exactly **`0600`**. Looser modes
-(for example `0701` or `0604`) are rejected.
+exact mode **`0700`**, and refuses symlinks, FIFOs, or credential files whose
+mode is not exactly **`0600`**. Looser modes (for example `0701` or `0604`)
+and stricter ones (for example `0400`) are rejected. A `.partial` leftover that
+shares the credential's inode (from an interrupted publish) is cleaned up; any
+other hard link to the credential file is refused.
 
 Custom `--data-dir` paths use an isolated file name (`data-<sha256>` of the
 canonical path), matching the macOS account naming scheme.

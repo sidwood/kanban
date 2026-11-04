@@ -1690,7 +1690,7 @@ mod tests {
 
         let (mut server, client) = UnixStream::pair().expect("socket pair");
         client
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_millis(100)))
             .expect("read timeout");
         let payload = json!({ "value": 1, "version": 1 });
         let line = format!(
@@ -1707,7 +1707,9 @@ mod tests {
         let writer = server.clone();
         let tail = line.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
+            // Well past the read timeout, so recv sees at least one
+            // WouldBlock with the first half already buffered.
+            std::thread::sleep(Duration::from_millis(400));
             let mut server = writer.lock().unwrap();
             server.write_all(&tail.as_bytes()[split..]).unwrap();
             server.flush().unwrap();

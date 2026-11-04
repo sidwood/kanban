@@ -12,8 +12,11 @@ our supported stack.
 
 On Linux, persist the secret in `<data>/installation-credential/<account>` as a
 regular file with mode exactly `0600` inside a directory with mode exactly
-`0700`, both owned by the effective user. The store rejects symlinks, hard links,
-FIFOs, and any mode looser than those exact permissions.
+`0700`, both owned by the effective user. The store rejects symlinks, FIFOs,
+and any mode other than those exact permissions, so stricter modes such as
+`0400` are rejected too. A `.partial` leftover that shares the credential's
+inode (from an interrupted publish) is cleaned up; any other hard link to the
+credential file is refused.
 
 This reverses the earlier “no file fallback on Linux” rule from `main`: Linux
 managed startup **requires** this file store; there is no Keychain or

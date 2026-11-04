@@ -154,8 +154,17 @@ mod file_installation_secret {
         }
     }
 
+    /// Remove `.partial.` leftovers that share the credential's inode:
+    /// the hard link a crashed publish leaves behind. Any other partial
+    /// may be another loader's in-flight temp file, so it is left alone.
     fn remove_stale_partials(store_dir: &Path, account: &str) -> Result<(), ApiError> {
         let _dir = open_store_directory(store_dir)?;
+        let credential = match store_dir.join(account).symlink_metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(unavailable()),
+        };
         let prefix = format!(".{account}.partial.");
         let entries = fs::read_dir(store_dir).map_err(|_| unavailable())?;
         for entry in entries {
@@ -164,14 +173,23 @@ mod file_installation_secret {
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if name.starts_with(&prefix) {
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            let Ok(partial) = entry.path().symlink_metadata() else {
+                continue;
+            };
+            if partial.is_file()
+                && partial.dev() == credential.dev()
+                && partial.ino() == credential.ino()
+            {
                 let _ = fs::remove_file(entry.path());
             }
         }
         Ok(())
     }
 
-    fn ensure_store_dir(store_dir: &Path) -> Result<(), ApiError> {
+    pub(super) fn ensure_store_dir(store_dir: &Path) -> Result<(), ApiError> {
         match store_dir.symlink_metadata() {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
@@ -546,6 +564,52 @@ mod tests {
             .load_or_create()
             .expect("stale partial links are removed on load");
         assert_eq!(path.metadata().unwrap().nlink(), 1);
+    }
+
+    #[test]
+    fn file_store_leaves_unrelated_partial_files_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        let in_flight = path
+            .parent()
+            .unwrap()
+            .join(format!(".{}.partial.cafef00d", store.account));
+        std::fs::write(&in_flight, b"another loader's temp file").unwrap();
+        store.load_or_create().unwrap();
+        assert!(
+            in_flight.exists(),
+            "a partial that is not a link to the credential is not ours to delete"
+        );
+    }
+
+    #[test]
+    fn concurrent_store_directory_creation_tolerates_already_exists() {
+        use std::sync::{Arc, Barrier};
+
+        const THREADS: usize = 16;
+        for _ in 0..50 {
+            let dir = tempfile::TempDir::new().unwrap();
+            let store_dir = dir.path().join("installation-credential");
+            let barrier = Arc::new(Barrier::new(THREADS));
+            let handles: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let store_dir = store_dir.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        file_installation_secret::ensure_store_dir(&store_dir)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .unwrap()
+                    .expect("a racing mkdir that finds the directory is tolerated");
+            }
+        }
     }
 
     #[test]

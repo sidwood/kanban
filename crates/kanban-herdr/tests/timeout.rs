@@ -420,7 +420,7 @@ fn a_paced_prompt_uses_the_requested_non_empty_fragment_count() {
         "/workspaces/kanban.seed",
         SessionScript::default()
             .with_prompt_accepted(true)
-            .with_paced_prompt(0, FRAGMENTS, Duration::from_millis(1)),
+            .with_paced_prompt(0, FRAGMENTS, Duration::from_millis(5)),
     );
     let mapping = named_mapping("kanban-main", "/workspaces/kanban.seed");
     let mut client =

@@ -119,7 +119,7 @@ mod file_installation_secret {
         let path = store_dir.join(account);
         match path.symlink_metadata() {
             Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable()),
-            Ok(_) => read_existing(&store_dir, &path, account),
+            Ok(_) => read_existing(&store_dir, &path, account, sync_directory),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let key = random_key()?;
                 install_new_key(&store_dir, &path, account, &key, rename, sync_directory)
@@ -341,7 +341,7 @@ mod file_installation_secret {
             Ok(secret) => secret,
             Err(_) => match path.symlink_metadata() {
                 Ok(metadata) if !metadata.file_type().is_symlink() => {
-                    read_existing(store_dir, path, account)?
+                    read_existing(store_dir, path, account, sync_directory)?
                 }
                 _ => return Err(unavailable()),
             },
@@ -354,6 +354,7 @@ mod file_installation_secret {
         store_dir: &Path,
         path: &Path,
         account: &str,
+        sync_directory: DirectorySyncFn,
     ) -> Result<InstallationSecret, ApiError> {
         ensure_store_dir(store_dir)?;
         remove_stale_partials(store_dir, account)?;
@@ -370,6 +371,7 @@ mod file_installation_secret {
         }
         let mut key = zeroize::Zeroizing::new([0u8; 32]);
         file.read_exact(&mut *key).map_err(|_| unavailable())?;
+        sync_directory(store_dir)?;
         Ok(InstallationSecret::from_key(&key))
     }
 
@@ -416,6 +418,7 @@ mod http_response;
 mod tests {
     use super::*;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn credentials_match(first: &InstallationSecret, second: &InstallationSecret) -> bool {
         first.expose().as_bytes() == second.expose().as_bytes()
@@ -555,8 +558,14 @@ mod tests {
         )))
     }
 
-    fn store_directory_sync_fails(_store_dir: &Path) -> Result<(), ApiError> {
-        Err(unavailable())
+    static STORE_DIRECTORY_SYNC_FAILS: AtomicBool = AtomicBool::new(true);
+
+    fn store_directory_sync_fails_until_cleared(_store_dir: &Path) -> Result<(), ApiError> {
+        if STORE_DIRECTORY_SYNC_FAILS.load(Ordering::Relaxed) {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
     }
 
     #[test]
@@ -595,7 +604,7 @@ mod tests {
             dir.path(),
             &store.account,
             file_installation_secret::sys_renameat2_noreplace,
-            store_directory_sync_fails,
+            store_directory_sync_fails_until_cleared,
         );
         assert!(
             result.is_err(),
@@ -605,6 +614,30 @@ mod tests {
         assert!(
             path.is_file(),
             "the credential itself was published; only its directory sync failed"
+        );
+        STORE_DIRECTORY_SYNC_FAILS.store(true, Ordering::Relaxed);
+        let second = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            store_directory_sync_fails_until_cleared,
+        );
+        assert!(
+            second.is_err(),
+            "an existing credential must not be accepted while its directory entry stays unsynced"
+        );
+        STORE_DIRECTORY_SYNC_FAILS.store(false, Ordering::Relaxed);
+        let accepted = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            store_directory_sync_fails_until_cleared,
+        )
+        .expect("the published credential loads once its directory entry syncs");
+        let stored: [u8; 32] = std::fs::read(&path).unwrap().try_into().unwrap();
+        assert!(
+            credentials_match(&accepted, &InstallationSecret::from_key(&stored)),
+            "recovery must accept the published credential without rotating it"
         );
     }
 

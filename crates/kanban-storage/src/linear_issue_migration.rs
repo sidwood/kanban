@@ -309,6 +309,7 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
     Ok(())
 }
 
+/// Collapses consecutive history rows that repeat one workflow state.
 fn collapse_consecutive_duplicate_history(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "DELETE FROM issue_state_history
@@ -326,6 +327,13 @@ fn collapse_consecutive_duplicate_history(conn: &Connection) -> rusqlite::Result
     )
 }
 
+/// Stamps lifecycle timestamps from the rebuilt state history.
+///
+/// `started_at` keeps the first entry into a started state. The terminal
+/// stamps record the entry into the last completed or canceled state and
+/// apply only while the issue still sits in that state, mirroring how a
+/// save stamps the entry and a reopen clears it: an issue that left the
+/// terminal state keeps no terminal timestamp.
 fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "UPDATE tickets SET started_at = (
@@ -333,22 +341,32 @@ fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Re
              FROM issue_state_history AS h
              JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
              WHERE h.ticket_id = tickets.id AND s.type = 'started'
-             ORDER BY h.started_at ASC LIMIT 1
+             ORDER BY h.started_at ASC, h.id ASC LIMIT 1
          ) WHERE started_at IS NULL;
          UPDATE tickets SET completed_at = (
-             SELECT h.ended_at
+             SELECT h.started_at
              FROM issue_state_history AS h
              JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
-             WHERE h.ticket_id = tickets.id AND s.type = 'completed' AND h.ended_at IS NOT NULL
-             ORDER BY h.ended_at DESC LIMIT 1
-         ) WHERE completed_at IS NULL;
+             WHERE h.ticket_id = tickets.id AND s.type = 'completed'
+             ORDER BY h.started_at DESC, h.id DESC LIMIT 1
+         ) WHERE completed_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM issue_workflow_states AS current_state
+               WHERE current_state.id = tickets.workflow_state_id
+                 AND current_state.type = 'completed'
+           );
          UPDATE tickets SET canceled_at = (
-             SELECT h.ended_at
+             SELECT h.started_at
              FROM issue_state_history AS h
              JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
-             WHERE h.ticket_id = tickets.id AND s.type IN ('canceled', 'duplicate') AND h.ended_at IS NOT NULL
-             ORDER BY h.ended_at DESC LIMIT 1
-         ) WHERE canceled_at IS NULL;",
+             WHERE h.ticket_id = tickets.id AND s.type IN ('canceled', 'duplicate')
+             ORDER BY h.started_at DESC, h.id DESC LIMIT 1
+         ) WHERE canceled_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM issue_workflow_states AS current_state
+               WHERE current_state.id = tickets.workflow_state_id
+                 AND current_state.type IN ('canceled', 'duplicate')
+           );",
     )
 }
 
@@ -1183,6 +1201,35 @@ mod tests {
         .unwrap();
     }
 
+    fn seed_legacy_bug(
+        conn: &Connection,
+        id: i64,
+        state: &str,
+        severity: Option<&str>,
+        created_at: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, title, criteria,
+                 actual_behaviour, reporter_evidence, bug_qualification, bug_facts,
+                 completion, version, created_at
+             ) VALUES (
+                 ?1, 1, ?1, 'bug', 'normal', ?2, ?3, '[]',
+                 'Observed behaviour', 'Board screenshot',
+                 ?4, '{\"external_references\":[]}',
+                 '[]', 1, ?5
+             )",
+            params![
+                id,
+                state,
+                format!("Legacy bug {id}"),
+                severity.map(|value| format!("{{\"severity\":\"{value}\"}}")),
+                created_at
+            ],
+        )
+        .unwrap();
+    }
+
     fn seed_legacy_transition(
         conn: &Connection,
         ticket_id: i64,
@@ -1210,6 +1257,18 @@ mod tests {
             "SELECT due_date FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn migrated_lifecycle_timestamps(
+        conn: &Connection,
+        ticket_id: i64,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT started_at, completed_at, canceled_at FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap()
     }
@@ -1462,6 +1521,72 @@ mod tests {
         let conn = database.connection();
         assert_eq!(migrated_due_date(&conn, 1), "2026-11-15");
         assert_eq!(migrated_due_date(&conn, 2), "2099-12-31");
+    }
+
+    #[test]
+    fn migration_backfills_terminal_timestamps_from_state_history() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_task(&conn, 1, "done", None, "2026-11-03T21:38:37.981Z");
+            seed_legacy_transition(&conn, 1, "draft", "ready", "2026-11-03T21:38:46.601Z");
+            seed_legacy_transition(&conn, 1, "ready", "active", "2026-11-03T21:38:50.957Z");
+            seed_legacy_transition(&conn, 1, "active", "in_review", "2026-11-03T21:38:56.423Z");
+            seed_legacy_transition(
+                &conn,
+                1,
+                "in_review",
+                "approved",
+                "2026-11-03T21:38:56.427Z",
+            );
+            seed_legacy_transition(&conn, 1, "approved", "landing", "2026-11-03T21:39:00.402Z");
+            seed_legacy_transition(&conn, 1, "landing", "done", "2026-11-03T21:39:00.405Z");
+
+            seed_legacy_bug(&conn, 2, "cancelled", None, "2026-11-03T21:38:37.996Z");
+            seed_legacy_transition(&conn, 2, "draft", "cancelled", "2026-11-03T21:39:55.119Z");
+
+            seed_legacy_task(&conn, 3, "parked", None, "2026-11-03T21:38:37.988Z");
+            seed_legacy_transition(&conn, 3, "draft", "parked", "2026-11-03T21:38:46.608Z");
+
+            seed_legacy_task(&conn, 4, "active", None, "2026-11-03T21:38:37.985Z");
+            seed_legacy_transition(&conn, 4, "draft", "done", "2026-11-03T21:39:10.000Z");
+            seed_legacy_transition(&conn, 4, "done", "active", "2026-11-03T21:39:20.000Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let (started, completed, canceled) = migrated_lifecycle_timestamps(&conn, 1);
+        assert_eq!(started.as_deref(), Some("2026-11-03T21:38:50.957Z"));
+        assert_eq!(
+            completed.as_deref(),
+            Some("2026-11-03T21:39:00.405Z"),
+            "the last entry into the completed state completes the issue"
+        );
+        assert_eq!(canceled, None);
+
+        let (started, completed, canceled) = migrated_lifecycle_timestamps(&conn, 2);
+        assert_eq!(started, None);
+        assert_eq!(completed, None);
+        assert_eq!(
+            canceled.as_deref(),
+            Some("2026-11-03T21:39:55.119Z"),
+            "the last entry into the canceled state cancels the issue"
+        );
+
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 3);
+        assert_eq!(completed, None, "a parked issue was never terminal");
+        assert_eq!(canceled, None);
+
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 4);
+        assert_eq!(
+            completed, None,
+            "an issue that left the completed state is no longer completed"
+        );
+        assert_eq!(canceled, None);
     }
 
     #[test]

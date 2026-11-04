@@ -15,7 +15,6 @@ import type { TicketEditorRequest } from '../stores/ticket-dialog'
 import {
   LINEAR_PRIORITIES,
   blankIssueCreateDraft,
-  storyCoverDraft,
   useTicketEditorStore,
 } from '../stores/ticket-editor'
 import { issueDisplayKey } from '../views/board-card'
@@ -31,6 +30,7 @@ const issueOverlay = useIssueOverlayStore()
 
 const projectId = ref<number | null>(null)
 const record = ref<TicketRecord | null>(null)
+const coverLanded = ref<TicketRecord | null>(null)
 const issueDraft = ref(blankIssueCreateDraft())
 const heldLabels = ref<string[]>([])
 const localTitle = ref('')
@@ -128,6 +128,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   opening += 1
   const attempt = opening
   record.value = null
+  coverLanded.value = null
   heldLabels.value = []
   readError.value = null
   editor.error = null
@@ -203,11 +204,7 @@ async function submitCreate(): Promise<void> {
   const request = dialog.editor
   const landed =
     request?.specId != null && request.story !== null
-      ? await editor.create(
-          transport,
-          projectId.value,
-          storyCoverDraft(request.specId, request.story, issueDraft.value),
-        )
+      ? await submitStoryCover(projectId.value, request.specId, request.story)
       : await editor.createIssue(
           transport,
           projectId.value,
@@ -215,6 +212,24 @@ async function submitCreate(): Promise<void> {
           request?.parentTicketId ?? null,
         )
   if (landed) dialog.closeEditor()
+}
+
+async function submitStoryCover(
+  forProject: number,
+  specId: number,
+  story: string,
+): Promise<boolean> {
+  if (!transport) return false
+  const covering =
+    coverLanded.value ??
+    (await editor.createStoryCover(transport, forProject, specId, story, issueDraft.value))
+  if (!covering) return false
+  coverLanded.value = covering
+  const project = projects.projects.find((entry) => entry.id === covering.project_id)
+  const identifier = project
+    ? issueDisplayKey(project.code, covering.number)
+    : `${covering.project_id}-${covering.number}`
+  return editor.saveStoryCoverFields(transport, identifier, covering, issueDraft.value)
 }
 
 async function submitEdit(): Promise<void> {

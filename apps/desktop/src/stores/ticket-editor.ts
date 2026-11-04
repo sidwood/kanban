@@ -193,7 +193,12 @@ export function storyCoverDraft(
     priority: TICKET_PRIORITY_OF_LINEAR[draft.priority] ?? 'normal',
     specId,
     slice: draft.title,
-    criteria: [{ outcome: draft.description, stories: story }],
+    criteria: [
+      {
+        outcome: draft.description.trim() === '' ? `Covers story ${story}.` : draft.description,
+        stories: story,
+      },
+    ],
   }
 }
 
@@ -304,6 +309,59 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
         this.error = null
       } catch (failure) {
         this.error = asApiError(failure).message
+        return false
+      }
+      await this.refresh(transport, landed.project_id)
+      return true
+    },
+    async createStoryCover(
+      transport: ShellTransport,
+      projectId: number,
+      specId: number,
+      story: string,
+      draft: IssueCreateDraft,
+    ): Promise<TicketRecord | null> {
+      const request = ticketCreateRequestOf(
+        projectId,
+        storyCoverDraft(specId, story, draft),
+        crypto.randomUUID(),
+      )
+      try {
+        const landed = await new KanbanClient(transport).commandTicketCreate(request)
+        this.error = null
+        return landed
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return null
+      }
+    },
+    async saveStoryCoverFields(
+      transport: ShellTransport,
+      identifier: string,
+      landed: TicketRecord,
+      draft: IssueCreateDraft,
+    ): Promise<boolean> {
+      const request: IssueSaveRequest = {
+        mutation: { optimistic_version: landed.version, idempotency_key: crypto.randomUUID() },
+        identifier,
+        description: draft.description,
+        priority: draft.priority,
+      }
+      const due = draft.dueDate.trim()
+      if (due !== '') {
+        request.due_date = due
+      }
+      if (draft.labels.length > 0) {
+        request.add_labels = [...draft.labels]
+      }
+      if (draft.milestoneId !== null) {
+        request.milestone_id = draft.milestoneId
+      }
+      try {
+        await new KanbanClient(transport).commandIssueSave(request)
+        this.error = null
+      } catch (failure) {
+        this.error = `${identifier} was created, but its issue fields did not save: ${asApiError(failure).message}`
         return false
       }
       await this.refresh(transport, landed.project_id)

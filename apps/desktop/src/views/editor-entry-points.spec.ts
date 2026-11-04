@@ -9,6 +9,9 @@ import type { Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 import type {
+  IssueLabelRecord,
+  IssueMilestoneRecord,
+  IssueSaveRequest,
   ProjectListResponse,
   SpecCoverageMatrixResponse,
   TicketCreateRequest,
@@ -214,11 +217,19 @@ describe('an uncovered Story', () => {
 
 // A core that keeps what `ticket.create` mints and answers the
 // coverage matrix from the criteria its Implementations hold, so a
-// read after the create reports what the create actually claimed.
-function coveringCore() {
+// read after the create reports what the create actually claimed. Like
+// the real core it refuses a criterion that states no outcome, and it
+// keeps the issue fields a later `issue.save` gives a created Ticket.
+function coveringCore(options: { refusedFieldSaves?: number } = {}) {
   const tickets: TicketRecord[] = []
   const commands: Array<{ name: string; request: unknown }> = []
+  const issueFields: Record<string, IssueSaveRequest> = {}
   const stories = ['CORE-S1-US1', 'CORE-S1-US3']
+  let refusedFieldSaves = options.refusedFieldSaves ?? 0
+  const labels: IssueLabelRecord[] = [{ name: 'Urgent work', color: '#d33' }]
+  const milestones: IssueMilestoneRecord[] = [
+    { id: 7, name: 'Launch', issues_done: 0, issues_total: 0 },
+  ]
   const transport = {
     query: (name: string) => {
       if (name === 'spec.coverage.matrix') {
@@ -242,8 +253,8 @@ function coveringCore() {
         } satisfies SpecCoverageMatrixResponse)
       }
       if (name === 'ticket.list') return Promise.resolve({ tickets: [...tickets] })
-      if (name === 'issue.list_labels') return Promise.resolve({ labels: [] })
-      if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      if (name === 'issue.list_labels') return Promise.resolve({ labels })
+      if (name === 'issue.list_milestones') return Promise.resolve({ milestones })
       if (name === 'ticket.graph.list') {
         return Promise.resolve({
           proposals: [
@@ -255,8 +266,33 @@ function coveringCore() {
     },
     command: (name: string, request: unknown) => {
       commands.push({ name, request })
+      if (name === 'issue.save') {
+        const save = request as IssueSaveRequest
+        const standing = tickets.find((held) => `CORE-${held.number}` === save.identifier)
+        if (!standing) return Promise.reject({ code: 'not_found', message: 'issue' })
+        if (refusedFieldSaves > 0) {
+          refusedFieldSaves -= 1
+          return Promise.reject({ code: 'unavailable', message: 'the core is busy' })
+        }
+        if (save.mutation.optimistic_version !== standing.version) {
+          return Promise.reject({ code: 'stale_version', message: 'the Ticket moved on' })
+        }
+        issueFields[save.identifier!] = save
+        tickets.splice(tickets.indexOf(standing), 1, { ...standing, version: standing.version + 1 })
+        return Promise.resolve({
+          identifier: save.identifier,
+          ticket_id: standing.id,
+          url: `kanban://issue/${save.identifier}`,
+        })
+      }
       if (name !== 'ticket.create') return Promise.resolve({})
       const create = request as TicketCreateRequest
+      if ((create.criteria ?? []).some((criterion) => criterion.outcome.trim() === '')) {
+        return Promise.reject({
+          code: 'invalid_request',
+          message: 'an Acceptance Criterion states an observable outcome',
+        })
+      }
       const created = ticket({
         id: 40 + tickets.length,
         project_id: create.project_id,
@@ -279,39 +315,53 @@ function coveringCore() {
     subscribe: () => () => undefined,
     onConnectionChange: () => () => undefined,
   } as unknown as ShellTransport
-  return { transport, commands, tickets }
+  return { transport, commands, tickets, issueFields }
+}
+
+async function mountCovering(core: ReturnType<typeof coveringCore>) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  await router.push('/planning')
+  await router.isReady()
+  const surface = defineComponent({
+    render: () => [h(PlanningView), h(TicketEditorDialog)],
+  })
+  const wrapper = mount(surface, {
+    attachTo: document.body,
+    global: {
+      plugins: [pinia, router],
+      provide: { [kanbanTransportKey as symbol]: core.transport },
+    },
+  })
+  mounted.push(wrapper)
+  await flushPromises()
+  expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(true)
+  expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).toContain('CORE-S1-US3')
+  await wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').trigger('click')
+  await flushPromises()
+  return { wrapper, pinia }
+}
+
+function expectStoryCovered(wrapper: VueWrapper, number: number, outcome: string): void {
+  expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').exists()).toBe(false)
+  expect(wrapper.find(`[data-testid="coverage-claim-CORE-S1-US3-${number}"]`).text()).toContain(
+    outcome,
+  )
+  expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).not.toContain('CORE-S1-US3')
 }
 
 describe('covering a Story from planning', () => {
   it('creates the Implementation on the Spec with the Story claimed, and the matrix reads it covered', async () => {
     const core = coveringCore()
-    const pinia = createPinia()
-    setActivePinia(pinia)
-    await router.push('/planning')
-    await router.isReady()
-    const surface = defineComponent({
-      render: () => [h(PlanningView), h(TicketEditorDialog)],
-    })
-    const wrapper = mount(surface, {
-      attachTo: document.body,
-      global: {
-        plugins: [pinia, router],
-        provide: { [kanbanTransportKey as symbol]: core.transport },
-      },
-    })
-    mounted.push(wrapper)
-    await flushPromises()
-    expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).toContain('CORE-S1-US3')
+    const { wrapper, pinia } = await mountCovering(core)
 
-    await wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').trigger('click')
-    await flushPromises()
     await wrapper.find('[data-testid="ticket-title"]').setValue('Registration reports its gaps')
     await wrapper.find('[data-testid="ticket-priority"]').setValue('2')
     await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
     await flushPromises()
 
-    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create'])
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create', 'issue.save'])
     expect(core.commands[0]!.request).toMatchObject({
       project_id: 4,
       kind: 'implementation',
@@ -320,13 +370,94 @@ describe('covering a Story from planning', () => {
       slice: 'Registration reports its gaps',
       criteria: [{ outcome: 'Covers story CORE-S1-US3.', stories: ['CORE-S1-US3'] }],
     })
+    expect(core.commands[1]!.request).toMatchObject({
+      mutation: { optimistic_version: 1 },
+      identifier: 'CORE-3',
+      description: 'Covers story CORE-S1-US3.',
+      priority: 2,
+    })
     expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
-    const covering = core.tickets[0]!
-    expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').exists()).toBe(false)
-    expect(
-      wrapper.find(`[data-testid="coverage-claim-CORE-S1-US3-${covering.number}"]`).text(),
-    ).toContain('Covers story CORE-S1-US3.')
-    expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).not.toContain('CORE-S1-US3')
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
+  })
+
+  it('keeps the description, priority, due date, labels and milestone chosen for the cover', async () => {
+    const core = coveringCore()
+    const { wrapper, pinia } = await mountCovering(core)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('  Registration reports its gaps  ')
+    await wrapper.find('[data-testid="ticket-description"]').setValue('  Gaps\nare reported  ')
+    await wrapper.find('[data-testid="ticket-priority"]').setValue('0')
+    await wrapper.find('[data-testid="ticket-due"]').setValue('2026-12-01')
+    await wrapper.find('[data-testid="ticket-milestone"]').setValue('7')
+    await wrapper.find('[data-testid="ticket-label-Urgent work"]').setValue(true)
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create', 'issue.save'])
+    expect(core.commands[0]!.request).toMatchObject({
+      kind: 'implementation',
+      spec_id: 1,
+      slice: '  Registration reports its gaps  ',
+      criteria: [{ outcome: '  Gaps\nare reported  ', stories: ['CORE-S1-US3'] }],
+    })
+    expect(core.issueFields['CORE-3']).toEqual({
+      mutation: { optimistic_version: 1, idempotency_key: expect.any(String) },
+      identifier: 'CORE-3',
+      description: '  Gaps\nare reported  ',
+      priority: 0,
+      due_date: '2026-12-01',
+      add_labels: ['Urgent work'],
+      milestone_id: 7,
+    })
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Gaps')
+  })
+
+  it('covers the Story when the description is left empty', async () => {
+    const core = coveringCore()
+    const { wrapper, pinia } = await mountCovering(core)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Registration reports its gaps')
+    await wrapper.find('[data-testid="ticket-description"]').setValue('')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-error"]').exists()).toBe(false)
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create', 'issue.save'])
+    expect(core.commands[0]!.request).toMatchObject({
+      criteria: [{ outcome: 'Covers story CORE-S1-US3.', stories: ['CORE-S1-US3'] }],
+    })
+    expect(core.issueFields['CORE-3']).toMatchObject({ description: '', priority: 3 })
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
+  })
+
+  it('saves only the issue fields again when they failed after the Implementation was created', async () => {
+    const core = coveringCore({ refusedFieldSaves: 1 })
+    const { wrapper, pinia } = await mountCovering(core)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Registration reports its gaps')
+    await wrapper.find('[data-testid="ticket-due"]').setValue('2026-12-01')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create', 'issue.save'])
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(true)
+    const error = wrapper.find('[data-testid="ticket-error"]').text()
+    expect(error).toContain('CORE-3')
+    expect(error).toContain('the core is busy')
+
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual([
+      'ticket.create',
+      'issue.save',
+      'issue.save',
+    ])
+    expect(core.tickets).toHaveLength(1)
+    expect(core.issueFields['CORE-3']).toMatchObject({ due_date: '2026-12-01' })
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
   })
 })

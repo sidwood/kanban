@@ -95,12 +95,13 @@ pub trait CommentStore: Send + Sync {
     ) -> Result<(CommentRecord, Vec<kanban_dto::CommentRevisionRecord>), ApiError>;
 
     /// List comments on one target, oldest first, with cursor paging.
-    /// `aliases` are stored address forms that resolve to `target`
-    /// and must keep listing against it.
+    /// `joins_stream` decides whether a stored row's address names
+    /// the same entity as `target`, so rows written under a legacy
+    /// address spelling keep listing beside canonical rows.
     fn list_for_target(
         &self,
         target: &CommentTarget,
-        aliases: &[String],
+        joins_stream: &dyn Fn(&str) -> Result<bool, ApiError>,
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError>;
@@ -181,16 +182,16 @@ impl CommandHandler for CreateComment {
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_stored_text(&request.text)?;
         let author = require_author(&request.author)?;
-        let resolved = resolve_target(self.targets.as_ref(), &request.target)?;
+        let target = resolve_target(self.targets.as_ref(), &request.target)?;
         let parent_comment_id = validate_parent(
             self.store.as_ref(),
             self.targets.as_ref(),
             request.parent_comment_id,
-            &resolved.target,
+            &target,
         )?;
         let comment = self.store.create(
             project.id().value(),
-            &resolved.target,
+            &target,
             &text,
             author,
             parent_comment_id,
@@ -257,7 +258,7 @@ struct ListCommentsQuery {
 impl QueryHandler for ListCommentsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query: CommentListQuery = parse_payload(payload)?;
-        let resolved = resolve_target(self.targets.as_ref(), &query.target)?;
+        let target = resolve_target(self.targets.as_ref(), &query.target)?;
         let limit = if query.limit == 0 {
             50
         } else {
@@ -269,9 +270,21 @@ impl QueryHandler for ListCommentsQuery {
             .map(str::parse::<u64>)
             .transpose()
             .map_err(|_| ApiError::invalid_request("cursor must be a comment id"))?;
+        // Ticket streams admit every stored spelling the issue
+        // lookups resolve to the same issue; every other kind keeps
+        // the exact id it always had.
+        let canonical = target.id().to_owned();
+        let addresses_issue = target.kind() == TimelineEntityKind::Ticket.as_str();
+        let joins_stream = move |stored: &str| {
+            if addresses_issue {
+                joins_issue_stream(self.targets.as_ref(), stored, &canonical)
+            } else {
+                Ok(stored == canonical)
+            }
+        };
         let (comments, next_cursor) =
             self.store
-                .list_for_target(&resolved.target, &resolved.aliases, limit, cursor)?;
+                .list_for_target(&target, &joins_stream, limit, cursor)?;
         let response = CommentListResponse {
             comments,
             next_cursor,
@@ -342,13 +355,6 @@ fn parse_target(target: &TimelineEntityRef) -> Result<CommentTarget, ApiError> {
         .map_err(|error| ApiError::invalid_request(&error.to_string()))
 }
 
-/// A Comment target after resolution: the canonical stored form plus
-/// the legacy address forms that must keep listing against it.
-struct ResolvedTarget {
-    target: CommentTarget,
-    aliases: Vec<String>,
-}
-
 /// Resolve the target a command addressed. Ticket targets resolve
 /// the way issue tools resolve their references, so an issue key and
 /// the issue's numeric id address one comment stream and every new
@@ -356,32 +362,37 @@ struct ResolvedTarget {
 fn resolve_target(
     targets: &dyn CommentIssueTargets,
     raw: &TimelineEntityRef,
-) -> Result<ResolvedTarget, ApiError> {
+) -> Result<CommentTarget, ApiError> {
     let target = parse_target(raw)?;
     if target.kind() != TimelineEntityKind::Ticket.as_str() {
-        return Ok(ResolvedTarget {
-            target,
-            aliases: Vec::new(),
-        });
+        return Ok(target);
     }
-    let (key, ticket_id) = targets
+    let (_, ticket_id) = targets
         .resolve_issue_reference(target.id())?
         .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
     let canonical = ticket_id.to_string();
-    // Comments written before targets resolved stored whichever form
-    // the caller passed, in any letter case; the issue key in its
-    // lowercase spelling stands for every one of those rows.
-    let lowercase_key = key.display().to_lowercase();
-    let aliases = if lowercase_key == canonical {
-        Vec::new()
-    } else {
-        vec![lowercase_key]
-    };
-    Ok(ResolvedTarget {
-        target: CommentTarget::new(target.kind(), &canonical)
-            .expect("the canonical target id revalidates"),
-        aliases,
-    })
+    CommentTarget::new(target.kind(), &canonical)
+        .map_err(|error| ApiError::invalid_request(&error.to_string()))
+}
+
+/// Whether a stored ticket address names the same issue as the
+/// canonical id. Rows written before targets resolved carry
+/// whichever spelling their caller passed, so membership follows the
+/// issue lookups themselves: every reference form they accept — the
+/// numeric id however padded or signed, the issue key in any letter
+/// case or padding — is one stream, while an address that resolves
+/// elsewhere, or to nothing at all, names another stream.
+fn joins_issue_stream(
+    targets: &dyn CommentIssueTargets,
+    stored: &str,
+    canonical: &str,
+) -> Result<bool, ApiError> {
+    if stored.eq_ignore_ascii_case(canonical) {
+        return Ok(true);
+    }
+    Ok(targets
+        .resolve_issue_reference(stored)?
+        .is_some_and(|(_, ticket_id)| ticket_id.to_string() == canonical))
 }
 
 /// Replies join the stream they answer and nest one level, the way
@@ -562,59 +573,55 @@ mod comments {
         fn list_for_target(
             &self,
             target: &CommentTarget,
-            aliases: &[String],
+            joins_stream: &dyn Fn(&str) -> Result<bool, kanban_dto::ApiError>,
             limit: u32,
             cursor: Option<u64>,
         ) -> Result<(Vec<CommentListItem>, Option<String>), kanban_dto::ApiError> {
             let state = self.state.lock().expect("the memory store lock is sound");
             let after = cursor.unwrap_or(0);
-            let mut items: Vec<CommentListItem> = state
-                .comments
-                .iter()
-                .filter(|comment| {
-                    comment.target().kind() == target.kind()
-                        && comment.id().value() > after
-                        && (comment.target().id() == target.id()
-                            || (target.kind() == TimelineEntityKind::Ticket.as_str()
-                                && aliases.iter().any(|alias| {
-                                    alias.eq_ignore_ascii_case(comment.target().id())
-                                })))
-                })
-                .map(|comment| {
-                    let id = comment.id().value();
-                    CommentListItem {
-                        id,
-                        author: String::new(),
-                        body: comment.current_text().as_str().to_owned(),
-                        created_at: state
+            let mut items: Vec<CommentListItem> = Vec::new();
+            for comment in &state.comments {
+                if items.len() > limit as usize {
+                    break;
+                }
+                if comment.target().kind() != target.kind()
+                    || comment.id().value() <= after
+                    || !joins_stream(comment.target().id())?
+                {
+                    continue;
+                }
+                let id = comment.id().value();
+                items.push(CommentListItem {
+                    id,
+                    author: String::new(),
+                    body: comment.current_text().as_str().to_owned(),
+                    created_at: state
+                        .revision_stamps
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned()),
+                    edited_at: (comment.version() > 1).then(|| {
+                        state
                             .revision_stamps
-                            .first()
+                            .last()
                             .cloned()
-                            .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned()),
-                        edited_at: (comment.version() > 1).then(|| {
+                            .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned())
+                    }),
+                    parent_comment_id: state
+                        .parents
+                        .get(
                             state
-                                .revision_stamps
-                                .last()
-                                .cloned()
-                                .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned())
-                        }),
-                        parent_comment_id: state
-                            .parents
-                            .get(
-                                state
-                                    .comments
-                                    .iter()
-                                    .position(|row| row.id() == comment.id())
-                                    .expect("the row is indexed"),
-                            )
-                            .copied()
-                            .flatten(),
-                        resolved_at: None,
-                        version: comment.version(),
-                    }
-                })
-                .collect();
-            items.sort_by_key(|item| item.id);
+                                .comments
+                                .iter()
+                                .position(|row| row.id() == comment.id())
+                                .expect("the row is indexed"),
+                        )
+                        .copied()
+                        .flatten(),
+                    resolved_at: None,
+                    version: comment.version(),
+                });
+            }
             let next_cursor = if items.len() > limit as usize {
                 Some(items[(limit as usize).saturating_sub(1)].id.to_string())
             } else {
@@ -842,6 +849,139 @@ mod comments {
                 "listing by {raw} reads the same stream"
             );
         }
+    }
+
+    #[test]
+    fn historical_reference_spellings_list_with_the_resolved_stream() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        for (id, body) in [
+            ("11", "Canonical"),
+            ("011", "Zero padded"),
+            ("+11", "Signed"),
+            ("tus-11", "Lowercase key"),
+            ("TUS-011", "Padded key"),
+        ] {
+            store
+                .create(
+                    1,
+                    &CommentTarget::new("ticket", id).expect("the stored target validates"),
+                    &CommentText::new_stored(body).expect("the body validates"),
+                    "legacy",
+                    None,
+                )
+                .expect("the pre-change row lands");
+        }
+
+        for raw in ["11", "TUS-11", "011", "+11", "TUS-011"] {
+            let listed = core
+                .query(
+                    "comment.list",
+                    &json!({ "target": { "kind": "ticket", "id": raw }, "limit": 10 }),
+                )
+                .expect("the list serves");
+            let bodies: Vec<_> = listed["comments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|comment| comment["body"].clone())
+                .collect();
+            assert_eq!(
+                bodies,
+                vec![
+                    json!("Canonical"),
+                    json!("Zero padded"),
+                    json!("Signed"),
+                    json!("Lowercase key"),
+                    json!("Padded key"),
+                ],
+                "listing by {raw} reads every stored spelling of one issue"
+            );
+        }
+    }
+
+    #[test]
+    fn historical_reference_spellings_do_not_mix_issue_streams() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        for (id, body) in [
+            ("11", "On eleven"),
+            ("012", "Twelve, zero padded"),
+            ("tus-12", "Twelve, keyed"),
+            ("garbage", "Resolves to nothing"),
+        ] {
+            store
+                .create(
+                    1,
+                    &CommentTarget::new("ticket", id).expect("the stored target validates"),
+                    &CommentText::new_stored(body).expect("the body validates"),
+                    "legacy",
+                    None,
+                )
+                .expect("the pre-change row lands");
+        }
+
+        let eleven = core
+            .query(
+                "comment.list",
+                &json!({ "target": { "kind": "ticket", "id": "11" }, "limit": 10 }),
+            )
+            .expect("the list serves");
+        assert_eq!(
+            eleven["comments"].as_array().unwrap().len(),
+            1,
+            "another issue's rows never join this stream"
+        );
+
+        let twelve = core
+            .query(
+                "comment.list",
+                &json!({ "target": { "kind": "ticket", "id": "12" }, "limit": 10 }),
+            )
+            .expect("the list serves");
+        let bodies: Vec<_> = twelve["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|comment| comment["body"].clone())
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![json!("Twelve, zero padded"), json!("Twelve, keyed")],
+            "issue twelve's own spellings list together"
+        );
+    }
+
+    #[test]
+    fn a_legacy_spelled_root_still_accepts_replies() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        let root = store
+            .create(
+                1,
+                &CommentTarget::new("ticket", "011").expect("the stored target validates"),
+                &CommentText::new_stored("Legacy root").expect("the body validates"),
+                "legacy",
+                None,
+            )
+            .expect("the pre-change row lands");
+
+        let reply = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "target": target(),
+                    "text": "Reply from the canonical form",
+                    "author": "lin",
+                    "parent_comment_id": root.id().value(),
+                }),
+            )
+            .expect("a reply joins the legacy root's resolved stream");
+
+        assert_eq!(
+            reply["target"]["id"],
+            json!("11"),
+            "the reply stores the canonical issue id"
+        );
     }
 
     #[test]

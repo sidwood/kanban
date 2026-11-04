@@ -228,30 +228,20 @@ impl CommentStore for SqliteCommentStore {
     fn list_for_target(
         &self,
         target: &CommentTarget,
-        aliases: &[String],
+        joins_stream: &dyn Fn(&str) -> Result<bool, ApiError>,
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         let conn = self.lock();
         let after = cursor.unwrap_or(0) as i64;
-        let fetch = limit.saturating_add(1) as i64;
-        // Ticket targets resolve through the issue store, so legacy
-        // rows may carry the issue key in any letter case; every
-        // stored form of one issue lists together. Other entity
-        // kinds address rows by their exact id, as they always have.
-        let (sql, binds) = if target.kind() == TimelineEntityKind::Ticket.as_str() {
-            let mut ids = vec![target.id().to_lowercase()];
-            for alias in aliases {
-                let lowered = alias.to_lowercase();
-                if !ids.contains(&lowered) {
-                    ids.push(lowered);
-                }
-            }
-            let placeholders = std::iter::repeat_n("?", ids.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!(
-                "SELECT c.id, c.version, c.created_at,
+        // Stream membership follows the matcher the caller resolved,
+        // because rows written before targets resolved carry any
+        // spelling their caller passed: rows stream past the cursor
+        // in id order and matching rows fill the page, while rows
+        // the matcher refuses never list.
+        let mut statement = conn
+            .prepare(
+                "SELECT c.id, c.entity_id, c.version, c.created_at,
                         (SELECT text FROM comment_revisions
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                         (SELECT recorded_at FROM comment_revisions
@@ -260,60 +250,29 @@ impl CommentStore for SqliteCommentStore {
                         c.parent_comment_id,
                         c.resolved_at
                  FROM comments AS c
-                 WHERE c.entity_kind = ? AND c.id > ?
-                   AND LOWER(c.entity_id) IN ({placeholders})
-                 ORDER BY c.id ASC
-                 LIMIT ?",
-            );
-            let mut binds: Vec<rusqlite::types::Value> = Vec::with_capacity(ids.len() + 3);
-            binds.push(rusqlite::types::Value::Text(target.kind().to_owned()));
-            binds.push(rusqlite::types::Value::Integer(after));
-            for id in &ids {
-                binds.push(rusqlite::types::Value::Text(id.clone()));
-            }
-            binds.push(rusqlite::types::Value::Integer(fetch));
-            (sql, binds)
-        } else {
-            let sql = "SELECT c.id, c.version, c.created_at,
-                    (SELECT text FROM comment_revisions
-                     WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                    (SELECT recorded_at FROM comment_revisions
-                     WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                    COALESCE(c.author, ''),
-                    c.parent_comment_id,
-                    c.resolved_at
-             FROM comments AS c
-             WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
-             ORDER BY c.id ASC
-             LIMIT ?4";
-            let binds = vec![
-                rusqlite::types::Value::Text(target.kind().to_owned()),
-                rusqlite::types::Value::Text(target.id().to_owned()),
-                rusqlite::types::Value::Integer(after),
-                rusqlite::types::Value::Integer(fetch),
-            ];
-            (sql.to_owned(), binds)
-        };
-        let mut statement = conn
-            .prepare(sql.as_str())
+                 WHERE c.entity_kind = ?1 AND c.id > ?2
+                 ORDER BY c.id ASC",
+            )
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let rows = statement
-            .query_map(rusqlite::params_from_iter(binds.iter()), |row| {
+            .query_map(rusqlite::params![target.kind(), after], |row| {
                 let id: i64 = row.get(0)?;
-                let version: i64 = row.get(1)?;
-                let created_at: String = row.get(2)?;
-                let body: String = row.get(3)?;
-                let latest_at: String = row.get(4)?;
-                let author: Option<String> = row.get(5)?;
-                let parent_comment_id: Option<i64> = row.get(6)?;
-                let resolved_at: Option<String> = row.get(7)?;
+                let entity_id: String = row.get(1)?;
+                let version: i64 = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let body: String = row.get(4)?;
+                let latest_at: String = row.get(5)?;
+                let author: Option<String> = row.get(6)?;
+                let parent_comment_id: Option<i64> = row.get(7)?;
+                let resolved_at: Option<String> = row.get(8)?;
                 Ok((
                     id,
+                    entity_id,
                     version,
                     created_at,
                     body,
                     latest_at,
-                    author.unwrap_or_default(),
+                    author,
                     parent_comment_id,
                     resolved_at,
                 ))
@@ -321,12 +280,24 @@ impl CommentStore for SqliteCommentStore {
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let mut items = Vec::new();
         for row in rows {
-            let (id, version, created_at, body, latest_at, author, parent_comment_id, resolved_at) =
-                row.map_err(|error| ApiError::internal(&error.to_string()))?;
+            let (
+                id,
+                entity_id,
+                version,
+                created_at,
+                body,
+                latest_at,
+                author,
+                parent_comment_id,
+                resolved_at,
+            ) = row.map_err(|error| ApiError::internal(&error.to_string()))?;
+            if !joins_stream(&entity_id)? {
+                continue;
+            }
             let edited_at = (version > 1).then_some(latest_at);
             items.push(CommentListItem {
                 id: id.unsigned_abs(),
-                author,
+                author: author.unwrap_or_default(),
                 body,
                 created_at,
                 edited_at,
@@ -334,6 +305,9 @@ impl CommentStore for SqliteCommentStore {
                 resolved_at,
                 version: version as u64,
             });
+            if items.len() > limit as usize {
+                break;
+            }
         }
         let next_cursor = if items.len() > limit as usize {
             Some(items[(limit as usize).saturating_sub(1)].id.to_string())
@@ -689,14 +663,15 @@ mod revision_store {
             )
             .expect("the alpha comment lands");
 
+        let exact = |wanted: &'static str| move |stored: &str| Ok(stored == wanted);
         let (upper, _) = store
-            .list_for_target(&project_target("Alpha"), &[], 10, None)
+            .list_for_target(&project_target("Alpha"), &exact("Alpha"), 10, None)
             .expect("the Alpha list serves");
         assert_eq!(upper.len(), 1, "only the exact-id row lists");
         assert_eq!(upper[0].body, "on Alpha");
 
         let (lower, _) = store
-            .list_for_target(&project_target("alpha"), &[], 10, None)
+            .list_for_target(&project_target("alpha"), &exact("alpha"), 10, None)
             .expect("the alpha list serves");
         assert_eq!(lower.len(), 1, "only the exact-id row lists");
         assert_eq!(lower[0].body, "on alpha");
@@ -718,6 +693,54 @@ mod revision_store {
         assert_eq!(revisions[0].text, "Report\n");
     }
 
+    /// The matcher an application core binds for one issue's stream:
+    /// every reference spelling the issue lookups accept resolves to
+    /// the same numeric identity.
+    fn joins_issue_one(stored: &str) -> Result<bool, kanban_dto::ApiError> {
+        let issue_one = match stored.parse::<u64>() {
+            Ok(number) => number == 1,
+            Err(_) => {
+                stored.eq_ignore_ascii_case("core-1") || stored.eq_ignore_ascii_case("core-01")
+            }
+        };
+        Ok(issue_one)
+    }
+
+    #[test]
+    fn list_for_target_honours_the_stream_matcher_and_cursor() {
+        let (_dir, _database, store) = store();
+        for stored in ["1", "01", "+1", "Core-01", "2"] {
+            store
+                .create(
+                    1,
+                    &CommentTarget::new("ticket", stored).expect("the stored target validates"),
+                    &text(format!("row {stored}").as_str()),
+                    "tester",
+                    None,
+                )
+                .expect("the row lands");
+        }
+
+        let mut listed = Vec::new();
+        let mut cursor = None;
+        loop {
+            let (page, next) = store
+                .list_for_target(&target(), &joins_issue_one, 2, cursor)
+                .expect("the page serves");
+            listed.extend(page.iter().map(|row| row.body.clone()));
+            cursor = next.and_then(|value| value.parse::<u64>().ok());
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            listed,
+            vec!["row 1", "row 01", "row +1", "row Core-01"],
+            "only the rows the matcher admits list, oldest first, without duplicates"
+        );
+    }
+
     #[test]
     fn resolving_and_unresolving_each_bump_the_version() {
         let (_dir, _database, store) = store();
@@ -725,11 +748,12 @@ mod revision_store {
             .create(1, &target(), &text("first thought"), "tester", None)
             .expect("the create lands");
 
+        let any_row = |_: &str| Ok(true);
         store
             .set_resolved(CommentId::new(1), true)
             .expect("the resolve lands");
         let (items, _) = store
-            .list_for_target(&target(), &[], 10, None)
+            .list_for_target(&target(), &any_row, 10, None)
             .expect("the list serves");
         assert_eq!(items[0].version, 2);
         assert!(items[0].resolved_at.is_some());
@@ -738,7 +762,7 @@ mod revision_store {
             .set_resolved(CommentId::new(1), false)
             .expect("the unresolve lands");
         let (items, _) = store
-            .list_for_target(&target(), &[], 10, None)
+            .list_for_target(&target(), &any_row, 10, None)
             .expect("the list serves");
         assert_eq!(items[0].version, 3);
         assert!(items[0].resolved_at.is_none());

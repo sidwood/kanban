@@ -505,6 +505,65 @@ async fn operator_route_serves_one_comment_stream_per_issue() {
         "resolving bumps the comment version"
     );
 
+    // Comments stored before targets resolved carry whichever
+    // reference spelling their caller passed; they keep listing
+    // through the operator route beside canonical rows.
+    let conn = rusqlite::Connection::open(&h.database_path).unwrap();
+    let code = key
+        .rsplit_once('-')
+        .expect("the key carries a code")
+        .0
+        .to_owned();
+    for (n, stored) in [
+        format!("0{ticket_id}"),
+        format!("+{ticket_id}"),
+        format!("{code}-0{ticket_id}"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        conn.execute(
+            "INSERT INTO comments (project_id, entity_kind, entity_id, version, author)
+             VALUES (1, 'ticket', ?1, 1, 'legacy')",
+            [stored],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text)
+             VALUES (?1, 1, ?2)",
+            rusqlite::params![id, format!("legacy-{n}")],
+        )
+        .unwrap();
+    }
+    drop(conn);
+    let listed = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target":{"kind":"ticket","id":key}, "limit":10}),
+        ))
+        .await
+        .unwrap();
+    let stream = listed.structured_content.unwrap();
+    let bodies: Vec<_> = stream["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![
+            json!("Posted by key"),
+            json!("Posted by id"),
+            json!("Reply"),
+            json!("legacy-0"),
+            json!("legacy-1"),
+            json!("legacy-2"),
+        ],
+        "historically stored spellings keep listing over the operator route"
+    );
+
     client.cancel().await.unwrap();
     service.shutdown();
 }

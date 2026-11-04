@@ -742,6 +742,129 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
 }
 
 #[test]
+fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let host = save_issue(
+        &session,
+        0,
+        "legacy-numeric-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "legacy-numeric-other",
+        json!({ "project_id": 1, "title": "Other" }),
+    );
+    let code = host
+        .identifier
+        .rsplit_once('-')
+        .expect("the identifier carries a code")
+        .0
+        .to_owned();
+    let padded_key = format!("{code}-0{}", host.ticket_id);
+    let zero_padded = format!("0{}", host.ticket_id);
+    let signed = format!("+{}", host.ticket_id);
+    let twice_padded = format!("00{}", host.ticket_id);
+
+    let mut next_id = 910u64;
+    let mut seed = |stored: &str, body: &str| {
+        let id = i64::try_from(next_id).expect("the id fits");
+        next_id += 1;
+        h.database
+            .connection()
+            .execute(
+                "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+                 VALUES (?1, '1', 'ticket', ?2, 1, 'legacy')",
+                rusqlite::params![id, stored],
+            )
+            .expect("the legacy row lands");
+        h.database
+            .connection()
+            .execute(
+                "INSERT INTO comment_revisions (comment_id, revision, text)
+                 VALUES (?1, 1, ?2)",
+                rusqlite::params![id, body],
+            )
+            .expect("the legacy revision lands");
+    };
+    seed(&zero_padded, "Legacy, zero padded");
+    seed(&signed, "Legacy, signed");
+    seed(&padded_key, "Legacy, padded key");
+    seed(&twice_padded, "Legacy, twice padded");
+    seed(&other.identifier, "Legacy, other issue");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let bodies: Vec<_> = by_id["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![
+            json!("Legacy, zero padded"),
+            json!("Legacy, signed"),
+            json!("Legacy, padded key"),
+            json!("Legacy, twice padded"),
+        ],
+        "every reference spelling the issue lookups accept lists together"
+    );
+
+    for raw in [
+        host.identifier.clone(),
+        zero_padded.clone(),
+        signed.clone(),
+        padded_key.clone(),
+        host.identifier.to_lowercase(),
+    ] {
+        let listed = session
+            .call(
+                "comment.list",
+                &json!({ "target": { "kind": "ticket", "id": raw }, "limit": 10 }),
+            )
+            .expect("the list serves");
+        assert_eq!(
+            listed["comments"], by_id["comments"],
+            "listing by {raw} reads the same stream"
+        );
+    }
+
+    let other_list = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let other_bodies: Vec<_> = other_list["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        other_bodies,
+        vec![json!("Legacy, other issue")],
+        "another issue keeps its own rows"
+    );
+}
+
+#[test]
 fn reply_parent_must_belong_to_the_same_issue() {
     let session = session();
     let host = save_issue(

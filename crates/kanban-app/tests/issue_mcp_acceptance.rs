@@ -215,6 +215,49 @@ fn acceptance_retired_label_is_rejected() {
 }
 
 #[test]
+fn retiring_a_label_returns_its_whole_record() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
+    let session = OperatorSession::new(core);
+
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "retire-label-create"),
+                "project_id": 1,
+                "name": "ops-runway",
+                "color": "#F59E0B",
+                "group": "Stage",
+                "group_single_select": false,
+            }),
+        )
+        .expect("label is created");
+
+    let retired: kanban_dto::IssueLabelRecord = serde_json::from_value(
+        session
+            .call(
+                "issue.retire_label",
+                &json!({
+                    "mutation": mutation(0, "retire-label-retire"),
+                    "project_id": 1,
+                    "name": "ops-runway",
+                }),
+            )
+            .expect("retiring succeeds"),
+    )
+    .expect("the retire response is the whole label record");
+    assert_eq!(retired.name, "ops-runway");
+    assert_eq!(retired.color, "#F59E0B");
+    assert_eq!(retired.group.as_deref(), Some("Stage"));
+    assert!(!retired.group_single_select);
+    assert!(retired.retired);
+}
+
+#[test]
 fn acceptance_add_labels_persist_on_create_and_update() {
     let mut h = harness();
     let attachments = h._dir.path().join("attachments");

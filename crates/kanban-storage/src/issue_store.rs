@@ -1068,7 +1068,11 @@ impl SqliteIssueStore {
         Ok(())
     }
 
-    pub fn retire_label(&self, project_id: i64, name: &str) -> Result<(), ApiError> {
+    pub fn retire_label(
+        &self,
+        project_id: i64,
+        name: &str,
+    ) -> Result<kanban_app::IssueLabelRow, ApiError> {
         let conn = self.lock();
         let changed = conn
             .execute(
@@ -1081,7 +1085,27 @@ impl SqliteIssueStore {
         if changed == 0 {
             return Err(ApiError::not_found(&format!("label `{name}`")));
         }
-        Ok(())
+        let row: Option<kanban_app::IssueLabelRow> = conn
+            .query_row(
+                "SELECT l.name, l.color, g.name, COALESCE(g.single_select, 0),
+                        l.retired_at IS NOT NULL
+                 FROM issue_labels AS l
+                 LEFT JOIN issue_label_groups AS g ON g.id = l.group_id
+                 WHERE l.project_id = ?1 AND l.name = ?2",
+                params![project_id, name],
+                |row| {
+                    Ok(kanban_app::IssueLabelRow {
+                        name: row.get(0)?,
+                        color: row.get(1)?,
+                        group: row.get(2)?,
+                        group_single_select: row.get::<_, i64>(3)? != 0,
+                        retired: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(internal)?;
+        row.ok_or_else(|| ApiError::internal("the retired label row is missing"))
     }
 
     pub fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError> {
@@ -1543,7 +1567,11 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         SqliteIssueStore::append_sub_issue_sort(self, ticket_id, parent_id)
     }
 
-    fn retire_label(&self, project_id: i64, name: &str) -> Result<(), ApiError> {
+    fn retire_label(
+        &self,
+        project_id: i64,
+        name: &str,
+    ) -> Result<kanban_app::IssueLabelRow, ApiError> {
         SqliteIssueStore::retire_label(self, project_id, name)
     }
 

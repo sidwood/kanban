@@ -134,6 +134,6 @@ pub trait IssueStore: Send + Sync {
         group: Option<&str>,
         group_single_select: bool,
     ) -> Result<IssueLabelRow, ApiError>;
-    fn retire_label(&self, project_id: i64, name: &str) -> Result<(), ApiError>;
+    fn retire_label(&self, project_id: i64, name: &str) -> Result<IssueLabelRow, ApiError>;
     fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError>;
 }

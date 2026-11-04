@@ -404,10 +404,18 @@ impl CommandHandler for RetireLabel {
     ) -> Result<Value, ApiError> {
         let request: IssueRetireLabelRequest = parse_payload(&command.payload)?;
         resolve_project(self.0.projects.as_ref(), request.project_id)?;
-        self.0
+        let row = self
+            .0
             .issues
             .retire_label(request.project_id as i64, &request.name)?;
-        Ok(json!({ "name": request.name, "retired": true }))
+        serde_json::to_value(IssueLabelRecord {
+            name: row.name,
+            color: row.color,
+            group: row.group,
+            group_single_select: row.group_single_select,
+            retired: row.retired,
+        })
+        .map_err(|_| ApiError::internal("label response invalid"))
     }
 }
 

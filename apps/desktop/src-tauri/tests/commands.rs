@@ -15,14 +15,16 @@ use kanban_dto::{
     BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
     CloneRemoveRequest, CommentCreateRequest, CommentEditRequest, CommentListQuery,
-    CommentRevisionsQuery, DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest,
-    DiagnosticsExportQuery, DispatchClaimRequest, DispatchQueueQuery, DispatchRequestCreateRequest,
-    EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery, ExportRenderRequest, HealthQuery,
-    HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery,
-    HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
-    InitiativeListQuery, InitiativeRenameRequest, IssueGetQuery, IssueLabelsQuery, IssueListQuery,
-    IssueMilestonesQuery, IssueSaveRequest, IssueWorkflowStatesQuery, LaneCreateRequest,
-    LaneListQuery, LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
+    CommentResolveRequest, CommentRevisionsQuery, DeferralListQuery, DeferralRecordRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, DispatchClaimRequest, DispatchQueueQuery,
+    DispatchRequestCreateRequest, EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery,
+    ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
+    HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, IssueCreateLabelRequest,
+    IssueCreateMilestoneRequest, IssueGetQuery, IssueLabelsQuery, IssueListQuery,
+    IssueMilestonesQuery, IssueProjectsQuery, IssueRetireLabelRequest, IssueSaveRequest,
+    IssueUpdateProjectSettingsRequest, IssueWorkflowStatesQuery, LaneCreateRequest, LaneListQuery,
+    LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
     LaneWorkspaceReleaseRequest, MutationContext, PlanActivateRequest, PlanArchiveRequest,
     PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery,
     PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
@@ -829,6 +831,7 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "TimelineQuery" => decode_invoke_args::<TimelineQuery>(request).is_err(),
         "CommentCreateRequest" => decode_invoke_args::<CommentCreateRequest>(request).is_err(),
         "CommentEditRequest" => decode_invoke_args::<CommentEditRequest>(request).is_err(),
+        "CommentResolveRequest" => decode_invoke_args::<CommentResolveRequest>(request).is_err(),
         "CommentRevisionsQuery" => decode_invoke_args::<CommentRevisionsQuery>(request).is_err(),
         "CommentListQuery" => decode_invoke_args::<CommentListQuery>(request).is_err(),
         "RulingRecordRequest" => decode_invoke_args::<RulingRecordRequest>(request).is_err(),
@@ -1114,6 +1117,19 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         }
         "IssueLabelsQuery" => decode_invoke_args::<IssueLabelsQuery>(request).is_err(),
         "IssueMilestonesQuery" => decode_invoke_args::<IssueMilestonesQuery>(request).is_err(),
+        "IssueProjectsQuery" => decode_invoke_args::<IssueProjectsQuery>(request).is_err(),
+        "IssueCreateLabelRequest" => {
+            decode_invoke_args::<IssueCreateLabelRequest>(request).is_err()
+        }
+        "IssueCreateMilestoneRequest" => {
+            decode_invoke_args::<IssueCreateMilestoneRequest>(request).is_err()
+        }
+        "IssueRetireLabelRequest" => {
+            decode_invoke_args::<IssueRetireLabelRequest>(request).is_err()
+        }
+        "IssueUpdateProjectSettingsRequest" => {
+            decode_invoke_args::<IssueUpdateProjectSettingsRequest>(request).is_err()
+        }
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),
     };

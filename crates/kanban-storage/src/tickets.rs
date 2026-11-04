@@ -373,6 +373,37 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
     sync_issue_state_after_legacy_move(span, ticket)
 }
 
+/// Move the waiting Ticket's aggregate version forward by one under
+/// its optimistic guard and stamp the row's update time, inside the
+/// caller's write span — the shared ticket-write boundary a legacy
+/// write that changes no stored column (an edge or a blocker) moves
+/// through, so the issue model's update stamp moves with the version
+/// the legacy aggregate already moved. The application layer checked
+/// the version before applying, so a refusal here means a concurrent
+/// writer moved it first, and nothing this span wrote may land.
+pub(crate) fn bump_version_and_stamp_update(
+    span: &WriteSpan<'_>,
+    waiting: &Ticket,
+) -> Result<(), ApiError> {
+    let expected = waiting.version();
+    let changed = span
+        .execute(
+            "UPDATE tickets
+             SET version = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND version = ?3",
+            params![
+                waiting.id().value() as i64,
+                expected as i64 + 1,
+                expected as i64,
+            ],
+        )
+        .map_err(internal)?;
+    if changed != 1 {
+        return Err(ticket_write_refused(span, waiting.id(), expected));
+    }
+    Ok(())
+}
+
 /// Seed the Linear issue projection a new Ticket row carries: the
 /// initial workflow state with its open history row at the creation
 /// stamp, the lifecycle stamps that state's entry rules call for,

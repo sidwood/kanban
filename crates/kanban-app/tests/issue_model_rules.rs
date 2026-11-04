@@ -192,12 +192,14 @@ fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std
     .expect("tickets register");
     core.register_lifecycle(
         tickets.clone(),
-        dependencies,
+        dependencies.clone(),
         projects.clone(),
         schedules,
         None,
     )
     .expect("lifecycle registers");
+    core.register_dependencies(dependencies.clone(), tickets.clone(), projects.clone())
+        .expect("dependency writes register");
     core.register_reassignment(tickets.clone(), projects.clone(), specs.clone())
         .expect("reassignment registers");
     core.register_profiles(
@@ -1956,6 +1958,109 @@ fn every_legacy_write_stamps_the_issue_update_time() {
         assert!(
             after.updated_at >= clock,
             "the legacy bug facts stamp updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    // Dependency and blocker writes move the waiting ticket's
+    // version, so its update stamp moves with them: the relation a
+    // legacy write changes is a change the issue model must see.
+    {
+        let (identifier, ticket_id, version) =
+            seeded_task(&h, "sweep-dependency", "Dependency sweep task");
+        let _ = version;
+        let blocker = create_legacy_task(&h.core, "sweep-dependency-blocker", "Blocking task");
+        let blocker_id = blocker["id"].as_u64().expect("a ticket id");
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.dependency.add",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-dependency-add"),
+                    "from_ticket": blocker_id,
+                    "to_ticket": ticket_id,
+                }),
+            )
+            .expect("the legacy dependency add lands");
+        let after_add = read_issue(&h.session, &identifier);
+        assert_eq!(
+            after_add.version,
+            before.version + 1,
+            "the dependency add moves the waiting version once"
+        );
+        assert!(
+            after_add.updated_at >= clock,
+            "the legacy dependency add stamps updated_at, stayed at {}",
+            after_add.updated_at
+        );
+        assert_eq!(
+            after_add.state_history, before.state_history,
+            "a dependency add changes no workflow state"
+        );
+
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.dependency.remove",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-dependency-remove"),
+                    "from_ticket": blocker_id,
+                    "to_ticket": ticket_id,
+                }),
+            )
+            .expect("the legacy dependency remove lands");
+        let after = read_issue(&h.session, &identifier);
+        assert!(
+            after.updated_at >= clock,
+            "the legacy dependency remove stamps updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    {
+        let (identifier, ticket_id, version) =
+            seeded_task(&h, "sweep-blocker", "Blocker sweep task");
+        let _ = version;
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        let added = h
+            .core
+            .command(
+                "ticket.blocker.add",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-blocker-add"),
+                    "ticket_id": ticket_id,
+                    "description": "The sweep waits on an external blocker",
+                }),
+            )
+            .expect("the legacy blocker add lands");
+        let after_add = read_issue(&h.session, &identifier);
+        assert!(
+            after_add.updated_at >= clock,
+            "the legacy blocker add stamps updated_at, stayed at {}",
+            after_add.updated_at
+        );
+        let blocker_id = added["blockers"][0]["id"]
+            .as_u64()
+            .expect("the recorded blocker carries its id");
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.blocker.remove",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-blocker-remove"),
+                    "ticket_id": ticket_id,
+                    "blocker_id": blocker_id,
+                }),
+            )
+            .expect("the legacy blocker remove lands");
+        let after = read_issue(&h.session, &identifier);
+        assert!(
+            after.updated_at >= clock,
+            "the legacy blocker remove stamps updated_at, stayed at {}",
             after.updated_at
         );
     }

@@ -199,39 +199,11 @@ fn moved(waiting: &Ticket) -> Ticket {
 }
 
 /// Move the waiting Ticket's aggregate version forward by one under
-/// its optimistic guard. The application layer checked the version
-/// before applying, so a refusal here means a concurrent writer
-/// moved it first, and nothing this span wrote may land.
+/// its optimistic guard, stamping the row's update time with it: the
+/// shared ticket-write boundary in [`crate::tickets`] owns the move,
+/// so the issue model's update stamp travels with the version.
 fn bump_waiting_version(span: &WriteSpan<'_>, waiting: &Ticket) -> Result<(), ApiError> {
-    let expected = waiting.version();
-    let changed = span
-        .execute(
-            "UPDATE tickets SET version = ?2 WHERE id = ?1 AND version = ?3",
-            params![
-                waiting.id().value() as i64,
-                expected as i64 + 1,
-                expected as i64,
-            ],
-        )
-        .map_err(internal)?;
-    if changed != 1 {
-        return Err(ticket_write_refused(span, waiting.id(), expected));
-    }
-    Ok(())
-}
-
-/// Why a guarded Ticket write was refused, read from the row's
-/// current state.
-fn ticket_write_refused(span: &WriteSpan<'_>, id: TicketId, attempted_from: u64) -> ApiError {
-    match span.query_row(
-        "SELECT version FROM tickets WHERE id = ?1",
-        params![id.value() as i64],
-        |row| row.get::<_, i64>(0),
-    ) {
-        Ok(current) => ApiError::stale_version(attempted_from, current.unsigned_abs()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => ApiError::not_found(&format!("ticket {id}")),
-        Err(error) => internal(error),
-    }
+    crate::tickets::bump_version_and_stamp_update(span, waiting)
 }
 
 /// Report a SQLite failure the caller cannot act on.

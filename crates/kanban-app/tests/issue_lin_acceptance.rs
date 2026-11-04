@@ -4,8 +4,13 @@ use std::sync::Arc;
 
 use kanban_app::{
     CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+    ProjectStore, TimelineEnvelope,
 };
-use kanban_dto::{ErrorCode, IssueRecord, IssueSaveResponse};
+use kanban_dto::{
+    ErrorCode, IssueRecord, IssueSaveResponse, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
+};
+use kanban_domain::ProjectRegistration;
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
     AllowAllMigrations, Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore,
@@ -1411,4 +1416,95 @@ fn resolve_edit_and_unresolve_chain_versions_and_revisions() {
         .expect_err("a stale optimistic version is refused");
     assert_eq!(stale.code, ErrorCode::StaleVersion);
     assert_eq!(stale.current_version, Some(4));
+}
+
+/// A session over a database with a second registered project, so filters
+/// and ownership can be proved across team boundaries.
+fn session_with_second_project() -> (tempfile::TempDir, OperatorSession) {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let edge = ProjectRegistration::new(
+        "EDGE",
+        "Edge tooling",
+        "/repositories/edge",
+        "/workspaces/edge.seed",
+        "main",
+        "edge.seed",
+        Some("edge-main"),
+        None,
+    )
+    .expect("the edge registration validates");
+    projects
+        .create(&edge, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the edge project lands");
+    let dir = h._dir;
+    let core = Arc::new(h.core);
+    (dir, OperatorSession::new(core))
+}
+
+#[test]
+fn comment_create_requires_the_project_to_own_the_issue() {
+    let (_dir, session) = session_with_second_project();
+    let edge_issue = save_issue(
+        &session,
+        0,
+        "ownership-edge-issue",
+        json!({ "project_id": 2, "title": "Edge work" }),
+    );
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ownership-wrong-project"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "text": "Wrong project",
+                "author": "lin",
+            }),
+        )
+        .expect_err("a project that does not own the issue is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("project_id"));
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused write stored nothing"
+    );
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ownership-own-project"),
+                "project_id": 2,
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "text": "Owning project",
+                "author": "lin",
+            }),
+        )
+        .expect("the owning project may comment");
 }

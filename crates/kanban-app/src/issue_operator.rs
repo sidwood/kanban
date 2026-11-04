@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::issue::IssueStore;
+use crate::issue::{IssueStore, IssueWorkflowState};
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
 use crate::spec::SpecStore;
@@ -814,6 +814,15 @@ fn list_issues(
     } else {
         request.limit.clamp(1, 100)
     };
+    if let Some(since) = request.updated_since.as_deref() {
+        time::OffsetDateTime::parse(since, &time::format_description::well_known::Rfc3339)
+            .map_err(|_| {
+                ApiError::invalid_request_field(
+                    "updated_since",
+                    "updated_since must be an RFC 3339 timestamp",
+                )
+            })?;
+    }
     let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
         Some(project_id) => {
             resolve_project(ctx.projects.as_ref(), project_id)?;
@@ -833,13 +842,17 @@ fn list_issues(
             let ticket_id = ticket.id().value();
             if let Some(state) = request.state.as_deref() {
                 let workflow = ctx.issues.workflow_state_for_ticket(ticket_id as i64)?;
-                if workflow.as_ref().is_none_or(|value| value.name != state) {
+                let matches_state = |value: &IssueWorkflowState| {
+                    value.name.eq_ignore_ascii_case(state)
+                        || value.state_type.wire_name().eq_ignore_ascii_case(state)
+                };
+                if workflow.as_ref().is_none_or(|value| !matches_state(value)) {
                     continue;
                 }
             }
             if let Some(label) = request.label.as_deref() {
                 let labels = ctx.issues.list_labels(ticket_id as i64)?;
-                if !labels.iter().any(|held| held == label) {
+                if !labels.iter().any(|held| held.eq_ignore_ascii_case(label)) {
                     continue;
                 }
             }

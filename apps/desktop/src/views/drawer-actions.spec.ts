@@ -172,6 +172,27 @@ describe('the drawer footer actions', () => {
     expect(document.querySelector('[data-testid="issue-description-input"]')).toBeNull()
   })
 
+  it('sends the footer command after a description save at the version that save left', async () => {
+    const state = harness({ tickets: [implementation({ state: 'ready' })] })
+    await openDrawer(state)
+
+    await click('issue-description-edit')
+    await type('issue-description-input', 'The commands are served over the socket.')
+    await click('issue-description-save')
+    await click('drawer-park')
+
+    expect(issued(state, 'issue.save')[0]).toEqual({
+      mutation: { optimistic_version: 5, idempotency_key: expect.any(String) },
+      identifier: 'CORE-13',
+      description: 'The commands are served over the socket.',
+    })
+    expect(issued(state, 'ticket.park')[0]).toEqual({
+      mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+      ticket_id: 8,
+    })
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+  })
+
   it('offers every workflow state except the current one in the move select', async () => {
     const state = harness({ tickets: [implementation({ state: 'ready' })] })
     await openDrawer(state)

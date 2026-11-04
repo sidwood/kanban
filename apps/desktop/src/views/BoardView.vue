@@ -821,8 +821,21 @@ const drawerFacts = computed(() => {
   ]
 })
 
-function onDrawerIssueRefreshed(issue: IssueRecord): void {
+// A save in the issue panel moves the Ticket's version, so the drawer
+// reads the Ticket again: the footer's next command carries the
+// version that save left.
+async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
+  if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
   drawerIssue.value = issue
+  const attempt = drawerRequest
+  try {
+    const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: issue.ticket_id })
+    if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
+    drawerTicket.value = record
+  } catch {
+    // The footer keeps the Ticket it holds; the core refuses a command
+    // at its version and the footer reports that refusal.
+  }
 }
 
 // The empty states: a scope with nothing in it points at planning; a

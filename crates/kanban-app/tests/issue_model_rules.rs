@@ -686,3 +686,39 @@ fn identity_description_patches_change_nothing() {
     );
 }
 
+/// A legacy task reports its initial state through the legacy
+/// fallback; saving that same state changes nothing, even though the
+/// stored workflow id is still unset.
+#[test]
+fn saving_the_reported_state_of_a_legacy_task_changes_nothing() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let created = create_legacy_task(&h.core, "legacy-same-state-create", "Unmoved task");
+    let identifier = format!("CORE-{}", created["number"].as_u64().expect("a number"));
+
+    let before = read_issue(session, &identifier);
+    assert_eq!(before.state, "Draft");
+
+    save_issue(
+        session,
+        before.version,
+        "legacy-same-state-save",
+        json!({ "identifier": identifier, "state": "Draft" }),
+    );
+    let after = read_issue(session, &identifier);
+    assert_eq!(
+        after.version, before.version,
+        "saving the reported state keeps the version"
+    );
+    assert_eq!(
+        after.updated_at, before.updated_at,
+        "saving the reported state keeps updated_at"
+    );
+    assert_eq!(
+        after.state_history.len(),
+        before.state_history.len(),
+        "saving the reported state writes no history"
+    );
+    assert_eq!(after.state, "Draft");
+}
+

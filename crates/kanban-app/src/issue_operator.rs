@@ -714,6 +714,13 @@ fn apply_named_state(
     let to = ctx
         .issues
         .resolve_state_by_name(project_id as i64, state_name)?;
+    if ctx
+        .issues
+        .workflow_state_for_ticket(ticket_id)?
+        .is_some_and(|current| current.name == to.name)
+    {
+        return Ok(());
+    }
     let envelope = transition(
         ProjectId::new(project_id),
         TicketId::new(ticket_id as u64),

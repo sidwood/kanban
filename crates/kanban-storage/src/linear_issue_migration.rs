@@ -257,7 +257,9 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
                 Ok((row.get(0)?, from, to))
             })?
             .filter_map(|row| row.ok())
-            .filter(|(_, from, to)| !from.is_empty() && !to.is_empty())
+            // Same-state events record a visit, not a transition, so they
+            // neither open nor close a history row.
+            .filter(|(_, from, to)| !from.is_empty() && !to.is_empty() && from != to)
             .collect::<Vec<_>>();
         if events.is_empty() {
             let workflow_state_id: Option<i64> = conn
@@ -279,9 +281,6 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
             continue;
         }
         for (index, (recorded_at, from, to)) in events.iter().enumerate() {
-            if from == to {
-                continue;
-            }
             if index == 0
                 && let Some(from_id) = workflow_id_for_legacy(conn, project_id, from)?
             {
@@ -304,6 +303,7 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
         }
     }
     collapse_consecutive_duplicate_history(conn)?;
+    ensure_current_state_history_row(conn)?;
     backfill_lifecycle_timestamps_from_history(conn)?;
     backfill_legacy_trait_labels(conn)?;
     Ok(())
@@ -324,6 +324,28 @@ fn collapse_consecutive_duplicate_history(conn: &Connection) -> rusqlite::Result
               )
              WHERE h1.workflow_state_id = h2.workflow_state_id
          )",
+    )
+}
+
+/// Guarantees every issue keeps a history row for its current workflow
+/// state, including issues whose only legacy events revisited that state
+/// and collapsed away entirely.
+fn ensure_current_state_history_row(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+         SELECT t.id, t.workflow_state_id, COALESCE(
+             (SELECT MAX(COALESCE(h.ended_at, h.started_at))
+              FROM issue_state_history AS h
+              WHERE h.ticket_id = t.id),
+             t.created_at
+         ), NULL
+         FROM tickets AS t
+         WHERE t.workflow_state_id IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM issue_state_history AS h
+               WHERE h.ticket_id = t.id
+                 AND h.workflow_state_id = t.workflow_state_id
+           );",
     )
 }
 
@@ -1273,6 +1295,28 @@ mod tests {
         .unwrap()
     }
 
+    fn migrated_history(
+        conn: &Connection,
+        ticket_id: i64,
+    ) -> Vec<(String, String, Option<String>)> {
+        let mut statement = conn
+            .prepare(
+                "SELECT s.name, h.started_at, h.ended_at
+                 FROM issue_state_history AS h
+                 JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+                 WHERE h.ticket_id = ?1
+                 ORDER BY h.started_at ASC, h.id ASC",
+            )
+            .unwrap();
+        statement
+            .query_map([ticket_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
     #[derive(Debug, PartialEq, Eq)]
     struct MigratedComment {
         text: String,
@@ -1587,6 +1631,55 @@ mod tests {
             "an issue that left the completed state is no longer completed"
         );
         assert_eq!(canceled, None);
+    }
+
+    #[test]
+    fn migration_keeps_a_history_row_for_the_current_state() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_bug(&conn, 1, "draft", None, "2026-11-03T21:38:37.997Z");
+            seed_legacy_transition(&conn, 1, "draft", "draft", "2026-11-03T21:40:21.545Z");
+
+            seed_legacy_task(&conn, 2, "parked", None, "2026-11-03T21:38:37.988Z");
+            seed_legacy_transition(&conn, 2, "draft", "parked", "2026-11-03T21:38:46.608Z");
+            seed_legacy_transition(&conn, 2, "parked", "parked", "2026-11-03T21:40:21.542Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let draft_only = migrated_history(&conn, 1);
+        assert_eq!(
+            draft_only,
+            vec![(
+                "Draft".to_owned(),
+                "2026-11-03T21:38:37.997Z".to_owned(),
+                None
+            )],
+            "an issue that only revisited its current state keeps one open row for it"
+        );
+
+        let parked = migrated_history(&conn, 2);
+        assert_eq!(
+            parked,
+            vec![
+                (
+                    "Draft".to_owned(),
+                    "2026-11-03T21:38:37.988Z".to_owned(),
+                    Some("2026-11-03T21:38:46.608Z".to_owned())
+                ),
+                (
+                    "Parked".to_owned(),
+                    "2026-11-03T21:38:46.608Z".to_owned(),
+                    None
+                ),
+            ],
+            "a same-state visit is dropped and the current state stays open"
+        );
     }
 
     #[test]

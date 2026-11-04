@@ -1,8 +1,8 @@
 //! Linear issue model rules that must hold across the operator MCP and
 //! the legacy Ticket lifecycle: terminal lifecycle stamps, synchronized
-//! state history for legacy moves, fractional sub-issue ranks, history
-//! rows for a new issue's first state, and no-op saves that change
-//! nothing.
+//! state history for legacy moves and reassignment, fractional
+//! sub-issue ranks, history rows for a new issue's first state, and
+//! no-op saves that change nothing.
 
 use std::sync::Arc;
 
@@ -196,6 +196,8 @@ fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std
         None,
     )
     .expect("lifecycle registers");
+    core.register_reassignment(tickets.clone(), projects.clone(), specs.clone())
+        .expect("reassignment registers");
     core.register_issue_operator(
         tickets,
         projects.clone(),
@@ -576,3 +578,62 @@ fn saving_unchanged_fields_keeps_version_and_history() {
         );
     }
 }
+
+/// A legacy `ticket.reassign` supersedes the original, so the issue
+/// projection must follow the original into the superseded workflow
+/// state with its history and stamps, exactly as a park or cancel does.
+#[test]
+fn legacy_reassignment_moves_the_original_issue_state() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let created = create_legacy_task(&h.core, "legacy-reassign-create", "Replaced task");
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let identifier = format!("CORE-{}", created["number"].as_u64().expect("a number"));
+
+    save_issue(
+        session,
+        created["version"].as_u64().expect("a version"),
+        "legacy-reassign-ready",
+        json!({ "identifier": identifier, "state": "Ready" }),
+    );
+
+    let replacement = h
+        .core
+        .command(
+            "ticket.reassign",
+            &json!({
+                "mutation": mutation(issue_version(session, &identifier), "legacy-reassign"),
+                "ticket_id": ticket_id,
+                "kind": "task",
+                "priority": "normal",
+                "title": "Replacement task",
+                "subtype": "operational",
+                "mode": "human",
+                "completion": ["Checked"],
+            }),
+        )
+        .expect("the reassignment lands");
+    assert!(
+        replacement["id"].as_u64().is_some_and(|id| id != ticket_id),
+        "the reassignment returns the replacement"
+    );
+
+    let moved = read_issue(session, &identifier);
+    assert_eq!(
+        moved.state, "Superseded",
+        "the issue model follows the superseded original"
+    );
+    assert_eq!(moved.state_type, "canceled");
+    assert!(
+        moved.canceled_at.is_some(),
+        "superseding stamps cancellation for the issue model"
+    );
+    assert!(moved.completed_at.is_none());
+    let names = history_names(&moved);
+    assert!(
+        names.ends_with(&["Ready", "Superseded"]),
+        "the reassignment closes the Ready row and opens a Superseded row, saw {names:?}"
+    );
+    assert!(moved.state_history.last().unwrap().ended_at.is_none());
+}
+

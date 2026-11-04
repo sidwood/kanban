@@ -94,7 +94,9 @@ impl TicketStore for SqliteTicketStore {
             ));
         }
         // The supersession moves the original's state and version
-        // alone: every other recorded fact stands.
+        // alone: every other recorded fact stands. The issue
+        // projection follows the superseded state inside the same
+        // write, exactly as any other legacy move does.
         let preceding = original.version() - 1;
         let changed = span
             .execute(
@@ -112,6 +114,7 @@ impl TicketStore for SqliteTicketStore {
         if changed != 1 {
             return Err(ticket_write_refused(&span, original.id(), preceding));
         }
+        sync_issue_state_after_legacy_move(&span, original)?;
         let stored = StoredTicket::of(priority, body);
         span.execute(
             "INSERT INTO tickets

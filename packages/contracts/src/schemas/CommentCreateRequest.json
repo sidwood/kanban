@@ -61,6 +61,10 @@
   },
   "description": "Request payload for the `comment.create` command.",
   "properties": {
+    "author": {
+      "description": "Optional author label stored on the comment row.",
+      "type": "string"
+    },
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },

@@ -92,6 +92,21 @@
         "null"
       ]
     },
+    "duplicate_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "duplicates": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "identifier": {
       "type": "string"
     },

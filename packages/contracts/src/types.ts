@@ -186,6 +186,7 @@ export type CloneRemovedRecord = {
   workspace_id: number;
 };
 export type CommentCreateRequest = {
+  author?: string;
   mutation: MutationContext;
   project_id: number;
   target: TimelineEntityRef;
@@ -616,6 +617,8 @@ export type IssueRecord = {
   created_at: string;
   description: string;
   due_date?: string | null;
+  duplicate_of?: string | null;
+  duplicates?: string[] | null;
   identifier: string;
   labels: string[];
   milestone_id?: number | null;
@@ -653,6 +656,7 @@ export type IssueSaveRequest = {
   remove_blocks?: string[] | null;
   remove_labels?: string[] | null;
   remove_related?: string[] | null;
+  sort_order?: number | null;
   state?: string | null;
   title?: string | null;
 };
@@ -1841,7 +1845,7 @@ export type TicketSpecMoveRequest = {
   spec_id: number;
   ticket_id: number;
 };
-export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
+export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded' | 'duplicate';
 export type TicketTransitionRequest = {
   mutation: MutationContext;
   ticket_id: number;

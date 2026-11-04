@@ -8315,6 +8315,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -9133,6 +9140,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -9873,6 +9887,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -10701,6 +10722,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -11192,6 +11220,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -12420,6 +12455,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -12823,6 +12865,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         }
@@ -13076,6 +13125,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         }
@@ -13325,6 +13381,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -13580,6 +13643,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         }
@@ -13799,6 +13869,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -14036,6 +14113,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         }
@@ -14187,6 +14271,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -14714,6 +14805,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -15016,6 +15114,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -15486,6 +15591,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -16164,6 +16276,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -16838,6 +16957,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -17551,6 +17677,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -18225,6 +18358,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -18929,6 +19069,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -20129,6 +20276,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -20819,6 +20973,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -21121,6 +21282,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -21601,6 +21769,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -22542,6 +22717,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -28970,6 +29152,10 @@
       },
       "description": "Request payload for the `comment.create` command.",
       "properties": {
+        "author": {
+          "description": "Optional author label stored on the comment row.",
+          "type": "string"
+        },
         "mutation": {
           "$ref": "#/definitions/MutationContext"
         },
@@ -31983,6 +32169,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -35309,6 +35502,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         }
@@ -36185,6 +36385,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -36696,6 +36903,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -37164,6 +37378,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -37680,6 +37901,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -38229,6 +38457,13 @@
                 "superseded"
               ],
               "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
+              ],
+              "type": "string"
             }
           ]
         },
@@ -38709,6 +38944,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -39291,6 +39533,13 @@
               "description": "Terminal: replaced by a reassignment Ticket.",
               "enum": [
                 "superseded"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "Terminal: duplicate of another issue.",
+              "enum": [
+                "duplicate"
               ],
               "type": "string"
             }
@@ -40332,6 +40581,13 @@
             "null"
           ]
         },
+        "sort_order": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "state": {
           "type": [
             "string",
@@ -40485,6 +40741,21 @@
         "due_date": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "duplicate_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duplicates": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -40693,6 +40964,21 @@
             "due_date": {
               "type": [
                 "string",
+                "null"
+              ]
+            },
+            "duplicate_of": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "duplicates": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
                 "null"
               ]
             },

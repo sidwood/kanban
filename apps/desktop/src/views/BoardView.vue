@@ -18,6 +18,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
 import type { BoardGlobalCard, IssueRecord, TicketRecord, TicketState } from '@kanban/contracts'
 import AppButton from '../components/AppButton.vue'
+import AttemptHistory from '../components/AttemptHistory.vue'
 import BoardCard from '../components/board/BoardCard.vue'
 import BoardColumnsFlyout from '../components/board/BoardColumnsFlyout.vue'
 import type { ColumnPreference } from '../components/board/BoardColumnsFlyout.vue'
@@ -763,6 +764,17 @@ async function followLink(ticketId: number | null): Promise<void> {
   openedByLink = ticketId
   if (openTicketId.value === ticketId) return
   await openTicket(ticketId)
+}
+
+// Every run the open Ticket has minted, oldest first; a recovery from
+// the drawer reads them again, on the drawer and on the board.
+const drawerAttempts = computed(() => detail.attempts)
+
+async function refreshAttempts(): Promise<void> {
+  if (transport && drawerTicket.value) {
+    await detail.refreshRuns(transport, drawerTicket.value.project_id)
+    await board.refreshRuns(transport, drawerTicket.value.project_id)
+  }
 }
 
 function openNewTicket(): void {
@@ -1563,6 +1575,12 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :project-id="drawerTicket.project_id"
           :project-code="drawerProjectCode"
           @refreshed="onDrawerIssueRefreshed"
+        />
+
+        <AttemptHistory
+          class="mt-6"
+          :attempts="drawerAttempts"
+          @recovered="refreshAttempts"
         />
       </template>
 

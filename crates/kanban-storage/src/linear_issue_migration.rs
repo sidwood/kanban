@@ -364,6 +364,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              END;",
         )?;
         backfill_issue_descriptions(conn)?;
+        preserve_legacy_external_blockers(conn)?;
         backfill_issue_state_history_from_timeline(conn)?;
         return Ok(());
     }
@@ -506,6 +507,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
            AND due_date = '2099-12-31';",
     )?;
     backfill_issue_descriptions(conn)?;
+    preserve_legacy_external_blockers(conn)?;
     backfill_issue_state_history_from_timeline(conn)?;
     Ok(())
 }
@@ -713,6 +715,50 @@ pub(crate) fn backfill_issue_descriptions(conn: &Connection) -> rusqlite::Result
     Ok(())
 }
 
+/// Appends legacy external blocker prose to issue descriptions.
+fn preserve_legacy_external_blockers(conn: &Connection) -> rusqlite::Result<()> {
+    if !tickets_table_has_column(conn, "description")? {
+        return Ok(());
+    }
+    let mut tickets =
+        conn.prepare("SELECT DISTINCT ticket_id FROM ticket_blockers ORDER BY ticket_id")?;
+    let ticket_ids = tickets
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for ticket_id in ticket_ids {
+        let mut blockers = conn
+            .prepare("SELECT description FROM ticket_blockers WHERE ticket_id = ?1 ORDER BY id")?;
+        let descriptions: Vec<String> = blockers
+            .query_map([ticket_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if descriptions.is_empty() {
+            continue;
+        }
+        let current: String = conn.query_row(
+            "SELECT description FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| row.get(0),
+        )?;
+        let marker = "\n## External blockers\n";
+        if current.contains("## External blockers") {
+            continue;
+        }
+        let mut document = current;
+        if !document.is_empty() && !document.ends_with('\n') {
+            document.push('\n');
+        }
+        document.push_str(marker);
+        for text in descriptions {
+            document.push_str(&format!("\n- {text}\n"));
+        }
+        conn.execute(
+            "UPDATE tickets SET description = ?2 WHERE id = ?1",
+            params![ticket_id, document],
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     apply_linear_issue_relaxation(span)
 }
@@ -814,6 +860,8 @@ mod tests {
                  '2019-01-02T00:00:00.000000Z'
              );
              INSERT INTO ticket_dependencies (from_ticket, to_ticket) VALUES (1, 2);
+             INSERT INTO ticket_blockers (ticket_id, description)
+             VALUES (2, 'Vendor API quota holds the rollout');
              INSERT INTO comments (id, project_id, entity_kind, entity_id, version, created_at)
              VALUES (1, '1', 'ticket', '2', 2, '2020-06-01T10:00:00.000000Z');
              INSERT INTO comment_revisions (comment_id, revision, text, recorded_at)
@@ -1021,6 +1069,12 @@ mod tests {
                 .any(|relation| relation.kind == "blocked-by" && relation.identifier == "CORE-1")
         );
         assert_eq!(blocker.title, "Login flow");
+        assert!(
+            waiting
+                .description
+                .contains("Vendor API quota holds the rollout"),
+            "legacy external blocker prose should land in the issue description"
+        );
         assert!(
             !blocker.state_history.is_empty(),
             "state history should be backfilled from legacy transitions"

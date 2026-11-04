@@ -17,12 +17,12 @@ use kanban_dto::{
     CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest, CapacityGlobalDefaults,
     CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
-    CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse, CriterionBindingListQuery,
-    CriterionBindingListResponse, CriterionBindingRecord, CriterionCompleteRequest,
-    CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest, CriterionInvalidateRequest,
-    CriterionSatisfyRequest, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
+    CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
+    CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
+    CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
+    CriterionInvalidateRequest, CriterionSatisfyRequest, DeferralListQuery, DeferralListResponse,
+    DeferralRecord, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
     DiagnosticsExportResponse, DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery,
     DispatchQueueResponse, DispatchRequestCreateRequest, DispatchRequestRecord,
     EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
@@ -1446,6 +1446,19 @@ async fn comment_revisions(
 }
 
 #[tauri::command]
+async fn comment_list(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CommentListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentListQuery>(request)?;
+    run_blocking(shell, "comment list", |shell| {
+        forward_query(shell, "comment.list", "comment list", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ruling_record(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2616,6 +2629,7 @@ shell_handlers::shell_handler_catalogue! {
     comment_create,
     comment_edit,
     comment_revisions,
+    comment_list,
     ruling_record,
     ruling_supersede,
     ruling_list,

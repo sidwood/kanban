@@ -99,8 +99,9 @@ pub use clone::{
     CloneRecoveriesResponse, CloneRecoveryRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
 pub use comment::{
-    CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse,
+    CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentRevisionRecord, CommentRevisionsQuery,
+    CommentRevisionsResponse,
 };
 pub use coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -356,6 +357,9 @@ mod tests {
                 "CommentEditRequest",
                 "CommentRecord",
                 "CommentRevisionRecord",
+                "CommentListItem",
+                "CommentListQuery",
+                "CommentListResponse",
                 "CommentRevisionsQuery",
                 "CommentRevisionsResponse",
                 "CoverageCriterionProposal",

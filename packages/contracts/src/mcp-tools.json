@@ -29385,6 +29385,140 @@
     }
   },
   {
+    "description": "List comments on one timeline entity, oldest first, with cursor paging.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "TimelineEntityKind": {
+          "description": "Entity kinds that may appear on the activity timeline.",
+          "enum": [
+            "initiative",
+            "project",
+            "plan",
+            "spec",
+            "ticket",
+            "run",
+            "review",
+            "finding",
+            "evidence",
+            "comment",
+            "workspace",
+            "lane",
+            "profile",
+            "attention_item"
+          ],
+          "type": "string"
+        },
+        "TimelineEntityRef": {
+          "additionalProperties": false,
+          "description": "A timeline-visible entity reference.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/TimelineEntityKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `comment.list` query.",
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "target": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TimelineEntityRef"
+            }
+          ],
+          "description": "The entity whose comments are listed."
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "CommentListQuery",
+      "type": "object"
+    },
+    "name": "list_comments",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "CommentListItem": {
+          "additionalProperties": false,
+          "description": "One comment row for list views (operator MCP).",
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "edited_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "author",
+            "body",
+            "created_at",
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Response payload for the `comment.list` query.",
+      "properties": {
+        "comments": {
+          "items": {
+            "$ref": "#/definitions/CommentListItem"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "comments"
+      ],
+      "title": "CommentListResponse",
+      "type": "object"
+    }
+  },
+  {
     "description": "Record an immutable operator ruling on the timeline.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",

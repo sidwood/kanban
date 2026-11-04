@@ -196,6 +196,22 @@ export type CommentEditRequest = {
   mutation: MutationContext;
   text: string;
 };
+export type CommentListItem = {
+  author: string;
+  body: string;
+  created_at: string;
+  edited_at?: string | null;
+  id: number;
+};
+export type CommentListQuery = {
+  cursor?: string | null;
+  limit?: number;
+  target: TimelineEntityRef;
+};
+export type CommentListResponse = {
+  comments: CommentListItem[];
+  next_cursor?: string | null;
+};
 export type CommentRecord = {
   id: number;
   project_id: number;

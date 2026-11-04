@@ -17,6 +17,7 @@ computer workflows.
 | `save_comment` | `comment.create` | Post a comment on a ticket |
 | `edit_comment` | `comment.edit` | Append a revision to an existing comment |
 | `list_comment_revisions` | `comment.revisions` | Read comment history |
+| `list_comments` | `comment.list` | List comments on an issue (oldest first, cursor paging) |
 
 Agent-scoped MCP sessions keep the existing capability-bound tool set; operator
 tools are installation-authenticated only.

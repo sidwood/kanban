@@ -31,6 +31,7 @@ pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
     "issue.save",
     "comment.create",
     "comment.edit",
+    "comment.list",
     "comment.revisions",
 ];
 

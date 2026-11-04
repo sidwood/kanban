@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One comment row for list views (operator MCP).",
+  "properties": {
+    "author": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "edited_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "author",
+    "body",
+    "created_at",
+    "id"
+  ],
+  "title": "CommentListItem",
+  "type": "object"
+}

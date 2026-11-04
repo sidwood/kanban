@@ -828,6 +828,13 @@ define_exposed_catalogue! {
         mcp: "comment_revisions",
         description: "Query the full revision history for one Comment.",
     },
+    "comment.list" => {
+        kind: Query,
+        request: "CommentListQuery",
+        response: "CommentListResponse",
+        mcp: "list_comments",
+        description: "List comments on one timeline entity, oldest first, with cursor paging.",
+    },
     "ruling.record" => {
         kind: Command,
         request: "RulingRecordRequest",

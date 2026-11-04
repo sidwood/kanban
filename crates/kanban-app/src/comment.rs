@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, TextError};
 use kanban_dto::{
-    ApiError, CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse, LiveEventName, TimelineEntityKind, TimelineEntityRef,
+    ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
+    LiveEventName, TimelineEntityKind, TimelineEntityRef,
 };
 use serde_json::Value;
 
@@ -38,6 +39,14 @@ pub trait CommentStore: Send + Sync {
         &self,
         id: CommentId,
     ) -> Result<(CommentRecord, Vec<kanban_dto::CommentRevisionRecord>), ApiError>;
+
+    /// List comments on one target, oldest first, with cursor paging.
+    fn list_for_target(
+        &self,
+        target: &CommentTarget,
+        limit: u32,
+        cursor: Option<u64>,
+    ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError>;
 }
 
 impl Core {
@@ -61,7 +70,13 @@ impl Core {
                 store: store.clone(),
             }),
         )?;
-        self.register_query("comment.revisions", Arc::new(RevisionsQuery { store }))?;
+        self.register_query(
+            "comment.revisions",
+            Arc::new(RevisionsQuery {
+                store: store.clone(),
+            }),
+        )?;
+        self.register_query("comment.list", Arc::new(ListCommentsQuery { store }))?;
         Ok(())
     }
 }
@@ -145,6 +160,35 @@ impl QueryHandler for RevisionsQuery {
     }
 }
 
+/// Serves `comment.list`.
+struct ListCommentsQuery {
+    store: Arc<dyn CommentStore>,
+}
+
+impl QueryHandler for ListCommentsQuery {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let query: CommentListQuery = parse_payload(payload)?;
+        let target = parse_target(&query.target)?;
+        let limit = if query.limit == 0 {
+            50
+        } else {
+            query.limit.clamp(1, 100)
+        };
+        let cursor = query
+            .cursor
+            .as_deref()
+            .map(str::parse::<u64>)
+            .transpose()
+            .map_err(|_| ApiError::invalid_request("cursor must be a comment id"))?;
+        let (comments, next_cursor) = self.store.list_for_target(&target, limit, cursor)?;
+        let response = CommentListResponse {
+            comments,
+            next_cursor,
+        };
+        serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
+    }
+}
+
 fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
     store
         .find(CommentId::new(id))?
@@ -189,7 +233,7 @@ mod comments {
     use std::sync::{Arc, Mutex};
 
     use kanban_domain::{Comment, CommentId, CommentTarget, CommentText};
-    use kanban_dto::{ErrorCode, TimelineEntityKind, TimelineEntityRef};
+    use kanban_dto::{CommentListItem, ErrorCode, TimelineEntityKind, TimelineEntityRef};
     use serde_json::{Value, json};
 
     use super::CommentStore;
@@ -258,6 +302,53 @@ mod comments {
                 .revision_stamps
                 .push(format!("2026-09-04T12:00:{revision:02}Z"));
             Ok(())
+        }
+
+        fn list_for_target(
+            &self,
+            target: &CommentTarget,
+            limit: u32,
+            cursor: Option<u64>,
+        ) -> Result<(Vec<CommentListItem>, Option<String>), kanban_dto::ApiError> {
+            let state = self.state.lock().expect("the memory store lock is sound");
+            let after = cursor.unwrap_or(0);
+            let mut items: Vec<CommentListItem> = state
+                .comments
+                .iter()
+                .filter(|comment| {
+                    comment.target().kind() == target.kind()
+                        && comment.target().id() == target.id()
+                        && comment.id().value() > after
+                })
+                .map(|comment| {
+                    let id = comment.id().value();
+                    CommentListItem {
+                        id,
+                        author: String::new(),
+                        body: comment.current_text().as_str().to_owned(),
+                        created_at: state
+                            .revision_stamps
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned()),
+                        edited_at: (comment.version() > 1).then(|| {
+                            state
+                                .revision_stamps
+                                .last()
+                                .cloned()
+                                .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned())
+                        }),
+                    }
+                })
+                .collect();
+            items.sort_by_key(|item| item.id);
+            let next_cursor = if items.len() > limit as usize {
+                Some(items[(limit as usize).saturating_sub(1)].id.to_string())
+            } else {
+                None
+            };
+            items.truncate(limit as usize);
+            Ok((items, next_cursor))
         }
 
         fn revisions(
@@ -566,7 +657,38 @@ mod comments {
             .collect();
         assert_eq!(
             names,
-            vec!["comment.create", "comment.edit", "comment.revisions"]
+            vec![
+                "comment.create",
+                "comment.edit",
+                "comment.revisions",
+                "comment.list",
+            ]
         );
+    }
+
+    #[test]
+    fn list_query_returns_comments_oldest_first_with_cursor() {
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        core.command("comment.create", &create("First thought", "key-1", 0))
+            .expect("the create applies");
+        core.command("comment.create", &create("Second thought", "key-2", 0))
+            .expect("the second create applies");
+
+        let page = core
+            .query("comment.list", &json!({ "target": target(), "limit": 1 }))
+            .expect("the list query serves");
+        assert_eq!(page["comments"].as_array().unwrap().len(), 1);
+        assert_eq!(page["comments"][0]["body"], "First thought");
+        assert_eq!(page["next_cursor"].as_str(), Some("1"));
+
+        let rest = core
+            .query(
+                "comment.list",
+                &json!({ "target": target(), "limit": 10, "cursor": "1" }),
+            )
+            .expect("the second page serves");
+        assert_eq!(rest["comments"].as_array().unwrap().len(), 1);
+        assert_eq!(rest["comments"][0]["body"], "Second thought");
+        assert!(rest["next_cursor"].is_null());
     }
 }

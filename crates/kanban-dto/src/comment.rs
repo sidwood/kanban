@@ -77,13 +77,47 @@ pub struct CommentRevisionsResponse {
     pub revisions: Vec<CommentRevisionRecord>,
 }
 
+/// Request payload for the `comment.list` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentListQuery {
+    /// The entity whose comments are listed.
+    pub target: TimelineEntityRef,
+    #[serde(default)]
+    pub limit: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// One comment row for list views (operator MCP).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentListItem {
+    pub id: u64,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<String>,
+}
+
+/// Response payload for the `comment.list` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentListResponse {
+    pub comments: Vec<CommentListItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
-        CommentRevisionsQuery, CommentRevisionsResponse,
+        CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
+        CommentListResponse, CommentRecord, CommentRevisionRecord, CommentRevisionsQuery,
+        CommentRevisionsResponse,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -194,6 +228,35 @@ mod tests {
     }
 
     #[test]
+    fn a_list_response_carries_comments_and_cursor() {
+        let query = CommentListQuery {
+            target: target(),
+            limit: 50,
+            cursor: None,
+        };
+        let encoded_query = serde_json::to_value(&query).expect("the query serialises");
+        let decoded_query: CommentListQuery =
+            serde_json::from_value(encoded_query).expect("the query deserialises");
+        assert_eq!(decoded_query, query);
+
+        let response = CommentListResponse {
+            comments: vec![CommentListItem {
+                id: 1,
+                author: "ada".to_owned(),
+                body: "Ship report".to_owned(),
+                created_at: "2026-09-04T12:00:01Z".to_owned(),
+                edited_at: None,
+            }],
+            next_cursor: Some("1".to_owned()),
+        };
+        let encoded = serde_json::to_value(&response).expect("the response serialises");
+        assert_eq!(encoded["comments"].as_array().map(Vec::len), Some(1));
+        let decoded: CommentListResponse =
+            serde_json::from_value(encoded).expect("the response deserialises");
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
     fn every_comment_schema_rejects_unknown_fields() {
         for name in [
             "CommentCreateRequest",
@@ -202,6 +265,9 @@ mod tests {
             "CommentRevisionRecord",
             "CommentRevisionsQuery",
             "CommentRevisionsResponse",
+            "CommentListQuery",
+            "CommentListResponse",
+            "CommentListItem",
         ] {
             let (_, schema) = schema_definitions()
                 .into_iter()

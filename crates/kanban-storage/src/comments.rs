@@ -5,8 +5,8 @@
 use kanban_app::{CommentStore, TimelineEnvelope};
 use kanban_domain::{Comment, CommentId, CommentRevision, CommentTarget, CommentText};
 use kanban_dto::{
-    ApiError, CommentRecord, CommentRevisionRecord, TimelineEntityKind, TimelineEntityRef,
-    TimelineEventKind,
+    ApiError, CommentListItem, CommentRecord, CommentRevisionRecord, TimelineEntityKind,
+    TimelineEntityRef, TimelineEventKind,
 };
 use rusqlite::params;
 use serde_json::json;
@@ -156,6 +156,72 @@ impl CommentStore for SqliteCommentStore {
             revisions.push(row.map_err(|error| ApiError::internal(&error.to_string()))?);
         }
         Ok((record_of(&comment), revisions))
+    }
+
+    fn list_for_target(
+        &self,
+        target: &CommentTarget,
+        limit: u32,
+        cursor: Option<u64>,
+    ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
+        let conn = self.lock();
+        let after = cursor.unwrap_or(0) as i64;
+        let mut statement = conn
+            .prepare(
+                "SELECT c.id, c.version, c.created_at,
+                        (SELECT text FROM comment_revisions
+                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                        (SELECT recorded_at FROM comment_revisions
+                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                        (SELECT json_extract(detail, '$.author') FROM timeline_events
+                         WHERE kind = 'comment'
+                           AND json_extract(detail, '$.comment_id') = c.id
+                         ORDER BY recorded_at DESC LIMIT 1)
+                 FROM comments AS c
+                 WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
+                 ORDER BY c.id ASC
+                 LIMIT ?4",
+            )
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let fetch = limit.saturating_add(1) as i64;
+        let rows = statement
+            .query_map(params![target.kind(), target.id(), after, fetch], |row| {
+                let id: i64 = row.get(0)?;
+                let version: i64 = row.get(1)?;
+                let created_at: String = row.get(2)?;
+                let body: String = row.get(3)?;
+                let latest_at: String = row.get(4)?;
+                let author: Option<String> = row.get(5)?;
+                Ok((
+                    id,
+                    version,
+                    created_at,
+                    body,
+                    latest_at,
+                    author.unwrap_or_default(),
+                ))
+            })
+            .map_err(|error| ApiError::internal(&error.to_string()))?;
+        let mut items = Vec::new();
+        for row in rows {
+            let (id, version, created_at, body, latest_at, author) =
+                row.map_err(|error| ApiError::internal(&error.to_string()))?;
+            let edited_at = (version > 1).then_some(latest_at);
+            items.push(CommentListItem {
+                id: id.unsigned_abs(),
+                author,
+                body,
+                created_at,
+                edited_at,
+            });
+        }
+        let next_cursor = if items.len() > limit as usize {
+            Some(items[(limit as usize).saturating_sub(1)].id.to_string())
+        } else {
+            None
+        };
+        items.truncate(limit as usize);
+        Ok((items, next_cursor))
     }
 }
 

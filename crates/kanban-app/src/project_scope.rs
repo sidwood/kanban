@@ -13,8 +13,8 @@ use kanban_domain::{
     Ruling, RulingDraft, RulingId,
 };
 use kanban_dto::{
-    ApiError, CommentRecord, CommentRevisionRecord, DeferralListQuery, RulingListQuery,
-    TimelineEntityKind, TimelineEntityRef,
+    ApiError, CommentListItem, CommentRecord, CommentRevisionRecord, DeferralListQuery,
+    RulingListQuery, TimelineEntityKind, TimelineEntityRef,
 };
 use serde_json::{Value, json};
 
@@ -108,6 +108,15 @@ impl CommentStore for RecordingComments {
             },
             Vec::new(),
         ))
+    }
+
+    fn list_for_target(
+        &self,
+        _target: &CommentTarget,
+        _limit: u32,
+        _cursor: Option<u64>,
+    ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
+        Ok((Vec::new(), None))
     }
 }
 

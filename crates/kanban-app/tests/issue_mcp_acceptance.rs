@@ -572,6 +572,21 @@ fn acceptance_comment_tools_round_trip() {
         .call("comment.revisions", &json!({ "comment_id": comment_id }))
         .unwrap();
     assert_eq!(revisions["revisions"].as_array().unwrap().len(), 2);
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": saved.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let comments = listed["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["id"], json!(comment_id));
+    assert_eq!(comments[0]["body"], "Ship report v2");
+    assert!(comments[0]["edited_at"].is_string());
 }
 
 #[test]

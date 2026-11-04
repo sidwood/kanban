@@ -412,13 +412,15 @@ fn backfill_legacy_trait_labels(conn: &Connection) -> rusqlite::Result<()> {
             && let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw)
             && let Some(severity) = value.get("severity").and_then(|v| v.as_str())
         {
-            ensure_trait_label(conn, project_id, ticket_id, "Severity", severity)?;
+            // An issue carries at most one severity and one mode, so those
+            // groups behave like the single-select Type group.
+            ensure_trait_label(conn, project_id, ticket_id, "Severity", severity, true)?;
         }
         if let Some(subtype) = subtype.filter(|value| !value.is_empty()) {
-            ensure_trait_label(conn, project_id, ticket_id, "Subtype", &subtype)?;
+            ensure_trait_label(conn, project_id, ticket_id, "Subtype", &subtype, false)?;
         }
         if let Some(mode) = mode.filter(|value| !value.is_empty()) {
-            ensure_trait_label(conn, project_id, ticket_id, "Mode", &mode)?;
+            ensure_trait_label(conn, project_id, ticket_id, "Mode", &mode, true)?;
         }
     }
     Ok(())
@@ -430,11 +432,17 @@ fn ensure_trait_label(
     ticket_id: i64,
     group: &str,
     name: &str,
+    single_select: bool,
 ) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO issue_label_groups (project_id, name, single_select)
-         VALUES (?1, ?2, 0)",
-        params![project_id, group],
+         VALUES (?1, ?2, ?3)",
+        params![project_id, group, i64::from(single_select)],
+    )?;
+    conn.execute(
+        "UPDATE issue_label_groups SET single_select = ?3
+         WHERE project_id = ?1 AND name = ?2",
+        params![project_id, group, i64::from(single_select)],
     )?;
     let group_id: i64 = conn.query_row(
         "SELECT id FROM issue_label_groups WHERE project_id = ?1 AND name = ?2",
@@ -1679,6 +1687,55 @@ mod tests {
                 ),
             ],
             "a same-state visit is dropped and the current state stays open"
+        );
+    }
+
+    #[test]
+    fn migration_makes_severity_and_mode_groups_single_select() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_bug(
+                &conn,
+                1,
+                "draft",
+                Some("critical"),
+                "2026-11-03T21:38:37.997Z",
+            );
+            seed_legacy_task(&conn, 2, "active", None, "2026-11-03T21:38:37.985Z");
+            conn.execute(
+                "UPDATE tickets SET mode = 'agent', subtype = 'investigative' WHERE id = 2",
+                [],
+            )
+            .unwrap();
+            seed_legacy_transition(&conn, 2, "draft", "active", "2026-11-03T21:39:55.127Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare("SELECT name, single_select FROM issue_label_groups ORDER BY name")
+            .unwrap();
+        let groups = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            groups,
+            vec![
+                ("Mode".to_owned(), 1),
+                ("Severity".to_owned(), 1),
+                ("Subtype".to_owned(), 0),
+                ("Type".to_owned(), 1),
+            ],
+            "an issue carries at most one severity and one mode, like its type"
         );
     }
 

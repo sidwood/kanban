@@ -507,10 +507,15 @@ fn create_issue(
     let title = request
         .title
         .as_deref()
-        .filter(|title| !title.is_empty())
         .ok_or_else(|| {
             ApiError::invalid_request_field("title", "title is required when creating")
         })?;
+    if title.trim().is_empty() {
+        return Err(ApiError::invalid_request_field(
+            "title",
+            "a Ticket title cannot be blank",
+        ));
+    }
     let linear_priority = request.priority.unwrap_or(0);
     let create = TicketCreateRequest {
         mutation: request.mutation.clone(),

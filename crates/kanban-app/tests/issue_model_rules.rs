@@ -983,6 +983,50 @@ fn blank_title_updates_are_refused() {
     );
     assert_eq!(read_issue(session, &saved.identifier).title, "New title");
 }
+#[test]
+fn blank_titles_are_refused_when_creating() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    for (index, title) in ["", " ", "\t"].into_iter().enumerate() {
+        let error = try_save(
+            session,
+            0,
+            &format!("create-blank-title-{index}"),
+            json!({ "project_id": 1, "title": title }),
+        )
+        .expect_err("a blank title cannot create an issue");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{title:?}");
+        assert_eq!(
+            error.field.as_deref(),
+            Some("title"),
+            "{title:?}: {}",
+            error.message
+        );
+    }
+
+    let missing = try_save(
+        session,
+        0,
+        "create-without-title",
+        json!({ "project_id": 1 }),
+    )
+    .expect_err("an absent title cannot create an issue");
+    assert_eq!(missing.code, ErrorCode::InvalidRequest);
+    assert_eq!(missing.field.as_deref(), Some("title"));
+
+    let padded = save_issue(
+        session,
+        0,
+        "create-padded-title",
+        json!({ "project_id": 1, "title": "  Padded title  " }),
+    );
+    assert_eq!(
+        read_issue(session, &padded.identifier).title,
+        "  Padded title  ",
+        "a title with text keeps its surrounding spaces"
+    );
+}
 
 #[test]
 fn one_label_per_single_select_group_in_one_call() {

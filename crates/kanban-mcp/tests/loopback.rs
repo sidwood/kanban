@@ -120,6 +120,7 @@ async fn loopback_auth_matches_socket_allow_deny_revoke_and_idempotency() {
     assert_eq!(http_tools, socket_tools);
     assert!(http_tools.iter().any(|tool| tool.name == "ticket_get"));
     assert!(!http_tools.iter().any(|tool| tool.name == "ticket_override"));
+    let comment = json!({"mutation":common::mutation(0,"same-replay"), "project_id":1, "target":{"kind":"ticket","id":f.ticket.to_string()}, "text":"one durable comment", "author":"operator"});
     for (name, args, denied) in [
         ("ticket_get", json!({"ticket_id":f.ticket}), false),
         ("ticket_get", json!({"ticket_id":other}), true),
@@ -133,11 +134,7 @@ async fn loopback_auth_matches_socket_allow_deny_revoke_and_idempotency() {
             json!({"mutation":common::mutation(0,"operator"), "name":"spoof"}),
             true,
         ),
-        (
-            "comment_create",
-            json!({"mutation":common::mutation(0,"same-replay"), "project_id":1, "target":{"kind":"ticket","id":f.ticket.to_string()}, "text":"one durable comment", "author":"operator"}),
-            false,
-        ),
+        ("comment_create", comment.clone(), false),
     ] {
         let first = http.call_tool(call(name, args.clone())).await.unwrap();
         let second = socket.call_tool(call(name, args.clone())).await.unwrap();
@@ -158,17 +155,26 @@ async fn loopback_auth_matches_socket_allow_deny_revoke_and_idempotency() {
         [i64::try_from(f.capability).unwrap()],
     )
     .unwrap();
-    let replay = json!({"mutation":common::mutation(0,"same-replay"), "project_id":1, "target":{"kind":"ticket","id":f.ticket.to_string()}, "text":"one durable comment"});
+    // The replay reuses the original request verbatim, so its
+    // idempotency fingerprint matches: only the revoked authority can
+    // explain a refusal, never a request-body mismatch.
+    let refused = socket
+        .call_tool(call("comment_create", comment.clone()))
+        .await
+        .unwrap();
     assert!(
-        socket
-            .call_tool(call("comment_create", replay.clone()))
-            .await
-            .unwrap()
-            .is_error
-            .unwrap_or(false)
+        refused.is_error.unwrap_or(false),
+        "a revoked capability cannot replay its recorded request"
+    );
+    let refusal = refused.structured_content.unwrap();
+    assert_eq!(refusal["code"], json!("invalid_request"));
+    assert_eq!(
+        refusal["message"],
+        json!("operation is outside the authenticated run capability"),
+        "the refusal names the authority, not the idempotency key: {refusal}"
     );
     assert!(
-        http.call_tool(call("comment_create", replay))
+        http.call_tool(call("comment_create", comment))
             .await
             .is_err()
     );

@@ -352,10 +352,13 @@ fn ensure_current_state_history_row(conn: &Connection) -> rusqlite::Result<()> {
 /// Stamps lifecycle timestamps from the rebuilt state history.
 ///
 /// `started_at` keeps the first entry into a started state. The terminal
-/// stamps record the entry into the last completed or canceled state and
-/// apply only while the issue still sits in that state, mirroring how a
-/// save stamps the entry and a reopen clears it: an issue that left the
-/// terminal state keeps no terminal timestamp.
+/// stamps always mirror the current state, the way a save stamps the
+/// entry and a reopen clears it: an issue sitting in a completed or
+/// canceled state carries the entry into its last such state, and an
+/// issue that left carries none. Both directions are rewritten rather
+/// than only filled, because an earlier build of the migration stamped
+/// the exit of a terminal visit, leaving reopened issues with a stale
+/// stamp and re-entered issues with the exit of the earlier visit.
 fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "UPDATE tickets SET started_at = (
@@ -371,8 +374,13 @@ fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Re
              JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
              WHERE h.ticket_id = tickets.id AND s.type = 'completed'
              ORDER BY h.started_at DESC, h.id DESC LIMIT 1
-         ) WHERE completed_at IS NULL
-           AND EXISTS (
+         ) WHERE EXISTS (
+               SELECT 1 FROM issue_workflow_states AS current_state
+               WHERE current_state.id = tickets.workflow_state_id
+                 AND current_state.type = 'completed'
+           );
+         UPDATE tickets SET completed_at = NULL
+         WHERE NOT EXISTS (
                SELECT 1 FROM issue_workflow_states AS current_state
                WHERE current_state.id = tickets.workflow_state_id
                  AND current_state.type = 'completed'
@@ -383,8 +391,13 @@ fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Re
              JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
              WHERE h.ticket_id = tickets.id AND s.type IN ('canceled', 'duplicate')
              ORDER BY h.started_at DESC, h.id DESC LIMIT 1
-         ) WHERE canceled_at IS NULL
-           AND EXISTS (
+         ) WHERE EXISTS (
+               SELECT 1 FROM issue_workflow_states AS current_state
+               WHERE current_state.id = tickets.workflow_state_id
+                 AND current_state.type IN ('canceled', 'duplicate')
+           );
+         UPDATE tickets SET canceled_at = NULL
+         WHERE NOT EXISTS (
                SELECT 1 FROM issue_workflow_states AS current_state
                WHERE current_state.id = tickets.workflow_state_id
                  AND current_state.type IN ('canceled', 'duplicate')
@@ -1351,9 +1364,10 @@ mod tests {
 
     /// A database that applied an earlier build of the linear issue
     /// migrations: due dates carry legacy timestamps, terminal stamps
-    /// were never backfilled, the history row for an issue that only
-    /// revisited its current state collapsed away, and the Severity and
-    /// Mode groups were created multi-select.
+    /// record the exit of a terminal visit instead of its entry, the
+    /// history row for an issue that only revisited its current state
+    /// collapsed away, and the Severity and Mode groups were created
+    /// multi-select.
     fn earlier_build_database() -> (tempfile::TempDir, Database) {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("kanban.sqlite");
@@ -1396,6 +1410,24 @@ mod tests {
             )
             .unwrap();
             seed_legacy_transition(&conn, 5, "draft", "active", "2026-11-03T21:39:55.127Z");
+
+            seed_legacy_task(&conn, 6, "active", None, "2026-11-03T21:45:00.000Z");
+            seed_legacy_transition(&conn, 6, "draft", "done", "2026-11-03T21:45:10.000Z");
+            seed_legacy_transition(&conn, 6, "done", "active", "2026-11-03T21:45:20.000Z");
+
+            seed_legacy_task(&conn, 7, "done", None, "2026-11-03T21:46:00.000Z");
+            seed_legacy_transition(&conn, 7, "draft", "done", "2026-11-03T21:46:10.000Z");
+            seed_legacy_transition(&conn, 7, "done", "active", "2026-11-03T21:46:20.000Z");
+            seed_legacy_transition(&conn, 7, "active", "done", "2026-11-03T21:46:30.000Z");
+
+            seed_legacy_bug(&conn, 8, "active", None, "2026-11-03T21:47:00.000Z");
+            seed_legacy_transition(&conn, 8, "draft", "cancelled", "2026-11-03T21:47:10.000Z");
+            seed_legacy_transition(&conn, 8, "cancelled", "active", "2026-11-03T21:47:20.000Z");
+
+            seed_legacy_bug(&conn, 9, "cancelled", None, "2026-11-03T21:48:00.000Z");
+            seed_legacy_transition(&conn, 9, "draft", "cancelled", "2026-11-03T21:48:10.000Z");
+            seed_legacy_transition(&conn, 9, "cancelled", "active", "2026-11-03T21:48:20.000Z");
+            seed_legacy_transition(&conn, 9, "active", "cancelled", "2026-11-03T21:48:30.000Z");
         }
         database.migrate(&AllowAllMigrations).unwrap();
 
@@ -1403,7 +1435,24 @@ mod tests {
             .connection()
             .execute_batch(
                 "UPDATE tickets SET due_date = '2026-11-15T17:00:00.000Z' WHERE id = 1;
-                 UPDATE tickets SET completed_at = NULL, canceled_at = NULL;
+                 UPDATE tickets SET completed_at = (
+                     SELECT h.ended_at
+                     FROM issue_state_history AS h
+                     JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+                     WHERE h.ticket_id = tickets.id
+                       AND s.type = 'completed'
+                       AND h.ended_at IS NOT NULL
+                     ORDER BY h.ended_at DESC LIMIT 1
+                 );
+                 UPDATE tickets SET canceled_at = (
+                     SELECT h.ended_at
+                     FROM issue_state_history AS h
+                     JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+                     WHERE h.ticket_id = tickets.id
+                       AND s.type IN ('canceled', 'duplicate')
+                       AND h.ended_at IS NOT NULL
+                     ORDER BY h.ended_at DESC LIMIT 1
+                 );
                  DELETE FROM issue_state_history WHERE ticket_id = 4;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
@@ -1695,6 +1744,11 @@ mod tests {
             seed_legacy_task(&conn, 4, "active", None, "2026-11-03T21:38:37.985Z");
             seed_legacy_transition(&conn, 4, "draft", "done", "2026-11-03T21:39:10.000Z");
             seed_legacy_transition(&conn, 4, "done", "active", "2026-11-03T21:39:20.000Z");
+
+            seed_legacy_task(&conn, 5, "done", None, "2026-11-03T21:38:37.989Z");
+            seed_legacy_transition(&conn, 5, "draft", "done", "2026-11-03T21:39:30.000Z");
+            seed_legacy_transition(&conn, 5, "done", "active", "2026-11-03T21:39:40.000Z");
+            seed_legacy_transition(&conn, 5, "active", "done", "2026-11-03T21:39:50.000Z");
         }
         database.migrate(&AllowAllMigrations).unwrap();
 
@@ -1725,6 +1779,15 @@ mod tests {
         assert_eq!(
             completed, None,
             "an issue that left the completed state is no longer completed"
+        );
+        assert_eq!(canceled, None);
+
+        let (started, completed, canceled) = migrated_lifecycle_timestamps(&conn, 5);
+        assert_eq!(started.as_deref(), Some("2026-11-03T21:39:40.000Z"));
+        assert_eq!(
+            completed.as_deref(),
+            Some("2026-11-03T21:39:50.000Z"),
+            "an issue that re-entered the completed state is completed by the last entry"
         );
         assert_eq!(canceled, None);
     }
@@ -1849,6 +1912,46 @@ mod tests {
         let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 1);
         assert_eq!(completed, None, "an active issue is not terminal");
         assert_eq!(canceled, None);
+    }
+
+    #[test]
+    fn repair_migration_clears_terminal_stamps_for_reopened_issues() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 6);
+        assert_eq!(
+            completed, None,
+            "an issue that left the completed state keeps no completed stamp"
+        );
+        assert_eq!(canceled, None);
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 8);
+        assert_eq!(completed, None);
+        assert_eq!(
+            canceled, None,
+            "an issue that left the canceled state keeps no canceled stamp"
+        );
+    }
+
+    #[test]
+    fn repair_migration_restamps_reentered_terminal_issues_from_last_entry() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let (_, completed, _) = migrated_lifecycle_timestamps(&conn, 7);
+        assert_eq!(
+            completed.as_deref(),
+            Some("2026-11-03T21:46:30.000Z"),
+            "an issue that re-entered the completed state is completed by the last entry"
+        );
+        let (_, _, canceled) = migrated_lifecycle_timestamps(&conn, 9);
+        assert_eq!(
+            canceled.as_deref(),
+            Some("2026-11-03T21:48:30.000Z"),
+            "an issue that re-entered the canceled state is canceled by the last entry"
+        );
     }
 
     #[test]

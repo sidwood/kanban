@@ -52,6 +52,17 @@ impl LinearPriority {
     pub fn value(self) -> u8 {
         self.0
     }
+
+    /// The Linear priority a legacy Ticket priority maps to, matching
+    /// the Linear migration's rewrite of stored rows.
+    pub fn of_legacy(priority: crate::ticket::Priority) -> Self {
+        Self(match priority {
+            crate::ticket::Priority::Urgent => 1,
+            crate::ticket::Priority::High => 2,
+            crate::ticket::Priority::Normal => 3,
+            crate::ticket::Priority::Low => 4,
+        })
+    }
 }
 
 /// Stable external key `PREFIX-123`.

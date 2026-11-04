@@ -150,6 +150,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
+        seed_issue_projection(&span, id, &priority)?;
         let (created, superseded) = envelopes(id);
         append_timeline(&span, &created)?;
         append_timeline(&span, &superseded)?;
@@ -232,6 +233,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
+        seed_issue_projection(&span, id, &priority)?;
         append_timeline(&span, &envelope(id))?;
         span.commit().map_err(internal)?;
         Ok(Ticket::new(
@@ -293,13 +295,27 @@ impl TicketStore for SqliteTicketStore {
 pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiError> {
     let stored = StoredTicket::of(ticket.priority(), ticket.body());
     let preceding_version = ticket.version() - 1;
-    let changed = span
-        .execute(
+    // A legacy write that changes the priority moves the Linear
+    // priority with it, the same way the migration maps stored rows;
+    // one that keeps the priority leaves whatever the issue model
+    // last held, so an operator's own priority edit survives an
+    // unrelated legacy save.
+    let prior_priority: Option<String> = span
+        .query_row(
+            "SELECT priority FROM tickets WHERE id = ?1 AND version = ?2",
+            params![ticket.id().value() as i64, preceding_version as i64],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(internal)?;
+    let changed = if prior_priority.as_deref() == Some(ticket.priority().wire_name()) {
+        span.execute(
             "UPDATE tickets
              SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
                  criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
                  bug_qualification = ?10, bug_facts = ?11, profile = ?12,
-                 pinned_version = ?13, version = ?14
+                 pinned_version = ?13, version = ?14,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND version = ?15",
             params![
                 ticket.id().value() as i64,
@@ -319,11 +335,94 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
                 preceding_version as i64,
             ],
         )
-        .map_err(internal)?;
+        .map_err(internal)?
+    } else {
+        span.execute(
+            "UPDATE tickets
+             SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
+                 criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
+                 bug_qualification = ?10, bug_facts = ?11, profile = ?12,
+                 pinned_version = ?13, version = ?14,
+                 linear_priority = ?16,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND version = ?15",
+            params![
+                ticket.id().value() as i64,
+                stored.priority,
+                ticket.state().wire_name(),
+                stored.spec_id,
+                stored.title,
+                stored.slice,
+                stored.criteria,
+                stored.actual_behaviour,
+                stored.reporter_evidence,
+                stored.bug_qualification,
+                stored.bug_facts,
+                ticket.profile().map(|name| name.as_str()),
+                ticket.pinned_version().map(|version| version as i64),
+                ticket.version() as i64,
+                preceding_version as i64,
+                i64::from(kanban_domain::LinearPriority::of_legacy(ticket.priority()).value()),
+            ],
+        )
+        .map_err(internal)?
+    };
     if changed != 1 {
         return Err(ticket_write_refused(span, ticket.id(), preceding_version));
     }
     sync_issue_state_after_legacy_move(span, ticket)
+}
+
+/// Seed the Linear issue projection a new Ticket row carries: the
+/// initial workflow state with its open history row at the creation
+/// stamp, the lifecycle stamps that state's entry rules call for,
+/// and the Linear priority the legacy priority maps to. The ticket
+/// lands in the store's first state, so the seed uses that state.
+fn seed_issue_projection(
+    span: &WriteSpan<'_>,
+    ticket_id: TicketId,
+    priority: &Priority,
+) -> Result<(), ApiError> {
+    let ticket_id = ticket_id.value() as i64;
+    let (project_id, created_at): (i64, String) = span
+        .query_row(
+            "SELECT project_id, created_at FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(internal)?;
+    let state = super::linear_issue::workflow_state_by_legacy(
+        span,
+        project_id,
+        TicketState::Draft.wire_name(),
+    )
+    .map_err(|error| ApiError::internal(&error.to_string()))?
+    .ok_or_else(|| ApiError::internal("the workflow state for a new ticket is missing"))?;
+    let mut stamps = kanban_domain::IssueStateTimestamps::default();
+    stamps.stamp_entry(state.state_type, &created_at);
+    stamps.clear_terminal_on_reopen(state.state_type);
+    span.execute(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+         VALUES (?1, ?2, ?3, NULL)",
+        params![ticket_id, state.id, &created_at],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "UPDATE tickets
+         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5,
+             linear_priority = ?6
+         WHERE id = ?1",
+        params![
+            ticket_id,
+            state.id,
+            stamps.started_at,
+            stamps.completed_at,
+            stamps.canceled_at,
+            i64::from(kanban_domain::LinearPriority::of_legacy(*priority).value()),
+        ],
+    )
+    .map_err(internal)?;
+    Ok(())
 }
 
 /// Keep the Linear issue projection in step with one legacy state

@@ -200,6 +200,12 @@ fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std
     .expect("lifecycle registers");
     core.register_reassignment(tickets.clone(), projects.clone(), specs.clone())
         .expect("reassignment registers");
+    core.register_profiles(
+        Arc::new(kanban_storage::SqliteProfileStore::new(database)),
+        tickets.clone(),
+        projects.clone(),
+    )
+    .expect("profiles register");
     core.register_issue_operator(
         tickets,
         projects.clone(),
@@ -228,13 +234,22 @@ fn legacy_harness() -> RulesHarness {
 }
 
 fn create_legacy_task(core: &Core, key: &str, title: &str) -> serde_json::Value {
+    create_legacy_task_with_priority(core, key, title, "normal")
+}
+
+fn create_legacy_task_with_priority(
+    core: &Core,
+    key: &str,
+    title: &str,
+    priority: &str,
+) -> serde_json::Value {
     core.command(
         "ticket.create",
         &json!({
             "mutation": mutation(0, key),
             "project_id": 1,
             "kind": "task",
-            "priority": "normal",
+            "priority": priority,
             "title": title,
             "subtype": "operational",
             "mode": "human",
@@ -1487,4 +1502,496 @@ fn legacy_child_closing_closes_the_parent_when_enabled() {
         "the parent closes with the legacy-closed child, in the same write"
     );
     assert!(closed.completed_at.is_some());
+}
+
+/// The identifier a legacy creation mints for its ticket.
+fn legacy_identifier(created: &Value) -> String {
+    format!("CORE-{}", created["number"].as_u64().expect("a number"))
+}
+
+/// A legacy Task moved to Ready over the operator surface, so its
+/// workflow state is already seeded the way every issued ticket's
+/// is: the sweep then measures what a later legacy write alone does.
+fn seeded_task(h: &RulesHarness, key: &str, title: &str) -> (String, u64, u64) {
+    let created = create_legacy_task(&h.core, key, title);
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let before = read_issue(&h.session, &identifier);
+    save_issue(
+        &h.session,
+        before.version,
+        &format!("{key}-ready"),
+        json!({ "identifier": identifier, "state": "Ready" }),
+    );
+    let seeded = read_issue(&h.session, &identifier);
+    (identifier, ticket_id, seeded.version)
+}
+
+#[test]
+fn a_legacy_created_task_opens_its_initial_state_row() {
+    let h = legacy_harness();
+    let created = create_legacy_task(&h.core, "legacy-create-history", "Legacy created task");
+    let identifier = legacy_identifier(&created);
+
+    let record = read_issue(&h.session, &identifier);
+    assert_eq!(record.state, "Draft", "a legacy creation starts in Draft");
+    let names = history_names(&record);
+    assert_eq!(
+        names,
+        vec!["Draft"],
+        "the legacy creation records the initial state's open row, saw {names:?}"
+    );
+    assert!(
+        record.state_history[0].ended_at.is_none(),
+        "the creation row stays open until a move closes it"
+    );
+
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    h.core
+        .command(
+            "ticket.park",
+            &json!({
+                "mutation": mutation(record.version, "legacy-create-history-park"),
+                "ticket_id": ticket_id,
+            }),
+        )
+        .expect("the legacy park lands");
+    let parked = read_issue(&h.session, &identifier);
+    let names = history_names(&parked);
+    assert_eq!(
+        names,
+        vec!["Draft", "Parked"],
+        "the later move closes the creation row instead of replacing it, saw {names:?}"
+    );
+    assert!(parked.state_history[0].ended_at.is_some());
+    assert!(parked.state_history[1].ended_at.is_none());
+}
+
+#[test]
+fn legacy_creation_maps_priorities_the_way_the_migration_does() {
+    for (wire, linear) in [("urgent", 1u8), ("high", 2), ("normal", 3), ("low", 4)] {
+        let h = legacy_harness();
+        let created = create_legacy_task_with_priority(
+            &h.core,
+            &format!("legacy-create-{wire}"),
+            "Priority mapping task",
+            wire,
+        );
+        let record = read_issue(&h.session, &legacy_identifier(&created));
+        assert_eq!(
+            record.priority, linear,
+            "legacy priority {wire} maps to Linear priority {linear}"
+        );
+    }
+}
+
+#[test]
+fn legacy_prioritise_moves_the_issue_priority() {
+    let h = legacy_harness();
+    let created =
+        create_legacy_task_with_priority(&h.core, "legacy-prioritise", "Prioritised task", "high");
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    assert_eq!(read_issue(&h.session, &identifier).priority, 2);
+
+    h.core
+        .command(
+            "ticket.prioritise",
+            &json!({
+                "mutation": mutation(read_issue(&h.session, &identifier).version, "legacy-prioritise-urgent"),
+                "ticket_id": ticket_id,
+                "priority": "urgent",
+            }),
+        )
+        .expect("the legacy prioritise lands");
+    let urgent = read_issue(&h.session, &identifier);
+    assert_eq!(urgent.priority, 1, "prioritise urgent maps to 1");
+    assert!(
+        urgent.version > created["version"].as_u64().expect("a version"),
+        "the legacy move still bumps the version"
+    );
+
+    h.core
+        .command(
+            "ticket.prioritise",
+            &json!({
+                "mutation": mutation(read_issue(&h.session, &identifier).version, "legacy-prioritise-low"),
+                "ticket_id": ticket_id,
+                "priority": "low",
+            }),
+        )
+        .expect("the second legacy prioritise lands");
+    assert_eq!(
+        read_issue(&h.session, &identifier).priority,
+        4,
+        "prioritise low maps to 4"
+    );
+}
+
+#[test]
+fn a_legacy_edit_stamps_the_issue_update_time() {
+    let h = legacy_harness();
+    let (identifier, ticket_id, version) = seeded_task(&h, "legacy-edit-stamp", "Edited task");
+    h.core
+        .command(
+            "ticket.park",
+            &json!({
+                "mutation": mutation(version, "legacy-edit-stamp-park"),
+                "ticket_id": ticket_id,
+            }),
+        )
+        .expect("the park seeds the workflow state");
+    let before = read_issue(&h.session, &identifier);
+    let stamp = wait_for_clock_past(&h, &before.updated_at);
+
+    h.core
+        .command(
+            "ticket.edit",
+            &json!({
+                "mutation": mutation(before.version, "legacy-edit-stamp-edit"),
+                "ticket_id": ticket_id,
+                "title": "Retitled task",
+            }),
+        )
+        .expect("the legacy edit lands");
+    let edited = read_issue(&h.session, &identifier);
+    assert_eq!(edited.title, "Retitled task");
+    assert_eq!(edited.state, "Parked", "the edit moves no state");
+    assert!(
+        edited.updated_at >= stamp,
+        "a same-state legacy edit stamps updated_at ({} may share the sampled millisecond {})",
+        edited.updated_at,
+        stamp
+    );
+    assert!(
+        edited.updated_at > before.updated_at,
+        "the edit advances the update time past the pre-edit stamp ({} must pass {})",
+        edited.updated_at,
+        before.updated_at
+    );
+}
+
+/// Every legacy write command that lands through the shared ticket
+/// row move stamps the issue's `updated_at` once the workflow state
+/// is seeded: the sweep covers each command family — the named human
+/// commands, the drag, profile assignment, bug qualification and
+/// facts, and the audited emergency override.
+#[test]
+fn every_legacy_write_stamps_the_issue_update_time() {
+    let h = legacy_harness();
+
+    let stamps = |command: &str, key: &str, payload: fn(u64, u64) -> serde_json::Value| {
+        let (identifier, ticket_id, version) = seeded_task(&h, key, "Sweep task");
+        let _ = version;
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        let payload = payload(ticket_id, before.version);
+        h.core
+            .command(command, &payload)
+            .unwrap_or_else(|error| panic!("the legacy {command} lands: {error:?}"));
+        let after = read_issue(&h.session, &identifier);
+        assert!(
+            after.updated_at >= clock,
+            "the legacy {command} stamps updated_at ({} may share the sampled millisecond {})",
+            after.updated_at,
+            clock
+        );
+        assert!(
+            after.updated_at > before.updated_at,
+            "the legacy {command} advances the update time past {} ",
+            before.updated_at
+        );
+        after
+    };
+
+    stamps(
+        "ticket.park",
+        "sweep-park",
+        |id, version| json!({"mutation": mutation(version, "sweep-park-move"), "ticket_id": id}),
+    );
+    stamps("ticket.transition", "sweep-transition", |id, version| {
+        json!({
+            "mutation": mutation(version, "sweep-transition-move"),
+            "ticket_id": id,
+            "to": "active"
+        })
+    });
+    stamps("ticket.prioritise", "sweep-prioritise", |id, version| {
+        json!({
+            "mutation": mutation(version, "sweep-prioritise-move"),
+            "ticket_id": id,
+            "priority": "low"
+        })
+    });
+    stamps("ticket.edit", "sweep-edit", |id, version| {
+        json!({
+            "mutation": mutation(version, "sweep-edit-move"),
+            "ticket_id": id,
+            "title": "Sweep retitled"
+        })
+    });
+    stamps(
+        "ticket.assign",
+        "sweep-assign",
+        |id, version| json!({"mutation": mutation(version, "sweep-assign-move"), "ticket_id": id, "profile": "standard"}),
+    );
+
+    // Scheduling leaves Draft, so its ticket is created over the
+    // operator surface, whose Draft row is seeded at creation.
+    {
+        let saved = save_issue(
+            &h.session,
+            0,
+            "sweep-schedule",
+            json!({ "project_id": 1, "title": "Scheduled sweep task" }),
+        );
+        let identifier = saved.identifier.clone();
+        let ticket_id = saved.ticket_id;
+        let before = read_issue(&h.session, &identifier);
+        assert_eq!(before.state, "Draft");
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.schedule",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-schedule-move"),
+                    "ticket_id": ticket_id,
+                    "cron": "*/15 * * * *",
+                    "timezone": "UTC",
+                    "after": "2026-09-08T09:00:00Z",
+                    "profile": "standard",
+                }),
+            )
+            .expect("the legacy schedule lands");
+        let after = read_issue(&h.session, &identifier);
+        assert_eq!(after.state, "Scheduled");
+        assert!(
+            after.updated_at >= clock,
+            "the legacy schedule stamps updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    // Unpark needs a parked ticket first.
+    {
+        let (identifier, ticket_id, version) = seeded_task(&h, "sweep-unpark", "Unparked task");
+        h.core
+            .command(
+                "ticket.park",
+                &json!({
+                    "mutation": mutation(version, "sweep-unpark-park"),
+                    "ticket_id": ticket_id,
+                }),
+            )
+            .expect("the park lands");
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.unpark",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-unpark-move"),
+                    "ticket_id": ticket_id,
+                }),
+            )
+            .expect("the unpark lands");
+        let after = read_issue(&h.session, &identifier);
+        assert!(
+            after.updated_at >= clock,
+            "the legacy unpark stamps updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    // The review decision: reach In Review, then approve it.
+    {
+        let (identifier, ticket_id, version) = seeded_task(&h, "sweep-review", "Review sweep task");
+        let _ = version;
+        let in_review = read_issue(&h.session, &identifier);
+        save_issue(
+            &h.session,
+            in_review.version,
+            "sweep-review-in-review",
+            json!({"identifier": identifier, "state": "In Review"}),
+        );
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.review",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-review-move"),
+                    "ticket_id": ticket_id,
+                    "decision": "approve",
+                }),
+            )
+            .expect("the legacy review lands");
+        let after = read_issue(&h.session, &identifier);
+        assert_eq!(after.state, "Approved");
+        assert!(
+            after.updated_at >= clock,
+            "the legacy review stamps updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    // The audited emergency override moves past terminal states.
+    {
+        let (identifier, ticket_id, version) =
+            seeded_task(&h, "sweep-override", "Override sweep task");
+        h.core
+            .command(
+                "ticket.cancel",
+                &json!({
+                    "mutation": mutation(version, "sweep-override-cancel"),
+                    "ticket_id": ticket_id,
+                }),
+            )
+            .expect("the legacy cancel lands");
+        let cancelled = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &cancelled.updated_at);
+        h.core
+            .command(
+                "ticket.emergency.override",
+                &json!({
+                    "mutation": mutation(cancelled.version, "sweep-override-move"),
+                    "ticket_id": ticket_id,
+                    "to": "done",
+                    "who": "operator",
+                    "why": "the sweep reaches every legacy write",
+                }),
+            )
+            .expect("the override lands");
+        let after = read_issue(&h.session, &identifier);
+        assert_eq!(after.state, "Done");
+        assert!(
+            after.updated_at >= clock,
+            "the emergency override stamps updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+
+    // Bug qualification and facts: the bug-only legacy writes.
+    {
+        let bug = h
+            .core
+            .command(
+                "ticket.create",
+                &json!({
+                    "mutation": mutation(0, "sweep-bug"),
+                    "project_id": 1,
+                    "kind": "bug",
+                    "priority": "normal",
+                    "title": "Sweep bug",
+                    "actual_behaviour": "The sweep observes the bug writes.",
+                    "reporter_evidence": "The sweep transcript.",
+                }),
+            )
+            .expect("the legacy Bug lands");
+        let identifier = legacy_identifier(&bug);
+        let ticket_id = bug["id"].as_u64().expect("a ticket id");
+        let draft = read_issue(&h.session, &identifier);
+        save_issue(
+            &h.session,
+            draft.version,
+            "sweep-bug-ready",
+            json!({"identifier": identifier, "state": "Ready"}),
+        );
+        let before = read_issue(&h.session, &identifier);
+        let clock = wait_for_clock_past(&h, &before.updated_at);
+        h.core
+            .command(
+                "ticket.bug.qualify",
+                &json!({
+                    "mutation": mutation(before.version, "sweep-bug-qualify"),
+                    "ticket_id": ticket_id,
+                    "qualification": {
+                        "expected_behaviour": "The sweep bug qualifies.",
+                        "reproduction": "Run the sweep.",
+                        "environment": "macOS 26, disposable SQLite.",
+                        "severity": "critical",
+                        "frequency": "Every run.",
+                        "affected_scope": "The sweep.",
+                        "risk": "None.",
+                        "criteria": [{
+                            "outcome": "The qualification lands.",
+                            "stories": ["CORE-S1-US1"]
+                        }],
+                        "verification_steps": [{ "command": "cargo test" }]
+                    }
+                }),
+            )
+            .expect("the legacy qualification lands");
+        let qualified = read_issue(&h.session, &identifier);
+        assert!(
+            qualified.updated_at >= clock,
+            "the legacy qualification stamps updated_at, stayed at {}",
+            qualified.updated_at
+        );
+        let clock = wait_for_clock_past(&h, &qualified.updated_at);
+        h.core
+            .command(
+                "ticket.bug.facts",
+                &json!({
+                    "mutation": mutation(qualified.version, "sweep-bug-facts"),
+                    "ticket_id": ticket_id,
+                    "external_references": [],
+                    "occurrence_snapshots": [],
+                    "evidence_ids": [],
+                }),
+            )
+            .expect("the legacy bug facts land");
+        let after = read_issue(&h.session, &identifier);
+        assert!(
+            after.updated_at >= clock,
+            "the legacy bug facts stamp updated_at, stayed at {}",
+            after.updated_at
+        );
+    }
+}
+
+#[test]
+fn a_legacy_reassignment_seeds_the_replacement_issue() {
+    let h = legacy_harness();
+    let created = create_legacy_task_with_priority(
+        &h.core,
+        "legacy-reassign-seed",
+        "Reassigned task",
+        "high",
+    );
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let ready = read_issue(&h.session, &identifier);
+
+    let replacement = h
+        .core
+        .command(
+            "ticket.reassign",
+            &json!({
+                "mutation": mutation(ready.version, "legacy-reassign-seed-move"),
+                "ticket_id": ticket_id,
+                "kind": "task",
+                "priority": "urgent",
+                "title": "Replacement task",
+                "subtype": "operational",
+                "mode": "human",
+                "completion": ["Checked"],
+            }),
+        )
+        .expect("the reassignment lands");
+    let replacement_key = format!("CORE-{}", replacement["number"].as_u64().expect("a number"));
+
+    let record = read_issue(&h.session, &replacement_key);
+    assert_eq!(record.state, "Draft", "the replacement starts in Draft");
+    assert_eq!(
+        record.priority, 1,
+        "the replacement carries the requested urgent priority"
+    );
+    let names = history_names(&record);
+    assert_eq!(
+        names,
+        vec!["Draft"],
+        "the replacement opens its own initial state row, saw {names:?}"
+    );
+    assert!(record.state_history[0].ended_at.is_none());
 }

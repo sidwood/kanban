@@ -276,10 +276,32 @@ impl SqliteIssueStore {
             )
             .map_err(not_found_ticket)?;
         let state = resolve_state_by_name(&span, project_id, state_name)?;
-        if prior_workflow.is_some() {
+        if prior_workflow == Some(state.id) {
             span.commit().map_err(internal)?;
             return Ok(());
         }
+        // The Ticket row's creation seeds the initial Draft state in
+        // the same write, so a requested first state replaces that
+        // seed: creation owns the whole history, and no state before
+        // it exists to close. Once anything else has moved the issue,
+        // the first recorded state stands.
+        let seeded_rows: i64 = span
+            .query_row(
+                "SELECT COUNT(*) FROM issue_state_history
+                 WHERE ticket_id = ?1 AND started_at = ?2",
+                params![ticket_id, &created_at],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        if seeded_rows != 1 {
+            span.commit().map_err(internal)?;
+            return Ok(());
+        }
+        span.execute(
+            "DELETE FROM issue_state_history WHERE ticket_id = ?1",
+            [ticket_id],
+        )
+        .map_err(internal)?;
         let legacy = TicketState::parse(&state.legacy_state)
             .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
         let mut stamps = IssueStateTimestamps::default();

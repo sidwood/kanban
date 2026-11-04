@@ -30,7 +30,7 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
     let comments: Arc<dyn CommentStore> = Arc::new(SqliteCommentStore::new(database));
     core.register_plans(plans.clone(), projects.clone(), specs.clone())
         .expect("plans register");
-    core.register_specs(specs.clone(), projects.clone(), plans)
+    core.register_specs(specs.clone(), projects.clone(), plans.clone())
         .expect("specs register");
     std::fs::create_dir_all(attachments).expect("attachments dir");
     core.register_tickets(
@@ -177,7 +177,7 @@ fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std
     let schedules = Arc::new(SqliteScheduleStore::new(database));
     core.register_plans(plans.clone(), projects.clone(), specs.clone())
         .expect("plans register");
-    core.register_specs(specs.clone(), projects.clone(), plans)
+    core.register_specs(specs.clone(), projects.clone(), plans.clone())
         .expect("specs register");
     std::fs::create_dir_all(attachments).expect("attachments dir");
     core.register_tickets(
@@ -206,6 +206,17 @@ fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std
         projects.clone(),
     )
     .expect("profiles register");
+    core.register_board(
+        Arc::new(kanban_storage::SqliteInitiativeStore::new(database)),
+        projects.clone(),
+        plans,
+        specs.clone(),
+        tickets.clone(),
+        Arc::new(kanban_storage::SqliteLaneStore::new(database)),
+        Arc::new(kanban_storage::SqliteProfileStore::new(database)),
+        None,
+    )
+    .expect("the board registers");
     core.register_issue_operator(
         tickets,
         projects.clone(),
@@ -2128,5 +2139,103 @@ fn every_calendar_date_round_trips_through_the_due_date() {
     assert_eq!(
         legacy.due_date, None,
         "a legacy creation carries no due date"
+    );
+}
+
+/// The ticket ids a global board projection shows, in board order.
+fn board_tickets(h: &RulesHarness, filter: serde_json::Value) -> Vec<u64> {
+    h.core
+        .query("board.global", &json!({ "filter": filter }))
+        .expect("the board serves")["cards"]
+        .as_array()
+        .expect("the cards are a list")
+        .iter()
+        .map(|card| card["ticket"]["id"].as_u64().expect("a ticket id"))
+        .collect()
+}
+
+#[test]
+fn issue_priority_changes_move_the_board_too() {
+    let h = legacy_harness();
+    let low = create_legacy_task_with_priority(&h.core, "board-sync-low", "Board low task", "low");
+    let normal = create_legacy_task(&h.core, "board-sync-normal", "Board normal task");
+    let low_id = low["id"].as_u64().expect("a ticket id");
+    let normal_id = normal["id"].as_u64().expect("a ticket id");
+    let low_key = legacy_identifier(&low);
+    let normal_key = legacy_identifier(&normal);
+
+    // Raising the low task to Urgent through the issue model must
+    // carry the board with it: the urgent filter finds it, the low
+    // filter loses it, and the board order puts it first.
+    let raised = read_issue(&h.session, &low_key);
+    save_issue(
+        &h.session,
+        raised.version,
+        "board-sync-raise",
+        json!({ "identifier": low_key, "priority": 1 }),
+    );
+    assert_eq!(
+        read_issue(&h.session, &low_key).priority,
+        1,
+        "the issue model carries the requested priority"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["urgent"] })),
+        vec![low_id],
+        "the urgent filter finds the raised task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["low"] })),
+        Vec::<u64>::new(),
+        "the low filter no longer holds the raised task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({})),
+        vec![low_id, normal_id],
+        "the board orders the urgent task before the normal one"
+    );
+
+    // Clearing the priority entirely leaves the issue on the board:
+    // No priority keeps the default normal bucket of the legacy
+    // vocabulary rather than dropping or misplacing the card.
+    let raised = read_issue(&h.session, &low_key);
+    save_issue(
+        &h.session,
+        raised.version,
+        "board-sync-clear",
+        json!({ "identifier": low_key, "priority": 0 }),
+    );
+    assert_eq!(read_issue(&h.session, &low_key).priority, 0);
+    let mut normal_bucket = board_tickets(&h, json!({ "priorities": ["normal"] }));
+    normal_bucket.sort();
+    assert_eq!(
+        normal_bucket,
+        vec![low_id, normal_id],
+        "No priority stays on the board in the normal bucket"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["urgent"] })),
+        Vec::<u64>::new(),
+        "the urgent filter released the cleared task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({})).len(),
+        2,
+        "no card dropped off the board"
+    );
+
+    // Lowering the normal task to Low through the issue model moves
+    // it behind the No-priority task in board order.
+    let cleared = read_issue(&h.session, &normal_key);
+    save_issue(
+        &h.session,
+        cleared.version,
+        "board-sync-lower",
+        json!({ "identifier": normal_key, "priority": 4 }),
+    );
+    assert_eq!(
+        board_tickets(&h, json!({})),
+        vec![low_id, normal_id],
+        "the low task now sorts behind the No-priority task"
     );
 }

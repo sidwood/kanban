@@ -174,6 +174,20 @@ impl Priority {
             .find(|priority| priority.wire_name() == stored)
     }
 
+    /// The legacy priority a Linear issue priority maps back to,
+    /// inverting the migration's mapping of stored rows. The legacy
+    /// vocabulary has no "none", so No priority (0) keeps the
+    /// default normal bucket: a card saved without a priority stays
+    /// on the board beside normal work instead of dropping off it.
+    pub fn of_linear(value: u8) -> Self {
+        match value {
+            1 => Self::Urgent,
+            2 => Self::High,
+            4 => Self::Low,
+            _ => Self::Normal,
+        }
+    }
+
     /// Rank for deterministic Dispatch Request queue order: urgent
     /// first, then high, normal, and low. Lower ranks precede higher
     /// ones.

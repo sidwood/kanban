@@ -160,9 +160,25 @@ impl SqliteIssueStore {
         if current == Some(i64::from(priority)) {
             return Ok(());
         }
+        // The issue model's priority is the operator-facing value,
+        // but the board and the legacy Ticket row keep their own
+        // column: every issue-model priority change carries the
+        // legacy priority with it, so the board's filters and order
+        // follow. No priority (0) maps to the legacy normal bucket,
+        // the vocabulary's default, so the card neither drops off
+        // the board nor changes buckets spuriously.
         conn.execute(
-            "UPDATE tickets SET linear_priority = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
-            params![ticket_id, i64::from(priority)],
+            "UPDATE tickets
+             SET linear_priority = ?2,
+                 priority = ?3,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                 version = version + 1
+             WHERE id = ?1",
+            params![
+                ticket_id,
+                i64::from(priority),
+                kanban_domain::Priority::of_linear(priority).wire_name(),
+            ],
         )
         .map_err(internal)?;
         Ok(())

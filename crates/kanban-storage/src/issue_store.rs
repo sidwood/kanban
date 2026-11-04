@@ -188,8 +188,10 @@ impl SqliteIssueStore {
 
     pub fn set_due_date(&self, ticket_id: i64, due_date: Option<&str>) -> Result<(), ApiError> {
         let conn = self.lock();
+        // No due date is the empty none value, never a calendar date:
+        // every valid date, however far out, round-trips.
         let stored = match due_date {
-            None => "2099-12-31".to_owned(),
+            None => String::new(),
             Some(raw) => validate_calendar_date(raw, "due_date")?,
         };
         let current: Option<String> = conn
@@ -665,14 +667,17 @@ impl SqliteIssueStore {
     pub fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         let conn = self.lock();
         conn.query_row(
-            "SELECT description, linear_priority, COALESCE(due_date, '2099-12-31'), milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id, started_at, completed_at, canceled_at, assignee
+            "SELECT description, linear_priority, due_date, milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id, started_at, completed_at, canceled_at, assignee
              FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| {
                 Ok(kanban_app::IssueTicketFields {
                     description: row.get(0)?,
                     linear_priority: row.get::<_, i64>(1)? as u8,
-                    due_date: row.get(2)?,
+                    due_date: {
+                        let stored: String = row.get(2)?;
+                        (!stored.is_empty()).then_some(stored)
+                    },
                     milestone_id: row.get(3)?,
                     updated_at: row.get(4)?,
                     created_at: row.get(5)?,

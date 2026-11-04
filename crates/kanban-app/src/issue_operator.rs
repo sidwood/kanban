@@ -814,7 +814,7 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         state: state.name,
         state_type: state.state_type.wire_name().to_owned(),
         priority: fields.linear_priority,
-        due_date: (fields.due_date != "2099-12-31").then_some(fields.due_date),
+        due_date: fields.due_date,
         milestone_id: fields.milestone_id.map(|value| value as u64),
         labels,
         relations,

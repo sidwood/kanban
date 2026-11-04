@@ -1143,6 +1143,55 @@ pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rus
     apply_linear_issue_relaxation(span)
 }
 
+/// Migration 0061: normalise stored issue dates.
+///
+/// Earlier builds of this branch accepted due dates and milestone
+/// target dates the strict calendar validator now refuses, such as
+/// `2026-1-5` or a date with surrounding whitespace. Every stored
+/// date that parses as a calendar date is rewritten in its
+/// zero-padded `YYYY-MM-DD` spelling; anything unparseable keeps its
+/// bytes and is reported nowhere. The due-date column's old in-band
+/// no-date marker — the exact date `2099-12-31` every earlier build
+/// wrote for "no due date" and read back as none — becomes the empty
+/// none value first, so it can never swallow a real far-future
+/// deadline again. Milestone target dates never carried the marker,
+/// so theirs are only padded.
+pub(crate) fn apply_loose_issue_date_normalisation(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    span.execute_batch("UPDATE tickets SET due_date = '' WHERE due_date = '2099-12-31';")?;
+    for table_and_column in [("tickets", "due_date"), ("issue_milestones", "target_date")] {
+        let (table, column) = table_and_column;
+        let rows: Vec<(i64, String)> = {
+            let mut statement = span.prepare(&format!(
+                "SELECT rowid, {column} FROM {table}
+                 WHERE {column} IS NOT NULL AND {column} <> ''"
+            ))?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        for (rowid, raw) in rows {
+            if let Some(padded) = padded_calendar_date(&raw)
+                && padded != raw
+            {
+                span.execute(
+                    &format!("UPDATE {table} SET {column} = ?2 WHERE rowid = ?1"),
+                    rusqlite::params![rowid, padded],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The zero-padded spelling of a date that parses as a calendar
+/// date once surrounding whitespace is trimmed, or `None` for
+/// anything the calendar validator would refuse.
+fn padded_calendar_date(raw: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+        .ok()
+        .map(|date| date.format("%Y-%m-%d").to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
@@ -1507,7 +1556,7 @@ mod tests {
                  WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
-                 DELETE FROM schema_migrations WHERE version = 60;",
+                 DELETE FROM schema_migrations WHERE version IN (60, 61);",
             )
             .unwrap();
         (dir, database)
@@ -1769,7 +1818,7 @@ mod tests {
 
         let conn = database.connection();
         assert_eq!(migrated_due_date(&conn, 1), "2026-11-15");
-        assert_eq!(migrated_due_date(&conn, 2), "2099-12-31");
+        assert_eq!(migrated_due_date(&conn, 2), "");
     }
 
     #[test]
@@ -1963,19 +2012,19 @@ mod tests {
         IssueStoreImpl::new(&database)
             .set_due_date(1, None)
             .unwrap();
-        assert_eq!(migrated_due_date(&database.connection(), 1), "2099-12-31");
+        assert_eq!(migrated_due_date(&database.connection(), 1), "");
 
         database.migrate(&AllowAllMigrations).unwrap();
         assert_eq!(
             migrated_due_date(&database.connection(), 1),
-            "2099-12-31",
+            "",
             "a due date cleared through the issue store stays cleared"
         );
     }
     #[test]
-    fn repair_migration_preserves_due_dates_an_earlier_build_stored() {
+    fn repair_migration_pads_earlier_build_dates_that_parse() {
         let (_dir, mut database) = earlier_build_database();
-        let stored_verbatim = [
+        let stored_by_earlier_builds = [
             (2_i64, " 2027-01-05"),
             (3, "2027-01- 05"),
             (5, "-0001-01-01"),
@@ -1985,7 +2034,7 @@ mod tests {
         ];
         {
             let conn = database.connection();
-            for (ticket_id, raw) in stored_verbatim {
+            for (ticket_id, raw) in stored_by_earlier_builds {
                 conn.execute(
                     "UPDATE tickets SET due_date = ?2 WHERE id = ?1",
                     rusqlite::params![ticket_id, raw],
@@ -1997,17 +2046,32 @@ mod tests {
 
         database.migrate(&AllowAllMigrations).unwrap();
 
-        for (ticket_id, raw) in stored_verbatim {
+        // Every date that parses as a calendar date is rewritten in
+        // its zero-padded spelling and saves back; the odd years are
+        // their own canonical spelling, keep their bytes, and still
+        // meet the strict validator's refusal on save.
+        let expected = [
+            (2_i64, " 2027-01-05", "2027-01-05", true),
+            (3, "2027-01- 05", "2027-01-05", true),
+            (5, "-0001-01-01", "-0001-01-01", false),
+            (6, "+10000-01-01", "+10000-01-01", false),
+            (7, "2027-1-5", "2027-01-05", true),
+            (8, "2027- 1- 5", "2027-01-05", true),
+        ];
+        for (ticket_id, raw, now_holds, saves_back) in expected {
             assert_eq!(
                 migrated_due_date(&database.connection(), ticket_id),
-                raw,
-                "a due date an earlier build stored verbatim keeps its stored text"
+                now_holds,
+                "the due date {raw:?} an earlier build stored"
             );
-            let refused = IssueStoreImpl::new(&database)
-                .set_due_date(ticket_id, Some(raw))
-                .expect_err("the store refuses a due date that is not zero-padded");
-            assert_eq!(refused.code, ErrorCode::InvalidRequest);
-            assert_eq!(refused.field.as_deref(), Some("due_date"), "{raw:?}");
+            let outcome = IssueStoreImpl::new(&database).set_due_date(ticket_id, Some(now_holds));
+            if saves_back {
+                outcome.expect("a zero-padded date saves back");
+            } else {
+                let refused = outcome.expect_err("the store refuses a non-padded date");
+                assert_eq!(refused.code, ErrorCode::InvalidRequest);
+                assert_eq!(refused.field.as_deref(), Some("due_date"), "{raw:?}");
+            }
         }
     }
 
@@ -2216,5 +2280,106 @@ mod tests {
                 }),
             )
             .expect("a migrated due date saves back unchanged");
+    }
+
+    /// Prove migration 0061 on a database an earlier build left with loose
+    /// issue dates: every stored due date and milestone target date that
+    /// parses as a calendar date is rewritten zero-padded, the retired
+    /// in-band no-date marker becomes the none value, and anything
+    /// unparseable keeps its bytes.
+    #[test]
+    fn migration_0061_pads_stored_issue_dates_and_retires_the_marker() {
+        let dir = tempfile::TempDir::new().expect("a scratch directory is available");
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).expect("the scratch database opens");
+        migrations::apply_through(&database.connection(), 60).expect("schema 60 lands");
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            for (id, state, due) in [
+                (1i64, "done", "2026-1-5"),
+                (2i64, "draft", "2099-12-31"),
+                (3i64, "draft", " 2026-11-05 "),
+                (4i64, "draft", "not a calendar date"),
+                (5i64, "draft", "2026-02-30"),
+                (6i64, "draft", "2026-11-05Z"),
+            ] {
+                conn.execute(
+                    "INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, title, criteria,
+                 subtype, mode, completion, version, due_date
+             ) VALUES (?1, 1, ?1, 'task', 'normal', ?2, ?3, '[]',
+                       'operational', 'human', '[\"Tracked\"]', 1, ?4)",
+                    rusqlite::params![id, state, format!("Ticket {id}"), due],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO tickets (
+             id, project_id, number, kind, priority, state, title, criteria,
+             subtype, mode, completion, version
+         ) VALUES (7, 1, 7, 'task', 'normal', 'draft', 'Unmarked ticket', '[]',
+                   'operational', 'human', '[\"Tracked\"]', 1)",
+                [],
+            )
+            .unwrap();
+            for (id, target) in [(1i64, "2027-2-3"), (2i64, "2027-03-04"), (3i64, "soon")] {
+                conn.execute(
+                    "INSERT INTO issue_milestones (id, project_id, name, sort_order, target_date)
+             VALUES (?1, 1, ?2, ?1, ?3)",
+                    rusqlite::params![id, format!("M{id}"), target],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO issue_milestones (id, project_id, name, sort_order)
+         VALUES (4, 1, 'M4', 4)",
+                [],
+            )
+            .unwrap();
+        }
+
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migration 0061 applies");
+
+        let conn = database.connection();
+        let due: Vec<(i64, String)> = conn
+            .prepare("SELECT id, due_date FROM tickets ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            due,
+            vec![
+                (1, "2026-01-05".to_owned()),
+                (2, String::new()),
+                (3, "2026-11-05".to_owned()),
+                (4, "not a calendar date".to_owned()),
+                (5, "2026-02-30".to_owned()),
+                (6, "2026-11-05Z".to_owned()),
+                (7, String::new()),
+            ],
+            "loose dates pad, the marker retires, unparseable text stands"
+        );
+        let targets: Vec<(i64, Option<String>)> = conn
+            .prepare("SELECT id, target_date FROM issue_milestones ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            targets,
+            vec![
+                (1, Some("2027-02-03".to_owned())),
+                (2, Some("2027-03-04".to_owned())),
+                (3, Some("soon".to_owned())),
+                (4, None),
+            ],
+            "milestone target dates pad the same way, without a marker"
+        );
     }
 }

@@ -2081,3 +2081,52 @@ fn removing_a_label_the_project_never_had_is_refused() {
     assert_eq!(after.version, before.version);
     assert_eq!(after.updated_at, before.updated_at);
 }
+
+#[test]
+fn every_calendar_date_round_trips_through_the_due_date() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "due-round-trip-create",
+        json!({ "project_id": 1, "title": "Dated issue" }),
+    );
+    let before = read_issue(session, &saved.identifier);
+
+    save_issue(
+        session,
+        before.version,
+        "due-round-trip-far",
+        json!({
+            "identifier": saved.identifier,
+            "due_date": "2099-12-31",
+        }),
+    );
+    let far = read_issue(session, &saved.identifier);
+    assert_eq!(
+        far.due_date.as_deref(),
+        Some("2099-12-31"),
+        "the farthest real calendar date is a due date, not a marker"
+    );
+
+    let cleared = save_issue(
+        session,
+        far.version,
+        "due-round-trip-clear",
+        json!({ "identifier": saved.identifier, "due_date": null }),
+    );
+    let _ = cleared;
+    let empty = read_issue(session, &saved.identifier);
+    assert_eq!(
+        empty.due_date, None,
+        "clearing the due date reads back as no due date"
+    );
+
+    let created = create_legacy_task(&h.core, "due-round-trip-legacy", "Legacy dated task");
+    let legacy = read_issue(session, &legacy_identifier(&created));
+    assert_eq!(
+        legacy.due_date, None,
+        "a legacy creation carries no due date"
+    );
+}

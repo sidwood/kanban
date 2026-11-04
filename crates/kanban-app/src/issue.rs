@@ -40,7 +40,7 @@ pub struct IssueMilestoneRow {
 pub struct IssueTicketFields {
     pub description: String,
     pub linear_priority: u8,
-    pub due_date: String,
+    pub due_date: Option<String>,
     pub milestone_id: Option<i64>,
     pub updated_at: String,
     pub created_at: String,

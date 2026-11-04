@@ -5,6 +5,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { IssueRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -194,6 +195,45 @@ describe('the Ticket editor dialog', () => {
 
     expect(wrapper.find('[data-testid="ticket-error"]').text()).toBe('the Ticket moved on')
     expect(useTicketDialogStore().editorOpen).toBe(true)
+  })
+
+  it('editing only the title of an issue carrying a retired label sends no label change', async () => {
+    const { transport, requests } = editorHarness({
+      tickets: [implementationTicket()],
+      answer: (name) =>
+        name === 'issue.get'
+          ? Promise.resolve({
+              identifier: 'CORE-17',
+              url: 'kanban://issue/CORE-17',
+              ticket_id: 1,
+              project_id: 4,
+              title: 'Spec authoring creates content versions end to end',
+              description: 'Acceptance criteria and story links live in the description.',
+              state: 'Draft',
+              state_type: 'unstarted',
+              priority: 2,
+              labels: ['Retired'],
+              relations: [],
+              state_history: [],
+              version: 1,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            } satisfies IssueRecord)
+          : undefined,
+    })
+    const wrapper = open(transport)
+    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
+    await flushPromises()
+
+    const sent = requests('issue.save')[0]
+    expect(sent).toMatchObject({ identifier: 'CORE-17', title: 'A sharper title' })
+    expect(sent).not.toHaveProperty('add_labels')
+    expect(sent).not.toHaveProperty('remove_labels')
+    expect(useTicketDialogStore().editorOpen).toBe(false)
   })
 
   it('a saved edit survives a reload because the next open reads the record', async () => {

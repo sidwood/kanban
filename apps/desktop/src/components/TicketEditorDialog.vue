@@ -29,6 +29,9 @@ const editor = useTicketEditorStore()
 const projectId = ref<number | null>(null)
 const record = ref<TicketRecord | null>(null)
 const issueDraft = ref(blankIssueCreateDraft())
+// The labels the edited issue carried when it was read: an edit sends
+// only what the draft changes against them.
+const heldLabels = ref<string[]>([])
 const localTitle = ref('')
 const localDescription = ref('')
 const availableLabels = ref<IssueLabelRecord[]>([])
@@ -124,6 +127,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   opening += 1
   const attempt = opening
   record.value = null
+  heldLabels.value = []
   readError.value = null
   editor.error = null
   if (!request || !transport) return
@@ -164,6 +168,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
         : `${held.project_id}-${held.number}`
       const issue = await new KanbanClient(transport).queryIssueGet({ identifier })
       if (attempt !== opening) return
+      heldLabels.value = [...issue.labels]
       issueDraft.value = {
         title: issue.title,
         description: issue.description,
@@ -218,6 +223,7 @@ async function submitEdit(): Promise<void> {
     identifier,
     held.version,
     issueDraft.value,
+    heldLabels.value,
   )
   if (savedIssue) dialog.closeEditor()
 }

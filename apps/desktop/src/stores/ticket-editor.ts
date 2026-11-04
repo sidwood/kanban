@@ -232,11 +232,16 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       await this.refresh(transport, projectId)
       return true
     },
+    // Save an edit of one issue. Labels go as the difference between
+    // the draft and the labels the issue already carries, never the
+    // whole set: the core refuses to add a retired label even when it
+    // is already attached.
     async updateIssue(
       transport: ShellTransport,
       identifier: string,
       optimisticVersion: number,
       draft: IssueCreateDraft,
+      existingLabels: readonly string[],
     ): Promise<boolean> {
       const request: IssueSaveRequest = {
         mutation: {
@@ -250,8 +255,13 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       }
       const due = draft.dueDate.trim()
       request.due_date = due === '' ? null : due
-      if (draft.labels.length > 0) {
-        request.add_labels = [...draft.labels]
+      const added = draft.labels.filter((label) => !existingLabels.includes(label))
+      if (added.length > 0) {
+        request.add_labels = added
+      }
+      const removed = existingLabels.filter((label) => !draft.labels.includes(label))
+      if (removed.length > 0) {
+        request.remove_labels = removed
       }
       request.milestone_id = draft.milestoneId
       try {

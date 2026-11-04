@@ -150,7 +150,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
-        seed_issue_projection(&span, id, &priority)?;
+        seed_issue_projection(&span, id, &priority, TicketState::Draft)?;
         let (created, superseded) = envelopes(id);
         append_timeline(&span, &created)?;
         append_timeline(&span, &superseded)?;
@@ -233,7 +233,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
-        seed_issue_projection(&span, id, &priority)?;
+        seed_issue_projection(&span, id, &priority, TicketState::Draft)?;
         append_timeline(&span, &envelope(id))?;
         span.commit().map_err(internal)?;
         Ok(Ticket::new(
@@ -408,37 +408,37 @@ pub(crate) fn bump_version_and_stamp_update(
 /// initial workflow state with its open history row at the creation
 /// stamp, the lifecycle stamps that state's entry rules call for,
 /// and the Linear priority the legacy priority maps to. The ticket
-/// lands in the store's first state, so the seed uses that state.
-fn seed_issue_projection(
-    span: &WriteSpan<'_>,
+/// lands in `initial`'s workflow state — the store's first state for
+/// an ordinary creation, the state it was minted into for a minted
+/// occurrence — so the seed opens that state's row.
+pub(crate) fn seed_issue_projection(
+    conn: &rusqlite::Connection,
     ticket_id: TicketId,
     priority: &Priority,
+    initial: TicketState,
 ) -> Result<(), ApiError> {
     let ticket_id = ticket_id.value() as i64;
-    let (project_id, created_at): (i64, String) = span
+    let (project_id, created_at): (i64, String) = conn
         .query_row(
             "SELECT project_id, created_at FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(internal)?;
-    let state = super::linear_issue::workflow_state_by_legacy(
-        span,
-        project_id,
-        TicketState::Draft.wire_name(),
-    )
-    .map_err(|error| ApiError::internal(&error.to_string()))?
-    .ok_or_else(|| ApiError::internal("the workflow state for a new ticket is missing"))?;
+    let state =
+        super::linear_issue::workflow_state_by_legacy(conn, project_id, initial.wire_name())
+            .map_err(|error| ApiError::internal(&error.to_string()))?
+            .ok_or_else(|| ApiError::internal("the workflow state for a new ticket is missing"))?;
     let mut stamps = kanban_domain::IssueStateTimestamps::default();
     stamps.stamp_entry(state.state_type, &created_at);
     stamps.clear_terminal_on_reopen(state.state_type);
-    span.execute(
+    conn.execute(
         "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
          VALUES (?1, ?2, ?3, NULL)",
         params![ticket_id, state.id, &created_at],
     )
     .map_err(internal)?;
-    span.execute(
+    conn.execute(
         "UPDATE tickets
          SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5,
              linear_priority = ?6

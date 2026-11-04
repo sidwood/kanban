@@ -2771,3 +2771,101 @@ fn relation_lists_take_ticket_ids_and_name_their_field() {
         );
     }
 }
+#[test]
+fn a_scheduled_occurrence_opens_its_ready_state_row() {
+    use kanban_app::recurrence::RecurrenceStore;
+    use kanban_domain::recurrence::RecurrenceAdvance;
+    use kanban_storage::recurrence::SqliteRecurrenceStore;
+
+    let h = legacy_harness();
+    let created = create_legacy_task_with_priority(
+        &h.core,
+        "recurrence-seed-create",
+        "Recurring high task",
+        "high",
+    );
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+
+    h.core
+        .command(
+            "ticket.schedule",
+            &json!({
+                "mutation": mutation(read_issue(&h.session, &identifier).version, "recurrence-seed-schedule"),
+                "ticket_id": ticket_id,
+                "cron": "*/15 * * * *",
+                "timezone": "UTC",
+                "after": "2026-09-08T09:00:00Z",
+                "profile": "standard",
+            }),
+        )
+        .expect("the legacy schedule lands");
+    let schedule_id: i64 = h
+        .database
+        .connection()
+        .query_row(
+            "SELECT id FROM schedules WHERE ticket_id = ?1",
+            [ticket_id as i64],
+            |row| row.get(0),
+        )
+        .expect("the schedule row lands");
+
+    let committed = SqliteRecurrenceStore::new(&h.database)
+        .advance(
+            kanban_domain::ScheduleId::new(schedule_id as u64),
+            "2026-11-04T21:00:00.000Z",
+            &|_| {
+                Ok(Some(RecurrenceAdvance {
+                    occurrence_window: Some("2026-11-04T20:45:00.000Z".to_owned()),
+                    skipped: None,
+                    next_activation: "2026-11-04T21:15:00.000Z".to_owned(),
+                }))
+            },
+        )
+        .expect("the due recurrence advances")
+        .expect("the decision mints an occurrence");
+    let occurrence = committed.ticket.expect("the occurrence is committed");
+    let occurrence_key = format!("CORE-{}", occurrence.number().value());
+
+    // The occurrence is a full issue the moment it is minted: the
+    // stored workflow projection holds Ready with its open history
+    // row, and the template's high priority maps to 2 the way every
+    // legacy creation does.
+    let record = read_issue(&h.session, &occurrence_key);
+    assert_eq!(record.state, "Ready", "the stored projection holds Ready");
+    assert_eq!(record.state_type, "unstarted");
+    let names = history_names(&record);
+    assert_eq!(
+        names,
+        vec!["Ready"],
+        "the occurrence opens exactly its Ready row, saw {names:?}"
+    );
+    assert!(record.state_history[0].ended_at.is_none());
+    assert_eq!(record.priority, 2, "the template's high maps to 2");
+    assert!(record.started_at.is_none());
+    assert!(record.completed_at.is_none());
+    assert!(record.canceled_at.is_none());
+
+    // A second pass before the next activation mints nothing, so the
+    // occurrence keeps exactly one open history row.
+    let idle = SqliteRecurrenceStore::new(&h.database)
+        .advance(
+            kanban_domain::ScheduleId::new(schedule_id as u64),
+            "2026-11-04T21:00:00.000Z",
+            &|_| {
+                Ok(Some(RecurrenceAdvance {
+                    occurrence_window: Some("2026-11-04T21:00:00.000Z".to_owned()),
+                    skipped: None,
+                    next_activation: "2026-11-04T21:30:00.000Z".to_owned(),
+                }))
+            },
+        )
+        .expect("the idle pass refuses nothing");
+    assert!(idle.is_none(), "a not-yet-due schedule mints nothing");
+    let unchanged = read_issue(&h.session, &occurrence_key);
+    assert_eq!(
+        unchanged.state_history.len(),
+        1,
+        "no retry duplicates the occurrence's history"
+    );
+}

@@ -186,6 +186,13 @@ fn insert_occurrence(
         ],
     )
     .map_err(internal)?;
+    // The occurrence is a full issue the moment it is minted: the
+    // shared ticket boundary seeds its workflow projection — the
+    // state it was minted into with its open history row and the
+    // Linear priority the template's legacy priority maps to — inside
+    // the same advance, so no reader relies on a fallback state or a
+    // default priority.
+    crate::tickets::seed_issue_projection(conn, id, &ticket.priority(), ticket.state())?;
     conn.execute(
         "INSERT INTO ticket_dependencies (from_ticket,to_ticket)
         SELECT from_ticket, ?2 FROM ticket_dependencies WHERE to_ticket = ?1",
@@ -481,6 +488,20 @@ mod tests {
             [],
         )
         .expect("the fixture schedule lands");
+        // A stored Project carries its workflow states; the raw
+        // fixture row bypassed the migration that seeds them.
+        conn.execute(
+            "INSERT OR IGNORE INTO issue_workflow_states (project_id, name, type, legacy_state, position)
+             SELECT 1, v.name, v.type, v.legacy_state, v.position FROM (
+                SELECT 'Draft' AS name, 'backlog' AS type, 'draft' AS legacy_state, 0 AS position
+                UNION ALL SELECT 'Scheduled', 'unstarted', 'scheduled', 3
+                UNION ALL SELECT 'Ready', 'unstarted', 'ready', 4
+                UNION ALL SELECT 'Done', 'completed', 'done', 9
+                UNION ALL SELECT 'Cancelled', 'canceled', 'cancelled', 10
+             ) AS v",
+            [],
+        )
+        .expect("the fixture workflow states land");
         ScheduleId::new(1)
     }
 

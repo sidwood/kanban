@@ -4,10 +4,151 @@
 """
 
 import base64
+import ctypes
+import hashlib
 import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.acceptance import checks, context, harness, scenarios
+
+
+def hashed_account(path):
+    """The account the core gives a data directory that is not the default."""
+    return "data-" + hashlib.sha256(os.fsencode(str(Path(path).resolve()))).hexdigest()
+
+
+class CredentialAccountTests(unittest.TestCase):
+    """The account mirrors the core: `installation` for the platform's
+    managed data directory, `data-<sha256 of the canonical path>` for
+    any other."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, ignore_errors=True))
+
+    def directory(self, *parts):
+        path = self.root.joinpath(*parts)
+        path.mkdir(parents=True)
+        return path
+
+    def test_linux_default_directory_is_the_installation_account(self):
+        data = self.directory("share", "Kanban")
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": str(data.parent)}
+        self.assertEqual(harness.credential_accounts(data, environ, "linux"),
+                         ["installation", hashed_account(data)])
+
+    def test_linux_other_directory_is_a_hashed_account(self):
+        data = self.directory("elsewhere", "Kanban")
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": str(self.root / "share")}
+        self.assertEqual(harness.credential_accounts(data, environ, "linux"),
+                         [hashed_account(data), "installation"])
+
+    def test_linux_ignores_a_relative_xdg_data_home(self):
+        data = self.directory("home", ".local", "share", "Kanban")
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": "relative/share"}
+        self.assertEqual(harness.credential_accounts(data, environ, "linux")[0], "installation")
+
+    def test_macos_default_is_application_support_whatever_xdg_says(self):
+        data = self.directory("home", "Library", "Application Support", "Kanban")
+        elsewhere = self.directory("xdg", "Kanban")
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": str(elsewhere.parent)}
+        self.assertEqual(harness.credential_accounts(data, environ, "darwin")[0], "installation")
+        self.assertEqual(harness.credential_accounts(elsewhere, environ, "darwin")[0],
+                         hashed_account(elsewhere))
+
+    def test_the_hash_covers_the_canonical_path(self):
+        real = self.directory("real", "Kanban")
+        link = self.root / "link"
+        link.symlink_to(real.parent)
+        environ = {"HOME": str(self.root / "home")}
+        self.assertEqual(harness.credential_accounts(link / "Kanban", environ, "linux")[0],
+                         hashed_account(real))
+
+
+class FakeSecurity:
+    """Stands in for Security.framework's legacy generic-password calls."""
+
+    def __init__(self, status=0, secret=b"\x07" * 32):
+        self.status = status
+        self.secret = secret
+        self.lookups = []
+        self.freed = 0
+        self._buffer = ctypes.create_string_buffer(secret, len(secret))
+
+        def find(keychain, service_length, service, account_length, account, length, data, item):
+            self.lookups.append((keychain, service[:service_length], account[:account_length], item))
+            if self.status == 0:
+                length._obj.value = len(self.secret)
+                data._obj.value = ctypes.addressof(self._buffer)
+            return self.status
+
+        def free(attributes, data):
+            self.freed += 1
+            return 0
+
+        self.SecKeychainFindGenericPassword = find
+        self.SecKeychainItemFreeContent = free
+
+
+class InstallationSecretTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, ignore_errors=True))
+        self.data = self.root / "Kanban"
+        (self.data / "installation-credential").mkdir(parents=True)
+
+    def store_file(self, account, secret):
+        (self.data / "installation-credential" / account).write_bytes(secret)
+
+    def test_linux_reads_the_account_file(self):
+        self.store_file("installation", b"\x01" * 32)
+        self.assertEqual(harness.read_installation_secret(self.data, "installation", "linux"), b"\x01" * 32)
+
+    def test_linux_missing_account_is_none(self):
+        self.assertIsNone(harness.read_installation_secret(self.data, "installation", "linux"))
+
+    def test_a_secret_that_is_not_32_bytes_is_refused(self):
+        self.store_file("installation", b"\x01" * 31)
+        with self.assertRaises(harness.HarnessError):
+            harness.read_installation_secret(self.data, "installation", "linux")
+
+    def test_macos_reads_the_generic_password_and_frees_it(self):
+        security = FakeSecurity(secret=b"\x09" * 32)
+        secret = harness.read_installation_secret(self.data, "data-abc", "darwin", keychain=security)
+        self.assertEqual(secret, b"\x09" * 32)
+        self.assertEqual(security.lookups,
+                         [(None, b"dev.kanban.desktop.installation", b"data-abc", None)])
+        self.assertEqual(security.freed, 1)
+
+    def test_macos_missing_item_is_none(self):
+        security = FakeSecurity(status=-25300)
+        self.assertIsNone(harness.read_installation_secret(self.data, "installation", "darwin",
+                                                           keychain=security))
+        self.assertEqual(security.freed, 0)
+
+    def test_macos_refusals_explain_the_keychain_prompt(self):
+        for status in (-128, -25293, -25308, -61):
+            with self.subTest(status=status):
+                with self.assertRaises(harness.HarnessError) as raised:
+                    harness.read_installation_secret(self.data, "installation", "darwin",
+                                                     keychain=FakeSecurity(status=status))
+                self.assertIn("Keychain", str(raised.exception))
+                self.assertIn(str(status), str(raised.exception))
+
+    def test_bearer_candidates_try_the_core_account_first_and_skip_missing_ones(self):
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": str(self.root)}
+        hashed = hashed_account(self.data)
+        self.store_file("installation", b"\x01" * 32)
+        self.store_file(hashed, b"\x02" * 32)
+        found = list(harness.bearer_candidates(self.data, environ, "linux"))
+        self.assertEqual(found, [("installation", harness.derive_bearer(b"\x01" * 32)),
+                                 (hashed, harness.derive_bearer(b"\x02" * 32))])
+        (self.data / "installation-credential" / "installation").unlink()
+        self.assertEqual([account for account, _ in harness.bearer_candidates(self.data, environ, "linux")],
+                         [hashed])
 
 
 class BearerTests(unittest.TestCase):
@@ -43,6 +184,31 @@ class CoreProcessTests(unittest.TestCase):
             self.assertIn("too long for a Unix socket", str(raised.exception))
             self.assertIsNone(core.process)
             self.assertFalse(data_dir.parent.exists())
+
+
+class UnauthorisedTests(unittest.TestCase):
+    def test_a_rejected_bearer_raises_unauthorised(self):
+        import http.server
+        import threading
+
+        class Refuse(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("content-length", 0)))
+                self.send_response(401)
+                self.send_header("content-length", "0")
+                self.end_headers()
+
+            def log_message(self, *arguments):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Refuse)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        client = harness.McpClient("127.0.0.1", server.server_address[1], "kanban_wrong")
+        with self.assertRaises(harness.Unauthorised):
+            client.initialize()
 
 
 class RpcBodyTests(unittest.TestCase):

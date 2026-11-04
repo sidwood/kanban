@@ -82,14 +82,38 @@ not drive the core.
 
 ## Secrets
 
-The bearer is derived in memory from the data directory's installation
-credential. It is never printed, logged or written, and every line of output
-passes through a redactor first.
+The bearer is derived in memory from the core's 32-byte installation secret.
+It is never printed, logged or written, and every line of output passes
+through a redactor first.
+
+The core files the secret under an account: `installation` for its default
+data directory, or `data-` plus the SHA-256 of the canonical path for any
+other. The runner works the account out the same way and tries the other one
+if the core refuses the first.
+
+- Linux: the secret is the file `installation-credential/<account>` in the data
+  directory. The runner sets `XDG_DATA_HOME` so the directory it starts a core
+  on is that core's default.
+- macOS: the secret is a login Keychain generic password, service
+  `dev.kanban.desktop.installation`, read with the same Security.framework
+  call the core uses. `XDG_DATA_HOME` does not apply there, so a fresh run
+  uses a `data-…` account. The first read of each item asks whether Python
+  may use it; choose Always Allow. With no desktop session (over SSH, say) the
+  prompt cannot appear and the read fails with OSStatus -25308.
+
+Each fresh data root on macOS leaves one Keychain item, and the run prints the
+command to remove it. Reusing one path keeps it to a single item and a single
+prompt:
+
+```sh
+rm -rf /tmp/kanban-acceptance && python3 -m scripts.acceptance --fresh --data-dir /tmp/kanban-acceptance
+```
 
 ## Files
 
 - `__main__.py`: options, core lifecycle, test selection.
-- `harness.py`: the core process, its socket, and the MCP client.
+- `harness.py`: the core process, its socket, the MCP client, and the
+  installation secret (file or Keychain).
 - `context.py`: shared helpers, and the read-only tool allow-list.
 - `scenarios.py`: setup and the 11 tests.
 - `checks.py`: outcomes and the summary.

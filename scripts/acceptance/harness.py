@@ -1,12 +1,15 @@
 """Drive one Kanban core: its process, its socket, and its operator MCP.
 
 Only the Python standard library is used. The bearer credential is
-derived in memory from the installation file and never printed,
-logged, or written anywhere; every message this module produces is
-passed through `Redactor` first.
+derived in memory from the core's installation secret (a file on
+Linux, the login Keychain on macOS) and never printed, logged, or
+written anywhere; every message this module produces is passed
+through `Redactor` first.
 """
 
 import base64
+import ctypes
+import hashlib
 import http.client
 import json
 import os
@@ -27,6 +30,10 @@ class HarnessError(Exception):
     """The harness itself could not drive the core."""
 
 
+class Unauthorised(HarnessError):
+    """The core refused the bearer with HTTP 401."""
+
+
 class CoreError(Exception):
     """The core refused a socket request with a structured error."""
 
@@ -41,16 +48,117 @@ def derive_bearer(installation_bytes):
     return "kanban_" + encoded.rstrip("=")
 
 
-def read_bearer(data_dir):
-    """Derive the bearer for one data directory, in memory only."""
-    path = Path(data_dir) / "installation-credential" / "installation"
+# Where the core keeps its installation secret (crates/kanban-service/src/secrets.rs).
+KEYCHAIN_SERVICE = "dev.kanban.desktop.installation"
+SECURITY_FRAMEWORK = "/System/Library/Frameworks/Security.framework/Security"
+SECRET_LENGTH = 32
+KEYCHAIN_ITEM_NOT_FOUND = -25300
+KEYCHAIN_REFUSALS = {
+    -128: "the Keychain prompt was cancelled",
+    -25293: "Keychain access was denied",
+    -25308: "the Keychain needs to ask for permission but cannot show a prompt here; "
+            "run from a logged-in desktop session with the login keychain unlocked",
+}
+
+
+def home_directory(environ):
+    """`$HOME` when set, otherwise the account's home, as the core reads it."""
+    home = environ.get("HOME")
+    return Path(home) if home else Path(os.path.expanduser("~"))
+
+
+def managed_data_dir(environ, platform):
+    """The core's default data directory, as the `dirs` crate finds it."""
+    if platform == "darwin":
+        return home_directory(environ) / "Library" / "Application Support" / "Kanban"
+    xdg = environ.get("XDG_DATA_HOME")
+    if xdg and os.path.isabs(xdg):
+        return Path(xdg) / "Kanban"
+    return home_directory(environ) / ".local" / "share" / "Kanban"
+
+
+def credential_accounts(data_dir, environ=None, platform=None):
+    """The accounts the secret may sit under, the core's choice first.
+
+    The core uses `installation` for its default data directory and
+    `data-` plus the SHA-256 of the canonical path for any other. The
+    choice depends on the core's environment, which an attached core
+    may not share with the runner, so the other account is offered too.
+    """
+    environ = os.environ if environ is None else environ
+    platform = platform or sys.platform
+    data = Path(data_dir).resolve(strict=True)
+    default = managed_data_dir(environ, platform)
     try:
-        secret = path.read_bytes()
-    except OSError as error:
-        raise HarnessError(f"cannot read the installation credential: {error}")
-    if not secret:
-        raise HarnessError("the installation credential is empty")
-    return derive_bearer(secret)
+        default = default.resolve(strict=True)
+    except OSError:
+        pass
+    hashed = "data-" + hashlib.sha256(os.fsencode(str(data))).hexdigest()
+    return ["installation", hashed] if data == default else [hashed, "installation"]
+
+
+def load_security_framework():
+    library = ctypes.CDLL(SECURITY_FRAMEWORK)
+    find = library.SecKeychainFindGenericPassword
+    find.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+    ]
+    find.restype = ctypes.c_int32
+    free = library.SecKeychainItemFreeContent
+    free.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    free.restype = ctypes.c_int32
+    return library
+
+
+def keychain_secret(account, library=None):
+    """Read the core's generic password from the default keychain search
+    list, through the same legacy call the core itself makes. macOS may
+    ask once whether Python may read the item."""
+    library = library or load_security_framework()
+    service = KEYCHAIN_SERVICE.encode("utf-8")
+    name = account.encode("utf-8")
+    length = ctypes.c_uint32(0)
+    data = ctypes.c_void_p()
+    status = library.SecKeychainFindGenericPassword(
+        None, len(service), service, len(name), name, ctypes.byref(length), ctypes.byref(data), None)
+    if status == KEYCHAIN_ITEM_NOT_FOUND:
+        return None
+    if status != 0:
+        reason = KEYCHAIN_REFUSALS.get(status, "the Keychain refused the read")
+        raise HarnessError(f"cannot read Keychain item {KEYCHAIN_SERVICE} / {account}: "
+                           f"{reason} (OSStatus {status})")
+    try:
+        return ctypes.string_at(data.value, length.value) if data.value else b""
+    finally:
+        library.SecKeychainItemFreeContent(None, data)
+
+
+def read_installation_secret(data_dir, account, platform=None, keychain=None):
+    """One account's secret bytes, or None when the account holds none."""
+    platform = platform or sys.platform
+    if platform == "darwin":
+        secret = keychain_secret(account, keychain)
+    else:
+        path = Path(data_dir) / "installation-credential" / account
+        try:
+            secret = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise HarnessError(f"cannot read the installation credential: {error}")
+    if secret is not None and len(secret) != SECRET_LENGTH:
+        raise HarnessError(f"the installation secret under account {account} is "
+                           f"{len(secret)} bytes, not {SECRET_LENGTH}")
+    return secret
+
+
+def bearer_candidates(data_dir, environ=None, platform=None, keychain=None):
+    """Yield (account, bearer) for each account that holds a secret."""
+    for account in credential_accounts(data_dir, environ, platform):
+        secret = read_installation_secret(data_dir, account, platform, keychain)
+        if secret is not None:
+            yield account, derive_bearer(secret)
 
 
 class Redactor:
@@ -189,6 +297,8 @@ class McpClient:
             body["id"] = request_id
         status, headers, raw = self._post(body)
         lowered = {key.lower(): value for key, value in headers.items()}
+        if status == 401:
+            raise Unauthorised(f"{method} returned HTTP 401: the core refused the bearer")
         if status >= 400:
             raise HarnessError(f"{method} returned HTTP {status}")
         if lowered.get("mcp-session-id"):
@@ -310,6 +420,13 @@ class CoreProcess:
     def socket_path(self):
         return self.data_dir / "core.sock"
 
+    def environment(self):
+        """The environment the core starts with. On Linux this makes the
+        data directory the core's default; macOS ignores XDG_DATA_HOME."""
+        environment = dict(os.environ)
+        environment["XDG_DATA_HOME"] = str(self.data_dir.parent)
+        return environment
+
     def last_log_line(self):
         try:
             lines = self.log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
@@ -327,8 +444,7 @@ class CoreProcess:
             raise HarnessError(f"{self.socket_path} is {length} bytes, too long for a Unix socket "
                                f"(at most {SOCKET_PATH_LIMIT - 1}); choose a shorter --data-dir")
         self.data_dir.parent.mkdir(parents=True, exist_ok=True)
-        environment = dict(os.environ)
-        environment["XDG_DATA_HOME"] = str(self.data_dir.parent)
+        environment = self.environment()
         log = open(self.log_path, "ab")
         try:
             self.process = subprocess.Popen(

@@ -20,13 +20,16 @@ from . import scenarios
 from .checks import Recorder
 from .context import Context, StepError
 from .harness import (
+    KEYCHAIN_SERVICE,
     CoreProcess,
     HarnessError,
     McpClient,
     Redactor,
     SocketClient,
+    Unauthorised,
+    bearer_candidates,
+    credential_accounts,
     port_in_use,
-    read_bearer,
     socket_answers,
 )
 
@@ -164,10 +167,9 @@ def main(argv=None):
             core.start()
             started = True
             emit(f"core started; log {log_path}")
-        bearer = read_bearer(data_dir)
-        redact.add(bearer)
-        mcp = McpClient(host, arguments.port, bearer)
-        mcp.initialize()
+        mcp, account = connect(host, arguments.port, data_dir,
+                               core.environment() if started else os.environ, redact)
+        emit(f"installation secret: account {account} in {secret_store(data_dir)}")
         run_id = time.strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(3)
         ctx = Context(mcp, None if arguments.read_only else SocketClient(core.socket_path),
                       recorder, run_id, arguments.read_only)
@@ -176,7 +178,7 @@ def main(argv=None):
                 scenarios.setup_fresh(ctx, repositories)
             except Exception as error:
                 recorder.abort(f"setup failed, so no test can run: {error}")
-                return finish(recorder, emit, root, arguments)
+                return finish(recorder, emit, root, arguments, account)
         else:
             projects = ctx.must("list_projects", {})["projects"]
             match = [entry for entry in projects if entry["code"] == arguments.project]
@@ -199,7 +201,7 @@ def main(argv=None):
             moved = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
             recorder.check("the run left every issue's version and updated_at as it found them",
                            not moved, f"moved: {moved[:10]}" if moved else f"{len(after)} issues unchanged")
-        return finish(recorder, emit, root, arguments)
+        return finish(recorder, emit, root, arguments, account)
     except (HarnessError, OSError, subprocess.CalledProcessError) as error:
         emit(f"error: {error}")
         for line in recorder.summary_lines():
@@ -211,12 +213,40 @@ def main(argv=None):
             emit(f"core stopped{': ' + problem if problem else ''}")
 
 
-def finish(recorder, emit, root, arguments):
+def secret_store(data_dir):
+    if sys.platform == "darwin":
+        return "the login Keychain"
+    return str(data_dir / "installation-credential")
+
+
+def connect(host, port, data_dir, environ, redact):
+    """An initialised MCP client, trying each account that holds a secret
+    until the core accepts one."""
+    refused = []
+    for account, bearer in bearer_candidates(data_dir, environ):
+        redact.add(bearer)
+        mcp = McpClient(host, port, bearer)
+        try:
+            mcp.initialize()
+            return mcp, account
+        except Unauthorised:
+            refused.append(account)
+    if refused:
+        raise HarnessError(f"the core refused the secret under account {', '.join(refused)} "
+                           f"in {secret_store(data_dir)}")
+    raise HarnessError(f"no installation secret for {data_dir} in {secret_store(data_dir)} "
+                       f"(looked for account {', '.join(credential_accounts(data_dir, environ))})")
+
+
+def finish(recorder, emit, root, arguments, account):
     for line in recorder.summary_lines():
         emit(line)
     if arguments.fresh:
         emit(f"data root kept at {root}; re-read it with: python3 -m scripts.acceptance "
              f"--read-only --project LIN --data-dir {root}")
+        if sys.platform == "darwin" and account != "installation":
+            emit(f"the core added a login Keychain item for this data root; once you are done with it, "
+                 f"remove it with: security delete-generic-password -s {KEYCHAIN_SERVICE} -a {account}")
     return recorder.exit_code()
 
 

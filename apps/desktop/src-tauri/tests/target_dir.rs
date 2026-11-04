@@ -68,7 +68,7 @@ fn target_dir_accepts_relative_manifests() {
     let exe = std::env::current_exe().expect("test executable");
     let output = std::process::Command::new(exe)
         .current_dir(workspace_root())
-        .env_remove("CARGO_TARGET_DIR")
+        .env("CARGO_TARGET_DIR", "target")
         .env("KANBAN_TARGET_DIR_RELATIVE_MANIFESTS", "1")
         .args([
             "--exact",

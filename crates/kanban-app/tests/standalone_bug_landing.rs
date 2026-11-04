@@ -102,14 +102,7 @@ fn wired() -> Wired {
     let dir = TempDir::new().expect("a scratch directory is available");
     let seed = init_repo(&dir.path().join("kanban.seed"));
     let bug = dir.path().join("kanban.kan-t2");
-    git(
-        &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            bug.to_str().expect("utf-8"),
-        ],
-    );
+    common::git_test::git_clone(&seed, &bug, "Bug Author", "bug@fixture.test");
     git(&bug, &["checkout", "-b", "kan-t2"]);
     fs::write(bug.join("fix.md"), "bug fix\n").expect("the bug file is written");
     git(&bug, &["add", "."]);

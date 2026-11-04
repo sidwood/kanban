@@ -13,14 +13,16 @@ use std::path::Path;
 use std::process::Command;
 
 use kanban_app::WorkspaceGitObserver;
-use kanban_service::git_env::configure_git_command;
 use kanban_service::git_observer::LocalWorkspaceGitObserver;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let mut command = std::process::Command::new("git");
-    configure_git_command(&mut command);
-    let status = command
+    let status = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+        .env("GIT_CONFIG_VALUE_0", "master")
         .args(args)
         .current_dir(dir)
         .status()
@@ -29,7 +31,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn init_repo(dir: &Path) -> String {
-    git(dir, &["init"]);
+    git(dir, &["init", "-b", "main"]);
     git(dir, &["config", "user.email", "test@example.com"]);
     git(dir, &["config", "user.name", "Test"]);
     fs::write(dir.join("README.md"), "seed\n").expect("the seed file is written");

@@ -22,6 +22,7 @@
     "IFREG",
     "MSRV",
     "NONBLOCK",
+    "NOSYSTEM",
     "NOREPLACE",
     "Pinia",
     "Pocock",

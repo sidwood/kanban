@@ -4,15 +4,11 @@ use kanban_app::GitLanding;
 use kanban_app::landing::LandingDraft;
 use kanban_dto::ApiError;
 
-use crate::git_env::configure_git_command;
-
 pub struct LocalGitLanding;
 
 impl GitLanding for LocalGitLanding {
     fn require_base(&self, path: &str, base: &str) -> Result<(), ApiError> {
-        let mut command = std::process::Command::new("git");
-        configure_git_command(&mut command);
-        let output = command
+        let output = std::process::Command::new("git")
             .arg("-C")
             .arg(path)
             .args(["merge-base", "--is-ancestor", base, "HEAD"])
@@ -74,9 +70,7 @@ impl GitLanding for LocalGitLanding {
     }
 
     fn merge_in_progress(&self, path: &str) -> Result<bool, ApiError> {
-        let mut command = std::process::Command::new("git");
-        configure_git_command(&mut command);
-        let output = command
+        let output = std::process::Command::new("git")
             .arg("-C")
             .arg(path)
             .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
@@ -106,9 +100,7 @@ impl GitLanding for LocalGitLanding {
 }
 
 fn git_output(path: &str, args: &[&str]) -> Result<String, ApiError> {
-    let mut command = std::process::Command::new("git");
-    configure_git_command(&mut command);
-    let output = command
+    let output = std::process::Command::new("git")
         .arg("-C")
         .arg(path)
         .args(args)

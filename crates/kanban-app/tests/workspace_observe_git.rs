@@ -192,9 +192,11 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         &["remote", "add", "origin", "https://example.com/kanban.git"],
     );
     let workspace = git_dir.path().join("clone");
-    git(
-        git_dir.path(),
-        &["clone", "--local", &repository, workspace.to_str().unwrap()],
+    common::git_test::git_clone_local(
+        &repository,
+        workspace.to_str().unwrap(),
+        "Observe Author",
+        "observe@fixture.test",
     );
     set_bc_source(&workspace, &repository);
 
@@ -286,13 +288,17 @@ fn workspace_observe_refuses_an_unrelated_same_origin_clone() {
     let origin = init_repo_at(git_dir.path(), "origin");
     let repository = git_dir.path().join("repository");
     let unrelated = git_dir.path().join("unrelated");
-    git(
-        Path::new(&origin),
-        &["clone", "--local", &origin, repository.to_str().unwrap()],
+    common::git_test::git_clone_local(
+        &origin,
+        repository.to_str().unwrap(),
+        "Observe Author",
+        "observe@fixture.test",
     );
-    git(
-        Path::new(&origin),
-        &["clone", "--local", &origin, unrelated.to_str().unwrap()],
+    common::git_test::git_clone_local(
+        &origin,
+        unrelated.to_str().unwrap(),
+        "Observe Author",
+        "observe@fixture.test",
     );
     create_project(
         &projects,
@@ -352,9 +358,11 @@ fn fixture() -> (TempDir, Fixture) {
 /// Project's Workspace.
 fn registered_clone(dir: &Path, repository: &str, core: &Core, key: &str) -> String {
     let workspace = dir.join(format!("clone-{key}"));
-    git(
-        Path::new(repository),
-        &["clone", "--local", repository, workspace.to_str().unwrap()],
+    common::git_test::git_clone_local(
+        repository,
+        workspace.to_str().unwrap(),
+        "Observe Author",
+        "observe@fixture.test",
     );
     git(
         &workspace,
@@ -448,9 +456,11 @@ fn branch_clone(dir: &TempDir) -> (String, std::path::PathBuf) {
         &["remote", "add", "origin", "https://example.com/kanban.git"],
     );
     let workspace = dir.path().join("clone");
-    git(
-        dir.path(),
-        &["clone", "--local", &repository, workspace.to_str().unwrap()],
+    common::git_test::git_clone_local(
+        &repository,
+        workspace.to_str().unwrap(),
+        "Observe Author",
+        "observe@fixture.test",
     );
     git(
         &workspace,

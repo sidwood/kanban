@@ -7,7 +7,6 @@ mod backup_scheduler;
 pub mod diagnostics;
 pub mod export_files;
 pub mod fleet_clone;
-pub mod git_env;
 pub mod git_landing;
 pub mod git_observer;
 pub mod health;

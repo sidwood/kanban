@@ -189,24 +189,15 @@ fn wired() -> Wired {
     git(&seed, &["commit", "--allow-empty", "-m", "integration"]);
     git(&seed, &["checkout", "main"]);
     let integration = dir.path().join("kanban.kan-s1");
-    git(
+    common::git_test::git_clone(
         &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            integration.to_str().expect("utf-8"),
-        ],
+        &integration,
+        "Integration Author",
+        "integration@fixture.test",
     );
     git(&integration, &["checkout", "kan-s1"]);
     let lane = dir.path().join("kanban.kan-t1");
-    git(
-        &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            lane.to_str().expect("utf-8"),
-        ],
-    );
+    common::git_test::git_clone(&seed, &lane, "Lane Author", "lane@fixture.test");
     git(&lane, &["checkout", "-b", "kan-t1", "origin/kan-s1"]);
     fs::write(lane.join("lane.md"), "ticket work\n").expect("the lane file is written");
     git(&lane, &["add", "."]);

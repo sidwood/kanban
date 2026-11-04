@@ -104,7 +104,13 @@ mod file_installation_secret {
         account: &str,
         rename: AtomicRenameFn,
     ) -> Result<InstallationSecret, ApiError> {
-        load_or_create_with(data_dir, account, rename, sync_store_directory)
+        load_or_create_with(
+            data_dir,
+            account,
+            rename,
+            sync_store_directory,
+            sync_data_directory,
+        )
     }
 
     pub(super) fn load_or_create_with(
@@ -112,6 +118,7 @@ mod file_installation_secret {
         account: &str,
         rename: AtomicRenameFn,
         sync_directory: DirectorySyncFn,
+        sync_parent: DirectorySyncFn,
     ) -> Result<InstallationSecret, ApiError> {
         let store_dir = data_dir.join(CREDENTIAL_DIR);
         ensure_store_dir(&store_dir)?;
@@ -121,6 +128,7 @@ mod file_installation_secret {
             Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable()),
             Ok(_) => read_existing(&store_dir, &path, account, sync_directory),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                sync_parent(data_dir)?;
                 let key = random_key()?;
                 install_new_key(&store_dir, &path, account, &key, rename, sync_directory)
             }
@@ -260,8 +268,17 @@ mod file_installation_secret {
         Ok(())
     }
 
-    fn sync_store_directory(store_dir: &Path) -> Result<(), ApiError> {
+    pub(super) fn sync_store_directory(store_dir: &Path) -> Result<(), ApiError> {
         let dir = open_store_directory(store_dir)?;
+        dir.sync_all().map_err(|_| unavailable())
+    }
+
+    pub(super) fn sync_data_directory(data_dir: &Path) -> Result<(), ApiError> {
+        let dir = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(data_dir)
+            .map_err(|_| unavailable())?;
         dir.sync_all().map_err(|_| unavailable())
     }
 
@@ -605,6 +622,7 @@ mod tests {
             &store.account,
             file_installation_secret::sys_renameat2_noreplace,
             store_directory_sync_fails_until_cleared,
+            file_installation_secret::sync_data_directory,
         );
         assert!(
             result.is_err(),
@@ -621,6 +639,7 @@ mod tests {
             &store.account,
             file_installation_secret::sys_renameat2_noreplace,
             store_directory_sync_fails_until_cleared,
+            file_installation_secret::sync_data_directory,
         );
         assert!(
             second.is_err(),
@@ -632,12 +651,80 @@ mod tests {
             &store.account,
             file_installation_secret::sys_renameat2_noreplace,
             store_directory_sync_fails_until_cleared,
+            file_installation_secret::sync_data_directory,
         )
         .expect("the published credential loads once its directory entry syncs");
         let stored: [u8; 32] = std::fs::read(&path).unwrap().try_into().unwrap();
         assert!(
             credentials_match(&accepted, &InstallationSecret::from_key(&stored)),
             "recovery must accept the published credential without rotating it"
+        );
+    }
+
+    static DATA_DIRECTORY_SYNC_FAILS: AtomicBool = AtomicBool::new(true);
+
+    fn data_directory_sync_fails_until_cleared(_data_dir: &Path) -> Result<(), ApiError> {
+        if DATA_DIRECTORY_SYNC_FAILS.load(Ordering::Relaxed) {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn file_store_refuses_publication_before_the_data_directory_syncs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        DATA_DIRECTORY_SYNC_FAILS.store(true, Ordering::Relaxed);
+        let first = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            file_installation_secret::sync_store_directory,
+            data_directory_sync_fails_until_cleared,
+        );
+        assert!(
+            first.is_err(),
+            "a first start must not publish while the store directory's entry in the data directory is unsynced"
+        );
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        assert!(
+            !path.exists(),
+            "nothing is published before the data directory entry is durable"
+        );
+        let retry = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            file_installation_secret::sync_store_directory,
+            data_directory_sync_fails_until_cleared,
+        );
+        assert!(
+            retry.is_err(),
+            "a retry after a failed provisioning must sync the data directory before publishing"
+        );
+        assert!(
+            !path.exists(),
+            "the retry publishes nothing while the data directory stays unsynced"
+        );
+        DATA_DIRECTORY_SYNC_FAILS.store(false, Ordering::Relaxed);
+        let published = file_installation_secret::load_or_create_with(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+            file_installation_secret::sync_store_directory,
+            data_directory_sync_fails_until_cleared,
+        )
+        .expect("publishes once the data directory entry is durable");
+        let reloaded = file_installation_secret::load_or_create_with_rename(
+            dir.path(),
+            &store.account,
+            file_installation_secret::sys_renameat2_noreplace,
+        )
+        .expect("a later start reads the published credential");
+        assert!(
+            credentials_match(&published, &reloaded),
+            "recovery must not rotate the installation secret"
         );
     }
 

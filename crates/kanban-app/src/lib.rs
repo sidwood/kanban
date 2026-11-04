@@ -80,7 +80,7 @@ pub use catalog::{
 pub use clone::{
     CloneGuardStore, CloneTargetProbe, FLEET_TOOL_FAILED, FLEET_TOOL_REFUSED, FleetCloneTool,
 };
-pub use comment::CommentStore;
+pub use comment::{CommentIssueTargets, CommentStore, IssueStoreCommentTargets};
 pub use coordinator::{
     CoordinatorHerdr, CoordinatorLoop, CoordinatorLoopOutcome, CoordinatorLoopRequest,
     CoordinatorStep, ImplementerLaunch, NoopCoordinatorHerdr,

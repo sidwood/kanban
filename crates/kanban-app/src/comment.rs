@@ -4,18 +4,65 @@
 
 use std::sync::Arc;
 
-use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, TextError};
+use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError};
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
     CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionsQuery,
-    CommentRevisionsResponse, LiveEventName, TimelineEntityKind, TimelineEntityRef,
+    CommentRevisionsResponse, ErrorCode, LiveEventName, TimelineEntityKind, TimelineEntityRef,
 };
 use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
+use crate::issue::IssueStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
 use crate::project::{ProjectStore, resolve_project};
+
+/// The issue lookups Comment commands use to resolve a ticket target,
+/// the same way the issue tools resolve their references: an issue
+/// key or a numeric ticket id, answered with the canonical numeric
+/// identity every stored comment shares.
+pub trait CommentIssueTargets: Send + Sync {
+    /// Resolve `reference` to the issue's key and numeric identity,
+    /// or `None` when no such issue exists.
+    fn resolve_issue_reference(&self, reference: &str)
+    -> Result<Option<(IssueKey, u64)>, ApiError>;
+}
+
+/// [`CommentIssueTargets`] over the Linear issue store.
+pub struct IssueStoreCommentTargets {
+    issues: Arc<dyn IssueStore>,
+}
+
+impl IssueStoreCommentTargets {
+    pub fn new(issues: Arc<dyn IssueStore>) -> Self {
+        Self { issues }
+    }
+}
+
+impl CommentIssueTargets for IssueStoreCommentTargets {
+    fn resolve_issue_reference(
+        &self,
+        reference: &str,
+    ) -> Result<Option<(IssueKey, u64)>, ApiError> {
+        if let Ok(id) = reference.parse::<u64>() {
+            if i64::try_from(id).is_err() {
+                return Ok(None);
+            }
+            // A numeric reference addresses the ticket directly; the
+            // key lookup doubles as the existence check.
+            return match self.issues.load_issue_key(id as i64) {
+                Ok(key) => Ok(Some((key, id))),
+                Err(error) if error.code == ErrorCode::NotFound => Ok(None),
+                Err(error) => Err(error),
+            };
+        }
+        Ok(self
+            .issues
+            .resolve_identifier(reference)?
+            .map(|(key, ticket_id)| (key, ticket_id as u64)))
+    }
+}
 
 /// The storage port Comment commands call through.
 pub trait CommentStore: Send + Sync {
@@ -45,9 +92,12 @@ pub trait CommentStore: Send + Sync {
     ) -> Result<(CommentRecord, Vec<kanban_dto::CommentRevisionRecord>), ApiError>;
 
     /// List comments on one target, oldest first, with cursor paging.
+    /// `aliases` are stored address forms that resolve to `target`
+    /// and must keep listing against it.
     fn list_for_target(
         &self,
         target: &CommentTarget,
+        aliases: &[String],
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError>;
@@ -55,17 +105,20 @@ pub trait CommentStore: Send + Sync {
 
 impl Core {
     /// Register the Comment operations against `store`, resolving
-    /// their Project through `projects`.
+    /// their Project through `projects` and their ticket targets
+    /// through `targets`.
     pub fn register_comments(
         &mut self,
         store: Arc<dyn CommentStore>,
         projects: Arc<dyn ProjectStore>,
+        targets: Arc<dyn CommentIssueTargets>,
     ) -> Result<(), RegistrationError> {
         self.register_command(
             "comment.create",
             Arc::new(CreateComment {
                 store: store.clone(),
                 projects,
+                targets: targets.clone(),
             }),
         )?;
         self.register_command(
@@ -84,6 +137,7 @@ impl Core {
             "comment.list",
             Arc::new(ListCommentsQuery {
                 store: store.clone(),
+                targets,
             }),
         )?;
         self.register_command("comment.resolve", Arc::new(ResolveComment { store }))?;
@@ -95,6 +149,7 @@ impl Core {
 struct CreateComment {
     store: Arc<dyn CommentStore>,
     projects: Arc<dyn ProjectStore>,
+    targets: Arc<dyn CommentIssueTargets>,
 }
 
 impl CommandHandler for CreateComment {
@@ -115,10 +170,10 @@ impl CommandHandler for CreateComment {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_stored_text(&request.text)?;
-        let target = parse_target(&request.target)?;
+        let resolved = resolve_target(self.targets.as_ref(), &request.target)?;
         let comment = self.store.create(
             project.id().value(),
-            &target,
+            &resolved.target,
             &text,
             &request.author,
             request.parent_comment_id,
@@ -179,12 +234,13 @@ impl QueryHandler for RevisionsQuery {
 /// Serves `comment.list`.
 struct ListCommentsQuery {
     store: Arc<dyn CommentStore>,
+    targets: Arc<dyn CommentIssueTargets>,
 }
 
 impl QueryHandler for ListCommentsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query: CommentListQuery = parse_payload(payload)?;
-        let target = parse_target(&query.target)?;
+        let resolved = resolve_target(self.targets.as_ref(), &query.target)?;
         let limit = if query.limit == 0 {
             50
         } else {
@@ -196,7 +252,9 @@ impl QueryHandler for ListCommentsQuery {
             .map(str::parse::<u64>)
             .transpose()
             .map_err(|_| ApiError::invalid_request("cursor must be a comment id"))?;
-        let (comments, next_cursor) = self.store.list_for_target(&target, limit, cursor)?;
+        let (comments, next_cursor) =
+            self.store
+                .list_for_target(&resolved.target, &resolved.aliases, limit, cursor)?;
         let response = CommentListResponse {
             comments,
             next_cursor,
@@ -249,6 +307,48 @@ fn parse_target(target: &TimelineEntityRef) -> Result<CommentTarget, ApiError> {
         .map_err(|error| ApiError::invalid_request(&error.to_string()))
 }
 
+/// A Comment target after resolution: the canonical stored form plus
+/// the legacy address forms that must keep listing against it.
+struct ResolvedTarget {
+    target: CommentTarget,
+    aliases: Vec<String>,
+}
+
+/// Resolve the target a command addressed. Ticket targets resolve
+/// the way issue tools resolve their references, so an issue key and
+/// the issue's numeric id address one comment stream and every new
+/// write stores the numeric id. Other entity kinds keep the raw id.
+fn resolve_target(
+    targets: &dyn CommentIssueTargets,
+    raw: &TimelineEntityRef,
+) -> Result<ResolvedTarget, ApiError> {
+    let target = parse_target(raw)?;
+    if target.kind() != TimelineEntityKind::Ticket.as_str() {
+        return Ok(ResolvedTarget {
+            target,
+            aliases: Vec::new(),
+        });
+    }
+    let (key, ticket_id) = targets
+        .resolve_issue_reference(target.id())?
+        .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
+    let canonical = ticket_id.to_string();
+    // Comments written before targets resolved stored whichever form
+    // the caller passed, in any letter case; the issue key in its
+    // lowercase spelling stands for every one of those rows.
+    let lowercase_key = key.display().to_lowercase();
+    let aliases = if lowercase_key == canonical {
+        Vec::new()
+    } else {
+        vec![lowercase_key]
+    };
+    Ok(ResolvedTarget {
+        target: CommentTarget::new(target.kind(), &canonical)
+            .expect("the canonical target id revalidates"),
+        aliases,
+    })
+}
+
 fn record_of(comment: &Comment) -> CommentRecord {
     CommentRecord {
         id: comment.id().value(),
@@ -277,10 +377,13 @@ fn announce(effects: &dyn CommandEffects, event: LiveEventName, comment: &Commen
 mod comments {
     use std::sync::{Arc, Mutex};
 
-    use kanban_domain::{Comment, CommentId, CommentTarget, CommentText};
+    use kanban_domain::{
+        Comment, CommentId, CommentTarget, CommentText, IssueKey, ProjectCode, TicketNumber,
+    };
     use kanban_dto::{CommentListItem, ErrorCode, TimelineEntityKind, TimelineEntityRef};
     use serde_json::{Value, json};
 
+    use super::CommentIssueTargets;
     use super::CommentStore;
     use crate::catalog::exposed_operations;
     use crate::dispatch::Core;
@@ -354,6 +457,7 @@ mod comments {
         fn list_for_target(
             &self,
             target: &CommentTarget,
+            aliases: &[String],
             limit: u32,
             cursor: Option<u64>,
         ) -> Result<(Vec<CommentListItem>, Option<String>), kanban_dto::ApiError> {
@@ -364,7 +468,10 @@ mod comments {
                 .iter()
                 .filter(|comment| {
                     comment.target().kind() == target.kind()
-                        && comment.target().id() == target.id()
+                        && (comment.target().id().eq_ignore_ascii_case(target.id())
+                            || aliases
+                                .iter()
+                                .any(|alias| alias.eq_ignore_ascii_case(comment.target().id())))
                         && comment.id().value() > after
                 })
                 .map(|comment| {
@@ -458,7 +565,33 @@ mod comments {
     fn target() -> TimelineEntityRef {
         TimelineEntityRef {
             kind: TimelineEntityKind::Ticket,
-            id: "kan-t11".to_owned(),
+            id: "11".to_owned(),
+        }
+    }
+
+    fn issue_key(number: u64) -> IssueKey {
+        IssueKey::new(
+            ProjectCode::new("TUS").expect("the project code validates"),
+            TicketNumber::new(number).expect("the ticket number validates"),
+        )
+    }
+
+    /// Numeric references address the ticket they name; key
+    /// references resolve to the number they carry.
+    struct MemoryIssueTargets;
+
+    impl CommentIssueTargets for MemoryIssueTargets {
+        fn resolve_issue_reference(
+            &self,
+            reference: &str,
+        ) -> Result<Option<(IssueKey, u64)>, kanban_dto::ApiError> {
+            if let Ok(id) = reference.parse::<u64>() {
+                return Ok(Some((issue_key(id), id)));
+            }
+            match IssueKey::parse(reference) {
+                Some(key) => Ok(Some((key.clone(), key.number().value()))),
+                None => Ok(None),
+            }
         }
     }
 
@@ -472,7 +605,7 @@ mod comments {
             Arc::new(MemoryIdempotencyStore::new()),
             events,
         );
-        core.register_comments(store, projects)
+        core.register_comments(store, projects, Arc::new(MemoryIssueTargets))
             .expect("the comment operations register");
         core
     }
@@ -544,6 +677,82 @@ mod comments {
         assert_eq!(error.code, ErrorCode::NotFound);
         assert!(error.message.contains("project 9"));
         assert!(store.snapshot().is_empty(), "no row may be written");
+    }
+
+    #[test]
+    fn a_key_addressed_comment_joins_the_issue_id_stream() {
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        let response = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": "core-7" },
+                    "text": "Keyed",
+                }),
+            )
+            .expect("the create applies");
+
+        assert_eq!(
+            response["target"]["id"],
+            json!("7"),
+            "the stored target is the issue id, not the key"
+        );
+        for raw in ["7", "core-7", "CORE-7"] {
+            let listed = core
+                .query(
+                    "comment.list",
+                    &json!({ "target": { "kind": "ticket", "id": raw }, "limit": 10 }),
+                )
+                .expect("the list serves");
+            assert_eq!(
+                listed["comments"].as_array().unwrap().len(),
+                1,
+                "listing by {raw} reads the same stream"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unresolvable_ticket_target_is_not_found_without_recording_anything() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        let error = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": "kan-t11" },
+                    "text": "Ghost",
+                }),
+            )
+            .expect_err("a target no issue answers to is refused");
+
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(error.message.contains("kan-t11"));
+        assert!(store.snapshot().is_empty(), "no row may be written");
+    }
+
+    #[test]
+    fn a_non_ticket_target_keeps_its_raw_identity() {
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        let response = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "target": { "kind": "project", "id": "kanban-main" },
+                    "text": "On the project",
+                }),
+            )
+            .expect("the create applies");
+
+        assert_eq!(response["target"]["id"], json!("kanban-main"));
     }
 
     #[test]
@@ -684,7 +893,7 @@ mod comments {
                 json!({
                     "id": 1,
                     "project_id": 1,
-                    "target": { "kind": "ticket", "id": "kan-t11" },
+                    "target": target(),
                     "text": "First thought",
                     "version": 1,
                 })

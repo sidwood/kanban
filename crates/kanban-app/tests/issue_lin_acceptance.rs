@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use kanban_app::{CommentStore, Core, IssueStore, OperatorSession};
+use kanban_app::{
+    CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+};
 use kanban_dto::{ErrorCode, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
@@ -46,9 +48,17 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
         )),
     )
     .expect("tickets register");
-    core.register_issue_operator(tickets, projects.clone(), specs, issues, comments.clone())
-        .expect("issue operator registers");
-    core.register_comments(comments, projects)
+    core.register_issue_operator(
+        tickets,
+        projects.clone(),
+        specs,
+        issues.clone(),
+        comments.clone(),
+    )
+    .expect("issue operator registers");
+    let comment_targets: Arc<dyn CommentIssueTargets> =
+        Arc::new(IssueStoreCommentTargets::new(issues));
+    core.register_comments(comments, projects, comment_targets)
         .expect("comments register");
 }
 
@@ -514,4 +524,219 @@ fn l10_description_patch_in_place_and_mcp_doc_matches_catalog() {
             "mcp-operator.md must name MCP tool `{mcp}` for `{core}`"
         );
     }
+}
+#[test]
+fn comments_address_one_issue_by_key_or_id() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "stream-host",
+        json!({ "project_id": 1, "title": "Stream host" }),
+    );
+
+    let by_key = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "stream-by-key"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.identifier },
+                "text": "Posted by key",
+                "author": "lin",
+            }),
+        )
+        .expect("the key-form create applies");
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "stream-by-id"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Posted by id",
+                "author": "lin",
+            }),
+        )
+        .expect("the id-form create applies");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .expect("listing by id serves");
+    let by_key_list = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.identifier },
+                "limit": 10,
+            }),
+        )
+        .expect("listing by key serves");
+
+    let bodies: Vec<&str> = by_id["comments"]
+        .as_array()
+        .expect("an array of comments")
+        .iter()
+        .map(|comment| comment["body"].as_str().expect("body text"))
+        .collect();
+    assert_eq!(
+        bodies,
+        vec!["Posted by key", "Posted by id"],
+        "both address forms read and write one stream"
+    );
+    assert_eq!(
+        by_key_list["comments"], by_id["comments"],
+        "the key and the id list the same stream"
+    );
+    assert_eq!(
+        by_key["target"]["id"],
+        json!(host.ticket_id.to_string()),
+        "a created comment stores the issue id, not the key it was addressed by"
+    );
+}
+
+#[test]
+fn comment_targets_must_name_an_existing_issue() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "unknown-target-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+
+    for raw in ["CORE-999", "999"] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, &format!("unknown-{raw}")),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": raw },
+                    "text": "Ghost",
+                    "author": "lin",
+                }),
+            )
+            .expect_err("an unknown target is refused");
+        assert_eq!(error.code, ErrorCode::NotFound, "target {raw}");
+    }
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused writes stored nothing"
+    );
+}
+
+#[test]
+fn legacy_key_form_comments_join_the_resolved_stream() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let host = save_issue(
+        &session,
+        0,
+        "legacy-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (901, '1', 'ticket', ?1, 1, 'legacy')",
+            [&host.identifier],
+        )
+        .expect("the legacy row lands");
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text)
+             VALUES (901, 1, 'Legacy by key')",
+            [],
+        )
+        .expect("the legacy revision lands");
+    let mixed_case = format!(
+        "{}{}",
+        host.identifier.chars().next().expect("the key opens"),
+        host.identifier[1..].to_lowercase(),
+    );
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (902, '1', 'ticket', ?1, 1, 'legacy')",
+            [&mixed_case],
+        )
+        .expect("the mixed-case legacy row lands");
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text)
+             VALUES (902, 1, 'Legacy mixed case')",
+            [],
+        )
+        .expect("the mixed-case revision lands");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let by_key = session
+        .call(
+            "comment.list",
+            &json!({ "target": { "kind": "ticket", "id": host.identifier }, "limit": 10 }),
+        )
+        .unwrap();
+    let bodies: Vec<_> = by_id["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![json!("Legacy by key"), json!("Legacy mixed case")],
+        "every pre-change letter-case spelling of the key still lists"
+    );
+    assert_eq!(by_key["comments"], by_id["comments"]);
+
+    let reply = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "legacy-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply to the legacy root",
+                "author": "lin",
+                "parent_comment_id": 901,
+            }),
+        )
+        .expect("a legacy key-form root still accepts replies");
+    assert_eq!(
+        reply["target"]["id"],
+        json!(host.ticket_id.to_string()),
+        "the reply stores the canonical issue id"
+    );
 }

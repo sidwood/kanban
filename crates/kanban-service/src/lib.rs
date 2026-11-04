@@ -327,7 +327,7 @@ fn assemble_core_with_secret(
         ticket_store.clone(),
         projects.clone(),
         spec_store.clone(),
-        issue_store,
+        issue_store.clone(),
         comment_store.clone(),
     )?;
     core.register_lanes(
@@ -482,7 +482,11 @@ fn assemble_core_with_secret(
         projects,
         Arc::new(export_files::LocalExportFiles),
     )?;
-    core.register_comments(comment_store, project_store.clone())?;
+    core.register_comments(
+        comment_store,
+        project_store.clone(),
+        Arc::new(kanban_app::IssueStoreCommentTargets::new(issue_store)),
+    )?;
     core.register_rulings(ruling_store, project_store.clone())?;
     core.register_run_recovery(
         Arc::new(kanban_storage::SqliteRunRecoveryStore::new(&database)),
@@ -2047,11 +2051,24 @@ mod tests {
             }),
         );
         client.command(
+            "ticket.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "ticket-1" },
+                "project_id": 1,
+                "kind": "task",
+                "priority": "normal",
+                "subtype": "operational",
+                "mode": "human",
+                "completion": ["Timeline host exists"],
+                "title": "Timeline host",
+            }),
+        );
+        client.command(
             "comment.create",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "comment-1" },
                 "project_id": 1,
-                "target": { "kind": "ticket", "id": "kan-t10" },
+                "target": { "kind": "ticket", "id": "1" },
                 "text": "One timeline",
             }),
         );
@@ -2105,7 +2122,7 @@ mod tests {
         client.command(
             "project.archive",
             json!({
-                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-core" },
+                "mutation": { "optimistic_version": 2, "idempotency_key": "archive-core" },
                 "project_id": 1,
             }),
         );
@@ -2131,6 +2148,7 @@ mod tests {
                 json!({ "kind": "evidence", "scope": { "project": 1 } }),
                 json!({ "kind": "ruling", "scope": { "project": 1 } }),
                 json!({ "kind": "telemetry", "scope": { "project": 1 } }),
+                json!({ "kind": "transition", "scope": { "project": 1 } }),
                 json!({ "kind": "transition", "scope": { "project": 1 } }),
                 json!({ "kind": "transition", "scope": { "project": 1 } }),
             ],

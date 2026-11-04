@@ -92,6 +92,9 @@ fn capability_enforcement_scopes_comments_before_replay() {
         .register_comments(
             Arc::new(kanban_storage::SqliteCommentStore::new(&h.database)),
             Arc::new(SqliteProjectStore::new(&h.database)),
+            Arc::new(kanban_app::IssueStoreCommentTargets::new(Arc::new(
+                kanban_storage::SqliteIssueStore::new(&h.database),
+            ))),
         )
         .unwrap();
     let request = json!({"mutation":common::mutation(0,"agent-comment"),"project_id":1,
@@ -418,6 +421,9 @@ fn capability_enforcement_rechecks_expiry_inside_the_write_span() {
         .register_comments(
             Arc::new(kanban_storage::SqliteCommentStore::new(&h.database)),
             Arc::new(SqliteProjectStore::new(&h.database)),
+            Arc::new(kanban_app::IssueStoreCommentTargets::new(Arc::new(
+                kanban_storage::SqliteIssueStore::new(&h.database),
+            ))),
         )
         .unwrap();
     h.core.register_agent_authority(Arc::new(

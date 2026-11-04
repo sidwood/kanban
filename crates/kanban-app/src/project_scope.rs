@@ -115,12 +115,12 @@ impl CommentStore for RecordingComments {
     fn list_for_target(
         &self,
         _target: &CommentTarget,
+        _aliases: &[String],
         _limit: u32,
         _cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         Ok((Vec::new(), None))
     }
-
     fn set_resolved(&self, _id: CommentId, _resolved: bool) -> Result<(), ApiError> {
         Ok(())
     }
@@ -316,6 +316,28 @@ impl RecordingEvidence {
     }
 }
 
+/// Ticket targets in these tests address the numeric identity they
+/// name; no issue store stands behind the recorder ports.
+struct NumericIssueTargets;
+
+impl crate::comment::CommentIssueTargets for NumericIssueTargets {
+    fn resolve_issue_reference(
+        &self,
+        reference: &str,
+    ) -> Result<Option<(kanban_domain::IssueKey, u64)>, ApiError> {
+        let id = reference.parse::<u64>().ok();
+        Ok(id.map(|value| {
+            (
+                kanban_domain::IssueKey::new(
+                    kanban_domain::ProjectCode::new("TUS").expect("the code validates"),
+                    kanban_domain::TicketNumber::new(value).expect("the number validates"),
+                ),
+                value,
+            )
+        }))
+    }
+}
+
 /// A core wired like the service wires it: one Project store shared
 /// by every project-scoped operation, and recorders behind each
 /// entity port.
@@ -334,6 +356,7 @@ fn harness() -> (Arc<Recorded>, Core) {
             rows: Mutex::new(Vec::new()),
         }),
         projects.clone(),
+        Arc::new(NumericIssueTargets),
     )
     .expect("the comment operations register");
     core.register_rulings(
@@ -384,7 +407,7 @@ mod contract {
             &json!({
                 "mutation": mutation("comment"),
                 "project_id": 1,
-                "target": { "kind": "ticket", "id": "kan-t10" },
+                "target": { "kind": "ticket", "id": "10" },
                 "text": "One scope",
             }),
         )
@@ -454,7 +477,7 @@ mod contract {
                 json!({
                     "mutation": mutation("comment"),
                     "project_id": 9,
-                    "target": { "kind": "ticket", "id": "kan-t10" },
+                    "target": { "kind": "ticket", "id": "10" },
                     "text": "Ghost",
                 }),
             ),
@@ -554,7 +577,7 @@ mod contract {
                 &json!({
                     "mutation": mutation("comment"),
                     "project_id": "kan",
-                    "target": { "kind": "ticket", "id": "kan-t10" },
+                    "target": { "kind": "ticket", "id": "10" },
                     "text": "String scope",
                 }),
             )

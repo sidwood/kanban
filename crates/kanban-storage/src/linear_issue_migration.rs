@@ -1130,7 +1130,10 @@ mod tests {
 
     use kanban_app::catalog::exposed_operations;
     use kanban_app::events::NoopEventSink;
-    use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
+    use kanban_app::{
+        CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets,
+        OperatorSession, ProjectStore,
+    };
     use kanban_domain::{CommentId, ProjectRegistration};
     use kanban_dto::{
         IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
@@ -1555,9 +1558,18 @@ mod tests {
             )),
         )
         .unwrap();
-        core.register_issue_operator(tickets, projects.clone(), specs, issues, comments.clone())
+        core.register_issue_operator(
+            tickets,
+            projects.clone(),
+            specs,
+            issues.clone(),
+            comments.clone(),
+        )
+        .unwrap();
+        let comment_targets: Arc<dyn CommentIssueTargets> =
+            Arc::new(IssueStoreCommentTargets::new(issues));
+        core.register_comments(comments, projects, comment_targets)
             .unwrap();
-        core.register_comments(comments, projects).unwrap();
     }
 
     #[test]

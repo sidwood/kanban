@@ -190,30 +190,53 @@ impl CommentStore for SqliteCommentStore {
     fn list_for_target(
         &self,
         target: &CommentTarget,
+        aliases: &[String],
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         let conn = self.lock();
         let after = cursor.unwrap_or(0) as i64;
+        // Comments written before targets resolved may carry any
+        // address form, in any letter case, that resolves to this
+        // target; every stored form of one entity lists as one stream.
+        let mut ids = vec![target.id().to_lowercase()];
+        for alias in aliases {
+            let lowered = alias.to_lowercase();
+            if !ids.contains(&lowered) {
+                ids.push(lowered);
+            }
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT c.id, c.version, c.created_at,
+                    (SELECT text FROM comment_revisions
+                     WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                    (SELECT recorded_at FROM comment_revisions
+                     WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                    COALESCE(c.author, ''),
+                    c.parent_comment_id,
+                    c.resolved_at
+             FROM comments AS c
+             WHERE c.entity_kind = ? AND c.id > ?
+               AND LOWER(c.entity_id) IN ({placeholders})
+             ORDER BY c.id ASC
+             LIMIT ?",
+        );
         let mut statement = conn
-            .prepare(
-                "SELECT c.id, c.version, c.created_at,
-                        (SELECT text FROM comment_revisions
-                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        (SELECT recorded_at FROM comment_revisions
-                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        COALESCE(c.author, ''),
-                        c.parent_comment_id,
-                        c.resolved_at
-                 FROM comments AS c
-                 WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
-                 ORDER BY c.id ASC
-                 LIMIT ?4",
-            )
+            .prepare(&sql)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let fetch = limit.saturating_add(1) as i64;
+        let mut binds: Vec<rusqlite::types::Value> = Vec::with_capacity(ids.len() + 3);
+        binds.push(rusqlite::types::Value::Text(target.kind().to_owned()));
+        binds.push(rusqlite::types::Value::Integer(after));
+        for id in &ids {
+            binds.push(rusqlite::types::Value::Text(id.clone()));
+        }
+        binds.push(rusqlite::types::Value::Integer(fetch));
         let rows = statement
-            .query_map(params![target.kind(), target.id(), after, fetch], |row| {
+            .query_map(rusqlite::params_from_iter(binds.iter()), |row| {
                 let id: i64 = row.get(0)?;
                 let version: i64 = row.get(1)?;
                 let created_at: String = row.get(2)?;

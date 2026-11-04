@@ -3,7 +3,10 @@
 
 use std::sync::Arc;
 
-use kanban_app::{CommentStore, Core, IssueStore, OperatorSession, ProjectStore};
+use kanban_app::{
+    CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+    ProjectStore,
+};
 use kanban_domain::ProjectRegistration;
 use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
@@ -48,9 +51,17 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
         )),
     )
     .expect("tickets register");
-    core.register_issue_operator(tickets, projects.clone(), specs, issues, comments.clone())
-        .expect("issue operator registers");
-    core.register_comments(comments, projects)
+    core.register_issue_operator(
+        tickets,
+        projects.clone(),
+        specs,
+        issues.clone(),
+        comments.clone(),
+    )
+    .expect("issue operator registers");
+    let comment_targets: Arc<dyn CommentIssueTargets> =
+        Arc::new(IssueStoreCommentTargets::new(issues));
+    core.register_comments(comments, projects, comment_targets)
         .expect("comments register");
 }
 

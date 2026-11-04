@@ -25,6 +25,7 @@ export const STATUS_LABELS: Record<TicketState, string> = {
   done: 'Done',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  duplicate: 'Duplicate',
 }
 
 export const STATUS_TONES: Record<TicketState, StatusTone> = {
@@ -40,6 +41,7 @@ export const STATUS_TONES: Record<TicketState, StatusTone> = {
   done: 'positive',
   cancelled: 'neutral',
   superseded: 'neutral',
+  duplicate: 'neutral',
 }
 
 /**

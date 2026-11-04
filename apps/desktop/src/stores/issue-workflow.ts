@@ -16,6 +16,7 @@ export const DEFAULT_WORKFLOW_STATE_NAMES: readonly string[] = [
   'Done',
   'Cancelled',
   'Superseded',
+  'Duplicate',
 ]
 
 const LEGACY_BY_WORKFLOW_NAME: Record<string, TicketState> = {
@@ -31,6 +32,7 @@ const LEGACY_BY_WORKFLOW_NAME: Record<string, TicketState> = {
   Done: 'done',
   Cancelled: 'cancelled',
   Superseded: 'superseded',
+  Duplicate: 'duplicate',
 }
 
 const WORKFLOW_NAME_BY_LEGACY: Record<TicketState, string> = {
@@ -46,6 +48,7 @@ const WORKFLOW_NAME_BY_LEGACY: Record<TicketState, string> = {
   done: 'Done',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  duplicate: 'Duplicate',
 }
 
 export function defaultWorkflowStates(): IssueWorkflowStateRecord[] {

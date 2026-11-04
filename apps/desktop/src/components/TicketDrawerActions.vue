@@ -76,6 +76,7 @@ const TICKET_STATE_LABELS: Record<TicketState, string> = {
   done: 'Done',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  duplicate: 'Duplicate',
 }
 
 // A rejection that resolves the stage must carry at least one

@@ -7,8 +7,8 @@ use kanban_dto::{
     ApiError, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
     IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
     IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
-    IssueProjectSettingsResponse, IssueProjectsResponse, IssueRecord, IssueSaveRequest,
-    IssueSaveResponse, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
+    IssueProjectSettingsResponse, IssueProjectsResponse, IssueRecord, IssueRetireLabelRequest,
+    IssueSaveRequest, IssueSaveResponse, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
     IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
     TaskMode as WireMode, TaskSubtype as WireSubtype, TicketCreateRequest, TicketKind,
     TicketPriority,
@@ -19,7 +19,7 @@ use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::issue::IssueStore;
 use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
-use crate::project::ProjectStore;
+use crate::project::{ProjectStore, resolve_project};
 use crate::spec::SpecStore;
 use crate::ticket::{TicketStore, create_ticket, transition};
 
@@ -34,6 +34,7 @@ pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
     "issue.save",
     "issue.create_milestone",
     "issue.create_label",
+    "issue.retire_label",
     "issue.update_project_settings",
     "comment.create",
     "comment.edit",
@@ -141,6 +142,15 @@ impl Core {
             })),
         )?;
         self.register_command(
+            "issue.retire_label",
+            Arc::new(RetireLabel(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_command(
             "issue.update_project_settings",
             Arc::new(UpdateProjectSettings(IssueContext {
                 tickets,
@@ -218,6 +228,7 @@ struct ListWorkflowStates(IssueContext);
 impl QueryHandler for ListWorkflowStates {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let request: IssueWorkflowStatesQuery = parse_payload(payload)?;
+        resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let states = self
             .0
             .issues
@@ -240,6 +251,7 @@ struct ListLabels(IssueContext);
 impl QueryHandler for ListLabels {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let request: IssueLabelsQuery = parse_payload(payload)?;
+        resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let labels = self
             .0
             .issues
@@ -263,6 +275,7 @@ struct ListMilestones(IssueContext);
 impl QueryHandler for ListMilestones {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let request: IssueMilestonesQuery = parse_payload(payload)?;
+        resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let milestones = self
             .0
             .issues
@@ -372,6 +385,32 @@ impl CommandHandler for CreateLabel {
     }
 }
 
+struct RetireLabel(IssueContext);
+
+impl CommandHandler for RetireLabel {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<IssueRetireLabelRequest>(payload)?;
+        ParsedCommand::lift("issue", payload)
+    }
+
+    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: IssueRetireLabelRequest = parse_payload(&command.payload)?;
+        resolve_project(self.0.projects.as_ref(), request.project_id)?;
+        self.0
+            .issues
+            .retire_label(request.project_id as i64, &request.name)?;
+        Ok(json!({ "name": request.name, "retired": true }))
+    }
+}
+
 struct UpdateProjectSettings(IssueContext);
 
 impl CommandHandler for UpdateProjectSettings {
@@ -412,10 +451,30 @@ fn create_issue(
     request: &IssueSaveRequest,
     effects: &dyn CommandEffects,
 ) -> Result<Value, ApiError> {
-    let mut project_id = request
-        .project_id
-        .ok_or_else(|| ApiError::invalid_request("project_id is required when creating"))?;
-    if let Some(parent_ref) = request.parent_id.as_ref().and_then(|value| value.as_deref()) {
+    let mut project_id = if let Some(id) = request.project_id {
+        id
+    } else if let Some(parent_ref) = request
+        .parent_id
+        .as_ref()
+        .and_then(|value| value.as_deref())
+    {
+        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
+        ctx.tickets
+            .find(TicketId::new(parent_id))?
+            .ok_or_else(|| ApiError::not_found("parent issue"))?
+            .project()
+            .value()
+    } else {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            "project_id is required when creating without parent_id",
+        ));
+    };
+    if let Some(parent_ref) = request
+        .parent_id
+        .as_ref()
+        .and_then(|value| value.as_deref())
+    {
         let parent_id = resolve_parent_reference(ctx, parent_ref)?;
         let parent = ctx
             .tickets
@@ -476,7 +535,11 @@ fn create_issue(
     if let Some(milestone) = request.milestone_id.as_ref() {
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
-    } else if let Some(parent_ref) = request.parent_id.as_ref().and_then(|value| value.as_deref()) {
+    } else if let Some(parent_ref) = request
+        .parent_id
+        .as_ref()
+        .and_then(|value| value.as_deref())
+    {
         let parent_id = resolve_parent_reference(ctx, parent_ref)?;
         let fields = ctx.issues.issue_fields(parent_id as i64)?;
         if let Some(milestone_id) = fields.milestone_id {
@@ -486,6 +549,20 @@ fn create_issue(
     }
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
+    if request.sort_order.is_none()
+        && let Some(parent_ref) = request
+            .parent_id
+            .as_ref()
+            .and_then(|value| value.as_deref())
+    {
+        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
+        ctx.issues
+            .append_sub_issue_sort(ticket_id as i64, parent_id as i64)?;
+    }
+    if let Some(assignee) = request.assignee.as_ref() {
+        ctx.issues
+            .set_assignee(ticket_id as i64, assignee.as_deref())?;
+    }
     finish_save_response(ctx, ticket_id as u64)
 }
 
@@ -531,6 +608,9 @@ fn update_issue(
     }
     apply_label_changes(ctx, project_id as i64, ticket_id, request)?;
     apply_issue_extensions(ctx, ticket_id, request)?;
+    if let Some(assignee) = request.assignee.as_ref() {
+        ctx.issues.set_assignee(ticket_id, assignee.as_deref())?;
+    }
     finish_save_response(ctx, ticket_id as u64)
 }
 
@@ -626,6 +706,13 @@ fn apply_named_state(
     let to = ctx
         .issues
         .resolve_state_by_name(project_id as i64, state_name)?;
+    if ctx
+        .issues
+        .workflow_state_for_ticket(ticket_id)?
+        .is_some_and(|current| current.name == to.name)
+    {
+        return Ok(());
+    }
     let envelope = transition(
         ProjectId::new(project_id),
         TicketId::new(ticket_id as u64),
@@ -706,6 +793,7 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         duplicate_of,
         duplicates: (!duplicates.is_empty()).then_some(duplicates),
         children: (!children.is_empty()).then_some(children),
+        assignee: (!fields.assignee.is_empty()).then_some(fields.assignee),
     })
 }
 
@@ -719,7 +807,10 @@ fn list_issues(
         request.limit.clamp(1, 100)
     };
     let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
-        Some(project_id) => vec![project_id],
+        Some(project_id) => {
+            resolve_project(ctx.projects.as_ref(), project_id)?;
+            vec![project_id]
+        }
         None => ctx
             .projects
             .list()?
@@ -744,9 +835,10 @@ fn list_issues(
                     continue;
                 }
             }
-            if let Some(parent_id) = request.parent_id {
+            if let Some(parent_ref) = request.parent_id.as_deref() {
+                let expected_parent = resolve_parent_filter(ctx, parent_ref)?;
                 let fields = ctx.issues.issue_fields(ticket_id as i64)?;
-                if fields.parent_ticket_id != Some(parent_id as i64) {
+                if fields.parent_ticket_id != Some(expected_parent) {
                     continue;
                 }
             }
@@ -756,8 +848,11 @@ fn list_issues(
                     continue;
                 }
             }
-            if request.assignee.is_some() {
-                continue;
+            if let Some(expected_assignee) = request.assignee.as_deref() {
+                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
+                if fields.assignee != expected_assignee {
+                    continue;
+                }
             }
             let record =
                 load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;
@@ -812,6 +907,22 @@ fn list_issues(
     Ok(IssueListResponse {
         issues,
         next_cursor,
+    })
+}
+
+fn resolve_parent_filter(ctx: &IssueContext, raw: &str) -> Result<i64, ApiError> {
+    if raw.contains('-') {
+        let (_, ticket_id) = ctx
+            .issues
+            .resolve_identifier(raw)?
+            .ok_or_else(|| ApiError::not_found(raw))?;
+        return Ok(ticket_id);
+    }
+    raw.parse::<i64>().map_err(|_| {
+        ApiError::invalid_request_field(
+            "parent_id",
+            "parent_id must be a ticket id or an issue key",
+        )
     })
 }
 

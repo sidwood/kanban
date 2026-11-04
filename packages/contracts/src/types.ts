@@ -11,6 +11,7 @@ export type JsonValue =
 export type ApiError = {
   code: ErrorCode;
   current_version?: number | null;
+  field?: string | null;
   message: string;
 };
 export type AttentionAcknowledgeRequest = {
@@ -206,6 +207,7 @@ export type CommentListItem = {
   id: number;
   parent_comment_id?: number | null;
   resolved_at?: string | null;
+  version: number;
 };
 export type CommentListQuery = {
   cursor?: string | null;
@@ -392,7 +394,7 @@ export type DispatchRequestRecord = {
 };
 export type DispatchStatus = 'queued' | 'claimed';
 export type DonePlacement = 'column' | 'table';
-export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
+export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'conflict' | 'internal';
 export type EventEnvelope = {
   event_type: string;
   payload: JsonValue;
@@ -616,7 +618,7 @@ export type IssueListQuery = {
   label?: string | null;
   limit?: number;
   milestone_id?: number | null;
-  parent_id?: number | null;
+  parent_id?: string | null;
   project_id?: number | null;
   query?: string | null;
   state?: string | null;
@@ -654,6 +656,7 @@ export type IssueProjectsResponse = {
   projects: IssueProjectRecord[];
 };
 export type IssueRecord = {
+  assignee?: string | null;
   canceled_at?: string | null;
   children?: IssueChildRecord[] | null;
   completed_at?: string | null;
@@ -684,11 +687,17 @@ export type IssueRelationRecord = {
   identifier: string;
   kind: string;
 };
+export type IssueRetireLabelRequest = {
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+};
 export type IssueSaveRequest = {
   add_blocked_by?: string[] | null;
   add_blocks?: string[] | null;
   add_labels?: string[] | null;
   add_related?: string[] | null;
+  assignee?: string | null;
   description?: string | null;
   description_patch?: string | null;
   due_date?: string | null;

@@ -1173,6 +1173,13 @@ define_exposed_catalogue! {
         mcp: "create_label",
         description: "Create a label (and optional group) on one project.",
     },
+    "issue.retire_label" => {
+        kind: Command,
+        request: "IssueRetireLabelRequest",
+        response: "IssueLabelRecord",
+        mcp: "retire_label",
+        description: "Retire (archive) a label on one project.",
+    },
     "issue.update_project_settings" => {
         kind: Command,
         request: "IssueUpdateProjectSettingsRequest",

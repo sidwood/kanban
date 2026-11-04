@@ -279,6 +279,9 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
             continue;
         }
         for (index, (recorded_at, from, to)) in events.iter().enumerate() {
+            if from == to {
+                continue;
+            }
             if index == 0
                 && let Some(from_id) = workflow_id_for_legacy(conn, project_id, from)?
             {
@@ -300,6 +303,118 @@ fn backfill_issue_state_history_from_timeline(conn: &Connection) -> rusqlite::Re
             }
         }
     }
+    collapse_consecutive_duplicate_history(conn)?;
+    backfill_lifecycle_timestamps_from_history(conn)?;
+    backfill_legacy_trait_labels(conn)?;
+    Ok(())
+}
+
+fn collapse_consecutive_duplicate_history(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DELETE FROM issue_state_history
+         WHERE id IN (
+             SELECT h2.id
+             FROM issue_state_history AS h2
+             JOIN issue_state_history AS h1
+               ON h1.ticket_id = h2.ticket_id
+              AND h1.id = (
+                  SELECT MAX(id) FROM issue_state_history
+                  WHERE ticket_id = h2.ticket_id AND id < h2.id
+              )
+             WHERE h1.workflow_state_id = h2.workflow_state_id
+         )",
+    )
+}
+
+fn backfill_lifecycle_timestamps_from_history(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "UPDATE tickets SET started_at = (
+             SELECT h.started_at
+             FROM issue_state_history AS h
+             JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+             WHERE h.ticket_id = tickets.id AND s.type = 'started'
+             ORDER BY h.started_at ASC LIMIT 1
+         ) WHERE started_at IS NULL;
+         UPDATE tickets SET completed_at = (
+             SELECT h.ended_at
+             FROM issue_state_history AS h
+             JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+             WHERE h.ticket_id = tickets.id AND s.type = 'completed' AND h.ended_at IS NOT NULL
+             ORDER BY h.ended_at DESC LIMIT 1
+         ) WHERE completed_at IS NULL;
+         UPDATE tickets SET canceled_at = (
+             SELECT h.ended_at
+             FROM issue_state_history AS h
+             JOIN issue_workflow_states AS s ON s.id = h.workflow_state_id
+             WHERE h.ticket_id = tickets.id AND s.type IN ('canceled', 'duplicate') AND h.ended_at IS NOT NULL
+             ORDER BY h.ended_at DESC LIMIT 1
+         ) WHERE canceled_at IS NULL;",
+    )
+}
+
+fn backfill_legacy_trait_labels(conn: &Connection) -> rusqlite::Result<()> {
+    let mut tickets =
+        conn.prepare("SELECT id, project_id, kind, bug_qualification, subtype, mode FROM tickets")?;
+    let rows = tickets.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (ticket_id, project_id, kind, qualification, subtype, mode) = row?;
+        if kind == "bug"
+            && let Some(raw) = qualification
+            && let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw)
+            && let Some(severity) = value.get("severity").and_then(|v| v.as_str())
+        {
+            ensure_trait_label(conn, project_id, ticket_id, "Severity", severity)?;
+        }
+        if let Some(subtype) = subtype.filter(|value| !value.is_empty()) {
+            ensure_trait_label(conn, project_id, ticket_id, "Subtype", &subtype)?;
+        }
+        if let Some(mode) = mode.filter(|value| !value.is_empty()) {
+            ensure_trait_label(conn, project_id, ticket_id, "Mode", &mode)?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_trait_label(
+    conn: &Connection,
+    project_id: i64,
+    ticket_id: i64,
+    group: &str,
+    name: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO issue_label_groups (project_id, name, single_select)
+         VALUES (?1, ?2, 0)",
+        params![project_id, group],
+    )?;
+    let group_id: i64 = conn.query_row(
+        "SELECT id FROM issue_label_groups WHERE project_id = ?1 AND name = ?2",
+        params![project_id, group],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO issue_labels (project_id, name, color, group_id)
+         VALUES (?1, ?2, '#9CA3AF', ?3)",
+        params![project_id, name, group_id],
+    )?;
+    let label_id: i64 = conn.query_row(
+        "SELECT id FROM issue_labels WHERE project_id = ?1 AND name = ?2",
+        params![project_id, name],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO issue_ticket_labels (ticket_id, label_id) VALUES (?1, ?2)",
+        params![ticket_id, label_id],
+    )?;
     Ok(())
 }
 
@@ -329,10 +444,14 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
     if tickets_table_has_column(conn, "description")? {
         conn.execute_batch(
             "UPDATE tickets
-             SET due_date = due
-             WHERE due IS NOT NULL
-               AND due <> ''
-               AND due_date = '2099-12-31';
+             SET due_date = CASE
+                 WHEN due IS NOT NULL AND due <> '' AND length(due) >= 10 THEN substr(due, 1, 10)
+                 ELSE due_date
+             END
+             WHERE due IS NOT NULL AND due <> '' AND due_date = '2099-12-31';
+             UPDATE tickets
+             SET due_date = substr(due_date, 1, 10)
+             WHERE length(due_date) > 10;
              DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
              DROP TRIGGER IF EXISTS tickets_bug_shape_update;
              CREATE TRIGGER tickets_bug_shape_insert
@@ -854,6 +973,34 @@ pub(crate) fn apply_duplicate_ticket_state_in_span(span: &WriteSpan<'_>) -> rusq
 
 pub(crate) fn apply_comment_author_column_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     apply_comment_author_column(span)
+}
+
+pub(crate) fn apply_project_auto_close_setting(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "projects",
+        "auto_close_sub_issues",
+        "auto_close_sub_issues INTEGER NOT NULL DEFAULT 0",
+    )
+}
+
+pub(crate) fn apply_project_auto_close_setting_in_span(
+    span: &WriteSpan<'_>,
+) -> rusqlite::Result<()> {
+    apply_project_auto_close_setting(span)
+}
+
+pub(crate) fn apply_issue_assignee_column(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "tickets",
+        "assignee",
+        "assignee TEXT NOT NULL DEFAULT ''",
+    )
+}
+
+pub(crate) fn apply_issue_assignee_column_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_issue_assignee_column(span)
 }
 
 pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {

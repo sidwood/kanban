@@ -119,9 +119,7 @@ impl IssueStateTimestamps {
     pub fn clear_terminal_on_reopen(&mut self, to_state: WorkflowStateType) {
         if matches!(
             to_state,
-            WorkflowStateType::Started
-                | WorkflowStateType::Backlog
-                | WorkflowStateType::Unstarted
+            WorkflowStateType::Started | WorkflowStateType::Backlog | WorkflowStateType::Unstarted
         ) {
             self.completed_at = None;
             self.canceled_at = None;

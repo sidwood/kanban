@@ -26,6 +26,15 @@ const dialog = useTicketDialogStore()
 const comments = ref<CommentListItem[]>([])
 const commentError = ref<string | null>(null)
 const commentBody = ref('')
+const replyingToCommentId = ref<number | null>(null)
+
+const topLevelComments = computed(() =>
+  comments.value.filter((entry) => entry.parent_comment_id == null),
+)
+
+function repliesFor(parentId: number): CommentListItem[] {
+  return comments.value.filter((entry) => entry.parent_comment_id === parentId)
+}
 const descriptionLocal = ref('')
 const descriptionSaving = ref(false)
 const descriptionError = ref<string | null>(null)
@@ -80,8 +89,37 @@ async function postComment(): Promise<void> {
       target: { kind: 'ticket', id: String(props.issue.ticket_id) },
       text: commentBody.value,
       author: 'operator',
+      parent_comment_id: replyingToCommentId.value,
     })
     commentBody.value = ''
+    replyingToCommentId.value = null
+    await loadComments()
+  } catch (failure) {
+    commentError.value = asApiError(failure).message
+  }
+}
+
+function startReply(commentId: number): void {
+  replyingToCommentId.value = commentId
+}
+
+function cancelReply(): void {
+  replyingToCommentId.value = null
+}
+
+async function toggleResolve(comment: CommentListItem): Promise<void> {
+  if (!transport) return
+  commentError.value = null
+  const client = new KanbanClient(transport)
+  try {
+    await client.commandCommentResolve({
+      mutation: {
+        optimistic_version: comment.version,
+        idempotency_key: crypto.randomUUID(),
+      },
+      comment_id: comment.id,
+      resolved: comment.resolved_at == null,
+    })
     await loadComments()
   } catch (failure) {
     commentError.value = asApiError(failure).message
@@ -156,7 +194,7 @@ function editIssue(): void {
           Assignee
         </dt>
         <dd data-testid="issue-detail-assignee">
-          —
+          {{ issue.assignee ?? '—' }}
         </dd>
       </div>
       <div class="flex flex-col gap-1 border-b border-line pb-2">
@@ -271,19 +309,61 @@ function editIssue(): void {
         {{ commentError }}
       </InlineAlert>
       <ul
-        v-if="comments.length"
+        v-if="topLevelComments.length"
         class="flex flex-col gap-2"
         data-testid="issue-comment-list"
       >
         <li
-          v-for="comment in comments"
+          v-for="comment in topLevelComments"
           :key="comment.id"
           class="rounded-control border border-line bg-surface/70 px-3 py-2 text-sm"
           :data-testid="`issue-comment-${comment.id}`"
         >
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-muted">
+            <span>{{ comment.author }}</span>
+            <span
+              v-if="comment.resolved_at"
+              data-testid="issue-comment-resolved-badge"
+            >
+              Resolved
+            </span>
+          </div>
           <p class="mt-1 whitespace-pre-wrap text-ink">
             {{ comment.body }}
           </p>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <AppButton
+              variant="secondary"
+              :data-testid="`issue-comment-reply-${comment.id}`"
+              @click="startReply(comment.id)"
+            >
+              Reply
+            </AppButton>
+            <AppButton
+              variant="secondary"
+              :data-testid="`issue-comment-resolve-${comment.id}`"
+              @click="toggleResolve(comment)"
+            >
+              {{ comment.resolved_at ? 'Reopen' : 'Resolve' }}
+            </AppButton>
+          </div>
+          <ul
+            v-if="repliesFor(comment.id).length"
+            class="mt-2 flex flex-col gap-2 border-l border-line pl-3"
+            :data-testid="`issue-comment-replies-${comment.id}`"
+          >
+            <li
+              v-for="reply in repliesFor(comment.id)"
+              :key="reply.id"
+              class="text-sm"
+              :data-testid="`issue-comment-${reply.id}`"
+            >
+              <span class="text-xs text-ink-muted">{{ reply.author }}</span>
+              <p class="whitespace-pre-wrap text-ink">
+                {{ reply.body }}
+              </p>
+            </li>
+          </ul>
         </li>
       </ul>
       <p
@@ -292,6 +372,21 @@ function editIssue(): void {
         data-testid="issue-comment-empty"
       >
         No comments yet.
+      </p>
+      <p
+        v-if="replyingToCommentId != null"
+        class="text-xs text-ink-muted"
+        data-testid="issue-comment-replying"
+      >
+        Replying to comment #{{ replyingToCommentId }}
+        <button
+          type="button"
+          class="ml-2 underline"
+          data-testid="issue-comment-cancel-reply"
+          @click="cancelReply()"
+        >
+          Cancel
+        </button>
       </p>
       <label class="flex flex-col gap-1 text-sm text-ink-muted">
         Add comment

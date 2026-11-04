@@ -44,19 +44,20 @@ function issueRecord(overrides: Partial<IssueRecord> = {}): IssueRecord {
   }
 }
 
-function transportFor(issue: IssueRecord): ShellTransport {
+function transportFor(issue: IssueRecord, onSave?: (body: Record<string, unknown>) => void): ShellTransport {
+  let current = issue
   return {
     query: ((name, request) => {
       if (name === 'ticket.get') {
         return Promise.resolve({
-          id: issue.ticket_id,
-          project_id: issue.project_id,
+          id: current.ticket_id,
+          project_id: current.project_id,
           number: 1,
           kind: 'task',
           priority: 'normal',
           state: 'active',
           spec_id: null,
-          title: issue.title,
+          title: current.title,
           slice: null,
           criteria: [],
           bug: null,
@@ -71,14 +72,41 @@ function transportFor(issue: IssueRecord): ShellTransport {
       }
       if (name === 'issue.get') {
         const body = request as { identifier?: string }
-        if (body.identifier === issue.identifier) {
-          return Promise.resolve(issue)
+        if (body.identifier === current.identifier) {
+          return Promise.resolve(current)
+        }
+        const child = current.children?.find((entry) => entry.identifier === body.identifier)
+        if (child) {
+          return Promise.resolve({
+            ...current,
+            identifier: child.identifier,
+            title: child.title,
+            state: child.state,
+            children: [],
+            version: 1,
+          })
         }
         return Promise.reject({ code: 'not_found', message: 'issue' })
       }
       return Promise.reject({ code: 'not_found', message: name })
     }) as ShellTransport['query'],
-    command: (() => Promise.reject({ code: 'not_found', message: 'command' })) as ShellTransport['command'],
+    command: ((name, request) => {
+      if (name === 'issue.save') {
+        const body = request as Record<string, unknown>
+        onSave?.(body)
+        const identifier = body.identifier as string
+        const sortOrder = body.sort_order as number | undefined
+        if (identifier != null && sortOrder != null && current.children) {
+          const next = current.children.map((child) =>
+            child.identifier === identifier ? { ...child, sort_order: sortOrder } : child,
+          )
+          next.sort((a, b) => a.sort_order - b.sort_order)
+          current = { ...current, children: next }
+        }
+        return Promise.resolve({ identifier, ticket_id: 1, url: `kanban://issue/${identifier}` })
+      }
+      return Promise.reject({ code: 'not_found', message: name })
+    }) as ShellTransport['command'],
     subscribe: (() => () => {}) as ShellTransport['subscribe'],
     onConnectionChange: () => () => {},
   }
@@ -109,5 +137,35 @@ describe('IssueSubIssues progress', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+  })
+
+  it('reorders sub-issues with issue.save sort_order (U4)', async () => {
+    const saves: Record<string, unknown>[] = []
+    const wrapper = mount(IssueSubIssues, {
+      props: {
+        projectCode: 'CORE',
+        ticketId: 1,
+        projectId: 4,
+      },
+      global: {
+        plugins: [createPinia(), router],
+        provide: {
+          [kanbanTransportKey as symbol]: transportFor(issueRecord(), (body) => saves.push(body)),
+        },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    await wrapper.find('[data-testid="drawer-sub-issue-down-CORE-2"]').trigger('click')
+    await flushPromises()
+
+    expect(saves.length).toBeGreaterThanOrEqual(2)
+    expect(saves.some((body) => body.identifier === 'CORE-2' && body.sort_order === 1)).toBe(true)
+    expect(saves.some((body) => body.identifier === 'CORE-3' && body.sort_order === 0)).toBe(true)
+
+    const rows = wrapper.findAll('[data-testid^="drawer-sub-issue-row-"]')
+    expect(rows[0]?.attributes('data-testid')).toBe('drawer-sub-issue-row-CORE-3')
+    expect(rows[1]?.attributes('data-testid')).toBe('drawer-sub-issue-row-CORE-2')
   })
 })

@@ -60,6 +60,12 @@
         "null"
       ]
     },
+    "assignee": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "description": {
       "type": [
         "string",

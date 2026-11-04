@@ -91,6 +91,12 @@
     }
   },
   "properties": {
+    "assignee": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "canceled_at": {
       "type": [
         "string",

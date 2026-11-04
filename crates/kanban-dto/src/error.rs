@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct ApiError {
     pub code: ErrorCode,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
     /// The aggregate's current version, carried by `stale_version`
     /// rejections so the client can correct and retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19,6 +21,7 @@ impl ApiError {
         Self {
             code: ErrorCode::UnknownField,
             message: format!("unknown field `{field}`"),
+            field: Some(field.to_owned()),
             current_version: None,
         }
     }
@@ -31,6 +34,7 @@ impl ApiError {
             message: format!(
                 "optimistic version {expected} is stale; the aggregate is at version {current}"
             ),
+            field: None,
             current_version: Some(current),
         }
     }
@@ -40,6 +44,7 @@ impl ApiError {
         Self {
             code: ErrorCode::DuplicateIdempotencyKey,
             message: format!("idempotency key `{key}` was already used by a different request"),
+            field: None,
             current_version: None,
         }
     }
@@ -55,34 +60,61 @@ impl ApiError {
                 "idempotency key `{key}` was recorded without an operation and \
                  cannot prove a replay; retry with a fresh idempotency key"
             ),
+            field: None,
             current_version: None,
         }
     }
 
-    /// The named operation or aggregate does not exist.
     pub fn not_found(subject: &str) -> Self {
         Self {
             code: ErrorCode::NotFound,
             message: format!("{subject} was not found"),
+            field: None,
             current_version: None,
         }
     }
 
-    /// The payload is malformed: a required field is missing or a
-    /// value has the wrong shape.
     pub fn invalid_request(reason: &str) -> Self {
         Self {
             code: ErrorCode::InvalidRequest,
             message: reason.to_owned(),
+            field: None,
             current_version: None,
         }
     }
 
-    /// An unexpected failure inside the core.
+    pub fn invalid_request_field(field: &str, reason: &str) -> Self {
+        Self {
+            code: ErrorCode::InvalidRequest,
+            message: reason.to_owned(),
+            field: Some(field.to_owned()),
+            current_version: None,
+        }
+    }
+
+    pub fn conflict(reason: &str) -> Self {
+        Self {
+            code: ErrorCode::Conflict,
+            message: reason.to_owned(),
+            field: None,
+            current_version: None,
+        }
+    }
+
+    pub fn conflict_field(field: &str, reason: &str) -> Self {
+        Self {
+            code: ErrorCode::Conflict,
+            message: reason.to_owned(),
+            field: Some(field.to_owned()),
+            current_version: None,
+        }
+    }
+
     pub fn internal(reason: &str) -> Self {
         Self {
             code: ErrorCode::Internal,
             message: reason.to_owned(),
+            field: None,
             current_version: None,
         }
     }
@@ -98,6 +130,7 @@ pub enum ErrorCode {
     AmbiguousIdempotencyKey,
     NotFound,
     InvalidRequest,
+    Conflict,
     Internal,
 }
 
@@ -133,8 +166,10 @@ mod tests {
             json!({
                 "code": "unknown_field",
                 "message": "unknown field `surprise`",
+                "field": "surprise",
             })
         );
+        assert!(encoded.get("current_version").is_none());
     }
 
     #[test]

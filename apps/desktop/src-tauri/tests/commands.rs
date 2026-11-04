@@ -675,6 +675,33 @@ fn sample_request(schema: &str) -> Value {
         "IssueWorkflowStatesQuery" => json!({ "project_id": 1 }),
         "IssueLabelsQuery" => json!({ "project_id": 1 }),
         "IssueMilestonesQuery" => json!({ "project_id": 1 }),
+        "CommentResolveRequest" => json!({
+            "mutation": mutation,
+            "comment_id": 1,
+            "resolved": true,
+        }),
+        "IssueProjectsQuery" => json!({}),
+        "IssueCreateMilestoneRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "Stage 2",
+        }),
+        "IssueCreateLabelRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "severity-high",
+            "color": "#ff0000",
+        }),
+        "IssueRetireLabelRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "severity-high",
+        }),
+        "IssueUpdateProjectSettingsRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "auto_close_sub_issues": true,
+        }),
         "ShellPreferencesUpdateRequest" => json!({
             "mutation": mutation,
             "rail_open": true,

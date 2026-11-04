@@ -92,9 +92,9 @@ use crate::issue::{
     IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
     IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
     IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,
-    IssueRelationRecord, IssueSaveRequest, IssueSaveResponse, IssueStateHistoryRecord,
-    IssueSubIssueProgress, IssueUpdateProjectSettingsRequest, IssueWorkflowStateRecord,
-    IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
+    IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
+    IssueStateHistoryRecord, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
+    IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
 use crate::lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -429,6 +429,10 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         (
             "IssueCreateLabelRequest",
             schema_for!(IssueCreateLabelRequest),
+        ),
+        (
+            "IssueRetireLabelRequest",
+            schema_for!(IssueRetireLabelRequest),
         ),
         (
             "IssueCreateMilestoneRequest",

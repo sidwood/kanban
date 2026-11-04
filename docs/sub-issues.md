@@ -14,11 +14,13 @@ Sub-issues follow Linear's parent/child model (see [linear-issue-model.md](./lin
 - `save_issue` accepts `parent_id` on create and update; `null` clears the parent.
 - `sort_order` on save sets child ordering (`sub_issue_sort`); `get_issue` lists children in that order.
 - `get_issue` returns `parent` and `children` (identifier, title, state, sort).
-- `list_issues` filters with `parent_id`.
+- `list_issues` filters with `parent_id` (numeric ticket id or issue key).
 
 When all children are in a **closed** state (Done, Cancelled, Superseded, or
 Duplicate — matching Linear’s notion of completed/cancelled work), an **open**
-parent is automatically moved to Done. Terminal parents are not updated again.
+parent can be moved to Done automatically when **`auto_close_sub_issues`** is
+enabled for the project (`update_project_settings`; **default off**). Terminal
+parents are not updated again.
 
 ## UI
 

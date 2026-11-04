@@ -18,7 +18,8 @@ use kanban_dto::{
     CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
     CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionsQuery,
+    CommentRevisionsResponse,
     CriterionBindingListQuery, CriterionBindingListResponse, CriterionBindingRecord,
     CriterionCompleteRequest, CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest,
     CriterionInvalidateRequest, CriterionSatisfyRequest, DeferralListQuery, DeferralListResponse,
@@ -31,9 +32,12 @@ use kanban_dto::{
     HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    IssueGetQuery, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
-    IssueMilestonesQuery, IssueMilestonesResponse, IssueRecord, IssueSaveRequest,
-    IssueSaveResponse, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse, LandingBugRequest,
+    IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery, IssueLabelRecord,
+    IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
+    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectSettingsResponse,
+    IssueProjectsQuery, IssueProjectsResponse, IssueRecord, IssueRetireLabelRequest,
+    IssueSaveRequest, IssueSaveResponse, IssueUpdateProjectSettingsRequest,
+    IssueWorkflowStatesQuery, IssueWorkflowStatesResponse, LandingBugRequest,
     LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest, LandingRecord,
     LandingSeedRequest, LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord,
     LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
@@ -1459,6 +1463,19 @@ async fn list_comments(
 }
 
 #[tauri::command]
+async fn resolve_comment(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CommentResolveRequest, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentResolveRequest>(request)?;
+    run_blocking(shell, "comment resolve", |shell| {
+        forward_command(shell, "comment.resolve", "resolved comment", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ruling_record(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2466,6 +2483,71 @@ async fn list_milestones(
 }
 
 #[tauri::command]
+async fn list_projects(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueProjectsQuery,
+) -> Result<IssueProjectsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list projects", |shell| {
+        forward_query(shell, "issue.list_projects", "list projects", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_milestone(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueCreateMilestoneRequest,
+) -> Result<IssueMilestoneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "create milestone", |shell| {
+        forward_command(shell, "issue.create_milestone", "create milestone", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_label(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueCreateLabelRequest,
+) -> Result<IssueLabelRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "create label", |shell| {
+        forward_command(shell, "issue.create_label", "create label", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn retire_label(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueRetireLabelRequest,
+) -> Result<IssueLabelRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "retire label", |shell| {
+        forward_command(shell, "issue.retire_label", "retire label", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_project_settings(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueUpdateProjectSettingsRequest,
+) -> Result<IssueProjectSettingsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "update project settings", |shell| {
+        forward_command(
+            shell,
+            "issue.update_project_settings",
+            "update project settings",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn service_stop_warning(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2630,6 +2712,7 @@ shell_handlers::shell_handler_catalogue! {
     comment_edit,
     comment_revisions,
     list_comments,
+    resolve_comment,
     ruling_record,
     ruling_supersede,
     ruling_list,
@@ -2704,6 +2787,11 @@ shell_handlers::shell_handler_catalogue! {
     list_issue_statuses,
     list_issue_labels,
     list_milestones,
+    list_projects,
+    create_milestone,
+    create_label,
+    retire_label,
+    update_project_settings,
 }
 
 /// Build the window, start the core on demand, and supervise the

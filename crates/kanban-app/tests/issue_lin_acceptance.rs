@@ -6,8 +6,8 @@ use kanban_app::{CommentStore, Core, IssueStore, OperatorSession};
 use kanban_dto::{ErrorCode, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
-    Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore, SqliteSpecStore,
-    SqliteTicketStore,
+    AllowAllMigrations, Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore,
+    SqliteSpecStore, SqliteTicketStore, migrations,
 };
 use serde_json::json;
 
@@ -59,6 +59,33 @@ fn session() -> OperatorSession {
     OperatorSession::new(Arc::new(h.core))
 }
 
+fn migrated_session() -> (tempfile::TempDir, OperatorSession) {
+    let dir = tempfile::TempDir::new().expect("scratch dir");
+    let path = dir.path().join("kanban.sqlite");
+    let mut database = Database::open(&path).expect("database opens");
+    migrations::apply_through(&database.connection(), 52).expect("schema 52");
+    common::seed_project_profile(&database);
+    let ticket_id = common::insert_ready_ticket(&path, 1, "normal");
+    common::insert_blocker(&path, ticket_id);
+    database
+        .migrate(&AllowAllMigrations)
+        .expect("migrate to head");
+    let attachments = dir.path().join("attachments");
+    let idempotency = Arc::new(kanban_storage::SqliteIdempotencyStore::new(
+        &database,
+        kanban_storage::RetentionPolicy::keep_most_recent(
+            std::num::NonZeroU32::new(100).expect("non-zero"),
+        ),
+    ));
+    let mut core = kanban_app::dispatch::Core::new(
+        kanban_app::catalog::exposed_operations(),
+        idempotency,
+        Arc::new(kanban_app::events::NoopEventSink),
+    );
+    register_issue_stack(&mut core, &database, &attachments);
+    (dir, OperatorSession::new(Arc::new(core)))
+}
+
 fn save_issue(
     session: &OperatorSession,
     version: u64,
@@ -100,10 +127,7 @@ fn l1_null_clears_distinguish_absent_from_null() {
     );
     let read: IssueRecord = serde_json::from_value(
         session
-            .call(
-                "issue.get",
-                &json!({ "identifier": host.identifier }),
-            )
+            .call("issue.get", &json!({ "identifier": host.identifier }))
             .unwrap(),
     )
     .unwrap();
@@ -337,13 +361,26 @@ fn l6_comment_body_thread_and_resolve() {
 }
 
 #[test]
+fn l7_migrated_database_preserves_blocker_prose_on_issue_get() {
+    let (_dir, session) = migrated_session();
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": "CORE-1" }))
+            .expect("issue.get on migrated row"),
+    )
+    .expect("issue shape");
+    assert!(
+        read.description
+            .contains("waiting on an unregistered vendor"),
+        "legacy ticket_blockers prose should appear on the migrated issue"
+    );
+}
+
+#[test]
 fn l8_errors_are_specific_not_opaque() {
     let session = session();
     let error = session
-        .call(
-            "issue.get",
-            &json!({ "identifier": "NOPE-999" }),
-        )
+        .call("issue.get", &json!({ "identifier": "NOPE-999" }))
         .expect_err("unknown issue");
     assert_eq!(error.code, ErrorCode::NotFound);
 
@@ -380,7 +417,7 @@ fn l9_list_filters_and_lookups() {
     let listed = session
         .call("issue.list_projects", &json!({}))
         .expect("list projects");
-    assert!(listed["projects"].as_array().unwrap().len() >= 1);
+    assert!(!listed["projects"].as_array().unwrap().is_empty());
 
     let labels = session
         .call("issue.list_labels", &json!({ "project_id": 1 }))
@@ -455,7 +492,11 @@ fn l10_description_patch_in_place_and_mcp_doc_matches_catalog() {
     .unwrap();
     assert_eq!(read.description, "alpha BETA gamma");
 
-    let doc = std::fs::read_to_string("/tmp/stage2-wt/docs/mcp-operator.md").expect("doc");
+    let doc = std::fs::read_to_string(format!(
+        "{}/../../docs/mcp-operator.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("doc");
     for (core, mcp) in [
         ("issue.save", "save_issue"),
         ("issue.get", "get_issue"),

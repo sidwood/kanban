@@ -39,13 +39,19 @@
             "string",
             "null"
           ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
         }
       },
       "required": [
         "author",
         "body",
         "created_at",
-        "id"
+        "id",
+        "version"
       ],
       "type": "object"
     }

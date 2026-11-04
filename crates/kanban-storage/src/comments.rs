@@ -236,16 +236,8 @@ impl CommentStore for SqliteCommentStore {
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let mut items = Vec::new();
         for row in rows {
-            let (
-                id,
-                version,
-                created_at,
-                body,
-                latest_at,
-                author,
-                parent_comment_id,
-                resolved_at,
-            ) = row.map_err(|error| ApiError::internal(&error.to_string()))?;
+            let (id, version, created_at, body, latest_at, author, parent_comment_id, resolved_at) =
+                row.map_err(|error| ApiError::internal(&error.to_string()))?;
             let edited_at = (version > 1).then_some(latest_at);
             items.push(CommentListItem {
                 id: id.unsigned_abs(),
@@ -255,6 +247,7 @@ impl CommentStore for SqliteCommentStore {
                 edited_at,
                 parent_comment_id: parent_comment_id.map(|value| value as u64),
                 resolved_at,
+                version: version as u64,
             });
         }
         let next_cursor = if items.len() > limit as usize {

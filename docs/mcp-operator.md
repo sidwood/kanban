@@ -20,6 +20,7 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | `list_projects` | `issue.list_projects` | Registered projects (teams) |
 | `create_milestone` | `issue.create_milestone` | Create a milestone on a project |
 | `create_label` | `issue.create_label` | Create a label (and optional group) on a project |
+| `retire_label` | `issue.retire_label` | Retire (archive) a label on a project |
 | `update_project_settings` | `issue.update_project_settings` | Per-project settings such as `auto_close_sub_issues` (default off) |
 | `comment_create` | `comment.create` | Post a comment (optional thread parent); body stored without trimming trailing newlines |
 | `comment_edit` | `comment.edit` | Append a revision to an existing comment |

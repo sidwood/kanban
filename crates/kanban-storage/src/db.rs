@@ -236,8 +236,8 @@ impl Database {
     }
 
     /// The raw connection, for tests that must fabricate state.
-    #[cfg(test)]
-    pub(crate) fn connection(&self) -> ReentrantMutexGuard<'_, Connection> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connection(&self) -> ReentrantMutexGuard<'_, Connection> {
         self.lock()
     }
 }

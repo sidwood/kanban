@@ -1,2 +1,4 @@
--- Per-project sub-issue auto-close (Linear: off by default).
-ALTER TABLE projects ADD COLUMN auto_close_sub_issues INTEGER NOT NULL DEFAULT 0;
+-- 0057 project auto-close setting
+--
+-- Applied idempotently from `src/linear_issue_migration.rs` so recovery
+-- tests can re-run migrations 47+ without failing on existing columns.

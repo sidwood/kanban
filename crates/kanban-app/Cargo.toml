@@ -31,5 +31,5 @@ path = "src/bin/kanban-contracts-gen.rs"
 tempfile = "3.27.0"
 kanban-herdr = { path = "../kanban-herdr", features = ["test-support"] }
 kanban-service = { path = "../kanban-service" }
-kanban-storage = { path = "../kanban-storage" }
+kanban-storage = { path = "../kanban-storage", features = ["test-support"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

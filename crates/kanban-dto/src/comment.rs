@@ -117,6 +117,7 @@ pub struct CommentListItem {
     pub parent_comment_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<String>,
+    pub version: u64,
 }
 
 /// Response payload for the `comment.list` query.
@@ -189,6 +190,7 @@ mod tests {
             target: target(),
             text: "First".to_owned(),
             author: "tester".to_owned(),
+            parent_comment_id: None,
         };
         let encoded = serde_json::to_value(&create).expect("the request serialises");
         let decoded: CommentCreateRequest =
@@ -265,6 +267,9 @@ mod tests {
                 body: "Ship report".to_owned(),
                 created_at: "2026-09-04T12:00:01Z".to_owned(),
                 edited_at: None,
+                parent_comment_id: None,
+                resolved_at: None,
+                version: 1,
             }],
             next_cursor: Some("1".to_owned()),
         };

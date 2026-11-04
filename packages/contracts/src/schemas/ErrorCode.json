@@ -8,6 +8,7 @@
     "ambiguous_idempotency_key",
     "not_found",
     "invalid_request",
+    "conflict",
     "internal"
   ],
   "title": "ErrorCode",

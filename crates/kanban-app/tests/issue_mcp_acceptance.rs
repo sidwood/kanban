@@ -127,7 +127,7 @@ fn acceptance_free_state_move_appends_without_lifecycle_enforcement() {
         .call(
             "issue.save",
             &save_payload(
-                2,
+                1,
                 "acceptance-state-done",
                 json!({
                     "identifier": saved.identifier,

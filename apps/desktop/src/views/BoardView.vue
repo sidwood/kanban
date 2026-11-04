@@ -763,33 +763,17 @@ async function followLink(ticketId: number | null): Promise<void> {
   await openTicket(ticketId)
 }
 
-const drawerAttempts = computed(() => detail.attempts)
-
-async function refreshAttempts(): Promise<void> {
-  if (transport && drawerTicket.value) {
-    await detail.refreshRuns(transport, drawerTicket.value.project_id)
-    await board.refreshRuns(transport, drawerTicket.value.project_id)
-  }
-}
-
-// A command run from the drawer replaces the record the drawer is
-// showing with the one the core returned, and the board re-reads the
-// scope the move may have changed.
-function drawerActed(record: TicketRecord): void {
-  if (drawerTicket.value?.id !== record.id) return
-  drawerTicket.value = record
-  void load()
-}
-
 function openNewTicket(): void {
   ticketDialog.openCreate({
     projectId: scope.value === 'all' || scope.value === null ? null : scope.value,
   })
 }
 
-const drawerTimelineId = computed(() =>
-  drawerTicket.value ? ticketTimelineId(drawerTicket.value.id) : '',
-)
+function drawerActed(record: TicketRecord): void {
+  if (drawerTicket.value?.id !== record.id) return
+  drawerTicket.value = record
+  void load()
+}
 
 // A human review verdict appends its audit against the Ticket without
 // moving the Ticket's own version, so the timeline is told to read

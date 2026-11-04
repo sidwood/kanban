@@ -68,6 +68,12 @@ pub struct IssueSaveRequest {
     pub add_blocked_by: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_blocked_by: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_string_patch"
+    )]
+    pub assignee: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -155,6 +161,8 @@ pub struct IssueRecord {
     pub duplicates: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<IssueChildRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -170,8 +178,12 @@ pub struct IssueListQuery {
     pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_since: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_optional_parent_filter"
+    )]
+    pub parent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,6 +298,14 @@ pub struct IssueCreateLabelRequest {
     pub group: Option<String>,
     #[serde(default)]
     pub group_single_select: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueRetireLabelRequest {
+    pub mutation: MutationContext,
+    pub project_id: u64,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

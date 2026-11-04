@@ -133,8 +133,14 @@ impl ServerHandler for Adapter {
         let outcome = self.backend.call(operation.name, &payload);
         // Do not reflect attacker-controlled field names or values into errors.
         Ok(match outcome {
-            Ok(value)=>CallToolResult::structured(value),
-            Err(error)=>CallToolResult::structured_error(serde_json::json!({"code":error.code,"message":"request refused by Core","current_version":error.current_version})),
-        }.into())
+            Ok(value) => CallToolResult::structured(value),
+            Err(error) => CallToolResult::structured_error(serde_json::json!({
+                "code": error.code,
+                "message": error.message,
+                "field": error.field,
+                "current_version": error.current_version,
+            })),
+        }
+        .into())
     }
 }

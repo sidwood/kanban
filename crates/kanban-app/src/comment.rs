@@ -80,11 +80,13 @@ impl Core {
                 store: store.clone(),
             }),
         )?;
-        self.register_query("comment.list", Arc::new(ListCommentsQuery { store: store.clone() }))?;
-        self.register_command(
-            "comment.resolve",
-            Arc::new(ResolveComment { store }),
+        self.register_query(
+            "comment.list",
+            Arc::new(ListCommentsQuery {
+                store: store.clone(),
+            }),
         )?;
+        self.register_command("comment.resolve", Arc::new(ResolveComment { store }))?;
         Ok(())
     }
 }
@@ -149,7 +151,7 @@ impl CommandHandler for EditComment {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CommentEditRequest = parse_payload(&command.payload)?;
-        let text = parse_text(&request.text)?;
+        let text = parse_stored_text(&request.text)?;
         let mut comment = load(&self.store, request.comment_id)?;
         comment
             .edit(text)
@@ -235,10 +237,6 @@ fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
     store
         .find(CommentId::new(id))?
         .ok_or_else(|| ApiError::not_found(&format!("comment {id}")))
-}
-
-fn parse_text(raw: &str) -> Result<CommentText, ApiError> {
-    CommentText::new(raw).map_err(|error: TextError| ApiError::invalid_request(&error.to_string()))
 }
 
 fn parse_stored_text(raw: &str) -> Result<CommentText, ApiError> {
@@ -389,6 +387,7 @@ mod comments {
                         }),
                         parent_comment_id: None,
                         resolved_at: None,
+                        version: comment.version(),
                     }
                 })
                 .collect();
@@ -721,6 +720,7 @@ mod comments {
                 "comment.edit",
                 "comment.revisions",
                 "comment.list",
+                "comment.resolve",
             ]
         );
     }

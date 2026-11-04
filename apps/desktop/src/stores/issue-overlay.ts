@@ -65,7 +65,7 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
     },
     async refreshOne(
       transport: ShellTransport,
-      projectId: number,
+      _projectId: number,
       projectCode: string,
       ticketId: number,
       ticketNumber: number,

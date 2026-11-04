@@ -35,10 +35,8 @@
       ]
     },
     "parent_id": {
-      "format": "uint64",
-      "minimum": 0.0,
       "type": [
-        "integer",
+        "string",
         "null"
       ]
     },

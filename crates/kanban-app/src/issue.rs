@@ -50,6 +50,7 @@ pub struct IssueTicketFields {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub canceled_at: Option<String>,
+    pub assignee: String,
 }
 
 /// Loads and mutates Linear-shaped issue fields beside the Ticket port.
@@ -111,6 +112,7 @@ pub trait IssueStore: Send + Sync {
         target_identifier: Option<&str>,
     ) -> Result<(), ApiError>;
     fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError>;
+    fn append_sub_issue_sort(&self, ticket_id: i64, parent_id: i64) -> Result<(), ApiError>;
     fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError>;
     fn sub_issue_progress(&self, ticket_id: i64) -> Result<(u32, u32), ApiError>;
     fn add_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError>;
@@ -132,4 +134,6 @@ pub trait IssueStore: Send + Sync {
         group: Option<&str>,
         group_single_select: bool,
     ) -> Result<IssueLabelRow, ApiError>;
+    fn retire_label(&self, project_id: i64, name: &str) -> Result<(), ApiError>;
+    fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError>;
 }

@@ -344,6 +344,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "comment thread",
         sql: include_str!("../migrations/0058_comment_thread.sql"),
     },
+    Migration {
+        version: 59,
+        name: "issue assignee",
+        sql: include_str!("../migrations/0059_issue_assignee.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -392,8 +397,8 @@ pub(crate) fn run(
 
 /// Applies every migration up to and including `version`, for tests
 /// that must fabricate the state an older schema left behind.
-#[cfg(test)]
-pub(crate) fn apply_through(conn: &Connection, version: i64) -> Result<(), StorageError> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn apply_through(conn: &Connection, version: i64) -> Result<(), StorageError> {
     ensure_bookkeeping(conn)?;
     for migration in MIGRATIONS.iter().filter(|entry| entry.version <= version) {
         apply_one(conn, migration)?;
@@ -503,8 +508,24 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
                 source,
             },
         )?;
+    } else if migration.version == 57 {
+        crate::linear_issue_migration::apply_project_auto_close_setting_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
     } else if migration.version == 58 {
         crate::linear_issue_migration::apply_comment_thread_columns_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 59 {
+        crate::linear_issue_migration::apply_issue_assignee_column_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -2009,6 +2030,10 @@ mod tests {
                 PendingMigration {
                     version: 58,
                     name: "comment thread",
+                },
+                PendingMigration {
+                    version: 59,
+                    name: "issue assignee",
                 },
             ]]
         );

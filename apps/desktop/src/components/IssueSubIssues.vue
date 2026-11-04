@@ -86,6 +86,48 @@ function addSubIssue(): void {
     parentTicketId: props.ticketId,
   })
 }
+
+const reordering = ref(false)
+
+async function moveChild(index: number, direction: -1 | 1): Promise<void> {
+  if (!transport || !issue.value?.children?.length) return
+  const targetIndex = index + direction
+  const children = issue.value.children
+  if (targetIndex < 0 || targetIndex >= children.length) return
+
+  reordering.value = true
+  error.value = null
+  const client = new KanbanClient(transport)
+  const a = children[index]
+  const b = children[targetIndex]
+  try {
+    const [loadedA, loadedB] = await Promise.all([
+      client.queryIssueGet({ identifier: a.identifier }),
+      client.queryIssueGet({ identifier: b.identifier }),
+    ])
+    await client.commandIssueSave({
+      mutation: {
+        optimistic_version: loadedA.version,
+        idempotency_key: crypto.randomUUID(),
+      },
+      identifier: a.identifier,
+      sort_order: targetIndex,
+    })
+    await client.commandIssueSave({
+      mutation: {
+        optimistic_version: loadedB.version,
+        idempotency_key: crypto.randomUUID(),
+      },
+      identifier: b.identifier,
+      sort_order: index,
+    })
+    await reload()
+  } catch (failure) {
+    error.value = asApiError(failure).message
+  } finally {
+    reordering.value = false
+  }
+}
 </script>
 
 <template>
@@ -126,7 +168,7 @@ function addSubIssue(): void {
       data-testid="drawer-sub-issue-list"
     >
       <li
-        v-for="child in issue.children"
+        v-for="(child, index) in issue.children"
         :key="child.identifier"
         class="flex cursor-pointer items-center justify-between gap-2 rounded-control border border-line px-2 py-1 hover:bg-surface/80"
         :data-testid="`drawer-sub-issue-row-${child.identifier}`"
@@ -135,6 +177,28 @@ function addSubIssue(): void {
         <span class="font-mono text-xs text-ink-muted">{{ child.identifier }}</span>
         <span class="min-w-0 flex-1 truncate text-ink">{{ child.title }}</span>
         <span class="text-xs text-ink-muted">{{ child.state }}</span>
+        <span
+          v-if="issue.children.length > 1"
+          class="flex shrink-0 gap-1"
+          @click.stop
+        >
+          <AppButton
+            variant="secondary"
+            :disabled="reordering || index === 0"
+            :data-testid="`drawer-sub-issue-up-${child.identifier}`"
+            @click="moveChild(index, -1)"
+          >
+            Up
+          </AppButton>
+          <AppButton
+            variant="secondary"
+            :disabled="reordering || index === issue.children.length - 1"
+            :data-testid="`drawer-sub-issue-down-${child.identifier}`"
+            @click="moveChild(index, 1)"
+          >
+            Down
+          </AppButton>
+        </span>
       </li>
     </ul>
 

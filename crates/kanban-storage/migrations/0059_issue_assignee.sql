@@ -1,0 +1,4 @@
+-- 0059 issue assignee
+--
+-- Applied idempotently from `src/linear_issue_migration.rs` so recovery
+-- tests can re-run migrations 47+ without failing on existing columns.

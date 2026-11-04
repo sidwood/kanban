@@ -96,18 +96,79 @@ mod file_installation_secret {
         data_dir: &Path,
         account: &str,
     ) -> Result<InstallationSecret, ApiError> {
+        load_or_create_with_rename(data_dir, account, sys_renameat2_noreplace)
+    }
+
+    pub(super) fn load_or_create_with_rename(
+        data_dir: &Path,
+        account: &str,
+        rename: AtomicRenameFn,
+    ) -> Result<InstallationSecret, ApiError> {
         let store_dir = data_dir.join(CREDENTIAL_DIR);
         ensure_store_dir(&store_dir)?;
+        remove_stale_partials(&store_dir, account)?;
         let path = store_dir.join(account);
         match path.symlink_metadata() {
             Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable()),
-            Ok(_) => read_existing(&store_dir, &path),
+            Ok(_) => read_existing(&store_dir, &path, account),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let key = random_key()?;
-                install_new_key(&store_dir, &path, &key)
+                install_new_key(&store_dir, &path, account, &key, rename)
             }
             Err(_) => Err(unavailable()),
         }
+    }
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub(super) enum AtomicRenameError {
+        Exists,
+        InvalidArg,
+        Failed,
+    }
+
+    pub(super) type AtomicRenameFn = fn(&Path, &Path) -> Result<(), AtomicRenameError>;
+
+    fn sys_renameat2_noreplace(temp: &Path, path: &Path) -> Result<(), AtomicRenameError> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let temp_c =
+            CString::new(temp.as_os_str().as_bytes()).map_err(|_| AtomicRenameError::Failed)?;
+        let path_c =
+            CString::new(path.as_os_str().as_bytes()).map_err(|_| AtomicRenameError::Failed)?;
+        let rc = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                temp_c.as_ptr(),
+                libc::AT_FDCWD,
+                path_c.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if rc == 0 {
+            return Ok(());
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EEXIST) => Err(AtomicRenameError::Exists),
+            Some(libc::EINVAL) => Err(AtomicRenameError::InvalidArg),
+            _ => Err(AtomicRenameError::Failed),
+        }
+    }
+
+    fn remove_stale_partials(store_dir: &Path, account: &str) -> Result<(), ApiError> {
+        let _dir = open_store_directory(store_dir)?;
+        let prefix = format!(".{account}.partial.");
+        let entries = fs::read_dir(store_dir).map_err(|_| unavailable())?;
+        for entry in entries {
+            let entry = entry.map_err(|_| unavailable())?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name.starts_with(&prefix) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        Ok(())
     }
 
     fn ensure_store_dir(store_dir: &Path) -> Result<(), ApiError> {
@@ -194,31 +255,12 @@ mod file_installation_secret {
         Ok(store_dir.join(format!(".{name}.partial.{suffix_hex}")))
     }
 
-    fn publish_new_key(temp: &Path, path: &Path) -> Result<(), ApiError> {
-        if std::env::var_os("KANBAN_TEST_RENAMEAT2_EINVAL").is_some() {
-            return publish_via_hard_link(temp, path);
-        }
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let temp_c = CString::new(temp.as_os_str().as_bytes()).map_err(|_| unavailable())?;
-        let path_c = CString::new(path.as_os_str().as_bytes()).map_err(|_| unavailable())?;
-        let rc = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                temp_c.as_ptr(),
-                libc::AT_FDCWD,
-                path_c.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        if rc == 0 {
-            return Ok(());
-        }
-        let error = std::io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::EEXIST) => Err(unavailable()),
-            Some(libc::EINVAL) => publish_via_hard_link(temp, path),
-            _ => Err(unavailable()),
+    fn publish_new_key(temp: &Path, path: &Path, rename: AtomicRenameFn) -> Result<(), ApiError> {
+        match rename(temp, path) {
+            Ok(()) => Ok(()),
+            Err(AtomicRenameError::Exists) => Err(unavailable()),
+            Err(AtomicRenameError::InvalidArg) => publish_via_hard_link(temp, path),
+            Err(AtomicRenameError::Failed) => Err(unavailable()),
         }
     }
 
@@ -231,7 +273,9 @@ mod file_installation_secret {
     fn install_new_key(
         store_dir: &Path,
         path: &Path,
+        account: &str,
         key: &zeroize::Zeroizing<[u8; 32]>,
+        rename: AtomicRenameFn,
     ) -> Result<InstallationSecret, ApiError> {
         let temp = partial_temp_path(store_dir, path)?;
         let result: Result<InstallationSecret, ApiError> = (|| {
@@ -248,7 +292,7 @@ mod file_installation_secret {
             file.sync_all().map_err(|_| unavailable())?;
             verify_regular_file(&file, 0o600)?;
             drop(file);
-            publish_new_key(&temp, path)?;
+            publish_new_key(&temp, path, rename)?;
             sync_store_directory(store_dir)?;
             Ok(InstallationSecret::from_key(key))
         })();
@@ -259,15 +303,20 @@ mod file_installation_secret {
             Ok(secret) => Ok(secret),
             Err(_) => match path.symlink_metadata() {
                 Ok(metadata) if !metadata.file_type().is_symlink() => {
-                    read_existing(store_dir, path)
+                    read_existing(store_dir, path, account)
                 }
                 _ => Err(unavailable()),
             },
         }
     }
 
-    fn read_existing(store_dir: &Path, path: &Path) -> Result<InstallationSecret, ApiError> {
+    fn read_existing(
+        store_dir: &Path,
+        path: &Path,
+        account: &str,
+    ) -> Result<InstallationSecret, ApiError> {
         ensure_store_dir(store_dir)?;
+        remove_stale_partials(store_dir, account)?;
         let metadata = path.symlink_metadata().map_err(|_| unavailable())?;
         reject_non_regular_file_metadata(&metadata)?;
         let mut file = OpenOptions::new()
@@ -326,7 +375,7 @@ mod http_response;
 #[cfg(all(test, not(target_os = "macos")))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     fn credentials_match(first: &InstallationSecret, second: &InstallationSecret) -> bool {
         first.expose().as_bytes() == second.expose().as_bytes()
@@ -421,6 +470,8 @@ mod tests {
 
     #[test]
     fn file_store_refuses_fifo_at_credential_path() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
         let dir = tempfile::TempDir::new().unwrap();
         let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
         store.load_or_create().unwrap();
@@ -431,18 +482,70 @@ mod tests {
         let path_c = CString::new(path.as_os_str().as_bytes()).unwrap();
         let rc = unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) };
         assert_eq!(rc, 0);
-        assert!(store.load_or_create().is_err());
+        let data_dir = dir.path().to_path_buf();
+        let (done, wait) = mpsc::channel();
+        std::thread::spawn(move || {
+            let store = NativeKeychain::for_data_dir(&data_dir).unwrap();
+            let _ = done.send(store.load_or_create().is_err());
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(failed) = wait.try_recv() {
+                assert!(failed, "FIFO at the credential path must be refused");
+                return;
+            }
+            assert!(Instant::now() < deadline, "FIFO open must not hang");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn rename_returns_einval(
+        _temp: &Path,
+        _path: &Path,
+    ) -> Result<(), file_installation_secret::AtomicRenameError> {
+        Err(file_installation_secret::AtomicRenameError::InvalidArg)
     }
 
     #[test]
     fn file_store_provisions_when_renameat2_is_unavailable() {
-        unsafe { std::env::set_var("KANBAN_TEST_RENAMEAT2_EINVAL", "1") };
         let dir = tempfile::TempDir::new().unwrap();
         let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
-        let first = store.load_or_create().expect("hard-link publish works");
-        unsafe { std::env::remove_var("KANBAN_TEST_RENAMEAT2_EINVAL") };
+        let first = file_installation_secret::load_or_create_with_rename(
+            dir.path(),
+            &store.account,
+            rename_returns_einval,
+        )
+        .expect("hard-link publish works");
         let second = store.load_or_create().expect("second read");
         assert!(credentials_match(&first, &second));
+    }
+
+    #[test]
+    fn file_store_tolerates_existing_credential_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        let store_dir = dir.path().join("installation-credential");
+        std::fs::create_dir(&store_dir).unwrap();
+        std::fs::set_permissions(&store_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        store
+            .load_or_create()
+            .expect("AlreadyExists on mkdir is tolerated");
+    }
+
+    #[test]
+    fn file_store_recovers_from_stale_partial_hard_link() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        store.load_or_create().unwrap();
+        let path = file_installation_secret::credential_path(&store.data_dir, &store.account);
+        let store_dir = path.parent().unwrap();
+        let partial = store_dir.join(format!(".{}.partial.deadbeef", store.account));
+        std::fs::hard_link(&path, &partial).unwrap();
+        assert_eq!(path.metadata().unwrap().nlink(), 2);
+        store
+            .load_or_create()
+            .expect("stale partial links are removed on load");
+        assert_eq!(path.metadata().unwrap().nlink(), 1);
     }
 
     #[test]

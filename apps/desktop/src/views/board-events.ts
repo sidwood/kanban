@@ -96,6 +96,12 @@ export function issuesNamedBy(event: KanbanLiveEvent): readonly number[] | null 
       return [event.payload.ticket_id]
     case 'ticket.graph.approved':
       return event.payload.tickets
+    case 'lane.created':
+    case 'lane.workspace.assigned':
+    case 'lane.workspace.released':
+    case 'lane.ticket.assigned':
+    case 'lane.ticket.released':
+      return event.payload.ticket_id == null ? null : [event.payload.ticket_id]
     default:
       return null
   }

@@ -322,4 +322,19 @@ describe('board issue reads', () => {
     expect(issueReads(query, 'issue.get')).toEqual([{ identifier: 'CORE-12' }])
     expect(issueReads(query, 'issue.list')).toEqual([])
   })
+
+  it('reads only the issue a lane assignment names', async () => {
+    const { emit, query } = await mounted()
+    query.mockClear()
+
+    emit({
+      sequence: 4,
+      event_type: 'lane.ticket.assigned',
+      payload: { id: 3, project_id: 1, ticket_id: 7, version: 2 },
+    })
+    await flushPromises()
+
+    expect(issueReads(query, 'issue.get')).toEqual([{ identifier: 'CORE-12' }])
+    expect(issueReads(query, 'issue.list')).toEqual([])
+  })
 })

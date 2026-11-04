@@ -23,10 +23,14 @@ fn fake_core_binary() -> PathBuf {
         return PathBuf::from(path);
     }
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_owned());
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
-    let built = cargo_target_dir(&manifest)
-        .join(profile)
-        .join("fake-core");
+    // CARGO_MANIFEST_DIR is apps/desktop/src-tauri; the root workspace
+    // manifest sits three levels up.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("src-tauri sits three levels below the workspace root")
+        .join("Cargo.toml");
+    let built = cargo_target_dir(&manifest).join(profile).join("fake-core");
     assert!(
         built.is_file(),
         "build the fake core with `cargo build -p kanban-fake-core --bin fake-core`"

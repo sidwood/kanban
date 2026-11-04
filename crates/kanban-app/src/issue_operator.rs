@@ -495,7 +495,8 @@ fn create_issue(
             .ok_or_else(|| ApiError::not_found("parent issue"))?;
         let parent_project = parent.project().value();
         if request.project_id.is_some() && project_id != parent_project {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_request_field(
+                "project_id",
                 "sub-issues must belong to the parent's project",
             ));
         }
@@ -505,7 +506,9 @@ fn create_issue(
         .title
         .as_deref()
         .filter(|title| !title.is_empty())
-        .ok_or_else(|| ApiError::invalid_request("title is required when creating"))?;
+        .ok_or_else(|| {
+            ApiError::invalid_request_field("title", "title is required when creating")
+        })?;
     let create = TicketCreateRequest {
         mutation: request.mutation.clone(),
         project_id,
@@ -910,12 +913,16 @@ fn list_issues(
     let start = if let Some(raw) = request.cursor.as_deref() {
         let cursor_ticket = raw
             .parse::<u64>()
-            .map_err(|_| ApiError::invalid_request("cursor must be a numeric ticket id"))?;
+            .map_err(|_| {
+                ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
+            })?;
         matches
             .iter()
             .position(|record| record.ticket_id == cursor_ticket)
             .map(|index| index + 1)
-            .ok_or_else(|| ApiError::invalid_request("cursor does not match any listed issue"))?
+            .ok_or_else(|| {
+                ApiError::invalid_request_field("cursor", "cursor does not match any listed issue")
+            })?
     } else {
         0
     };

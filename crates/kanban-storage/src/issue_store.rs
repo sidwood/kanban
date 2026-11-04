@@ -102,21 +102,31 @@ impl SqliteIssueStore {
             let find = value
                 .get("find")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| ApiError::invalid_request("description_patch.find is required"))?;
+                .ok_or_else(|| {
+                    ApiError::invalid_request_field(
+                        "description_patch",
+                        "description_patch.find is required",
+                    )
+                })?;
             let replace = value
                 .get("replace")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    ApiError::invalid_request("description_patch.replace is required")
+                    ApiError::invalid_request_field(
+                        "description_patch",
+                        "description_patch.replace is required",
+                    )
                 })?;
             if !current.contains(find) {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_request_field(
+                    "description_patch",
                     "description_patch.find did not match the current description",
                 ));
             }
             current.replacen(find, replace, 1)
         } else {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_request_field(
+                "description_patch",
                 "description_patch must be a JSON object with find and replace",
             ));
         };
@@ -136,7 +146,8 @@ impl SqliteIssueStore {
 
     pub fn set_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError> {
         if priority > 4 {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_request_field(
+                "priority",
                 "priority must be between 0 and 4",
             ));
         }
@@ -201,7 +212,9 @@ impl SqliteIssueStore {
                 .optional()
                 .map_err(internal)?;
             let Some(milestone_project) = milestone_project else {
-                return Err(ApiError::invalid_request("unknown milestone"));
+                return Err(ApiError::invalid_request_field(
+                    "milestone_id", "unknown milestone",
+                ));
             };
             let ticket_project: i64 = conn
                 .query_row(
@@ -211,7 +224,8 @@ impl SqliteIssueStore {
                 )
                 .map_err(not_found_ticket)?;
             if milestone_project != ticket_project {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_request_field(
+                    "milestone_id",
                     "milestone belongs to a different project",
                 ));
             }
@@ -561,14 +575,16 @@ impl SqliteIssueStore {
             .optional()
             .map_err(internal)?;
         let Some((label_id, retired_at)) = row else {
-            return Err(ApiError::invalid_request(&format!(
-                "unknown label `{name}`"
-            )));
+            return Err(ApiError::invalid_request_field(
+                "add_labels",
+                &format!("unknown label `{name}`"),
+            ));
         };
         if retired_at.is_some() {
-            return Err(ApiError::invalid_request(&format!(
-                "label `{name}` is retired"
-            )));
+            return Err(ApiError::invalid_request_field(
+                "add_labels",
+                &format!("label `{name}` is retired"),
+            ));
         }
         let group: Option<(i64, i64)> = conn
             .query_row(
@@ -882,13 +898,15 @@ impl SqliteIssueStore {
 
     pub fn set_parent(&self, ticket_id: i64, parent_id: Option<i64>) -> Result<(), ApiError> {
         if parent_id == Some(ticket_id) {
-            return Err(ApiError::invalid_request(
+            return Err(ApiError::invalid_request_field(
+                "parent_id",
                 "an issue cannot be its own parent",
             ));
         }
         if let Some(parent_id) = parent_id {
             if self.parent_would_cycle(ticket_id, parent_id)? {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_request_field(
+                    "parent_id",
                     "setting this parent would create a cycle",
                 ));
             }
@@ -917,7 +935,8 @@ impl SqliteIssueStore {
                 )
                 .map_err(not_found_ticket)?;
             if child_project != parent_project {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_request_field(
+                    "parent_id",
                     "parent issue must belong to the same project",
                 ));
             }
@@ -1055,7 +1074,8 @@ impl SqliteIssueStore {
                 return Err(ApiError::not_found(identifier));
             };
             if id == ticket_id {
-                return Err(ApiError::invalid_request(
+                return Err(ApiError::invalid_request_field(
+                    "duplicate_of",
                     "an issue cannot be a duplicate of itself",
                 ));
             }
@@ -1330,7 +1350,10 @@ impl SqliteIssueStore {
         };
         drop(conn);
         if blocker_id == ticket_id {
-            return Err(ApiError::invalid_request("an issue cannot block itself"));
+            return Err(ApiError::invalid_request_field(
+                "add_blocked_by",
+                "an issue cannot block itself",
+            ));
         }
         let key = self.load_issue_key(ticket_id)?;
         self.add_relation(blocker_id, &key.display(), "blocks")
@@ -1877,7 +1900,9 @@ pub fn resolve_state_by_name(
 ) -> Result<WorkflowStateRecord, ApiError> {
     workflow_state_by_name(conn, project_id, name)
         .map_err(internal_storage)?
-        .ok_or_else(|| ApiError::invalid_request(&format!("unknown state `{name}`")))
+        .ok_or_else(|| {
+            ApiError::invalid_request_field("state", &format!("unknown state `{name}`"))
+        })
 }
 
 fn internal(error: rusqlite::Error) -> ApiError {

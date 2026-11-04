@@ -344,6 +344,7 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       const request: IssueSaveRequest = {
         mutation: { optimistic_version: landed.version, idempotency_key: crypto.randomUUID() },
         identifier,
+        title: draft.title,
         description: draft.description,
         priority: draft.priority,
       }

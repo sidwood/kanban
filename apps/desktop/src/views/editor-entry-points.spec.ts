@@ -278,7 +278,11 @@ function coveringCore(options: { refusedFieldSaves?: number } = {}) {
           return Promise.reject({ code: 'stale_version', message: 'the Ticket moved on' })
         }
         issueFields[save.identifier!] = save
-        tickets.splice(tickets.indexOf(standing), 1, { ...standing, version: standing.version + 1 })
+        tickets.splice(tickets.indexOf(standing), 1, {
+          ...standing,
+          slice: save.title ?? standing.slice,
+          version: standing.version + 1,
+        })
         return Promise.resolve({
           identifier: save.identifier,
           ticket_id: standing.id,
@@ -403,6 +407,7 @@ describe('covering a Story from planning', () => {
     expect(core.issueFields['CORE-3']).toEqual({
       mutation: { optimistic_version: 1, idempotency_key: expect.any(String) },
       identifier: 'CORE-3',
+      title: '  Registration reports its gaps  ',
       description: '  Gaps\nare reported  ',
       priority: 0,
       due_date: '2026-12-01',
@@ -457,6 +462,35 @@ describe('covering a Story from planning', () => {
     ])
     expect(core.tickets).toHaveLength(1)
     expect(core.issueFields['CORE-3']).toMatchObject({ due_date: '2026-12-01' })
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
+  })
+
+  it('saves a title corrected after the issue fields were refused', async () => {
+    const core = coveringCore({ refusedFieldSaves: 1 })
+    const { wrapper, pinia } = await mountCovering(core)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Initial title')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(true)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Corrected title')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual([
+      'ticket.create',
+      'issue.save',
+      'issue.save',
+    ])
+    expect(core.commands[2]!.request).toMatchObject({
+      mutation: { optimistic_version: 1 },
+      identifier: 'CORE-3',
+      title: 'Corrected title',
+    })
+    expect(core.tickets).toHaveLength(1)
+    expect(core.tickets[0]!.slice).toBe('Corrected title')
     expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
     expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
   })

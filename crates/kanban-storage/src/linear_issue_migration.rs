@@ -442,17 +442,9 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
         "sub_issue_sort REAL NOT NULL DEFAULT 0",
     )?;
     if tickets_table_has_column(conn, "description")? {
+        normalise_legacy_due_dates(conn)?;
         conn.execute_batch(
-            "UPDATE tickets
-             SET due_date = CASE
-                 WHEN due IS NOT NULL AND due <> '' AND length(due) >= 10 THEN substr(due, 1, 10)
-                 ELSE due_date
-             END
-             WHERE due IS NOT NULL AND due <> '' AND due_date = '2099-12-31';
-             UPDATE tickets
-             SET due_date = substr(due_date, 1, 10)
-             WHERE length(due_date) > 10;
-             DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
+            "DROP TRIGGER IF EXISTS tickets_bug_shape_insert;
              DROP TRIGGER IF EXISTS tickets_bug_shape_update;
              CREATE TRIGGER tickets_bug_shape_insert
              BEFORE INSERT ON tickets
@@ -619,19 +611,37 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
                      OR NEW.bug_facts IS NOT NULL))
          BEGIN
              SELECT RAISE(ABORT, 'each Ticket kind carries exactly its own fields');
-         END;
-         UPDATE tickets
-         SET due_date = due
-         WHERE due IS NOT NULL
-           AND due <> ''
-           AND due_date = '2099-12-31';",
+         END;",
     )?;
+    normalise_legacy_due_dates(conn)?;
     backfill_issue_descriptions(conn)?;
     preserve_legacy_external_blockers(conn)?;
     backfill_issue_state_history_from_timeline(conn)?;
     dedupe_issue_state_history(conn)?;
     backfill_ticket_updated_at_from_timeline(conn)?;
     Ok(())
+}
+
+/// Converts legacy `due` timestamps into Linear calendar due dates.
+///
+/// Legacy values are UTC instants such as `2026-11-15T17:00:00.000Z`;
+/// Linear stores a plain `YYYY-MM-DD`. The UTC calendar date is used so
+/// the result is deterministic regardless of the migrating machine's
+/// time zone, and it matches the dates the legacy data was authored
+/// with: the source data was written in Europe/London, which shares
+/// UTC's calendar while this data was recorded.
+fn normalise_legacy_due_dates(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "UPDATE tickets
+         SET due_date = CASE
+             WHEN due IS NOT NULL AND due <> '' AND length(due) >= 10 THEN substr(due, 1, 10)
+             ELSE due_date
+         END
+         WHERE due IS NOT NULL AND due <> '' AND due_date = '2099-12-31';
+         UPDATE tickets
+         SET due_date = substr(due_date, 1, 10)
+         WHERE length(due_date) > 10;",
+    )
 }
 
 fn dedupe_issue_state_history(conn: &Connection) -> rusqlite::Result<()> {
@@ -1153,6 +1163,56 @@ mod tests {
         )
         .unwrap();
     }
+    fn seed_legacy_task(
+        conn: &Connection,
+        id: i64,
+        state: &str,
+        due: Option<&str>,
+        created_at: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, title, criteria,
+                 subtype, mode, completion, due, version, created_at
+             ) VALUES (
+                 ?1, 1, ?1, 'task', 'normal', ?2, ?3, '[]',
+                 'operational', 'human', '[\"Shipped\"]', ?4, 1, ?5
+             )",
+            params![id, state, format!("Legacy task {id}"), due, created_at],
+        )
+        .unwrap();
+    }
+
+    fn seed_legacy_transition(
+        conn: &Connection,
+        ticket_id: i64,
+        from: &str,
+        to: &str,
+        recorded_at: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO timeline_events (
+                 kind, detail, recorded_at, project_id, entity_kind, entity_id
+             ) VALUES (
+                 'transition', ?1, ?2, '1', 'ticket', ?3
+             )",
+            params![
+                format!("{{\"from\":\"{from}\",\"to\":\"{to}\"}}"),
+                recorded_at,
+                ticket_id.to_string()
+            ],
+        )
+        .unwrap();
+    }
+
+    fn migrated_due_date(conn: &Connection, ticket_id: i64) -> String {
+        conn.query_row(
+            "SELECT due_date FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
 
     #[derive(Debug, PartialEq, Eq)]
     struct MigratedComment {
@@ -1377,5 +1437,89 @@ mod tests {
         assert_eq!(revisions.1.len(), 2);
         assert_eq!(revisions.1[0].recorded_at, COMMENT_CREATED);
         assert_eq!(revisions.1[1].recorded_at, COMMENT_EDITED);
+    }
+    #[test]
+    fn migration_converts_legacy_datetime_due_dates_to_calendar_dates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_task(
+                &conn,
+                1,
+                "active",
+                Some("2026-11-15T17:00:00.000Z"),
+                "2026-11-03T21:38:37.985Z",
+            );
+            seed_legacy_transition(&conn, 1, "draft", "active", "2026-11-03T21:39:55.127Z");
+            seed_legacy_task(&conn, 2, "parked", None, "2026-11-03T21:38:37.988Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        assert_eq!(migrated_due_date(&conn, 1), "2026-11-15");
+        assert_eq!(migrated_due_date(&conn, 2), "2099-12-31");
+    }
+
+    #[test]
+    fn migrated_due_date_round_trips_through_issue_save() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_task(
+                &conn,
+                1,
+                "active",
+                Some("2026-11-10T17:00:00.000Z"),
+                "2026-11-03T21:38:37.985Z",
+            );
+            seed_legacy_transition(&conn, 1, "draft", "active", "2026-11-03T21:39:55.127Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let attachments = dir.path().join("attachments");
+        std::fs::create_dir_all(&attachments).unwrap();
+        let idempotency = Arc::new(SqliteIdempotencyStore::new(
+            &database,
+            RetentionPolicy::keep_most_recent(NonZeroU32::new(100).unwrap()),
+        ));
+        let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
+        register_operator_stack(&mut core, &database, &attachments);
+        let session = OperatorSession::new(Arc::new(core));
+
+        let read: IssueRecord = serde_json::from_value(
+            session
+                .call(
+                    "issue.get",
+                    &serde_json::to_value(IssueGetQuery {
+                        identifier: "CORE-1".into(),
+                    })
+                    .unwrap(),
+                )
+                .expect("issue.get succeeds"),
+        )
+        .unwrap();
+        assert_eq!(read.due_date.as_deref(), Some("2026-11-10"));
+
+        session
+            .call(
+                "issue.save",
+                &json!({
+                    "mutation": {
+                        "optimistic_version": read.version,
+                        "idempotency_key": "migrated-due-round-trip"
+                    },
+                    "identifier": "CORE-1",
+                    "due_date": read.due_date,
+                }),
+            )
+            .expect("a migrated due date saves back unchanged");
     }
 }

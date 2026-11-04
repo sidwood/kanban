@@ -1000,3 +1000,42 @@ fn resolve_and_unresolve_bump_the_comment_version() {
     assert_eq!(listed["comments"][0]["version"], json!(3));
     assert!(listed["comments"][0]["resolved_at"].is_null());
 }
+
+#[test]
+fn comment_revisions_keep_the_stored_body_verbatim() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "verbatim-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let body = "Report\n";
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "verbatim-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.identifier },
+                "text": body,
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+
+    let revisions = session
+        .call("comment.revisions", &json!({ "comment_id": comment_id }))
+        .unwrap();
+    assert_eq!(
+        revisions["comment"]["text"],
+        json!(body),
+        "the current text keeps its trailing newline"
+    );
+    assert_eq!(
+        revisions["revisions"][0]["text"],
+        json!(body),
+        "every revision row keeps its trailing newline"
+    );
+}

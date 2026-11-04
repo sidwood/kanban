@@ -358,7 +358,8 @@ fn load_revisions(
         .query_map(params![id.value() as i64], |row| {
             let revision = row.get::<_, i64>(0)?.unsigned_abs();
             let text: String = row.get(1)?;
-            let text = CommentText::new(&text)
+            // Stored operator bodies keep their whitespace verbatim.
+            let text = CommentText::new_stored(&text)
                 .map_err(|_| rusqlite::Error::ToSqlConversionFailure(Box::new(CorruptText)))?;
             Ok(CommentRevision::restore(revision, text))
         })
@@ -636,6 +637,22 @@ mod revision_store {
             .expect_err("the unknown Comment is refused");
 
         assert_eq!(error.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn revisions_keep_the_stored_text_verbatim() {
+        let (_dir, _database, store) = store();
+        let body = CommentText::new_stored("Report\n").expect("stored text validates");
+        store
+            .create(1, &target(), &body, "tester", None)
+            .expect("the create lands");
+
+        let (record, revisions) = store
+            .revisions(CommentId::new(1))
+            .expect("the revisions serve");
+
+        assert_eq!(record.text, "Report\n");
+        assert_eq!(revisions[0].text, "Report\n");
     }
 
     #[test]

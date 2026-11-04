@@ -263,6 +263,59 @@ describe('the Ticket editor dialog', () => {
     expect(useTicketDialogStore().editorOpen).toBe(true)
   })
 
+  it('sends nothing from the edit form until the issue record is read into it', async () => {
+    let release: (() => void) | null = null
+    const { transport, requests } = editorHarness({
+      tickets: [implementationTicket()],
+      answer: (name) =>
+        name === 'issue.get'
+          ? new Promise<IssueRecord>((resolve) => {
+              release = () =>
+                resolve({
+                  identifier: 'CORE-17',
+                  url: 'kanban://issue/CORE-17',
+                  ticket_id: 1,
+                  project_id: 4,
+                  title: 'Spec authoring creates content versions end to end',
+                  description: 'Acceptance criteria and story links live in the description.',
+                  state: 'Draft',
+                  state_type: 'unstarted',
+                  priority: 2,
+                  due_date: '2026-12-01',
+                  milestone_id: 9,
+                  labels: [],
+                  relations: [],
+                  state_history: [],
+                  version: 1,
+                  created_at: '2026-01-01T00:00:00Z',
+                  updated_at: '2026-01-01T00:00:00Z',
+                })
+            })
+          : undefined,
+    })
+    const wrapper = open(transport)
+    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+    expect(release).not.toBeNull()
+
+    const save = () => wrapper.find('[data-testid="ticket-save-issue"]')
+    expect((save().element as HTMLButtonElement).disabled).toBe(true)
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    // The form itself is submitted, so a guard on the button alone
+    // would not hold the save back.
+    await wrapper.find('[data-testid="ticket-edit-issue-form"]').trigger('submit')
+    await flushPromises()
+    expect(requests('issue.save')).toEqual([])
+
+    release!()
+    await flushPromises()
+
+    expect((save().element as HTMLButtonElement).disabled).toBe(false)
+    expect(
+      (wrapper.find('[data-testid="ticket-description"]').element as HTMLTextAreaElement).value,
+    ).toBe('Acceptance criteria and story links live in the description.')
+  })
+
   it('editing only the title of an issue carrying a retired label sends no label change', async () => {
     const { transport, requests } = editorHarness({
       tickets: [implementationTicket()],

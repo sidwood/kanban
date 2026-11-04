@@ -44,6 +44,10 @@ const availableLabels = ref<IssueLabelRecord[]>([])
 const availableMilestones = ref<IssueMilestoneRecord[]>([])
 const selectedLabel = ref('')
 const readError = ref<string | null>(null)
+// An edit saves every issue field the form holds, so the form saves
+// nothing until the issue record has been read into it; a save before
+// then would overwrite the record's fields with blank ones.
+const issueSeeded = ref(false)
 const parentKey = computed(() => {
   const parentId = dialog.editor?.parentTicketId
   if (parentId == null || projectId.value == null) return null
@@ -136,6 +140,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   opening += 1
   const attempt = opening
   record.value = null
+  issueSeeded.value = false
   coverLanded.value = null
   heldLabels.value = []
   readError.value = null
@@ -188,6 +193,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
         milestoneId: issue.milestone_id ?? null,
       }
       syncLocalsFromDraft()
+      issueSeeded.value = true
     } else {
       syncLocalsFromDraft()
     }
@@ -277,7 +283,7 @@ async function submitStoryCover(
 
 async function submitEdit(): Promise<void> {
   const held = record.value
-  if (!transport || !held) return
+  if (!transport || !held || !issueSeeded.value) return
   const project = projects.projects.find((entry) => entry.id === held.project_id)
   if (!project) {
     readError.value = 'Project is missing for this issue.'
@@ -582,6 +588,7 @@ const FIELD_CLASS =
           variant="primary"
           type="submit"
           data-testid="ticket-save-issue"
+          :disabled="!issueSeeded"
         >
           Save issue
         </AppButton>

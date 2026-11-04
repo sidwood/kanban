@@ -47,7 +47,8 @@ pub struct CommentCreateRequest {
     /// The initial text; blank text is refused.
     pub text: String,
     /// The author the comment speaks for; required, because the core
-    /// holds no operator identity to default from.
+    /// holds no operator identity to default from. `Unknown author` is
+    /// reserved for comments whose author was never recorded.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub author: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +122,8 @@ pub struct CommentListQuery {
 #[serde(deny_unknown_fields)]
 pub struct CommentListItem {
     pub id: u64,
+    /// The author the comment speaks for, or `Unknown author` when none
+    /// was recorded (comments carried over from the ticket model).
     pub author: String,
     pub body: String,
     pub created_at: String,

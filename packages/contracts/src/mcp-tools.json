@@ -29088,7 +29088,7 @@
     }
   },
   {
-    "description": "Create a Comment with its first revision on a timeline-visible entity. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Create a Comment with its first revision on a timeline-visible entity. The author `Unknown author` is reserved. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -29153,7 +29153,7 @@
       "description": "Request payload for the `comment.create` command.",
       "properties": {
         "author": {
-          "description": "The author the comment speaks for; required, because the core holds no operator identity to default from.",
+          "description": "The author the comment speaks for; required, because the core holds no operator identity to default from. `Unknown author` is reserved for comments whose author was never recorded.",
           "type": "string"
         },
         "mutation": {
@@ -29578,7 +29578,7 @@
     }
   },
   {
-    "description": "List comments on one timeline entity, oldest first, with cursor paging.",
+    "description": "List comments on one timeline entity, oldest first, with cursor paging. A comment whose author was never recorded lists as `Unknown author`.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -29660,6 +29660,7 @@
           "description": "One comment row for list views (operator MCP).",
           "properties": {
             "author": {
+              "description": "The author the comment speaks for, or `Unknown author` when none was recorded (comments carried over from the ticket model).",
               "type": "string"
             },
             "body": {

@@ -77,6 +77,26 @@ cannot fail on them.
   hold it keep it and new issues can only take the other. A retired row
   still counts when a lookup decides whether a spelling is ambiguous.
 
+## Comment authors
+
+`comment_create` requires an `author`, because the core holds no operator
+identity to default from. Migration `0056` keeps a timeline author where one
+was recorded. Only a comment with no recorded author — a blank or
+whitespace-only stored author — is shown as `Unknown author`.
+
+- `list_comments` applies that placeholder when the list is read. The stored
+  author stays empty, exactly as migration `0056` left a comment that had no
+  author, so the original is recoverable and the wording can change without a
+  migration. A timeline author, including a stored literal `Unknown author`,
+  is kept and shown as stored.
+- `comment_create` refuses `Unknown author` (in any letter case, ignoring
+  surrounding spaces) as `invalid_request` on `author`, so a new comment
+  cannot claim the placeholder.
+- Replies (`parent_comment_id`), `comment_edit`, and `resolve_comment` work on
+  these comments as on any other, and none of them sets an author.
+- The desktop issue panel shows the same name where any author goes.
+
+
 ## Acceptance
 
 Automated coverage lives in:

@@ -40,6 +40,7 @@ it, and what still needs a product decision.
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
 | Flat comments with revisions | No threads/resolution | `author` on `comments` (migration `0056`); `comment.list` returns author and timestamps. Thread columns exist; resolve UI not exposed. | None for list parity. |
+| Unrecorded comment authors | The ticket model kept no comment author | Migration `0056` keeps a timeline author where one was recorded and stores an empty author only when none was. `comment.list` shows that empty author as `Unknown author` (`displayed_comment_author` in `kanban-domain`) without rewriting the row. A stored literal `Unknown author` from the timeline is kept. `comment.create` refuses that placeholder. Reply, edit, and resolve are unchanged. See [mcp-operator.md](./mcp-operator.md#comment-authors). | Placeholder reserved; only unrecorded authors use it. |
 
 ## Projects and milestones
 

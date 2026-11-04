@@ -7,6 +7,7 @@
       "description": "One comment row for list views (operator MCP).",
       "properties": {
         "author": {
+          "description": "The author the comment speaks for, or `Unknown author` when none was recorded (comments carried over from the ticket model).",
           "type": "string"
         },
         "body": {

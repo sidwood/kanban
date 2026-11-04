@@ -812,7 +812,7 @@ define_exposed_catalogue! {
         request: "CommentCreateRequest",
         response: "CommentRecord",
         mcp: "comment_create",
-        description: "Create a Comment with its first revision on a timeline-visible entity.",
+        description: "Create a Comment with its first revision on a timeline-visible entity. The author `Unknown author` is reserved.",
     },
     "comment.edit" => {
         kind: Command,
@@ -833,7 +833,7 @@ define_exposed_catalogue! {
         request: "CommentListQuery",
         response: "CommentListResponse",
         mcp: "list_comments",
-        description: "List comments on one timeline entity, oldest first, with cursor paging.",
+        description: "List comments on one timeline entity, oldest first, with cursor paging. A comment whose author was never recorded lists as `Unknown author`.",
     },
     "comment.resolve" => {
         kind: Command,

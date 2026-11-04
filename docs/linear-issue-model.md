@@ -28,6 +28,8 @@ ticket row plus issue metadata (workflow state, labels, relations, sub-issues, d
 
 - `comment.list` returns author, body, created time, and edited time when applicable.
 - Authors are stored on the comment row (backfilled from timeline on migration).
+- A comment with no recorded author, such as one carried over from the ticket model, lists as
+  `Unknown author`; the stored author stays empty, and that name is reserved on create.
 
 ## MCP / operator names
 

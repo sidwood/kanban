@@ -3,6 +3,7 @@ import { computed, inject, ref, watch } from 'vue'
 import { KanbanClient } from '@kanban/contracts'
 import type { IssueRecord } from '@kanban/contracts'
 import { asApiError, kanbanTransportKey } from '../core/transport'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import AppButton from './AppButton.vue'
 import InlineAlert from './InlineAlert.vue'
@@ -15,6 +16,7 @@ const props = defineProps<{
 
 const transport = inject(kanbanTransportKey)
 const dialog = useTicketDialogStore()
+const issueOverlay = useIssueOverlayStore()
 
 const issue = ref<IssueRecord | null>(null)
 const error = ref<string | null>(null)
@@ -40,7 +42,7 @@ async function reload(): Promise<void> {
     const client = new KanbanClient(transport)
     const ticket = await client.queryTicketGet({ ticket_id: props.ticketId })
     const key = `${props.projectCode}-${ticket.number}`
-    issue.value = await client.queryIssueGet({ identifier: key })
+    issue.value = await issueOverlay.readIssue(transport, key)
   } catch (failure) {
     issue.value = null
     error.value = asApiError(failure).message
@@ -70,9 +72,7 @@ function openChild(child: { identifier: string }): void {
   if (!transport) return
   void (async () => {
     try {
-      const loaded = await new KanbanClient(transport).queryIssueGet({
-        identifier: child.identifier,
-      })
+      const loaded = await issueOverlay.readIssue(transport, child.identifier)
       emit('openIssue', loaded.ticket_id)
     } catch {
       // ignore navigation failures in the list row
@@ -102,8 +102,8 @@ async function moveChild(index: number, direction: -1 | 1): Promise<void> {
   const b = children[targetIndex]
   try {
     const [loadedA, loadedB] = await Promise.all([
-      client.queryIssueGet({ identifier: a.identifier }),
-      client.queryIssueGet({ identifier: b.identifier }),
+      issueOverlay.readIssue(transport, a.identifier),
+      issueOverlay.readIssue(transport, b.identifier),
     ])
     await client.commandIssueSave({
       mutation: {

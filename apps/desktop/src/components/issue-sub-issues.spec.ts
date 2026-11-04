@@ -5,6 +5,7 @@ import type { IssueRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
 import IssueSubIssues from './IssueSubIssues.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
@@ -241,5 +242,66 @@ describe('IssueSubIssues keyboard access', () => {
     await flushPromises()
 
     expect(wrapper.emitted('openIssue')).toBeUndefined()
+  })
+})
+
+describe('IssueSubIssues reads', () => {
+  it('waits for a free issue read while four are on the wire', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const answers: Array<() => void> = []
+    const busy = {
+      query: (name: string, request: unknown) => {
+        if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+        const { identifier } = request as { identifier: string }
+        return new Promise<IssueRecord>((resolve) =>
+          answers.push(() =>
+            resolve(issueRecord({ identifier, ticket_id: Number(identifier.split('-')[1]) })),
+          ),
+        )
+      },
+    } as unknown as ShellTransport
+    const board = useIssueOverlayStore().refreshIssues(
+      busy,
+      [11, 12, 13, 14].map((number) => ({
+        ticketId: number,
+        projectId: 4,
+        projectCode: 'CORE',
+        number,
+      })),
+    )
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    const served = transportFor(issueRecord())
+    const issueReads: string[] = []
+    const transport: ShellTransport = {
+      ...served,
+      query: ((name, request) => {
+        if (name === 'issue.get') issueReads.push((request as { identifier: string }).identifier)
+        return served.query(name, request)
+      }) as ShellTransport['query'],
+    }
+    const wrapper = mount(IssueSubIssues, {
+      props: { projectCode: 'CORE', ticketId: 1, projectId: 4 },
+      global: {
+        plugins: [pinia, router],
+        provide: { [kanbanTransportKey as symbol]: transport },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(issueReads).toEqual([])
+
+    answers.shift()!()
+    await flushPromises()
+    expect(issueReads).toEqual(['CORE-1'])
+    expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+
+    while (answers.length > 0) {
+      answers.shift()!()
+      await flushPromises()
+    }
+    await board
   })
 })

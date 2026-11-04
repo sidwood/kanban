@@ -8,6 +8,7 @@ import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
 import type { IssueLabelRecord, IssueMilestoneRecord, TicketRecord } from '@kanban/contracts'
 import { asApiError, kanbanTransportKey } from '../core/transport'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import type { TicketEditorRequest } from '../stores/ticket-dialog'
@@ -26,6 +27,7 @@ const transport = inject(kanbanTransportKey)
 const dialog = useTicketDialogStore()
 const projects = useProjectRegisterStore()
 const editor = useTicketEditorStore()
+const issueOverlay = useIssueOverlayStore()
 
 const projectId = ref<number | null>(null)
 const record = ref<TicketRecord | null>(null)
@@ -165,7 +167,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
       const identifier = heldProject
         ? issueDisplayKey(heldProject.code, held.number)
         : `${held.project_id}-${held.number}`
-      const issue = await new KanbanClient(transport).queryIssueGet({ identifier })
+      const issue = await issueOverlay.readIssue(transport, identifier)
       if (attempt !== opening) return
       heldLabels.value = [...issue.labels]
       issueDraft.value = {

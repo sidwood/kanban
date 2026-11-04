@@ -9,6 +9,7 @@ import type { IssueRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import {
   editorHarness,
@@ -98,6 +99,71 @@ describe('the Ticket editor dialog', () => {
     )
     expect(wrapper.find('[data-testid="ticket-create"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ticket-save-issue"]').exists()).toBe(true)
+  })
+
+  it('drawer Edit waits for a free issue read while four are on the wire', async () => {
+    const answers: Array<() => void> = []
+    const { transport, requests } = editorHarness({
+      tickets: [implementationTicket()],
+      answer: (name, request) => {
+        if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+        if (name !== 'issue.get') return undefined
+        const { identifier } = request as { identifier: string }
+        if (identifier === 'CORE-17') return undefined
+        const number = Number(identifier.split('-')[1])
+        return new Promise<IssueRecord>((resolve) =>
+          answers.push(() =>
+            resolve({
+              identifier,
+              url: `kanban://issue/${identifier}`,
+              ticket_id: 200 + number,
+              project_id: 4,
+              title: `Issue ${number}`,
+              description: '',
+              state: 'Draft',
+              state_type: 'unstarted',
+              priority: 3,
+              labels: [],
+              relations: [],
+              state_history: [],
+              version: 1,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            }),
+          ),
+        )
+      },
+    })
+    const wrapper = open(transport)
+    const board = useIssueOverlayStore().refreshIssues(
+      transport,
+      [1, 2, 3, 4].map((number) => ({
+        ticketId: 200 + number,
+        projectId: 4,
+        projectCode: 'CORE',
+        number,
+      })),
+    )
+    await flushPromises()
+    expect(requests('issue.get')).toHaveLength(4)
+
+    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+    expect(requests('issue.get')).toHaveLength(4)
+    expect((wrapper.find('[data-testid="ticket-title"]').element as HTMLInputElement).value).toBe('')
+
+    answers.shift()!()
+    await flushPromises()
+    expect(requests('issue.get')).toContainEqual({ identifier: 'CORE-17' })
+    expect((wrapper.find('[data-testid="ticket-title"]').element as HTMLInputElement).value).toBe(
+      'Spec authoring creates content versions end to end',
+    )
+
+    while (answers.length > 0) {
+      answers.shift()!()
+      await flushPromises()
+    }
+    await board
   })
 
   it('the edit form exposes title and description, not legacy kind fields', async () => {

@@ -5,7 +5,6 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use kanban_app::catalog::exposed_operations;
@@ -25,24 +24,11 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
+    common::git_test::git(dir, args);
 }
 
 fn git_init(dir: &Path) {
-    let status = Command::new("git")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "master")
-        .args(["init", "-b", "main"])
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git init -b main in {}", dir.display());
+    common::git_test::git(dir, &["init", "-b", "main"]);
 }
 
 fn init_repo(dir: &Path) -> PathBuf {
@@ -74,10 +60,7 @@ fn land_bug_request(wired: &Wired, ticket: &serde_json::Value, key: &str) -> ser
 }
 
 fn merge_in_progress(dir: &Path) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+    common::git_test::git_command(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         .status()
         .expect("git rev-parse MERGE_HEAD runs")
         .success()
@@ -435,13 +418,7 @@ fn standalone_bug_landing_merges_through_the_seed() {
         )
         .expect("the standalone Bug lands through the Seed");
     assert_eq!(landed["kind"], "standalone_bug");
-    let log = Command::new("git")
-        .args([
-            "-C",
-            wired.seed.to_str().expect("utf-8"),
-            "log",
-            "--oneline",
-        ])
+    let log = common::git_test::git_command(&wired.seed, &["log", "--oneline"])
         .output()
         .expect("the seed log reads");
     let history = String::from_utf8(log.stdout).expect("the log is UTF-8");
@@ -909,10 +886,7 @@ fn ticket_record(wired: &Wired, ticket: &serde_json::Value) -> serde_json::Value
 }
 
 fn source_tip(dir: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "HEAD"])
+    let output = common::git_test::git_command(dir, &["rev-parse", "HEAD"])
         .output()
         .expect("git rev-parse runs");
     assert!(output.status.success(), "git rev-parse HEAD succeeds");

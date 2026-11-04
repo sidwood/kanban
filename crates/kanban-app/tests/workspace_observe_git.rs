@@ -1,9 +1,10 @@
 //! App gate for workspace observation through the shipped git observer
 //! and real SQLite persistence (KAN-T31).
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 
 use kanban_app::catalog::exposed_operations;
@@ -23,27 +24,14 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
+    common::git_test::git(dir, args);
 }
 
 /// Initialise the fixture repository on `main` under the hostile
 /// `init.defaultBranch` GitHub runners carry, so the suite never
 /// depends on the host's default branch (KAN-T136-AC1).
 fn git_init(dir: &Path) {
-    let status = Command::new("git")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "master")
-        .args(["init", "-b", "main"])
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git init -b main in {}", dir.display());
+    common::git_test::git(dir, &["init", "-b", "main"]);
 }
 
 fn init_repo(dir: &Path) -> String {
@@ -173,8 +161,7 @@ fn shipped_observer_fixture_pins_main_under_a_hostile_default_branch() {
     let git_dir = TempDir::new().expect("a scratch directory is available");
     let repository = init_repo(git_dir.path());
 
-    let branch = Command::new("git")
-        .args(["-C", &repository, "symbolic-ref", "--short", "HEAD"])
+    let branch = common::git_test::git_command(Path::new(&repository), &["symbolic-ref", "--short", "HEAD"])
         .output()
         .expect("the fixture branch reads");
 
@@ -216,8 +203,7 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         workspace.to_str().expect("the path is UTF-8"),
     );
 
-    let head_before = Command::new("git")
-        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
+    let head_before = common::git_test::git_command(&workspace, &["rev-parse", "HEAD"])
         .output()
         .expect("head reads");
 
@@ -230,8 +216,7 @@ fn workspace_observe_reads_git_state_through_the_shipped_observer() {
         .command("workspace.observe", &register(1, "key-2", 1))
         .expect("the observation applies");
 
-    let head_after = Command::new("git")
-        .args(["-C", workspace.to_str().unwrap(), "rev-parse", "HEAD"])
+    let head_after = common::git_test::git_command(&workspace, &["rev-parse", "HEAD"])
         .output()
         .expect("head reads");
 

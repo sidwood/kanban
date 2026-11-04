@@ -6,6 +6,8 @@ use std::process::Command;
 use kanban_app::{WorkspaceGitObserver, WorkspaceGitSnapshot};
 use kanban_domain::WorkspaceCheckout;
 
+use crate::git_env::configure_git_command;
+
 /// Observe Workspaces through the local `git` binary without mutating
 /// clones (KAN-S6-US1).
 #[derive(Debug, Default)]
@@ -63,6 +65,7 @@ impl WorkspaceGitObserver for LocalWorkspaceGitObserver {
 
 fn git_output(path: &str, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
+    configure_git_command(&mut command);
     command.arg("-C").arg(path);
     command.args(args);
     let output = command.output().ok()?;
@@ -79,7 +82,9 @@ fn git_output(path: &str, args: &[&str]) -> Option<String> {
 }
 
 fn repository_identity(path: &str) -> Option<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    configure_git_command(&mut command);
+    let output = command
         .args(["-C", path, "rev-parse", "--git-common-dir"])
         .output()
         .ok()?;
@@ -138,7 +143,9 @@ fn belongs_to_repository(workspace_path: &str, repository_path: &str) -> bool {
 /// observation failure the health contract reports as unobserved,
 /// never as a dirty or clean tree (KAN-T99).
 fn working_tree_clean(workspace_path: &str) -> Option<bool> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    configure_git_command(&mut command);
+    let output = command
         .args([
             "--no-optional-locks",
             "-C",
@@ -171,7 +178,9 @@ fn working_tree_clean(workspace_path: &str) -> Option<bool> {
 fn unique_unlanded_commits(workspace_path: &str, repository_path: &str) -> Option<bool> {
     let repository_head = git_output(repository_path, &["rev-parse", "HEAD"])?;
     let repository_objects = repository_objects(repository_path)?;
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    configure_git_command(&mut command);
+    let output = command
         .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects)
         .args([
             "--no-optional-locks",
@@ -209,11 +218,14 @@ mod tests {
     use tempfile::TempDir;
 
     use super::LocalWorkspaceGitObserver;
+    use crate::git_env::configure_git_command;
     use kanban_app::WorkspaceGitObserver;
     use kanban_domain::WorkspaceCheckout;
 
     fn git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let mut command = Command::new("git");
+        configure_git_command(&mut command);
+        let status = command
             .args(args)
             .current_dir(dir)
             .status()
@@ -225,15 +237,7 @@ mod tests {
     /// `init.defaultBranch` GitHub runners carry, so the suite never
     /// depends on the host's default branch (KAN-T136-AC1).
     fn git_init(dir: &Path) {
-        let status = Command::new("git")
-            .env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-            .env("GIT_CONFIG_VALUE_0", "master")
-            .args(["init", "-b", "main"])
-            .current_dir(dir)
-            .status()
-            .expect("git runs");
-        assert!(status.success(), "git init -b main in {}", dir.display());
+        git(dir, &["init", "-b", "main"]);
     }
 
     fn init_repo(dir: &Path) -> String {
@@ -338,7 +342,9 @@ mod tests {
         let repository = init_repo(dir.path());
 
         let snapshot = LocalWorkspaceGitObserver.observe(&repository, &repository);
-        let expected = Command::new("git")
+        let mut expected = Command::new("git");
+        configure_git_command(&mut expected);
+        let expected = expected
             .args(["-C", &repository, "rev-parse", "HEAD^{tree}"])
             .output()
             .expect("git rev-parse runs");

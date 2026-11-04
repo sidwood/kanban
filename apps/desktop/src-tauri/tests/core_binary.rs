@@ -19,6 +19,22 @@ const RELEASE_FIXTURE: &str = concat!(
 
 const MALICIOUS_OVERRIDE: &str = "/malicious/kanban-service-override";
 
+fn cargo_target_dir(manifest: &Path) -> PathBuf {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
+        .arg(manifest)
+        .output()
+        .expect("cargo metadata runs");
+    assert!(output.status.success(), "cargo metadata must succeed");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata is JSON");
+    PathBuf::from(
+        metadata["target_directory"]
+            .as_str()
+            .expect("target_directory in cargo metadata"),
+    )
+}
+
 /// The release probe is built outside the test crate graph so it
 /// carries `not(debug_assertions)` path resolution.
 fn release_probe_exe() -> PathBuf {
@@ -36,7 +52,7 @@ fn release_probe_exe() -> PathBuf {
         .status()
         .expect("the release probe builds");
     assert!(status.success(), "the release probe must compile");
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/examples/core-binary-probe")
+    cargo_target_dir(&manifest).join("release/examples/core-binary-probe")
 }
 
 /// Lay out a shell directory with no packaged core beside the probe.

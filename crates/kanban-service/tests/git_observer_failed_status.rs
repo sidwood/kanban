@@ -14,10 +14,13 @@ use std::process::Command;
 
 use kanban_app::WorkspaceGitObserver;
 use kanban_service::git_observer::LocalWorkspaceGitObserver;
+use kanban_service::git_env::configure_git_command;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let mut command = std::process::Command::new("git");
+    configure_git_command(&mut command);
+    let status = command
         .args(args)
         .current_dir(dir)
         .status()

@@ -2,9 +2,7 @@
 // The one Ticket editor: a kind-adaptive dialog the operator reaches
 // from New Ticket, from a Spec's uncovered Story, and from the
 // drawer's Edit, preset to the kind that entry point means for edits.
-// Creating and editing both use the Linear issue model via `issue.save`,
-// except that covering an uncovered Story creates through `ticket.create`
-// so the Spec and the criterion claiming the Story persist.
+// Creating and editing both use the Linear issue model via `issue.save`.
 import { computed, inject, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'

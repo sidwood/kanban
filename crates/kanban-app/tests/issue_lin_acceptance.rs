@@ -2536,3 +2536,113 @@ fn listing_comments_refuses_a_missing_non_ticket_target() {
         .expect_err("a missing non-ticket target is refused");
     assert_eq!(refusal.code, ErrorCode::NotFound);
 }
+
+/// The second-project session with a Workspace and an attention item
+/// seated in project 1: non-ticket targets whose identifiers are not
+/// plain integers, or whose kind was left out of the ownership audit.
+fn session_with_second_project_workspace_and_attention()
+-> (tempfile::TempDir, kanban_storage::Database, OperatorSession) {
+    let (dir, database, session) = session_with_second_project_and_spec();
+    {
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO workspaces (id, project_id, path, is_seed, retired, health, version)
+             VALUES (100, 1, '/workspaces/owned', 0, 0, 'missing', 1)",
+            [],
+        )
+        .expect("the fixture Workspace lands");
+        conn.execute(
+            "INSERT INTO attention_items (
+                 id, project_id, kind, subject_kind, subject_id, summary, detail,
+                 fingerprint, version, active, first_seen_at, last_seen_at
+             ) VALUES (
+                 'blocker:1', 1, 'blocker', 'ticket', '1', 'Needs review', '{}',
+                 'abc', 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+             )",
+            [],
+        )
+        .expect("the fixture attention item lands");
+    }
+    (dir, database, session)
+}
+
+#[test]
+fn workspace_and_attention_comment_targets_belong_to_their_project() {
+    let (dir, _database, session) = session_with_second_project_workspace_and_attention();
+    let _ = dir;
+
+    // The Workspace belongs to project 1, so a comment on it under
+    // project 2 is refused the way every other owned target is.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "workspace-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "workspace", "id": "100" },
+                "text": "A comment on another project's workspace",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign workspace target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "workspace-ownership-kept",
+                },
+                "project_id": 1,
+                "target": { "kind": "workspace", "id": "100" },
+                "text": "A comment on the owning project's workspace",
+                "author": "operator",
+            }),
+        )
+        .expect("a comment on the owning workspace lands");
+    assert_eq!(own["project_id"], json!(1));
+
+    // The attention item's identifier is the text `blocker:1`, not an
+    // integer: ownership follows the row, and its own project may
+    // comment on it while another project may not.
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "attention-ownership-kept",
+                },
+                "project_id": 1,
+                "target": { "kind": "attention_item", "id": "blocker:1" },
+                "text": "A comment on the owning project's attention item",
+                "author": "operator",
+            }),
+        )
+        .expect("the owning project comments on its attention item");
+    assert_eq!(own["project_id"], json!(1));
+
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "attention-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "attention_item", "id": "blocker:1" },
+                "text": "A comment on another project's attention item",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign attention target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+}

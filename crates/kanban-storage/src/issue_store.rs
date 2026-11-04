@@ -1475,10 +1475,24 @@ impl SqliteIssueStore {
                 id.parse()
                     .map_err(|_| ApiError::internal("a resolved lane target is numeric"))?,
             ),
-            "attention_item" => integer_project(
-                "SELECT project_id FROM attention_items WHERE id = ?1",
+            "attention_item" => {
+                // The attention item's identifier is free text, the
+                // way its existence check reads it; only its project
+                // column is numeric.
+                let project: Option<i64> = conn
+                    .query_row(
+                        "SELECT project_id FROM attention_items WHERE id = ?1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(internal)?;
+                Ok(project.map(|value| value as u64))
+            }
+            "workspace" => integer_project(
+                "SELECT project_id FROM workspaces WHERE id = ?1",
                 id.parse()
-                    .map_err(|_| ApiError::internal("a resolved attention target is numeric"))?,
+                    .map_err(|_| ApiError::internal("a resolved workspace target is numeric"))?,
             ),
             "evidence" => text_project("SELECT project_id FROM evidence_items WHERE id = ?1", id),
             "comment" => text_project("SELECT project_id FROM comments WHERE id = ?1", id),

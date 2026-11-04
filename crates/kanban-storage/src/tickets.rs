@@ -21,6 +21,7 @@ use kanban_domain::{
     ExternalReference, ImplementationTicket, OccurrenceSnapshot, Priority, Project, ProjectId,
     Severity, SpecId, SpecNumber, TaskMode, TaskSubtype, TaskTicket, TaskTiming, Ticket,
     TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef, VerificationStep,
+    WorkflowStateType,
 };
 use kanban_dto::ApiError;
 use rusqlite::{OptionalExtension, params};
@@ -327,10 +328,10 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
 
 /// Keep the Linear issue projection in step with one legacy state
 /// move: the workflow state, its history rows, and the lifecycle
-/// stamps move with the Ticket row inside the same write. The legacy
-/// aggregate keeps owning the version and `updated_at`, so this
-/// never bumps them; a save that rewrites the same state touches
-/// nothing.
+/// stamps move with the Ticket row inside the same write, and the
+/// row's `updated_at` moves with the workflow change without an
+/// extra version increment. The legacy aggregate keeps owning the
+/// version; a save that rewrites the same state touches nothing.
 fn sync_issue_state_after_legacy_move(
     span: &WriteSpan<'_>,
     ticket: &Ticket,
@@ -402,7 +403,8 @@ fn sync_issue_state_after_legacy_move(
     .map_err(internal)?;
     span.execute(
         "UPDATE tickets
-         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5
+         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5,
+             updated_at = ?6
          WHERE id = ?1",
         params![
             ticket_id,
@@ -410,9 +412,27 @@ fn sync_issue_state_after_legacy_move(
             stamps.started_at,
             stamps.completed_at,
             stamps.canceled_at,
+            &now,
         ],
     )
     .map_err(internal)?;
+    if matches!(
+        state.state_type,
+        WorkflowStateType::Completed | WorkflowStateType::Canceled | WorkflowStateType::Duplicate
+    ) {
+        let parent_id: Option<i64> = span
+            .query_row(
+                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten();
+        if let Some(parent_id) = parent_id {
+            super::issue_store::auto_close_parent_if_children_done(span, parent_id)?;
+        }
+    }
     Ok(())
 }
 

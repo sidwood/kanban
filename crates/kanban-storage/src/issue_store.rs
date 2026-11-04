@@ -36,8 +36,6 @@ pub(crate) fn validate_calendar_date(raw: &str, field: &'static str) -> Result<S
     Ok(raw.to_owned())
 }
 
-
-
 /// Issue persistence beside the Ticket port.
 pub struct SqliteIssueStore {
     conn: ConnectionHandle,
@@ -99,15 +97,12 @@ impl SqliteIssueStore {
             )
             .map_err(not_found_ticket)?;
         let merged = if let Ok(value) = serde_json::from_str::<serde_json::Value>(patch) {
-            let find = value
-                .get("find")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ApiError::invalid_request_field(
-                        "description_patch",
-                        "description_patch.find is required",
-                    )
-                })?;
+            let find = value.get("find").and_then(|v| v.as_str()).ok_or_else(|| {
+                ApiError::invalid_request_field(
+                    "description_patch",
+                    "description_patch.find is required",
+                )
+            })?;
             let replace = value
                 .get("replace")
                 .and_then(|v| v.as_str())
@@ -231,7 +226,8 @@ impl SqliteIssueStore {
                 .map_err(internal)?;
             let Some(milestone_project) = milestone_project else {
                 return Err(ApiError::invalid_request_field(
-                    "milestone_id", "unknown milestone",
+                    "milestone_id",
+                    "unknown milestone",
                 ));
             };
             let ticket_project: i64 = conn
@@ -339,211 +335,12 @@ impl SqliteIssueStore {
         envelope: TimelineEnvelope,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let span = WriteSpan::begin(&conn).map_err(internal)?;
-        let now: String = span
-            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
-                row.get(0)
-            })
-            .map_err(internal)?;
-        let mut stamps = IssueStateTimestamps {
-            started_at: span
-                .query_row(
-                    "SELECT started_at FROM tickets WHERE id = ?1",
-                    [ticket_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(internal)?
-                .flatten(),
-            completed_at: span
-                .query_row(
-                    "SELECT completed_at FROM tickets WHERE id = ?1",
-                    [ticket_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(internal)?
-                .flatten(),
-            canceled_at: span
-                .query_row(
-                    "SELECT canceled_at FROM tickets WHERE id = ?1",
-                    [ticket_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(internal)?
-                .flatten(),
-        };
-        stamps.stamp_entry(to_state.state_type, &now);
-        stamps.clear_terminal_on_reopen(to_state.state_type);
-        let (created_at, prior_workflow): (String, Option<i64>) = span
-            .query_row(
-                "SELECT created_at, workflow_state_id FROM tickets WHERE id = ?1",
-                [ticket_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(internal)?;
-        if prior_workflow == Some(to_state.id) {
-            span.commit().map_err(internal)?;
-            return Ok(());
-        }
-        let history_rows: i64 = span
-            .query_row(
-                "SELECT COUNT(*) FROM issue_state_history WHERE ticket_id = ?1",
-                [ticket_id],
-                |row| row.get(0),
-            )
-            .map_err(internal)?;
-        if history_rows == 0
-            && let Some(from_id) = prior_workflow
-        {
-            span.execute(
-                "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![ticket_id, from_id, &created_at, &now],
-            )
-            .map_err(internal)?;
-        }
-        span.execute(
-            "UPDATE issue_state_history SET ended_at = ?2
-             WHERE ticket_id = ?1 AND ended_at IS NULL",
-            params![ticket_id, &now],
-        )
-        .map_err(internal)?;
-        span.execute(
-            "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
-             VALUES (?1, ?2, ?3, NULL)",
-            params![ticket_id, to_state.id, &now],
-        )
-        .map_err(internal)?;
-        let legacy = TicketState::parse(&to_state.legacy_state)
-            .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
-        span.execute(
-            "UPDATE tickets
-             SET state = ?2,
-                 workflow_state_id = ?3,
-                 started_at = ?4,
-                 completed_at = ?5,
-                 canceled_at = ?6,
-                 updated_at = ?7,
-                 version = version + 1
-             WHERE id = ?1",
-            params![
-                ticket_id,
-                legacy.wire_name(),
-                to_state.id,
-                stamps.started_at,
-                stamps.completed_at,
-                stamps.canceled_at,
-                &now,
-            ],
-        )
-        .map_err(internal)?;
-        insert_event(&span, &envelope).map_err(|error| ApiError::internal(&error.to_string()))?;
-        let parent_id: Option<i64> = span
-            .query_row(
-                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
-                [ticket_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(internal)?
-            .flatten();
-        let _ = project_id;
-        span.commit().map_err(internal)?;
-        if (to_state.state_type == WorkflowStateType::Completed
-            || to_state.state_type == WorkflowStateType::Canceled
-            || to_state.state_type == WorkflowStateType::Duplicate)
-            && let Some(parent_id) = parent_id
-        {
-            self.try_auto_close_parent_when_children_done(parent_id)?;
-        }
-        Ok(())
+        apply_free_state_on(&conn, ticket_id, project_id, to_state, envelope)
     }
 
     fn try_auto_close_parent_when_children_done(&self, parent_id: i64) -> Result<(), ApiError> {
         let conn = self.lock();
-        let project_id: i64 = conn
-            .query_row(
-                "SELECT project_id FROM tickets WHERE id = ?1",
-                [parent_id],
-                |row| row.get(0),
-            )
-            .map_err(not_found_ticket)?;
-        let enabled: i64 = conn
-            .query_row(
-                "SELECT auto_close_sub_issues FROM projects WHERE id = ?1",
-                [project_id],
-                |row| row.get(0),
-            )
-            .map_err(internal)?;
-        drop(conn);
-        if enabled == 0 {
-            return Ok(());
-        }
-        let conn = self.lock();
-        let parent_type: Option<String> = conn
-            .query_row(
-                "SELECT s.type FROM tickets AS t
-                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
-                 WHERE t.id = ?1",
-                [parent_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(internal)?
-            .flatten();
-        drop(conn);
-        if parent_type
-            .as_deref()
-            .is_some_and(|kind| matches!(kind, "completed" | "canceled" | "duplicate"))
-        {
-            return Ok(());
-        }
-        let conn = self.lock();
-        let child_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ?1",
-                [parent_id],
-                |row| row.get(0),
-            )
-            .map_err(internal)?;
-        if child_count == 0 {
-            return Ok(());
-        }
-        let open: i64 = conn
-            .query_row(
-                "SELECT COUNT(*)
-                 FROM tickets AS t
-                 LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
-                 WHERE t.parent_ticket_id = ?1
-                   AND (
-                     t.workflow_state_id IS NULL
-                     OR s.type NOT IN ('completed', 'canceled', 'duplicate')
-                   )",
-                [parent_id],
-                |row| row.get(0),
-            )
-            .map_err(internal)?;
-        drop(conn);
-        if open > 0 {
-            return Ok(());
-        }
-        let conn = self.lock();
-        let done = workflow_state_by_name(&conn, project_id, "Done")
-            .map_err(internal_storage)?
-            .ok_or_else(|| ApiError::internal("Done workflow state missing"))?;
-        drop(conn);
-        let envelope = TimelineEnvelope::project(
-            project_id as u64,
-            TimelineEventKind::Transition,
-            Some(TimelineEntityRef {
-                kind: TimelineEntityKind::Ticket,
-                id: parent_id.to_string(),
-            }),
-            serde_json::json!({ "action": "auto_close_sub_issues", "state": "Done" }),
-        );
-        self.apply_free_state(parent_id, project_id, &done, envelope)
+        auto_close_parent_if_children_done(&conn, parent_id)
     }
 
     fn parent_would_cycle(&self, ticket_id: i64, parent_id: i64) -> Result<bool, ApiError> {
@@ -1987,6 +1784,221 @@ impl kanban_app::IssueStore for SqliteIssueStore {
     }
 }
 
+/// Land one free state move over `conn`: the workflow row, one open
+/// history row, the lifecycle stamps, the timeline event, and the
+/// guarded version bump, nesting inside any write span already open.
+pub(crate) fn apply_free_state_on(
+    conn: &rusqlite::Connection,
+    ticket_id: i64,
+    project_id: i64,
+    to_state: &WorkflowStateRecord,
+    envelope: TimelineEnvelope,
+) -> Result<(), ApiError> {
+    let span = WriteSpan::begin(conn).map_err(internal)?;
+    let now: String = span
+        .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })
+        .map_err(internal)?;
+    let mut stamps = IssueStateTimestamps {
+        started_at: span
+            .query_row(
+                "SELECT started_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        completed_at: span
+            .query_row(
+                "SELECT completed_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        canceled_at: span
+            .query_row(
+                "SELECT canceled_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+    };
+    stamps.stamp_entry(to_state.state_type, &now);
+    stamps.clear_terminal_on_reopen(to_state.state_type);
+    let (created_at, prior_workflow): (String, Option<i64>) = span
+        .query_row(
+            "SELECT created_at, workflow_state_id FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(internal)?;
+    if prior_workflow == Some(to_state.id) {
+        span.commit().map_err(internal)?;
+        return Ok(());
+    }
+    let history_rows: i64 = span
+        .query_row(
+            "SELECT COUNT(*) FROM issue_state_history WHERE ticket_id = ?1",
+            [ticket_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    if history_rows == 0
+        && let Some(from_id) = prior_workflow
+    {
+        span.execute(
+            "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+            params![ticket_id, from_id, &created_at, &now],
+        )
+        .map_err(internal)?;
+    }
+    span.execute(
+        "UPDATE issue_state_history SET ended_at = ?2
+             WHERE ticket_id = ?1 AND ended_at IS NULL",
+        params![ticket_id, &now],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+             VALUES (?1, ?2, ?3, NULL)",
+        params![ticket_id, to_state.id, &now],
+    )
+    .map_err(internal)?;
+    let legacy = TicketState::parse(&to_state.legacy_state)
+        .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
+    span.execute(
+        "UPDATE tickets
+             SET state = ?2,
+                 workflow_state_id = ?3,
+                 started_at = ?4,
+                 completed_at = ?5,
+                 canceled_at = ?6,
+                 updated_at = ?7,
+                 version = version + 1
+             WHERE id = ?1",
+        params![
+            ticket_id,
+            legacy.wire_name(),
+            to_state.id,
+            stamps.started_at,
+            stamps.completed_at,
+            stamps.canceled_at,
+            &now,
+        ],
+    )
+    .map_err(internal)?;
+    insert_event(&span, &envelope).map_err(|error| ApiError::internal(&error.to_string()))?;
+    let parent_id: Option<i64> = span
+        .query_row(
+            "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(internal)?
+        .flatten();
+    let _ = project_id;
+    span.commit().map_err(internal)?;
+    if (to_state.state_type == WorkflowStateType::Completed
+        || to_state.state_type == WorkflowStateType::Canceled
+        || to_state.state_type == WorkflowStateType::Duplicate)
+        && let Some(parent_id) = parent_id
+    {
+        auto_close_parent_if_children_done(conn, parent_id)?;
+    }
+    Ok(())
+}
+
+/// The parent auto-close rule over one connection, so every write
+/// boundary (issue tools and legacy ticket moves alike) runs the same
+/// rule inside its own transaction.
+pub(crate) fn auto_close_parent_if_children_done(
+    conn: &rusqlite::Connection,
+    parent_id: i64,
+) -> Result<(), ApiError> {
+    let project_id: i64 = conn
+        .query_row(
+            "SELECT project_id FROM tickets WHERE id = ?1",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .map_err(not_found_ticket)?;
+    let enabled: i64 = conn
+        .query_row(
+            "SELECT auto_close_sub_issues FROM projects WHERE id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    if enabled == 0 {
+        return Ok(());
+    }
+    let parent_type: Option<String> = conn
+        .query_row(
+            "SELECT s.type FROM tickets AS t
+                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.id = ?1",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(internal)?
+        .flatten();
+    if parent_type
+        .as_deref()
+        .is_some_and(|kind| matches!(kind, "completed" | "canceled" | "duplicate"))
+    {
+        return Ok(());
+    }
+    let child_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ?1",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    if child_count == 0 {
+        return Ok(());
+    }
+    let open: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+                 FROM tickets AS t
+                 LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.parent_ticket_id = ?1
+                   AND (
+                     t.workflow_state_id IS NULL
+                     OR s.type NOT IN ('completed', 'canceled', 'duplicate')
+                   )",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    if open > 0 {
+        return Ok(());
+    }
+    let done = workflow_state_by_name(conn, project_id, "Done")
+        .map_err(internal_storage)?
+        .ok_or_else(|| ApiError::internal("Done workflow state missing"))?;
+    let envelope = TimelineEnvelope::project(
+        project_id as u64,
+        TimelineEventKind::Transition,
+        Some(TimelineEntityRef {
+            kind: TimelineEntityKind::Ticket,
+            id: parent_id.to_string(),
+        }),
+        serde_json::json!({ "action": "auto_close_sub_issues", "state": "Done" }),
+    );
+    apply_free_state_on(conn, parent_id, project_id, &done, envelope)
+}
+
 pub fn resolve_state_by_name(
     conn: &rusqlite::Connection,
     project_id: i64,
@@ -1994,9 +2006,7 @@ pub fn resolve_state_by_name(
 ) -> Result<WorkflowStateRecord, ApiError> {
     workflow_state_by_name(conn, project_id, name)
         .map_err(internal_storage)?
-        .ok_or_else(|| {
-            ApiError::invalid_request_field("state", &format!("unknown state `{name}`"))
-        })
+        .ok_or_else(|| ApiError::invalid_request_field("state", &format!("unknown state `{name}`")))
 }
 
 fn internal(error: rusqlite::Error) -> ApiError {

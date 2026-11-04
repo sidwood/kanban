@@ -61,6 +61,7 @@ struct RulesHarness {
     _dir: tempfile::TempDir,
     core: Arc<Core>,
     session: OperatorSession,
+    database: Database,
 }
 
 fn rules_harness() -> RulesHarness {
@@ -71,6 +72,7 @@ fn rules_harness() -> RulesHarness {
     RulesHarness {
         session: OperatorSession::new(core.clone()),
         core,
+        database: h.database,
         _dir: h._dir,
     }
 }
@@ -220,6 +222,7 @@ fn legacy_harness() -> RulesHarness {
     RulesHarness {
         session: OperatorSession::new(core.clone()),
         core,
+        database: h.database,
         _dir: h._dir,
     }
 }
@@ -863,6 +866,56 @@ fn calendar_due_dates_must_be_padded_and_trimmed() {
 }
 
 #[test]
+fn milestone_target_dates_follow_the_calendar_rule() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    for (index, raw) in ["2026-99-99", "2026-1-5", " 2026-11-05"]
+        .into_iter()
+        .enumerate()
+    {
+        let error = session
+            .call(
+                "issue.create_milestone",
+                &json!({
+                    "mutation": mutation(0, format!("loose-target-{index}")),
+                    "project_id": 1,
+                    "name": "Dated milestone",
+                    "target_date": raw,
+                }),
+            )
+            .expect_err("an impossible target date is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{raw}");
+        assert_eq!(error.field.as_deref(), Some("target_date"), "{raw}");
+    }
+
+    let created = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "target-date-exact"),
+                "project_id": 1,
+                "name": "Dated milestone",
+                "target_date": "2026-12-24",
+            }),
+        )
+        .expect("a zero-padded target date is accepted");
+    assert_eq!(created["target_date"], json!("2026-12-24"));
+
+    let undated = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "target-date-absent"),
+                "project_id": 1,
+                "name": "Undated milestone",
+            }),
+        )
+        .expect("a milestone without a target date is accepted");
+    assert_eq!(undated["target_date"], json!(null));
+}
+
+#[test]
 fn an_issue_cannot_reference_itself_in_relations() {
     let h = rules_harness();
     let session = &h.session;
@@ -1140,4 +1193,143 @@ fn retiring_an_already_retired_label_says_so() {
         )
         .expect_err("an unknown label is still not found");
     assert_eq!(unknown.code, ErrorCode::NotFound);
+}
+
+/// Wait until the SQLite clock's millisecond tick passes `earlier`,
+/// so a stamp taken after the wait is strictly newer.
+fn wait_for_clock_past(h: &RulesHarness, earlier: &str) -> String {
+    for _ in 0..200 {
+        let now: String = h
+            .database
+            .connection()
+            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+                row.get(0)
+            })
+            .expect("the clock serves");
+        if now.as_str() > earlier {
+            return now;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+    panic!("the SQLite clock never advanced past {earlier}");
+}
+
+#[test]
+fn legacy_state_moves_stamp_the_issue_update_time() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let created = create_legacy_task(&h.core, "legacy-stamp-create", "Legacy stamped task");
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let identifier = format!("CORE-{}", created["number"].as_u64().expect("a number"));
+
+    save_issue(
+        session,
+        created["version"].as_u64().expect("a version"),
+        "legacy-stamp-ready",
+        json!({ "identifier": identifier, "state": "Ready" }),
+    );
+    let before = read_issue(session, &identifier);
+    let moved_at = wait_for_clock_past(&h, &before.updated_at);
+
+    h.core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(issue_version(session, &identifier), "legacy-stamp-cancel"),
+                "ticket_id": ticket_id,
+            }),
+        )
+        .expect("the legacy cancel lands");
+
+    let moved = read_issue(session, &identifier);
+    assert_eq!(moved.state, "Cancelled");
+    assert!(
+        moved.updated_at > moved_at,
+        "the legacy move stamps updated_at ({} must pass {})",
+        moved.updated_at,
+        moved_at
+    );
+    assert_eq!(
+        moved.version,
+        before.version + 1,
+        "the move keeps its own single version increment"
+    );
+
+    let visible: Vec<String> = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "updated_since": moved_at }),
+        )
+        .expect("the listing serves")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .iter()
+        .map(|issue| {
+            issue["identifier"]
+                .as_str()
+                .expect("an identifier")
+                .to_owned()
+        })
+        .collect();
+    assert!(
+        visible.contains(&identifier),
+        "updated_since sees the legacy-moved issue: {visible:?}"
+    );
+}
+
+#[test]
+fn legacy_child_closing_closes_the_parent_when_enabled() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let parent = save_issue(
+        session,
+        0,
+        "auto-close-legacy-parent",
+        json!({ "project_id": 1, "title": "Parent awaiting the child" }),
+    );
+    let child = save_issue(
+        session,
+        0,
+        "auto-close-legacy-child",
+        json!({
+            "project_id": 1,
+            "title": "Child closed the legacy way",
+            "parent_id": parent.ticket_id.to_string(),
+        }),
+    );
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({
+                "mutation": mutation(0, "auto-close-legacy-enable"),
+                "project_id": 1,
+                "auto_close_sub_issues": true,
+            }),
+        )
+        .expect("auto-close is enabled");
+    save_issue(
+        session,
+        issue_version(session, &child.identifier),
+        "auto-close-legacy-ready",
+        json!({ "identifier": child.identifier, "state": "Ready" }),
+    );
+
+    h.core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(issue_version(session, &child.identifier), "auto-close-legacy-cancel"),
+                "ticket_id": child.ticket_id,
+            }),
+        )
+        .expect("the legacy cancel lands");
+
+    let moved_child = read_issue(session, &child.identifier);
+    assert_eq!(moved_child.state, "Cancelled");
+    let closed = read_issue(session, &parent.identifier);
+    assert_eq!(
+        closed.state, "Done",
+        "the parent closes with the legacy-closed child, in the same write"
+    );
+    assert!(closed.completed_at.is_some());
 }

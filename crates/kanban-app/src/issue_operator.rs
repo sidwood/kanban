@@ -541,9 +541,11 @@ fn create_issue(
         ctx.issues.set_description(ticket_id as i64, description)?;
     }
     if request.priority.is_some() {
-        ctx.issues.set_linear_priority(ticket_id as i64, linear_priority)?;
+        ctx.issues
+            .set_linear_priority(ticket_id as i64, linear_priority)?;
     } else {
-        ctx.issues.set_initial_linear_priority(ticket_id as i64, 0)?;
+        ctx.issues
+            .set_initial_linear_priority(ticket_id as i64, 0)?;
     }
     if let Some(due) = request.due_date.as_ref() {
         ctx.issues.set_due_date(ticket_id as i64, due.as_deref())?;
@@ -923,11 +925,9 @@ fn list_issues(
             .then_with(|| right.ticket_id.cmp(&left.ticket_id))
     });
     let start = if let Some(raw) = request.cursor.as_deref() {
-        let cursor_ticket = raw
-            .parse::<u64>()
-            .map_err(|_| {
-                ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
-            })?;
+        let cursor_ticket = raw.parse::<u64>().map_err(|_| {
+            ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
+        })?;
         matches
             .iter()
             .position(|record| record.ticket_id == cursor_ticket)

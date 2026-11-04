@@ -722,3 +722,83 @@ fn saving_the_reported_state_of_a_legacy_task_changes_nothing() {
     assert_eq!(after.state, "Draft");
 }
 
+/// Marking an issue a duplicate of a target it already names is a
+/// no-op only while it still sits in Duplicate; once it has moved on,
+/// re-marking the target moves it back.
+#[test]
+fn reapplying_a_moved_duplicate_target_returns_to_duplicate() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let target = save_issue(
+        session,
+        0,
+        "duplicate-target",
+        json!({ "project_id": 1, "title": "Duplicate target" }),
+    );
+    let duplicate = save_issue(
+        session,
+        0,
+        "duplicate-source",
+        json!({ "project_id": 1, "title": "Duplicate source" }),
+    );
+
+    save_issue(
+        session,
+        issue_version(session, &duplicate.identifier),
+        "duplicate-mark",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier }),
+    );
+    let marked = read_issue(session, &duplicate.identifier);
+    assert_eq!(marked.state, "Duplicate");
+    assert!(marked.canceled_at.is_some());
+
+    save_issue(
+        session,
+        marked.version,
+        "duplicate-remark",
+        json!({
+            "identifier": duplicate.identifier,
+            "duplicate_of": target.identifier.to_lowercase(),
+        }),
+    );
+    let unchanged = read_issue(session, &duplicate.identifier);
+    assert_eq!(
+        unchanged.version, marked.version,
+        "re-marking the held target while in Duplicate is a no-op"
+    );
+    assert_eq!(unchanged.state_history.len(), marked.state_history.len());
+
+    save_issue(
+        session,
+        unchanged.version,
+        "duplicate-done",
+        json!({ "identifier": duplicate.identifier, "state": "Done" }),
+    );
+    let done = read_issue(session, &duplicate.identifier);
+    assert_eq!(done.state, "Done");
+    assert!(done.completed_at.is_some());
+
+    save_issue(
+        session,
+        done.version,
+        "duplicate-return",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier }),
+    );
+    let reentered = read_issue(session, &duplicate.identifier);
+    assert_eq!(
+        reentered.state, "Duplicate",
+        "re-marking the target after a move re-enters Duplicate"
+    );
+    assert!(
+        reentered.completed_at.is_none(),
+        "re-entering Duplicate drops the completed stamp"
+    );
+    assert!(reentered.canceled_at.is_some());
+    let names = history_names(&reentered);
+    assert!(
+        names.ends_with(&["Done", "Duplicate"]),
+        "the re-entry closes the Done row and opens a Duplicate row, saw {names:?}"
+    );
+    assert!(reentered.state_history.last().unwrap().ended_at.is_none());
+}

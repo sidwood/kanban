@@ -107,9 +107,13 @@ impl IssueStateTimestamps {
                     self.started_at = Some(at.to_owned());
                 }
             }
-            WorkflowStateType::Completed => self.completed_at = Some(at.to_owned()),
+            WorkflowStateType::Completed => {
+                self.completed_at = Some(at.to_owned());
+                self.canceled_at = None;
+            }
             WorkflowStateType::Canceled | WorkflowStateType::Duplicate => {
                 self.canceled_at = Some(at.to_owned());
+                self.completed_at = None;
             }
             WorkflowStateType::Backlog | WorkflowStateType::Unstarted => {}
         }
@@ -139,6 +143,39 @@ mod tests {
         assert_eq!(stamps.started_at.as_deref(), Some("2026-11-03T12:00:00Z"));
         stamps.stamp_entry(WorkflowStateType::Completed, "2026-11-03T14:00:00Z");
         assert_eq!(stamps.completed_at.as_deref(), Some("2026-11-03T14:00:00Z"));
+    }
+
+    #[test]
+    fn entering_a_terminal_state_clears_the_opposite_stamp() {
+        let mut stamps = IssueStateTimestamps::default();
+        stamps.stamp_entry(WorkflowStateType::Completed, "2026-11-03T14:00:00Z");
+        assert_eq!(stamps.completed_at.as_deref(), Some("2026-11-03T14:00:00Z"));
+        stamps.stamp_entry(WorkflowStateType::Canceled, "2026-11-03T15:00:00Z");
+        assert_eq!(
+            stamps.canceled_at.as_deref(),
+            Some("2026-11-03T15:00:00Z"),
+            "entering canceled stamps the canceled time"
+        );
+        assert_eq!(
+            stamps.completed_at, None,
+            "a direct completed to canceled move drops the completed stamp"
+        );
+        stamps.stamp_entry(WorkflowStateType::Completed, "2026-11-03T16:00:00Z");
+        assert_eq!(
+            stamps.completed_at.as_deref(),
+            Some("2026-11-03T16:00:00Z"),
+            "entering completed stamps the completed time"
+        );
+        assert_eq!(
+            stamps.canceled_at, None,
+            "a direct canceled to completed move drops the canceled stamp"
+        );
+        stamps.stamp_entry(WorkflowStateType::Duplicate, "2026-11-03T17:00:00Z");
+        assert_eq!(stamps.canceled_at.as_deref(), Some("2026-11-03T17:00:00Z"));
+        assert_eq!(
+            stamps.completed_at, None,
+            "a direct completed to duplicate move drops the completed stamp"
+        );
     }
 
     #[test]

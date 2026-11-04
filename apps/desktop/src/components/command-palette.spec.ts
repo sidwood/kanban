@@ -128,4 +128,56 @@ describe('CommandPalette', () => {
       vi.useRealTimers()
     }
   })
+
+  it('chooses nothing on Enter from hits loaded before the input changed', async () => {
+    vi.useFakeTimers()
+    try {
+      const answers: Array<(response: SearchGlobalResponse) => void> = []
+      const { transport, queries } = harness(
+        () => new Promise<SearchGlobalResponse>((resolve) => answers.push(resolve)),
+      )
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: '/:anywhere(.*)*', component: RouterStub }],
+      })
+      const push = vi.spyOn(router, 'push')
+      const wrapper = mount(CommandPalette, {
+        attachTo: document.body,
+        global: {
+          plugins: [router],
+          provide: { [kanbanTransportKey as symbol]: transport },
+        },
+      })
+      usePaletteStore().openPalette()
+      await nextTick()
+      const input = wrapper.get('[data-testid="palette-query"]')
+      const enter = () =>
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+
+      await input.setValue('arch')
+      await vi.advanceTimersByTimeAsync(200)
+      answers[0]({
+        hits: [
+          { kind: 'project', id: 4, identifier: 'ARCH', label: 'Architecture notes', project_id: 4 },
+        ],
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(wrapper.text()).toContain('ARCH')
+
+      await input.setValue('archive')
+      expect(wrapper.text()).not.toContain('ARCH')
+      enter()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(push).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(200)
+      expect(queries.at(-1)).toEqual({ name: 'search.global', request: { q: 'archive' } })
+      enter()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(push).not.toHaveBeenCalled()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

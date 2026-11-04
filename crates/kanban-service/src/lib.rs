@@ -826,7 +826,7 @@ pub enum ServiceError {
     Arguments,
     #[error("loopback HTTP could not start")]
     LoopbackHttp,
-    #[error("installation Keychain access is unavailable")]
+    #[error("{}", installation_secret_message())]
     InstallationSecret,
     /// The data directory could not be created.
     #[error("the data directory could not be created: {source}")]
@@ -855,6 +855,16 @@ pub enum ServiceError {
         /// The structured application refusal.
         cause: kanban_dto::ApiError,
     },
+}
+
+#[cfg(target_os = "macos")]
+fn installation_secret_message() -> &'static str {
+    "installation Keychain access is unavailable"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn installation_secret_message() -> &'static str {
+    "credential storage failed"
 }
 
 /// Serve managed application data with native credentials and explicit HTTP opt-in.

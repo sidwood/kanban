@@ -7,7 +7,6 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use kanban_app::catalog::exposed_operations;
@@ -27,24 +26,11 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
+    common::git_test::git(dir, args);
 }
 
 fn git_init(dir: &Path) {
-    let status = Command::new("git")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "master")
-        .args(["init", "-b", "main"])
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git init -b main in {}", dir.display());
+    common::git_test::git(dir, &["init", "-b", "main"]);
 }
 
 fn init_repo(dir: &Path) -> PathBuf {
@@ -66,10 +52,7 @@ fn mutation(version: u64, key: impl AsRef<str>) -> serde_json::Value {
 }
 
 fn head_tip(dir: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "HEAD"])
+    let output = common::git_test::git_command(dir, &["rev-parse", "HEAD"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -77,10 +60,7 @@ fn head_tip(dir: &Path) -> String {
 }
 
 fn merge_in_progress(dir: &Path) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+    common::git_test::git_command(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         .status()
         .expect("git rev-parse MERGE_HEAD runs")
         .success()
@@ -209,24 +189,15 @@ fn wired() -> Wired {
     git(&seed, &["commit", "--allow-empty", "-m", "integration"]);
     git(&seed, &["checkout", "main"]);
     let integration = dir.path().join("kanban.kan-s1");
-    git(
+    common::git_test::git_clone(
         &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            integration.to_str().expect("utf-8"),
-        ],
+        &integration,
+        "Integration Author",
+        "integration@fixture.test",
     );
     git(&integration, &["checkout", "kan-s1"]);
     let lane = dir.path().join("kanban.kan-t1");
-    git(
-        &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            lane.to_str().expect("utf-8"),
-        ],
-    );
+    common::git_test::git_clone(&seed, &lane, "Lane Author", "lane@fixture.test");
     git(&lane, &["checkout", "-b", "kan-t1", "origin/kan-s1"]);
     fs::write(lane.join("lane.md"), "ticket work\n").expect("the lane file is written");
     git(&lane, &["add", "."]);

@@ -148,6 +148,9 @@ impl LoginLaunchPort for NativeLoginLaunch {
         }
     }
     fn set_enabled(&self, enabled: bool) -> Result<(), ApiError> {
+        if !cfg!(target_os = "macos") {
+            return Err(failure("launch at login requires macOS"));
+        }
         match self.enabled() {
             Ok(actual) if actual == enabled => return Ok(()),
             Ok(_) => {}

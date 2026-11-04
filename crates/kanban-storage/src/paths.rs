@@ -1,8 +1,9 @@
 //! Managed application data locations owned by the storage layer.
 //!
-//! The Core owns every path under `~/Library/Application
-//! Support/Kanban/` (ADR-0002); the database file lives there and
-//! nowhere else.
+//! The Core owns every path under the platform data home (ADR-0002):
+//! `~/Library/Application Support/Kanban/` on macOS and
+//! `$XDG_DATA_HOME/Kanban` (usually `~/.local/share/Kanban`) on Linux.
+//! The database file lives there and nowhere else.
 
 use std::path::PathBuf;
 
@@ -59,25 +60,33 @@ mod tests {
     use super::{database_path, managed_data_dir};
 
     #[test]
-    fn managed_data_dir_sits_in_application_support() {
+    fn managed_data_dir_sits_under_the_platform_data_home() {
         let managed_dir = managed_data_dir().expect("home is known in tests");
-        let components: Vec<_> = managed_dir
-            .components()
-            .map(|component| component.as_os_str())
-            .collect();
-
-        let tail = components
-            .iter()
-            .rev()
-            .take(3)
-            .rev()
-            .cloned()
-            .collect::<Vec<_>>();
-        let expected: Vec<_> = ["Library", "Application Support", "Kanban"]
-            .iter()
-            .map(std::ffi::OsStr::new)
-            .collect();
-        assert_eq!(tail, expected);
+        assert_eq!(
+            managed_dir.file_name().and_then(|name| name.to_str()),
+            Some("Kanban")
+        );
+        let expected = dirs::data_dir()
+            .expect("the platform data home is known in tests")
+            .join("Kanban");
+        assert_eq!(
+            managed_dir, expected,
+            "managed data must sit under the platform data home"
+        );
+        #[cfg(target_os = "macos")]
+        assert!(
+            managed_dir.ends_with("Library/Application Support/Kanban"),
+            "{}",
+            managed_dir.display()
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            managed_dir.ends_with(".local/share/Kanban")
+                || std::env::var_os("XDG_DATA_HOME")
+                    .is_some_and(|home| managed_dir.starts_with(home)),
+            "{}",
+            managed_dir.display()
+        );
     }
 
     #[test]

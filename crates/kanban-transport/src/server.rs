@@ -610,7 +610,7 @@ fn spawn_event_writer(
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{self, BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
@@ -789,10 +789,26 @@ mod tests {
 
         /// Read one frame, failing on EOF or a malformed line.
         fn recv(&mut self) -> ResponseFrame {
-            let mut line = String::new();
-            let read = self.reader.read_line(&mut line).expect("the client reads");
-            assert!(read > 0, "the server closed the connection early");
-            serde_json::from_str(line.trim_end()).expect("the frame decodes")
+            let deadline =
+                std::time::Instant::now() + Duration::from_secs(5) + Duration::from_secs(2);
+            let mut bytes: Vec<u8> = Vec::new();
+            loop {
+                match self.reader.read_until(b'\n', &mut bytes) {
+                    Ok(0) => panic!("the server closed the connection early"),
+                    Ok(_) if bytes.ends_with(b"\n") => {
+                        let line = std::str::from_utf8(&bytes).expect("the frame decodes");
+                        return serde_json::from_str(line.trim_end()).expect("the frame decodes");
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            panic!("timed out waiting for a server frame");
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("the client reads: {error:?}"),
+                }
+            }
         }
 
         /// Read one frame, or `None` when the server has closed the
@@ -1667,5 +1683,82 @@ mod tests {
         assert!(socket_path.is_file(), "the file is untouched");
 
         drop(dir);
+    }
+
+    #[test]
+    fn recv_accumulates_a_frame_split_across_would_block_reads() {
+        use std::sync::{Arc, Mutex};
+
+        let (mut server, client) = UnixStream::pair().expect("socket pair");
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("read timeout");
+        let payload = json!({ "value": 1, "version": 1 });
+        let line = format!(
+            "{}\n",
+            serde_json::to_string(&ResponseFrame::Response {
+                payload: payload.clone()
+            })
+            .unwrap()
+        );
+        let split = line.len() / 2;
+        server.write_all(&line.as_bytes()[..split]).unwrap();
+        server.flush().unwrap();
+        let server = Arc::new(Mutex::new(server));
+        let writer = server.clone();
+        let tail = line.clone();
+        std::thread::spawn(move || {
+            // Well past the read timeout, so recv sees at least one
+            // WouldBlock with the first half already buffered.
+            std::thread::sleep(Duration::from_millis(400));
+            let mut server = writer.lock().unwrap();
+            server.write_all(&tail.as_bytes()[split..]).unwrap();
+            server.flush().unwrap();
+        });
+        let mut client = TestClient {
+            reader: BufReader::new(client.try_clone().unwrap()),
+            stream: client,
+        };
+        let frame = client.recv();
+        assert_eq!(frame, ResponseFrame::Response { payload });
+    }
+
+    #[test]
+    fn recv_accumulates_a_frame_split_inside_a_utf8_character() {
+        use std::sync::{Arc, Mutex};
+
+        let (mut server, client) = UnixStream::pair().expect("socket pair");
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("read timeout");
+        let payload = json!({ "label": "café", "version": 1 });
+        let line = format!(
+            "{}\n",
+            serde_json::to_string(&ResponseFrame::Response {
+                payload: payload.clone()
+            })
+            .unwrap()
+        );
+        let split = line
+            .find('é')
+            .expect("the frame carries a multi-byte label")
+            + 1;
+        server.write_all(&line.as_bytes()[..split]).unwrap();
+        server.flush().unwrap();
+        let server = Arc::new(Mutex::new(server));
+        let writer = server.clone();
+        let tail = line.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            let mut server = writer.lock().unwrap();
+            server.write_all(&tail.as_bytes()[split..]).unwrap();
+            server.flush().unwrap();
+        });
+        let mut client = TestClient {
+            reader: BufReader::new(client.try_clone().unwrap()),
+            stream: client,
+        };
+        let frame = client.recv();
+        assert_eq!(frame, ResponseFrame::Response { payload });
     }
 }

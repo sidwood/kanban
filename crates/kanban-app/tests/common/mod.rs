@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod git_test;
 pub mod landing_review;
 pub mod review;
 

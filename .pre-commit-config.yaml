@@ -3,3 +3,6 @@ repos:
     rev: v10.0.1
     hooks:
       - id: cspell
+        # cspell-cli is a Node hook; `language_version: system` selects the
+        # host Node.
+        language_version: system

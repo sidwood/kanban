@@ -7,7 +7,6 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use kanban_app::catalog::exposed_operations;
@@ -27,31 +26,12 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
-}
-
-fn git_init(dir: &Path) {
-    let status = Command::new("git")
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-        .env("GIT_CONFIG_VALUE_0", "master")
-        .args(["init", "-b", "main"])
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git init -b main in {}", dir.display());
+    common::git_test::git(dir, args);
 }
 
 fn init_repo(dir: &Path) -> PathBuf {
     fs::create_dir_all(dir).expect("the repository directory is created");
-    git_init(dir);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "user.name", "Test"]);
+    common::git_test::init_repo(dir, "Seed Author", "seed@fixture.test");
     fs::write(dir.join("README.md"), "seed\n").expect("the seed file is written");
     git(dir, &["add", "."]);
     git(dir, &["commit", "-m", "initial"]);
@@ -66,13 +46,7 @@ fn mutation(version: u64, key: &str) -> serde_json::Value {
 }
 
 fn current_branch(dir: &Path) -> String {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            dir.to_str().expect("the path is UTF-8"),
-            "branch",
-            "--show-current",
-        ])
+    let output = common::git_test::git_command(dir, &["branch", "--show-current"])
         .output()
         .expect("the current branch reads");
     String::from_utf8(output.stdout)
@@ -97,24 +71,15 @@ fn wired() -> Wired {
     git(&seed, &["commit", "--allow-empty", "-m", "integration"]);
     git(&seed, &["checkout", "main"]);
     let integration = dir.path().join("kanban.kan-s1");
-    git(
+    common::git_test::git_clone(
         &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            integration.to_str().expect("utf-8"),
-        ],
+        &integration,
+        "Integration Author",
+        "integration@fixture.test",
     );
     git(&integration, &["checkout", "kan-s1"]);
     let lane = dir.path().join("kanban.kan-t1");
-    git(
-        &seed,
-        &[
-            "clone",
-            seed.to_str().expect("utf-8"),
-            lane.to_str().expect("utf-8"),
-        ],
-    );
+    common::git_test::git_clone(&seed, &lane, "Lane Author", "lane@fixture.test");
     git(&lane, &["checkout", "-b", "kan-t1", "origin/kan-s1"]);
     fs::write(lane.join("lane.md"), "ticket work\n").expect("the lane file is written");
     git(&lane, &["add", "."]);
@@ -453,17 +418,56 @@ fn integration_landing_merges_a_lane_into_the_spec_branch() {
     assert_eq!(landed["into_tip"], previous_tip);
     assert_eq!(landed["landed_tip"], head_tip(&wired.integration));
     assert_eq!(current_branch(&wired.integration), "kan-s1");
-    let log = Command::new("git")
-        .args([
-            "-C",
-            wired.integration.to_str().expect("utf-8"),
-            "log",
-            "--oneline",
-        ])
+    let log = common::git_test::git_command(&wired.integration, &["log", "--oneline"])
         .output()
         .expect("the integration log reads");
     let history = String::from_utf8(log.stdout).expect("the log is UTF-8");
     assert!(history.contains("ticket work"), "{history}");
+}
+
+#[test]
+fn integration_landing_merge_uses_repository_git_identity() {
+    let wired = wired();
+    let spec = authored_spec(&wired.core, "spec-identity");
+    claim_integration(
+        &wired.core,
+        &spec,
+        wired.integration.to_str().expect("utf-8"),
+        "claim-identity",
+    );
+    let ticket = assign_ticket_lane(&wired, &spec);
+    common::landing_review::complete_source_review(
+        &wired.core,
+        &wired.database,
+        &ticket,
+        Some(&spec),
+        &wired.lane,
+        "lane.md",
+        "source-review-identity",
+        true,
+    );
+    wired
+        .core
+        .command(
+            "landing.lane",
+            &json!({
+                "mutation": mutation(0, "land-identity"),
+                "project_id": 1,
+                "spec_id": spec["id"],
+                "from_path": wired.lane.to_str().expect("utf-8"),
+                "into_path": wired.integration.to_str().expect("utf-8"),
+            }),
+        )
+        .expect("the lane lands into the Spec branch");
+    let author =
+        common::git_test::git_command(&wired.integration, &["log", "-1", "--format=%an <%ae>"])
+            .output()
+            .expect("merge author reads");
+    assert!(author.status.success());
+    assert_eq!(
+        String::from_utf8(author.stdout).unwrap().trim(),
+        "Integration Author <integration@fixture.test>"
+    );
 }
 
 #[test]
@@ -563,13 +567,11 @@ fn integration_landing_refuses_an_unowned_workspace_with_the_right_branch_name()
     );
     assign_ticket_lane(&wired, &spec);
     let impostor = wired._dir.path().join("impostor");
-    git(
-        &wired.seed,
-        &[
-            "clone",
-            wired.integration.to_str().unwrap(),
-            impostor.to_str().unwrap(),
-        ],
+    common::git_test::git_clone(
+        &wired.integration,
+        &impostor,
+        "Impostor Author",
+        "impostor@fixture.test",
     );
     let result = wired.core.command(
         "landing.lane",
@@ -912,10 +914,7 @@ fn integration_landing_rechecks_seed_branch_and_workspace_liveness() {
 }
 
 fn head_tip(dir: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "HEAD"])
+    let output = common::git_test::git_command(dir, &["rev-parse", "HEAD"])
         .output()
         .unwrap();
     assert!(output.status.success());

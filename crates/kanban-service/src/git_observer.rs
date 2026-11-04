@@ -214,6 +214,11 @@ mod tests {
 
     fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+            .env("GIT_CONFIG_VALUE_0", "master")
             .args(args)
             .current_dir(dir)
             .status()
@@ -221,19 +226,32 @@ mod tests {
         assert!(status.success(), "git {:?} in {}", args, dir.display());
     }
 
+    fn git_clone_local(from: &str, to: &str) {
+        let status = Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+            .env("GIT_CONFIG_VALUE_0", "master")
+            .args([
+                "clone",
+                "-c",
+                "user.name=Observer Test",
+                "-c",
+                "user.email=observer@fixture.test",
+                "--local",
+                from,
+                to,
+            ])
+            .status()
+            .expect("git clone runs");
+        assert!(status.success(), "git clone --local {from} -> {to}");
+    }
     /// Initialise the fixture repository on `main` under the hostile
     /// `init.defaultBranch` GitHub runners carry, so the suite never
     /// depends on the host's default branch (KAN-T136-AC1).
     fn git_init(dir: &Path) {
-        let status = Command::new("git")
-            .env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
-            .env("GIT_CONFIG_VALUE_0", "master")
-            .args(["init", "-b", "main"])
-            .current_dir(dir)
-            .status()
-            .expect("git runs");
-        assert!(status.success(), "git init -b main in {}", dir.display());
+        git(dir, &["init", "-b", "main"]);
     }
 
     fn init_repo(dir: &Path) -> String {
@@ -306,10 +324,7 @@ mod tests {
             &["remote", "add", "origin", "https://example.com/kanban.git"],
         );
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         set_bc_source(&workspace, &repository);
 
         let snapshot = LocalWorkspaceGitObserver
@@ -375,10 +390,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -411,10 +423,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -458,10 +467,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -498,10 +504,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -541,20 +544,14 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let upstream = dir.path().join("upstream");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, upstream.to_str().unwrap()],
-        );
+        git_clone_local(&repository, upstream.to_str().unwrap());
         git(&upstream, &["switch", "-c", "feature"]);
         fs::write(upstream.join("feature.md"), "remote work\n")
             .expect("the remote change is written");
         git(&upstream, &["add", "."]);
         git(&upstream, &["commit", "-m", "remote work"]);
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -590,10 +587,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -633,10 +627,7 @@ mod tests {
         let dir = TempDir::new().expect("a scratch directory is available");
         let repository = init_repo(dir.path());
         let workspace = dir.path().join("clone");
-        git(
-            dir.path(),
-            &["clone", "--local", &repository, workspace.to_str().unwrap()],
-        );
+        git_clone_local(&repository, workspace.to_str().unwrap());
         git(
             &workspace,
             &[
@@ -703,19 +694,8 @@ mod tests {
         let repository = init_repo(dir.path());
         let first = dir.path().join("first");
         let second = dir.path().join("second");
-        git(
-            Path::new(&repository),
-            &["clone", "--local", &repository, first.to_str().unwrap()],
-        );
-        git(
-            &first,
-            &[
-                "clone",
-                "--local",
-                first.to_str().unwrap(),
-                second.to_str().unwrap(),
-            ],
-        );
+        git_clone_local(&repository, first.to_str().unwrap());
+        git_clone_local(first.to_str().unwrap(), second.to_str().unwrap());
         set_bc_source(&first, &repository);
         set_bc_source(&second, first.to_str().expect("the path is UTF-8"));
 
@@ -757,14 +737,8 @@ mod tests {
         let origin = init_repo_at(dir.path(), "origin");
         let repository = dir.path().join("repository");
         let unrelated = dir.path().join("unrelated");
-        git(
-            Path::new(&origin),
-            &["clone", "--local", &origin, repository.to_str().unwrap()],
-        );
-        git(
-            Path::new(&origin),
-            &["clone", "--local", &origin, unrelated.to_str().unwrap()],
-        );
+        git_clone_local(&origin, repository.to_str().unwrap());
+        git_clone_local(&origin, unrelated.to_str().unwrap());
 
         let snapshot = LocalWorkspaceGitObserver.observe(
             unrelated.to_str().expect("the path is UTF-8"),

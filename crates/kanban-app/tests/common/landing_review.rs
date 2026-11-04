@@ -2,7 +2,6 @@
 //! landing (KAN-T52 G5/G6, KAN-S10-US7).
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 
 use kanban_app::{Core, CriterionBindingStore, NoopCoordinatorWake};
@@ -140,6 +139,7 @@ pub fn seed_review_profiles(core: &Core) {
 
 /// Run the Ticket review sequence at the source Workspace tip, and
 /// optionally satisfy every criterion at that tip.
+#[allow(clippy::too_many_arguments)]
 pub fn complete_source_review(
     core: &Core,
     database: &Database,
@@ -456,10 +456,7 @@ fn version(record: &Value) -> u64 {
 }
 
 fn head_tip(dir: &Path) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "HEAD"])
+    let output = super::git_test::git_command(dir, &["rev-parse", "HEAD"])
         .output()
         .expect("git rev-parse runs");
     assert!(output.status.success(), "git rev-parse HEAD succeeds");

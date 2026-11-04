@@ -2,12 +2,16 @@
 //! builds honour the override; release builds resolve only the trusted
 //! packaged core beside the shell (DR-SS-09).
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
 use kanban_desktop_lib::locate_core_binary;
+
+use common::cargo_target_dir;
 
 /// Env-var tests share one lock: std::env::set_var races otherwise.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -36,7 +40,7 @@ fn release_probe_exe() -> PathBuf {
         .status()
         .expect("the release probe builds");
     assert!(status.success(), "the release probe must compile");
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/examples/core-binary-probe")
+    cargo_target_dir(&manifest).join("release/examples/core-binary-probe")
 }
 
 /// Lay out a shell directory with no packaged core beside the probe.

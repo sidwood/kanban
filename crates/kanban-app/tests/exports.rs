@@ -5,8 +5,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
+
+mod common;
 
 use kanban_app::ProjectStore;
 use kanban_app::catalog::exposed_operations;
@@ -25,18 +26,11 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git runs");
-    assert!(status.success(), "git {:?} in {}", args, dir.display());
+    common::git_test::git(dir, args);
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
+    let output = common::git_test::git_command(dir, args)
         .output()
         .expect("git runs");
     assert!(

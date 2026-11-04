@@ -31,6 +31,7 @@ fn login_launch_removal_recovers_an_owned_plist_after_external_unload() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn login_launch_bootstrap_and_readback_failures_never_claim_enabled() {
     use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new().unwrap();
@@ -54,6 +55,25 @@ fn login_launch_bootstrap_and_readback_failures_never_claim_enabled() {
     std::fs::write(&command, "#!/bin/sh\nexit 5\n").unwrap();
     assert!(adapter.enabled().is_err());
     assert!(adapter.set_enabled(false).is_err());
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn login_launch_is_unavailable_off_macos() {
+    let dir = TempDir::new().unwrap();
+    let adapter = NativeLoginLaunch::isolated(
+        "/usr/bin/true".into(),
+        dir.path().join("data"),
+        dir.path().to_path_buf(),
+        "dev.kanban.test.unavailable".into(),
+        dir.path().join("launchctl-fixture"),
+    );
+    let enabled = adapter.enabled().unwrap_err();
+    assert_eq!(enabled.message, "launch at login requires macOS");
+    let set_true = adapter.set_enabled(true).unwrap_err();
+    assert_eq!(set_true.message, "launch at login requires macOS");
+    let set_false = adapter.set_enabled(false).unwrap_err();
+    assert_eq!(set_false.message, "launch at login requires macOS");
 }
 
 #[test]

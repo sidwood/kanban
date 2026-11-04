@@ -23,7 +23,7 @@ use kanban_domain::{
     TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef, VerificationStep,
 };
 use kanban_dto::ApiError;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -321,6 +321,97 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
     if changed != 1 {
         return Err(ticket_write_refused(span, ticket.id(), preceding_version));
     }
+    sync_issue_state_after_legacy_move(span, ticket)
+}
+
+/// Keep the Linear issue projection in step with one legacy state
+/// move: the workflow state, its history rows, and the lifecycle
+/// stamps move with the Ticket row inside the same write. The legacy
+/// aggregate keeps owning the version and `updated_at`, so this
+/// never bumps them; a save that rewrites the same state touches
+/// nothing.
+fn sync_issue_state_after_legacy_move(
+    span: &WriteSpan<'_>,
+    ticket: &Ticket,
+) -> Result<(), ApiError> {
+    let ticket_id = ticket.id().value() as i64;
+    let (project_id, prior_workflow): (i64, Option<i64>) = span
+        .query_row(
+            "SELECT project_id, workflow_state_id FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(internal)?;
+    let state =
+        super::linear_issue::workflow_state_by_legacy(span, project_id, ticket.state().wire_name())
+            .map_err(|error| ApiError::internal(&error.to_string()))?
+            .ok_or_else(|| {
+                ApiError::internal("the workflow state for a legacy state move is missing")
+            })?;
+    if prior_workflow == Some(state.id) {
+        return Ok(());
+    }
+    let now: String = span
+        .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })
+        .map_err(internal)?;
+    let mut stamps = kanban_domain::IssueStateTimestamps {
+        started_at: span
+            .query_row(
+                "SELECT started_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        completed_at: span
+            .query_row(
+                "SELECT completed_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        canceled_at: span
+            .query_row(
+                "SELECT canceled_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+    };
+    stamps.stamp_entry(state.state_type, &now);
+    stamps.clear_terminal_on_reopen(state.state_type);
+    span.execute(
+        "UPDATE issue_state_history SET ended_at = ?2
+         WHERE ticket_id = ?1 AND ended_at IS NULL",
+        params![ticket_id, &now],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+         VALUES (?1, ?2, ?3, NULL)",
+        params![ticket_id, state.id, &now],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "UPDATE tickets
+         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5
+         WHERE id = ?1",
+        params![
+            ticket_id,
+            state.id,
+            stamps.started_at,
+            stamps.completed_at,
+            stamps.canceled_at,
+        ],
+    )
+    .map_err(internal)?;
     Ok(())
 }
 

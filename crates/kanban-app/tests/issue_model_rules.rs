@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use kanban_app::{
     CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
-    ProjectStore,
 };
 use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
@@ -60,17 +59,18 @@ fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std:
 
 struct RulesHarness {
     _dir: tempfile::TempDir,
+    core: Arc<Core>,
     session: OperatorSession,
-    database_path: std::path::PathBuf,
 }
 
 fn rules_harness() -> RulesHarness {
     let mut h = harness();
     let attachments = h._dir.path().join("attachments");
     register_issue_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
     RulesHarness {
-        session: OperatorSession::new(Arc::new(h.core)),
-        database_path: h.database_path,
+        session: OperatorSession::new(core.clone()),
+        core,
         _dir: h._dir,
     }
 }
@@ -161,5 +161,196 @@ fn switching_between_terminal_states_keeps_only_the_current_stamp() {
     assert!(
         redone.canceled_at.is_none(),
         "a direct Cancelled to Done move drops the canceled stamp"
+    );
+}
+
+fn register_legacy_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
+    let projects = Arc::new(SqliteProjectStore::new(database));
+    let tickets = Arc::new(SqliteTicketStore::new(database));
+    let specs = Arc::new(SqliteSpecStore::new(database));
+    let plans = Arc::new(SqlitePlanStore::new(database));
+    let issues: Arc<dyn IssueStore> = Arc::new(SqliteIssueStore::new(database));
+    let comments: Arc<dyn CommentStore> = Arc::new(SqliteCommentStore::new(database));
+    let dependencies = Arc::new(SqliteDependencyStore::new(database));
+    let schedules = Arc::new(SqliteScheduleStore::new(database));
+    core.register_plans(plans.clone(), projects.clone(), specs.clone())
+        .expect("plans register");
+    core.register_specs(specs.clone(), projects.clone(), plans)
+        .expect("specs register");
+    std::fs::create_dir_all(attachments).expect("attachments dir");
+    core.register_tickets(
+        tickets.clone(),
+        projects.clone(),
+        specs.clone(),
+        Arc::new(SqliteEvidenceStore::new(
+            database,
+            attachments.to_path_buf(),
+        )),
+    )
+    .expect("tickets register");
+    core.register_lifecycle(
+        tickets.clone(),
+        dependencies,
+        projects.clone(),
+        schedules,
+        None,
+    )
+    .expect("lifecycle registers");
+    core.register_issue_operator(
+        tickets,
+        projects.clone(),
+        specs,
+        issues.clone(),
+        comments.clone(),
+    )
+    .expect("issue operator registers");
+    let comment_targets: Arc<dyn CommentIssueTargets> =
+        Arc::new(IssueStoreCommentTargets::new(issues));
+    core.register_comments(comments, projects, comment_targets)
+        .expect("comments register");
+}
+
+fn legacy_harness() -> RulesHarness {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_legacy_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
+    RulesHarness {
+        session: OperatorSession::new(core.clone()),
+        core,
+        _dir: h._dir,
+    }
+}
+
+fn create_legacy_task(core: &Core, key: &str, title: &str) -> serde_json::Value {
+    core.command(
+        "ticket.create",
+        &json!({
+            "mutation": mutation(0, key),
+            "project_id": 1,
+            "kind": "task",
+            "priority": "normal",
+            "title": title,
+            "subtype": "operational",
+            "mode": "human",
+            "completion": ["Tracked"],
+        }),
+    )
+    .expect("the legacy Task lands")
+}
+
+fn history_names(record: &IssueRecord) -> Vec<&str> {
+    record
+        .state_history
+        .iter()
+        .map(|row| row.state.as_str())
+        .collect()
+}
+
+#[test]
+fn legacy_parking_moves_the_issue_state_and_history() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let created = create_legacy_task(&h.core, "legacy-park-create", "Legacy parked task");
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let identifier = format!("CORE-{}", created["number"].as_u64().expect("a number"));
+
+    let claimed = save_issue(
+        session,
+        created["version"].as_u64().expect("a version"),
+        "legacy-park-ready",
+        json!({ "identifier": identifier, "state": "Ready" }),
+    );
+    let _ = claimed;
+
+    h.core
+        .command(
+            "ticket.park",
+            &json!({
+                "mutation": mutation(issue_version(session, &identifier), "legacy-park-park"),
+                "ticket_id": ticket_id,
+            }),
+        )
+        .expect("the legacy park lands");
+
+    let moved = read_issue(session, &identifier);
+    assert_eq!(
+        moved.state, "Parked",
+        "the issue model follows the legacy move"
+    );
+    assert_eq!(moved.state_type, "backlog");
+    let names = history_names(&moved);
+    assert!(
+        names.ends_with(&["Ready", "Parked"]),
+        "the move closes the Ready row and opens a Parked row, saw {names:?}"
+    );
+    assert!(moved.state_history.last().unwrap().ended_at.is_none());
+    assert!(
+        moved.state_history[..moved.state_history.len() - 1]
+            .iter()
+            .all(|row| row.ended_at.is_some()),
+        "every earlier state is closed"
+    );
+
+    let rows_before_edit = moved.state_history.len();
+    let version = moved.version;
+    h.core
+        .command(
+            "ticket.edit",
+            &json!({
+                "mutation": mutation(version, "legacy-park-edit"),
+                "ticket_id": ticket_id,
+                "title": "Retitled without moving",
+            }),
+        )
+        .expect("the legacy edit lands");
+    let edited = read_issue(session, &identifier);
+    assert_eq!(edited.state, "Parked");
+    assert_eq!(
+        edited.state_history.len(),
+        rows_before_edit,
+        "a same-state legacy save writes no history"
+    );
+}
+
+#[test]
+fn legacy_cancelling_stamps_the_issue_cancellation() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let created = create_legacy_task(&h.core, "legacy-cancel-create", "Legacy cancelled task");
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+    let identifier = format!("CORE-{}", created["number"].as_u64().expect("a number"));
+
+    save_issue(
+        session,
+        created["version"].as_u64().expect("a version"),
+        "legacy-cancel-ready",
+        json!({ "identifier": identifier, "state": "Ready" }),
+    );
+    h.core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(issue_version(session, &identifier), "legacy-cancel-cancel"),
+                "ticket_id": ticket_id,
+            }),
+        )
+        .expect("the legacy cancel lands");
+
+    let moved = read_issue(session, &identifier);
+    assert_eq!(
+        moved.state, "Cancelled",
+        "the issue model follows the cancel"
+    );
+    assert_eq!(moved.state_type, "canceled");
+    assert!(
+        moved.canceled_at.is_some(),
+        "the legacy cancel stamps cancellation for the issue model"
+    );
+    assert!(moved.completed_at.is_none());
+    let names = history_names(&moved);
+    assert!(
+        names.ends_with(&["Ready", "Cancelled"]),
+        "the cancel closes the Ready row and opens a Cancelled row, saw {names:?}"
     );
 }

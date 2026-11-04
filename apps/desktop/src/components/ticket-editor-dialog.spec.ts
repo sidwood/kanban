@@ -1,7 +1,6 @@
 // KAN-T139-AC1 and KAN-T139-AC3: the one Ticket editor
 // is a dialog, opened from New Ticket, from an uncovered Story, and
-// from drawer Edit; create lands through issue.save, edit through
-// ticket.edit and Bug qualification commands.
+// from drawer Edit; create and edit both land through issue.save.
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -11,13 +10,11 @@ import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import {
-  capturedBug,
   editorHarness,
   editorProject,
   editorSpec,
   implementationTicket,
   otherProject,
-  qualifiedBug,
 } from '../test/editor-harness'
 import TicketEditorDialog from './TicketEditorDialog.vue'
 
@@ -85,32 +82,33 @@ describe('the Ticket editor dialog', () => {
     ).toContain('CORE-S1-US1')
   })
 
-  it('drawer Edit opens it preset to the Ticket kind, read from the record', async () => {
+  it('drawer Edit reads the issue record and shows the issue form', async () => {
     const { transport, operations } = editorHarness({ tickets: [implementationTicket()] })
     const wrapper = open(transport)
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
     expect(operations.some((entry) => entry.name === 'ticket.get')).toBe(true)
-    const kind = wrapper.find('[data-testid="ticket-kind"]').element as HTMLSelectElement
-    expect(kind.value).toBe('implementation')
-    expect(kind.disabled).toBe(true)
-    expect((wrapper.find('[data-testid="ticket-slice"]').element as HTMLTextAreaElement).value).toBe(
+    expect(operations.some((entry) => entry.name === 'issue.get')).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-kind"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-edit-key"]').text()).toContain('CORE-17')
+    expect((wrapper.find('[data-testid="ticket-title"]').element as HTMLInputElement).value).toBe(
       'Spec authoring creates content versions end to end',
     )
     expect(wrapper.find('[data-testid="ticket-create"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="ticket-save"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-save-issue"]').exists()).toBe(true)
   })
 
-  it('the edit form follows the standing kind', async () => {
+  it('the edit form exposes title and description, not legacy kind fields', async () => {
     const { transport } = editorHarness({ tickets: [implementationTicket()] })
     const wrapper = open(transport)
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="ticket-criteria-fact"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="ticket-title"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-title"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-description"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ticket-slice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-criteria-fact"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ticket-completion"]').exists()).toBe(false)
   })
 
@@ -159,20 +157,22 @@ describe('the Ticket editor dialog', () => {
     expect(wrapper.find('[data-testid="ticket-dialog"]').exists()).toBe(true)
   })
 
-  it('editing an Implementation sends ticket.edit at the version the record was read at', async () => {
+  it('editing an issue sends issue.save at the version the record was read at', async () => {
     const { transport, requests } = editorHarness({ tickets: [implementationTicket()] })
     const wrapper = open(transport)
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
-    await wrapper.find('[data-testid="ticket-slice"]').setValue('A sharper slice')
-    await wrapper.find('[data-testid="ticket-save"]').trigger('submit')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await wrapper.find('[data-testid="ticket-description"]').setValue('A sharper slice')
+    await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
     await flushPromises()
 
-    expect(requests('ticket.edit')[0]).toEqual({
+    expect(requests('issue.save')[0]).toMatchObject({
       mutation: { optimistic_version: 1, idempotency_key: expect.any(String) },
-      ticket_id: 1,
-      slice: 'A sharper slice',
+      identifier: 'CORE-17',
+      title: 'A sharper title',
+      description: 'A sharper slice',
     })
   })
 
@@ -180,7 +180,7 @@ describe('the Ticket editor dialog', () => {
     const { transport } = editorHarness({
       tickets: [implementationTicket()],
       answer: (name) =>
-        name === 'ticket.edit'
+        name === 'issue.save'
           ? Promise.reject({ code: 'stale_version', message: 'the Ticket moved on' })
           : undefined,
     })
@@ -188,8 +188,8 @@ describe('the Ticket editor dialog', () => {
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
-    await wrapper.find('[data-testid="ticket-slice"]').setValue('A sharper slice')
-    await wrapper.find('[data-testid="ticket-save"]').trigger('submit')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
     await flushPromises()
 
     expect(wrapper.find('[data-testid="ticket-error"]').text()).toBe('the Ticket moved on')
@@ -201,8 +201,9 @@ describe('the Ticket editor dialog', () => {
     const first = open(state.transport)
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
-    await first.find('[data-testid="ticket-slice"]').setValue('A sharper slice')
-    await first.find('[data-testid="ticket-save"]').trigger('submit')
+    await first.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await first.find('[data-testid="ticket-description"]').setValue('A sharper slice')
+    await first.find('[data-testid="ticket-save-issue"]').trigger('submit')
     await flushPromises()
     first.unmount()
 
@@ -211,96 +212,18 @@ describe('the Ticket editor dialog', () => {
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
-    expect((second.find('[data-testid="ticket-slice"]').element as HTMLTextAreaElement).value).toBe(
-      'A sharper slice',
+    expect((second.find('[data-testid="ticket-title"]').element as HTMLInputElement).value).toBe(
+      'A sharper title',
     )
-  })
-
-  it('a Bug edit seeds the qualification that stands and sends it whole', async () => {
-    const { transport, requests } = editorHarness({ tickets: [qualifiedBug()] })
-    const wrapper = open(transport)
-    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 19 })
-    await flushPromises()
-
     expect(
-      (wrapper.find('[data-testid="bug-qualify-severity"]').element as HTMLSelectElement).value,
-    ).toBe('high')
-    await wrapper.find('[data-testid="bug-qualify-severity"]').setValue('critical')
-    await wrapper.find('[data-testid="bug-qualify"]').trigger('submit')
-    await flushPromises()
-
-    expect(requests('ticket.bug.qualify')[0]).toEqual({
-      mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
-      ticket_id: 19,
-      qualification: {
-        expected_behaviour: 'The integration branch survives every landing.',
-        reproduction: 'Re land a reviewed change; the branch list still names it.',
-        environment: 'macOS 26, Kanban 0.1.0.',
-        severity: 'critical',
-        frequency: 'Every landing so far.',
-        affected_scope: 'All landing reviews.',
-        risk: 'Duplicate landings and lost review state.',
-        criteria: [
-          { outcome: 'The integration branch survives a landing.', stories: ['CORE-S1-US1'] },
-        ],
-        verification_steps: [{ command: 'cargo test -p kanban-storage tickets' }],
-      },
-    })
+      (second.find('[data-testid="ticket-description"]').element as HTMLTextAreaElement).value,
+    ).toBe('A sharper slice')
   })
 
-  it('a half-qualified Bug cannot be sent: severity is chosen, never defaulted', async () => {
-    const { transport, requests } = editorHarness({ tickets: [capturedBug()] })
-    const wrapper = open(transport)
-    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 2 })
-    await flushPromises()
-
-    const severity = wrapper.find('[data-testid="bug-qualify-severity"]')
-      .element as HTMLSelectElement
-    expect(severity.selectedOptions[0]?.textContent?.trim()).toBe('Choose a severity')
-    expect(severity.selectedOptions[0]?.disabled).toBe(true)
-    const submit = wrapper.find('[data-testid="bug-qualify"]').element as HTMLButtonElement
-    expect(submit.disabled).toBe(true)
-
-    await wrapper.find('[data-testid="bug-qualify"]').trigger('submit')
-    await flushPromises()
-    expect(requests('ticket.bug.qualify')).toHaveLength(0)
-    expect(wrapper.find('[data-testid="bug-qualify-incomplete"]').text()).toContain('severity')
-  })
-
-  it('a Bug edit records the vendor-neutral facts at the read version', async () => {
-    const { transport, requests } = editorHarness({ tickets: [capturedBug()] })
-    const wrapper = open(transport)
-    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 2 })
-    await flushPromises()
-
-    await wrapper
-      .find('[data-testid="bug-facts-reference-uri-0"]')
-      .setValue('https://example.invalid/issues/12')
-    await wrapper.find('[data-testid="bug-facts-reference-label-0"]').setValue('The report')
-    await wrapper.find('[data-testid="bug-facts-snapshot-at-0"]').setValue('2026-09-05T07:41:00Z')
-    await wrapper
-      .find('[data-testid="bug-facts-snapshot-observation-0"]')
-      .setValue('The log shows the drop.')
-    await wrapper.find('[data-testid="bug-facts-evidence"]').setValue('3, 7')
-    await wrapper.find('[data-testid="bug-facts"]').trigger('submit')
-    await flushPromises()
-
-    expect(requests('ticket.bug.facts')[0]).toEqual({
-      mutation: { optimistic_version: 1, idempotency_key: expect.any(String) },
-      ticket_id: 2,
-      external_references: [{ uri: 'https://example.invalid/issues/12', label: 'The report' }],
-      occurrence_snapshots: [
-        { observed_at: '2026-09-05T07:41:00Z', observation: 'The log shows the drop.' },
-      ],
-      evidence_ids: [3, 7],
-    })
-  })
-
-  it('never aims a qualification at a Bug the dialog was not opened on', async () => {
+  it('create mode never surfaces Bug qualification controls', async () => {
     const { transport, requests } = editorHarness({
       projects: [editorProject, otherProject],
       specs: [editorSpec],
-      tickets: [capturedBug()],
     })
     const wrapper = open(transport)
     useTicketDialogStore().openCreate({ projectId: 4 })
@@ -313,33 +236,13 @@ describe('the Ticket editor dialog', () => {
     expect(requests('ticket.bug.qualify')).toHaveLength(0)
   })
 
-  it('fixes a revision to the Ticket record\u2019s own Project', async () => {
-    const { transport, requests } = editorHarness({
-      projects: [editorProject, otherProject],
-      tickets: [qualifiedBug()],
-    })
-    const wrapper = open(transport)
-    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 19 })
-    await flushPromises()
-
-    const picker = wrapper.find('[data-testid="ticket-project"]').element as HTMLSelectElement
-    expect(picker.disabled).toBe(true)
-    expect(picker.value).toBe('4')
-
-    await wrapper.find('[data-testid="bug-qualify"]').trigger('submit')
-    await flushPromises()
-    expect(requests('ticket.bug.qualify')).toEqual([
-      expect.objectContaining({ ticket_id: 19 }),
-    ])
-  })
-
   it('closing the dialog leaves the record untouched', async () => {
     const { transport, operations } = editorHarness({ tickets: [implementationTicket()] })
     const wrapper = open(transport)
     useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
     await flushPromises()
 
-    await wrapper.find('[data-testid="ticket-slice"]').setValue('Abandoned')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Abandoned')
     await wrapper.find('[data-testid="ticket-dialog-close"]').trigger('click')
     await flushPromises()
 

@@ -2,8 +2,10 @@
 // answer per operation name, every query and command recorded in
 // issue order. Nothing here is production code.
 import type {
+  IssueRecord,
   ProjectRecord,
   SpecRecord,
+  TicketPriority,
   TicketRecord,
 } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
@@ -104,6 +106,56 @@ export function qualifiedBug(overrides: Partial<TicketRecord> = {}): TicketRecor
   }
 }
 
+const LINEAR_PRIORITY: Record<TicketPriority, number> = {
+  urgent: 1,
+  high: 2,
+  normal: 3,
+  low: 4,
+}
+
+function issueIdentifier(project: ProjectRecord, ticket: TicketRecord): string {
+  return `${project.code}-${ticket.number}`
+}
+
+function ticketByIdentifier(
+  identifier: string,
+  projects: readonly ProjectRecord[],
+  tickets: readonly TicketRecord[],
+): { project: ProjectRecord; ticket: TicketRecord } | undefined {
+  for (const ticket of tickets) {
+    const project = projects.find((entry) => entry.id === ticket.project_id)
+    if (project && issueIdentifier(project, ticket) === identifier) {
+      return { project, ticket }
+    }
+  }
+  return undefined
+}
+
+function ticketToIssue(project: ProjectRecord, ticket: TicketRecord): IssueRecord {
+  const identifier = issueIdentifier(project, ticket)
+  return {
+    identifier,
+    ticket_id: ticket.id,
+    project_id: ticket.project_id,
+    title: ticket.title ?? '',
+    description: ticket.slice ?? '',
+    priority: LINEAR_PRIORITY[ticket.priority],
+    state: 'Draft',
+    state_type: 'unstarted',
+    labels: [],
+    relations: [],
+    state_history: [],
+    due_date: ticket.due,
+    milestone_id: null,
+    parent: null,
+    children: [],
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    url: `https://kanban.invalid/${identifier}`,
+    version: ticket.version,
+  }
+}
+
 export function implementationTicket(overrides: Partial<TicketRecord> = {}): TicketRecord {
   return {
     id: 1,
@@ -113,8 +165,8 @@ export function implementationTicket(overrides: Partial<TicketRecord> = {}): Tic
     priority: 'high',
     state: 'draft',
     spec_id: 7,
-    title: null,
-    slice: 'Spec authoring creates content versions end to end',
+    title: 'Spec authoring creates content versions end to end',
+    slice: 'Acceptance criteria and story links live in the description.',
     criteria: [{ outcome: 'Specs mint unique numbers.', stories: ['CORE-S1-US1'] }],
     bug: null,
     subtype: null,
@@ -186,6 +238,13 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
           ? Promise.resolve({ ...found })
           : Promise.reject({ code: 'not_found', message: `ticket ${ticket_id}` })
       }
+      case 'issue.get': {
+        const { identifier } = request as { identifier: string }
+        const match = ticketByIdentifier(identifier, projects, tickets)
+        return match
+          ? Promise.resolve(ticketToIssue(match.project, match.ticket))
+          : Promise.reject({ code: 'not_found', message: `issue ${identifier}` })
+      }
       default:
         return Promise.resolve({})
     }
@@ -217,12 +276,43 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
     switch (name) {
       case 'issue.save': {
         const save = body as {
+          identifier?: string | null
+          mutation?: { optimistic_version?: number }
           project_id?: number
           title?: string
           description?: string
           priority?: number
           state?: string
-          due_date?: string
+          due_date?: string | null
+        }
+        if (save.identifier) {
+          const match = ticketByIdentifier(save.identifier, projects, tickets)
+          if (!match) {
+            return Promise.reject({ code: 'not_found', message: 'issue' })
+          }
+          const { ticket: standing } = match
+          const expected = save.mutation?.optimistic_version
+          if (expected !== undefined && expected !== standing.version) {
+            return Promise.reject({ code: 'stale_version', message: 'the Ticket moved on' })
+          }
+          const priority =
+            save.priority === undefined
+              ? standing.priority
+              : (Object.entries(LINEAR_PRIORITY).find(([, value]) => value === save.priority)?.[0] ??
+                  standing.priority) as TicketPriority
+          const updated = replace({
+            ...standing,
+            title: save.title ?? standing.title,
+            slice: save.description ?? standing.slice,
+            priority,
+            due: save.due_date === null ? null : (save.due_date ?? standing.due),
+            version: standing.version + 1,
+          })
+          return Promise.resolve({
+            identifier: save.identifier,
+            ticket_id: updated.id,
+            url: `https://kanban.invalid/${save.identifier}`,
+          })
         }
         const project_id = save.project_id ?? 4
         const project = projects.find((entry) => entry.id === project_id)

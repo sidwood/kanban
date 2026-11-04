@@ -1156,7 +1156,8 @@ mod tests {
     };
     use kanban_domain::{CommentId, ProjectRegistration};
     use kanban_dto::{
-        IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
+        ErrorCode, IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef,
+        TimelineEventKind,
     };
     use serde_json::json;
 
@@ -1972,9 +1973,9 @@ mod tests {
         );
     }
     #[test]
-    fn repair_migration_preserves_due_dates_the_store_accepts() {
+    fn repair_migration_preserves_due_dates_an_earlier_build_stored() {
         let (_dir, mut database) = earlier_build_database();
-        let accepted = [
+        let stored_verbatim = [
             (2_i64, " 2027-01-05"),
             (3, "2027-01- 05"),
             (5, "-0001-01-01"),
@@ -1982,24 +1983,31 @@ mod tests {
             (7, "2027-1-5"),
             (8, "2027- 1- 5"),
         ];
-        for (ticket_id, raw) in accepted {
-            IssueStoreImpl::new(&database)
-                .set_due_date(ticket_id, Some(raw))
-                .unwrap_or_else(|error| panic!("the store accepts {raw:?}: {error:?}"));
-            assert_eq!(migrated_due_date(&database.connection(), ticket_id), raw);
+        {
+            let conn = database.connection();
+            for (ticket_id, raw) in stored_verbatim {
+                conn.execute(
+                    "UPDATE tickets SET due_date = ?2 WHERE id = ?1",
+                    rusqlite::params![ticket_id, raw],
+                )
+                .unwrap();
+                assert_eq!(migrated_due_date(&conn, ticket_id), raw);
+            }
         }
 
         database.migrate(&AllowAllMigrations).unwrap();
 
-        for (ticket_id, raw) in accepted {
+        for (ticket_id, raw) in stored_verbatim {
             assert_eq!(
                 migrated_due_date(&database.connection(), ticket_id),
                 raw,
-                "a due date the store accepted verbatim keeps its stored text"
+                "a due date an earlier build stored verbatim keeps its stored text"
             );
-            IssueStoreImpl::new(&database)
+            let refused = IssueStoreImpl::new(&database)
                 .set_due_date(ticket_id, Some(raw))
-                .unwrap_or_else(|error| panic!("the store still accepts {raw:?}: {error:?}"));
+                .expect_err("the store refuses a due date that is not zero-padded");
+            assert_eq!(refused.code, ErrorCode::InvalidRequest);
+            assert_eq!(refused.field.as_deref(), Some("due_date"), "{raw:?}");
         }
     }
 

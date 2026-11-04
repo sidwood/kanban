@@ -13,13 +13,30 @@ use crate::timeline::insert_event;
 
 use super::linear_issue::{WorkflowStateRecord, workflow_state_by_legacy, workflow_state_by_name};
 
-fn validate_calendar_due_date(raw: &str) -> Result<String, ApiError> {
-    use chrono::NaiveDate;
-    NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
-        ApiError::invalid_request_field("due_date", "due_date must be a YYYY-MM-DD calendar date")
+/// A calendar date exactly as Linear stores it: zero-padded
+/// `YYYY-MM-DD` with no surrounding whitespace and a real day of a
+/// real month, kept verbatim when it passes.
+pub(crate) fn validate_calendar_date(raw: &str, field: &'static str) -> Result<String, ApiError> {
+    let bytes = raw.as_bytes();
+    let padded_shape = bytes.len() == 10
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..].iter().all(u8::is_ascii_digit);
+    if !padded_shape {
+        return Err(ApiError::invalid_request_field(
+            field,
+            &format!("{field} must be a zero-padded YYYY-MM-DD calendar date"),
+        ));
+    }
+    chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
+        ApiError::invalid_request_field(field, &format!("{field} is not a real calendar date"))
     })?;
     Ok(raw.to_owned())
 }
+
+
 
 /// Issue persistence beside the Ticket port.
 pub struct SqliteIssueStore {
@@ -147,7 +164,7 @@ impl SqliteIssueStore {
         let conn = self.lock();
         let stored = match due_date {
             None => "2099-12-31".to_owned(),
-            Some(raw) => validate_calendar_due_date(raw)?,
+            Some(raw) => validate_calendar_date(raw, "due_date")?,
         };
         let current: Option<String> = conn
             .query_row(
@@ -1396,18 +1413,31 @@ impl SqliteIssueStore {
         name: &str,
         target_date: Option<&str>,
     ) -> Result<kanban_app::IssueMilestoneRow, ApiError> {
+        let target_date = target_date
+            .map(|raw| validate_calendar_date(raw, "target_date"))
+            .transpose()?;
         let conn = self.lock();
         conn.execute(
             "INSERT INTO issue_milestones (project_id, name, sort_order, target_date)
              VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM issue_milestones WHERE project_id = ?1), ?3)",
             params![project_id, name, target_date],
         )
-        .map_err(internal)?;
+        .map_err(|error| {
+            if let rusqlite::Error::SqliteFailure(code, _) = &error
+                && code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+            {
+                return ApiError::conflict_field(
+                    "name",
+                    &format!("milestone `{name}` already exists"),
+                );
+            }
+            internal(error)
+        })?;
         let id = conn.last_insert_rowid() as u64;
         Ok(kanban_app::IssueMilestoneRow {
             id,
             name: name.to_owned(),
-            target_date: target_date.map(str::to_owned),
+            target_date: target_date.as_deref().map(str::to_owned),
             issues_total: 0,
             issues_done: 0,
         })

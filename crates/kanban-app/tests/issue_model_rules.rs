@@ -9,13 +9,13 @@ use std::sync::Arc;
 use kanban_app::{
     CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
 };
-use kanban_dto::{IssueGetQuery, IssueRecord, IssueSaveResponse};
+use kanban_dto::{ApiError, ErrorCode, IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
     Database, SqliteDependencyStore, SqliteEvidenceStore, SqliteIssueStore, SqlitePlanStore,
     SqliteProjectStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 mod common;
 
@@ -801,4 +801,97 @@ fn reapplying_a_moved_duplicate_target_returns_to_duplicate() {
         "the re-entry closes the Done row and opens a Duplicate row, saw {names:?}"
     );
     assert!(reentered.state_history.last().unwrap().ended_at.is_none());
+}
+
+/// `issue.save` with fields that must be refused, so tests can assert the
+/// exact rejection instead of the panic-on-error happy helper.
+fn try_save(
+    session: &OperatorSession,
+    version: u64,
+    key: &str,
+    fields: serde_json::Value,
+) -> Result<Value, ApiError> {
+    let mut object = serde_json::Map::new();
+    object.insert("mutation".into(), mutation(version, key));
+    if let Some(extra) = fields.as_object() {
+        object.extend(extra.clone());
+    }
+    session.call("issue.save", &serde_json::Value::Object(object))
+}
+
+#[test]
+fn calendar_due_dates_must_be_padded_and_trimmed() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "strict-dates-host",
+        json!({ "project_id": 1, "title": "Strict dates" }),
+    );
+
+    for (index, raw) in [
+        "2026-1-5",
+        " 2026-11-05",
+        "2026-11-5 ",
+        "2026-99-99",
+        "2026-02-30",
+        "2026-11-05T00:00:00Z",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let error = try_save(
+            session,
+            issue_version(session, &saved.identifier),
+            &format!("strict-dates-{index}"),
+            json!({ "identifier": saved.identifier, "due_date": raw }),
+        )
+        .expect_err("a loose calendar date is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{raw}");
+        assert_eq!(error.field.as_deref(), Some("due_date"), "{raw}");
+    }
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "strict-dates-exact",
+        json!({ "identifier": saved.identifier, "due_date": "2026-11-05" }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(read.due_date.as_deref(), Some("2026-11-05"));
+}
+
+#[test]
+fn an_issue_cannot_reference_itself_in_relations() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "self-reference-host",
+        json!({ "project_id": 1, "title": "Self references" }),
+    );
+
+    for (field, key) in [
+        ("add_blocks", "self-blocks"),
+        ("add_related", "self-related"),
+        ("add_blocked_by", "self-blocked-by"),
+    ] {
+        let error = try_save(
+            session,
+            issue_version(session, &saved.identifier),
+            key,
+            json!({ "identifier": saved.identifier, field: [saved.identifier.clone()] }),
+        )
+        .expect_err("a self reference is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{field}");
+        assert_eq!(error.field.as_deref(), Some(field), "{field}");
+    }
+
+    let read = read_issue(session, &saved.identifier);
+    assert!(
+        read.relations.is_empty(),
+        "no self relation row may be written"
+    );
 }

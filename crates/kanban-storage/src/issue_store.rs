@@ -103,6 +103,10 @@ impl SqliteIssueStore {
                 "description_patch must be a JSON object with find and replace",
             ));
         };
+        if merged == current {
+            drop(conn);
+            return Ok(merged);
+        }
         conn.execute(
             "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, &merged],

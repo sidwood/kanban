@@ -637,3 +637,52 @@ fn legacy_reassignment_moves_the_original_issue_state() {
     assert!(moved.state_history.last().unwrap().ended_at.is_none());
 }
 
+/// A description patch whose find and replace agree rewrites the
+/// description to itself: version, history and updated_at stand still.
+#[test]
+fn identity_description_patches_change_nothing() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let saved = save_issue(
+        session,
+        0,
+        "patch-create",
+        json!({
+            "project_id": 1,
+            "title": "Patched issue",
+            "description": "Preserved wording",
+            "state": "Active",
+        }),
+    );
+    let before = read_issue(session, &saved.identifier);
+
+    save_issue(
+        session,
+        before.version,
+        "patch-identity",
+        json!({
+            "identifier": saved.identifier,
+            "description_patch": "{\"find\":\"Preserved\",\"replace\":\"Preserved\"}",
+        }),
+    );
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(
+        after.version, before.version,
+        "a patch that rewrites the description to itself keeps the version"
+    );
+    assert_eq!(
+        after.updated_at, before.updated_at,
+        "an identity patch keeps updated_at"
+    );
+    assert_eq!(
+        after.state_history.len(),
+        before.state_history.len(),
+        "an identity patch writes no history"
+    );
+    assert_eq!(
+        after.description, before.description,
+        "an identity patch leaves the description byte-for-byte"
+    );
+}
+

@@ -424,15 +424,18 @@ fn same_stream(
     if stored.kind() != requested.kind() {
         return Ok(false);
     }
-    if stored.id().eq_ignore_ascii_case(requested.id()) {
-        return Ok(true);
+    // Only ticket identities resolve case-insensitively, through the
+    // issue lookups; every other kind matches its id exactly, so a
+    // case variant is a different stream rather than the same one.
+    if stored.kind() == TimelineEntityKind::Ticket.as_str() {
+        if stored.id().eq_ignore_ascii_case(requested.id()) {
+            return Ok(true);
+        }
+        if let Some((_, stored_id)) = targets.resolve_issue_reference(stored.id())? {
+            return Ok(stored_id.to_string() == requested.id());
+        }
     }
-    if stored.kind() == TimelineEntityKind::Ticket.as_str()
-        && let Some((_, stored_id)) = targets.resolve_issue_reference(stored.id())?
-    {
-        return Ok(stored_id.to_string() == requested.id());
-    }
-    Ok(false)
+    Ok(stored.id() == requested.id())
 }
 
 fn record_of(comment: &Comment) -> CommentRecord {
@@ -570,11 +573,12 @@ mod comments {
                 .iter()
                 .filter(|comment| {
                     comment.target().kind() == target.kind()
-                        && (comment.target().id().eq_ignore_ascii_case(target.id())
-                            || aliases
-                                .iter()
-                                .any(|alias| alias.eq_ignore_ascii_case(comment.target().id())))
                         && comment.id().value() > after
+                        && (comment.target().id() == target.id()
+                            || (target.kind() == TimelineEntityKind::Ticket.as_str()
+                                && aliases.iter().any(|alias| {
+                                    alias.eq_ignore_ascii_case(comment.target().id())
+                                })))
                 })
                 .map(|comment| {
                     let id = comment.id().value();
@@ -880,6 +884,55 @@ mod comments {
             .expect("the create applies");
 
         assert_eq!(response["target"]["id"], json!("kanban-main"));
+    }
+    #[test]
+    fn a_non_ticket_stream_matches_ids_exactly() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        let root = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-1" },
+                    "project_id": 1,
+                    "target": { "kind": "project", "id": "Alpha" },
+                    "text": "On Alpha",
+                "author": "tester",
+                }),
+            )
+            .expect("the create applies");
+        let root_id = root["id"].as_u64().unwrap();
+
+        let listed = core
+            .query(
+                "comment.list",
+                &json!({
+                    "target": { "kind": "project", "id": "alpha" },
+                    "limit": 10,
+                }),
+            )
+            .expect("the list serves");
+        assert_eq!(
+            listed["comments"].as_array().unwrap().len(),
+            0,
+            "an id differing only in case is another stream"
+        );
+
+        let cross = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-2" },
+                    "project_id": 1,
+                    "target": { "kind": "project", "id": "alpha" },
+                    "text": "Wrong stream",
+                "author": "tester",
+                    "parent_comment_id": root_id,
+                }),
+            )
+            .expect_err("a parent on an exact-id mismatch is refused");
+        assert_eq!(cross.code, ErrorCode::InvalidRequest);
+        assert_eq!(cross.field.as_deref(), Some("parent_comment_id"));
+        assert_eq!(store.snapshot().len(), 1, "only the Alpha row exists");
     }
 
     #[test]

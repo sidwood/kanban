@@ -1039,3 +1039,143 @@ fn comment_revisions_keep_the_stored_body_verbatim() {
         "every revision row keeps its trailing newline"
     );
 }
+
+#[test]
+fn non_ticket_targets_match_ids_exactly() {
+    let session = session();
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "exact-id-root"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "Alpha" },
+                "text": "On Alpha",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = root["id"].as_u64().unwrap();
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "project", "id": "alpha" },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "a case-variant id is a different stream"
+    );
+
+    let cross = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "exact-id-cross"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "alpha" },
+                "text": "Wrong stream",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .expect_err("a parent on another id is refused");
+    assert_eq!(cross.code, ErrorCode::InvalidRequest);
+    assert_eq!(cross.field.as_deref(), Some("parent_comment_id"));
+}
+
+#[test]
+fn resolve_edit_and_unresolve_chain_versions_and_revisions() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "chain-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "chain-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "First",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+
+    let resolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "chain-on"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect("the resolve applies");
+    assert_eq!(resolved["version"], json!(2));
+
+    let edited = session
+        .call(
+            "comment.edit",
+            &json!({
+                "mutation": mutation(2, "chain-edit"),
+                "comment_id": comment_id,
+                "text": "Second",
+            }),
+        )
+        .expect("the edit applies at the resolve-bumped version");
+    assert_eq!(edited["version"], json!(3));
+
+    let unresolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(3, "chain-off"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve applies at the edit-bumped version");
+    assert_eq!(unresolved["version"], json!(4));
+
+    let revisions = session
+        .call("comment.revisions", &json!({ "comment_id": comment_id }))
+        .unwrap();
+    assert_eq!(
+        revisions["revisions"].as_array().unwrap().len(),
+        2,
+        "only the edit appended a revision"
+    );
+    assert_eq!(revisions["comment"]["text"], json!("Second"));
+    assert_eq!(revisions["comment"]["version"], json!(4));
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(4));
+    assert!(listed["comments"][0]["resolved_at"].is_null());
+
+    let stale = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(2, "chain-stale"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect_err("a stale optimistic version is refused");
+    assert_eq!(stale.code, ErrorCode::StaleVersion);
+    assert_eq!(stale.current_version, Some(4));
+}

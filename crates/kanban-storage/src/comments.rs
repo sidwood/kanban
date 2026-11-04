@@ -234,21 +234,47 @@ impl CommentStore for SqliteCommentStore {
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         let conn = self.lock();
         let after = cursor.unwrap_or(0) as i64;
-        // Comments written before targets resolved may carry any
-        // address form, in any letter case, that resolves to this
-        // target; every stored form of one entity lists as one stream.
-        let mut ids = vec![target.id().to_lowercase()];
-        for alias in aliases {
-            let lowered = alias.to_lowercase();
-            if !ids.contains(&lowered) {
-                ids.push(lowered);
+        let fetch = limit.saturating_add(1) as i64;
+        // Ticket targets resolve through the issue store, so legacy
+        // rows may carry the issue key in any letter case; every
+        // stored form of one issue lists together. Other entity
+        // kinds address rows by their exact id, as they always have.
+        let (sql, binds) = if target.kind() == TimelineEntityKind::Ticket.as_str() {
+            let mut ids = vec![target.id().to_lowercase()];
+            for alias in aliases {
+                let lowered = alias.to_lowercase();
+                if !ids.contains(&lowered) {
+                    ids.push(lowered);
+                }
             }
-        }
-        let placeholders = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT c.id, c.version, c.created_at,
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT c.id, c.version, c.created_at,
+                        (SELECT text FROM comment_revisions
+                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                        (SELECT recorded_at FROM comment_revisions
+                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                        COALESCE(c.author, ''),
+                        c.parent_comment_id,
+                        c.resolved_at
+                 FROM comments AS c
+                 WHERE c.entity_kind = ? AND c.id > ?
+                   AND LOWER(c.entity_id) IN ({placeholders})
+                 ORDER BY c.id ASC
+                 LIMIT ?",
+            );
+            let mut binds: Vec<rusqlite::types::Value> = Vec::with_capacity(ids.len() + 3);
+            binds.push(rusqlite::types::Value::Text(target.kind().to_owned()));
+            binds.push(rusqlite::types::Value::Integer(after));
+            for id in &ids {
+                binds.push(rusqlite::types::Value::Text(id.clone()));
+            }
+            binds.push(rusqlite::types::Value::Integer(fetch));
+            (sql, binds)
+        } else {
+            let sql = "SELECT c.id, c.version, c.created_at,
                     (SELECT text FROM comment_revisions
                      WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                     (SELECT recorded_at FROM comment_revisions
@@ -257,22 +283,20 @@ impl CommentStore for SqliteCommentStore {
                     c.parent_comment_id,
                     c.resolved_at
              FROM comments AS c
-             WHERE c.entity_kind = ? AND c.id > ?
-               AND LOWER(c.entity_id) IN ({placeholders})
+             WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
              ORDER BY c.id ASC
-             LIMIT ?",
-        );
+             LIMIT ?4";
+            let binds = vec![
+                rusqlite::types::Value::Text(target.kind().to_owned()),
+                rusqlite::types::Value::Text(target.id().to_owned()),
+                rusqlite::types::Value::Integer(after),
+                rusqlite::types::Value::Integer(fetch),
+            ];
+            (sql.to_owned(), binds)
+        };
         let mut statement = conn
-            .prepare(&sql)
+            .prepare(sql.as_str())
             .map_err(|error| ApiError::internal(&error.to_string()))?;
-        let fetch = limit.saturating_add(1) as i64;
-        let mut binds: Vec<rusqlite::types::Value> = Vec::with_capacity(ids.len() + 3);
-        binds.push(rusqlite::types::Value::Text(target.kind().to_owned()));
-        binds.push(rusqlite::types::Value::Integer(after));
-        for id in &ids {
-            binds.push(rusqlite::types::Value::Text(id.clone()));
-        }
-        binds.push(rusqlite::types::Value::Integer(fetch));
         let rows = statement
             .query_map(rusqlite::params_from_iter(binds.iter()), |row| {
                 let id: i64 = row.get(0)?;
@@ -637,6 +661,45 @@ mod revision_store {
             .expect_err("the unknown Comment is refused");
 
         assert_eq!(error.code, ErrorCode::NotFound);
+    }
+
+    fn project_target(id: &str) -> CommentTarget {
+        CommentTarget::new("project", id).expect("the target validates")
+    }
+
+    #[test]
+    fn non_ticket_streams_list_by_exact_id() {
+        let (_dir, _database, store) = store();
+        store
+            .create(
+                1,
+                &project_target("Alpha"),
+                &text("on Alpha"),
+                "tester",
+                None,
+            )
+            .expect("the Alpha comment lands");
+        store
+            .create(
+                1,
+                &project_target("alpha"),
+                &text("on alpha"),
+                "tester",
+                None,
+            )
+            .expect("the alpha comment lands");
+
+        let (upper, _) = store
+            .list_for_target(&project_target("Alpha"), &[], 10, None)
+            .expect("the Alpha list serves");
+        assert_eq!(upper.len(), 1, "only the exact-id row lists");
+        assert_eq!(upper[0].body, "on Alpha");
+
+        let (lower, _) = store
+            .list_for_target(&project_target("alpha"), &[], 10, None)
+            .expect("the alpha list serves");
+        assert_eq!(lower.len(), 1, "only the exact-id row lists");
+        assert_eq!(lower[0].body, "on alpha");
     }
 
     #[test]

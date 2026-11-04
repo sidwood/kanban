@@ -1297,6 +1297,12 @@ pub struct Ticket {
     profile: Option<ProfileName>,
     pin: Option<u64>,
     version: u64,
+    /// Whether the last applied change explicitly assigned this
+    /// Ticket's priority, as `prioritise` does. A change that merely
+    /// carries the stored priority along leaves the flag clear, so
+    /// persistence can tell an explicit assignment from an unchanged
+    /// value even when both hold the same priority.
+    priority_reassigned: bool,
 }
 
 impl Ticket {
@@ -1322,6 +1328,7 @@ impl Ticket {
             profile: None,
             pin: None,
             version: 1,
+            priority_reassigned: false,
         }
     }
 
@@ -1350,6 +1357,7 @@ impl Ticket {
             profile: None,
             pin: None,
             version: 1,
+            priority_reassigned: false,
         }
     }
 
@@ -1378,6 +1386,7 @@ impl Ticket {
             profile,
             pin,
             version,
+            priority_reassigned: false,
         }
     }
 
@@ -1411,6 +1420,15 @@ impl Ticket {
     /// The Ticket's priority (DR-LC-12).
     pub fn priority(&self) -> Priority {
         self.priority
+    }
+
+    /// Whether the last applied change explicitly assigned this
+    /// Ticket's priority, as [`Ticket::prioritise`] does. A stored
+    /// priority the last change merely carried along answers false,
+    /// so persistence can tell an explicit assignment from an
+    /// unchanged value even when both hold the same priority.
+    pub fn priority_reassigned(&self) -> bool {
+        self.priority_reassigned
     }
 
     /// The lifecycle state (DR-LC-01).
@@ -1671,6 +1689,7 @@ impl Ticket {
             return Err(TicketError::Terminal);
         }
         self.priority = priority;
+        self.priority_reassigned = true;
         self.version += 1;
         Ok(())
     }

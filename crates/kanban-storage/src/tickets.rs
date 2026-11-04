@@ -299,7 +299,11 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
     // priority with it, the same way the migration maps stored rows;
     // one that keeps the priority leaves whatever the issue model
     // last held, so an operator's own priority edit survives an
-    // unrelated legacy save.
+    // unrelated legacy save. An explicit legacy assignment — the
+    // aggregate moved through `prioritise` — carries the Linear
+    // priority with it even onto the bucket the row already holds,
+    // because No priority (0) and a real normal (3) share the legacy
+    // normal bucket while meaning different priorities.
     let prior_priority: Option<String> = span
         .query_row(
             "SELECT priority FROM tickets WHERE id = ?1 AND version = ?2",
@@ -308,7 +312,9 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
         )
         .optional()
         .map_err(internal)?;
-    let changed = if prior_priority.as_deref() == Some(ticket.priority().wire_name()) {
+    let priority_carried_unchanged = !ticket.priority_reassigned()
+        && prior_priority.as_deref() == Some(ticket.priority().wire_name());
+    let changed = if priority_carried_unchanged {
         span.execute(
             "UPDATE tickets
              SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,

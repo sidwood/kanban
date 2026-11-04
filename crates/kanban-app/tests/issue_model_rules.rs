@@ -2772,6 +2772,90 @@ fn relation_lists_take_ticket_ids_and_name_their_field() {
     }
 }
 #[test]
+fn an_explicit_legacy_priority_lands_after_no_priority() {
+    let h = legacy_harness();
+    let created = create_legacy_task_with_priority(
+        &h.core,
+        "explicit-priority-create",
+        "Explicitly prioritised task",
+        "low",
+    );
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+
+    // No priority keeps the legacy normal bucket on the board while
+    // the issue itself carries 0.
+    let cleared = read_issue(&h.session, &identifier);
+    save_issue(
+        &h.session,
+        cleared.version,
+        "explicit-priority-clear",
+        json!({ "identifier": identifier, "priority": 0 }),
+    );
+    assert_eq!(read_issue(&h.session, &identifier).priority, 0);
+    assert!(board_tickets(&h, json!({ "priorities": ["normal"] })).contains(&ticket_id));
+
+    // An unrelated legacy edit preserves the operator's No priority.
+    let edited = read_issue(&h.session, &identifier);
+    h.core
+        .command(
+            "ticket.edit",
+            &json!({
+                "mutation": mutation(edited.version, "explicit-priority-edit"),
+                "ticket_id": ticket_id,
+                "title": "Edited beside No priority",
+            }),
+        )
+        .expect("the legacy edit lands");
+    assert_eq!(
+        read_issue(&h.session, &identifier).priority,
+        0,
+        "an unrelated legacy edit preserves No priority"
+    );
+
+    // An explicit legacy priority lands on the issue model with the
+    // migration's mapping — including normal onto the normal bucket
+    // the row already occupies after No priority.
+    for (step, (legacy, mapped, bucket)) in [
+        ("normal", 3u8, "normal"),
+        ("urgent", 1, "urgent"),
+        ("high", 2, "high"),
+        ("low", 4, "low"),
+        ("normal", 3, "normal"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let before = read_issue(&h.session, &identifier);
+        h.core
+            .command(
+                "ticket.prioritise",
+                &json!({
+                    "mutation": mutation(before.version, format!("explicit-priority-{step}-{legacy}")),
+                    "ticket_id": ticket_id,
+                    "priority": legacy,
+                }),
+            )
+            .expect("the legacy prioritise lands");
+        let after = read_issue(&h.session, &identifier);
+        assert_eq!(
+            after.priority, mapped,
+            "an explicit legacy {legacy} moves the issue priority"
+        );
+        assert_eq!(after.version, before.version + 1,);
+        assert_eq!(
+            after.state_history.len(),
+            before.state_history.len(),
+            "a priority change rewrites no history"
+        );
+        assert!(
+            board_tickets(&h, json!({ "priorities": [bucket] })).contains(&ticket_id),
+            "the {bucket} filter holds the ticket"
+        );
+    }
+}
+
+#[test]
 fn a_scheduled_occurrence_opens_its_ready_state_row() {
     use kanban_app::recurrence::RecurrenceStore;
     use kanban_domain::recurrence::RecurrenceAdvance;

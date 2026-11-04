@@ -1504,6 +1504,18 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
         "filter-completed",
         json!({ "project_id": 1, "title": "Already finished", "state": "Done" }),
     );
+    let unstarted = save_issue(
+        &session,
+        0,
+        "filter-unstarted",
+        json!({ "project_id": 1, "title": "Waiting to begin", "state": "Scheduled" }),
+    );
+    let canceled = save_issue(
+        &session,
+        0,
+        "filter-canceled",
+        json!({ "project_id": 1, "title": "Called off", "state": "Cancelled" }),
+    );
 
     let identifiers = |payload: serde_json::Value| -> Vec<String> {
         session
@@ -1537,6 +1549,16 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
         "the backlog type lists the Draft issue"
     );
     assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "unstarted" })),
+        vec![unstarted.identifier.clone()],
+        "the unstarted type lists the Scheduled issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "canceled" })),
+        vec![canceled.identifier.clone()],
+        "the canceled type lists the Cancelled issue"
+    );
+    assert_eq!(
         identifiers(json!({ "project_id": 1, "state": "duplicate" })),
         Vec::<String>::new(),
         "a type no issue holds lists nothing"
@@ -1559,6 +1581,8 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
     assert_eq!(
         identifiers(json!({ "project_id": 1, "updated_since": "2000-01-01T00:00:00Z" })),
         vec![
+            canceled.identifier.clone(),
+            unstarted.identifier.clone(),
             completed.identifier.clone(),
             started.identifier.clone(),
             backlog.identifier.clone(),

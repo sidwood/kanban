@@ -98,7 +98,7 @@ fn capability_enforcement_scopes_comments_before_replay() {
         )
         .unwrap();
     let request = json!({"mutation":common::mutation(0,"agent-comment"),"project_id":1,
-        "target":{"kind":"ticket","id":first.to_string()},"text":"Implementation evidence is ready."});
+        "target":{"kind":"ticket","id":first.to_string()},"text":"Implementation evidence is ready.","author":"agent"});
     let written = h
         .core
         .agent_command(cap, "comment.create", &request)
@@ -436,7 +436,7 @@ fn capability_enforcement_rechecks_expiry_inside_the_write_span() {
             Arc::new(kanban_storage::SqliteRunStore::new(&h.database)),
         ),
     ));
-    let input = json!({"mutation":common::mutation(0,"expiry-race"),"project_id":1,"target":{"kind":"ticket","id":ticket.to_string()},"text":"No late write"});
+    let input = json!({"mutation":common::mutation(0,"expiry-race"),"project_id":1,"target":{"kind":"ticket","id":ticket.to_string()},"text":"No late write","author":"agent"});
     assert!(
         h.core.agent_command(cap, "comment.create", &input).is_err(),
         "expiry between initial check and mutation must prevent the write"

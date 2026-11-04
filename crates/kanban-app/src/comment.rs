@@ -177,6 +177,7 @@ impl CommandHandler for CreateComment {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_stored_text(&request.text)?;
+        let author = require_author(&request.author)?;
         let resolved = resolve_target(self.targets.as_ref(), &request.target)?;
         let parent_comment_id = validate_parent(
             self.store.as_ref(),
@@ -188,7 +189,7 @@ impl CommandHandler for CreateComment {
             project.id().value(),
             &resolved.target,
             &text,
-            &request.author,
+            author,
             parent_comment_id,
         )?;
         announce(effects, LiveEventName::CommentCreated, &comment);
@@ -308,6 +309,18 @@ fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
     store
         .find(CommentId::new(id))?
         .ok_or_else(|| ApiError::not_found(&format!("comment {id}")))
+}
+
+/// Every comment carries the identity it speaks for. The core holds
+/// no operator identity to default from, so the caller must name one.
+fn require_author(author: &str) -> Result<&str, ApiError> {
+    if author.trim().is_empty() {
+        return Err(ApiError::invalid_request_field(
+            "author",
+            "author is required; the core holds no operator identity to default from",
+        ));
+    }
+    Ok(author)
 }
 
 fn parse_stored_text(raw: &str) -> Result<CommentText, ApiError> {
@@ -724,6 +737,7 @@ mod comments {
             "project_id": project_id,
             "target": target(),
             "text": text,
+            "author": "tester",
         })
     }
 
@@ -781,6 +795,7 @@ mod comments {
                     "project_id": 1,
                     "target": { "kind": "ticket", "id": "core-7" },
                     "text": "Keyed",
+                "author": "tester",
                 }),
             )
             .expect("the create applies");
@@ -817,6 +832,7 @@ mod comments {
                     "project_id": 1,
                     "target": { "kind": "ticket", "id": "kan-t11" },
                     "text": "Ghost",
+                "author": "tester",
                 }),
             )
             .expect_err("a target no issue answers to is refused");
@@ -838,6 +854,7 @@ mod comments {
                     "project_id": 1,
                     "target": { "kind": "project", "id": "kanban-main" },
                     "text": "On the project",
+                "author": "tester",
                 }),
             )
             .expect("the create applies");
@@ -983,6 +1000,7 @@ mod comments {
                     "project_id": 1,
                     "target": target(),
                     "text": "Reply",
+                "author": "tester",
                     "parent_comment_id": root_id,
                 }),
             )
@@ -996,6 +1014,7 @@ mod comments {
                 "project_id": 1,
                 "target": { "kind": "ticket", "id": "12" },
                 "text": "Elsewhere",
+                "author": "tester",
             }),
         )
         .expect("the other-stream create applies");
@@ -1008,6 +1027,7 @@ mod comments {
                     "project_id": 1,
                     "target": { "kind": "ticket", "id": "12" },
                     "text": "Wrong stream",
+                "author": "tester",
                     "parent_comment_id": root_id,
                 }),
             )
@@ -1023,6 +1043,7 @@ mod comments {
                     "project_id": 1,
                     "target": target(),
                     "text": "Reply to the reply",
+                "author": "tester",
                     "parent_comment_id": reply_id,
                 }),
             )
@@ -1038,11 +1059,36 @@ mod comments {
                     "project_id": 1,
                     "target": target(),
                     "text": "Ghost parent",
+                "author": "tester",
                     "parent_comment_id": 99,
                 }),
             )
             .expect_err("an unknown parent is refused");
         assert_eq!(ghost.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn blank_author_is_refused_without_recording_anything() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        for author in [None, Some(""), Some("   ")] {
+            let mut payload = create("First thought", "key-1", 0);
+            match author {
+                None => {
+                    payload
+                        .as_object_mut()
+                        .expect("the payload is an object")
+                        .remove("author");
+                }
+                Some(author) => payload["author"] = json!(author),
+            }
+            let error = core
+                .command("comment.create", &payload)
+                .expect_err("a blank author is refused");
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.field.as_deref(), Some("author"));
+        }
+        assert!(store.snapshot().is_empty(), "no row may be written");
     }
 
     #[test]

@@ -422,6 +422,7 @@ mod contract {
                 "project_id": 1,
                 "target": { "kind": "ticket", "id": "10" },
                 "text": "One scope",
+                "author": "operator",
             }),
         )
         .expect("the comment applies");

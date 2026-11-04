@@ -2934,6 +2934,7 @@ mod tests {
                         "project_id": 1,
                         "target": { "kind": "ticket", "id": ticket.to_string() },
                         "text": "unrelated to any Coordinator wake",
+                        "author": "operator",
                     }),
                 );
             }),

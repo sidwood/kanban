@@ -870,3 +870,53 @@ fn replies_nest_one_level() {
         "the refused second-level reply stored nothing"
     );
 }
+
+#[test]
+fn comment_author_is_required_and_kept() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "author-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+
+    for (label, author) in [
+        ("absent", None),
+        ("empty", Some("")),
+        ("blank", Some("   ")),
+    ] {
+        let mut payload = json!({
+            "mutation": mutation(0, &format!("author-{label}")),
+            "project_id": 1,
+            "target": target,
+            "text": "Note",
+        });
+        if let Some(author) = author {
+            payload["author"] = json!(author);
+        }
+        let error = session
+            .call("comment.create", &payload)
+            .expect_err("a blank author is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} author");
+        assert_eq!(error.field.as_deref(), Some("author"), "{label} author");
+    }
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "author-set"),
+                "project_id": 1,
+                "target": target,
+                "text": "Note",
+                "author": "lin",
+            }),
+        )
+        .expect("a named author is accepted");
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["author"], json!("lin"));
+}

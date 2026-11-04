@@ -2070,6 +2070,7 @@ mod tests {
                 "project_id": 1,
                 "target": { "kind": "ticket", "id": "1" },
                 "text": "One timeline",
+                "author": "operator",
             }),
         );
         client.command(

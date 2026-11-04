@@ -567,6 +567,7 @@ fn acceptance_comment_tools_round_trip() {
                 "project_id": 1,
                 "target": { "kind": "ticket", "id": saved.ticket_id.to_string() },
                 "text": "Ship report",
+                "author": "lin",
             }),
         )
         .unwrap();
@@ -601,7 +602,7 @@ fn acceptance_comment_tools_round_trip() {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0]["id"], json!(comment_id));
     assert_eq!(comments[0]["body"], "Ship report v2");
-    assert_eq!(comments[0]["author"], "");
+    assert_eq!(comments[0]["author"], "lin");
     assert!(comments[0]["created_at"].is_string());
     assert!(comments[0]["edited_at"].is_string());
 }

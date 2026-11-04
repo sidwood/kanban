@@ -251,6 +251,28 @@ function coverStory(story: string): void {
   })
 }
 
+watch(
+  () => ticketDialog.editor,
+  (now, before) => {
+    if (now === null && before?.story != null && before.specId !== null) {
+      void readCoverageAgain(before.specId)
+    }
+  },
+)
+
+async function readCoverageAgain(specId: number): Promise<void> {
+  if (!transport || matrix.pickedSpecId !== specId) return
+  const claim = issueCommand(scope)
+  const specClaim = issueCommand(specScope)
+  await proposalCoverage.load(
+    transport,
+    specId,
+    graphs.proposals.map((entry) => entry.spec_version),
+  )
+  if (!scopeHolds(scope, claim) || !scopeHolds(specScope, specClaim)) return
+  await matrix.read(transport, specId)
+}
+
 // A saved schedule changes the Ticket the editors read, so the
 // Project's Tickets are read again.
 async function scheduleSaved(): Promise<void> {

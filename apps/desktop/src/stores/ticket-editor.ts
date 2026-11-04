@@ -176,6 +176,27 @@ export function ticketCreateRequestOf(
   return request
 }
 
+const TICKET_PRIORITY_OF_LINEAR: Readonly<Record<number, TicketPriority>> = {
+  1: 'urgent',
+  2: 'high',
+  4: 'low',
+}
+
+export function storyCoverDraft(
+  specId: number,
+  story: string,
+  draft: IssueCreateDraft,
+): TicketDraft {
+  return {
+    ...blankTicketDraft(),
+    kind: 'implementation',
+    priority: TICKET_PRIORITY_OF_LINEAR[draft.priority] ?? 'normal',
+    specId,
+    slice: draft.title,
+    criteria: [{ outcome: draft.description, stories: story }],
+  }
+}
+
 export const useTicketEditorStore = defineStore('ticket-editor', {
   state: () => ({
     tickets: [] as TicketRecord[],

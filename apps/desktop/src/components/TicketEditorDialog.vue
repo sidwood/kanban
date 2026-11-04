@@ -2,7 +2,9 @@
 // The one Ticket editor: a kind-adaptive dialog the operator reaches
 // from New Ticket, from a Spec's uncovered Story, and from the
 // drawer's Edit, preset to the kind that entry point means for edits.
-// Creating and editing both use the Linear issue model via `issue.save`.
+// Creating and editing both use the Linear issue model via `issue.save`,
+// except that covering an uncovered Story creates through `ticket.create`
+// so the Spec and the criterion claiming the Story persist.
 import { computed, inject, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
@@ -14,6 +16,7 @@ import type { TicketEditorRequest } from '../stores/ticket-dialog'
 import {
   LINEAR_PRIORITIES,
   blankIssueCreateDraft,
+  storyCoverDraft,
   useTicketEditorStore,
 } from '../stores/ticket-editor'
 import { issueDisplayKey } from '../views/board-card'
@@ -197,12 +200,20 @@ async function submitCreate(): Promise<void> {
   }
   readError.value = null
   flushLocalsToDraft()
-  const landed = await editor.createIssue(
-    transport,
-    projectId.value,
-    issueDraft.value,
-    dialog.editor?.parentTicketId ?? null,
-  )
+  const request = dialog.editor
+  const landed =
+    request?.specId != null && request.story !== null
+      ? await editor.create(
+          transport,
+          projectId.value,
+          storyCoverDraft(request.specId, request.story, issueDraft.value),
+        )
+      : await editor.createIssue(
+          transport,
+          projectId.value,
+          issueDraft.value,
+          request?.parentTicketId ?? null,
+        )
   if (landed) dialog.closeEditor()
 }
 

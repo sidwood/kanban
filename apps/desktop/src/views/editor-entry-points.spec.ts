@@ -7,7 +7,14 @@ import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Pinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { ProjectListResponse, SpecCoverageMatrixResponse } from '@kanban/contracts'
+import { defineComponent, h } from 'vue'
+import type {
+  ProjectListResponse,
+  SpecCoverageMatrixResponse,
+  TicketCreateRequest,
+  TicketGraphListResponse,
+  TicketRecord,
+} from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -15,6 +22,7 @@ import { PALETTE_NAVIGATION } from '../stores/palette-navigation'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import { harness, ticket } from '../test/shell-harness'
 import App from '../App.vue'
+import TicketEditorDialog from '../components/TicketEditorDialog.vue'
 import PlanningView from './PlanningView.vue'
 
 const mounted: VueWrapper[] = []
@@ -201,5 +209,124 @@ describe('an uncovered Story', () => {
       kindLocked: true,
       story: 'CORE-S1-US3',
     })
+  })
+})
+
+// A core that keeps what `ticket.create` mints and answers the
+// coverage matrix from the criteria its Implementations hold, so a
+// read after the create reports what the create actually claimed.
+function coveringCore() {
+  const tickets: TicketRecord[] = []
+  const commands: Array<{ name: string; request: unknown }> = []
+  const stories = ['CORE-S1-US1', 'CORE-S1-US3']
+  const transport = {
+    query: (name: string) => {
+      if (name === 'spec.coverage.matrix') {
+        return Promise.resolve({
+          spec_id: 1,
+          version: 2,
+          stories: stories.map((story) => ({
+            story,
+            claims: tickets.flatMap((held) =>
+              held.kind === 'implementation' && held.spec_id === 1
+                ? held.criteria
+                    .filter((criterion) => criterion.stories.includes(story))
+                    .map((criterion) => ({
+                      ticket_id: held.id,
+                      ticket_number: held.number,
+                      outcome: criterion.outcome,
+                    }))
+                : [],
+            ),
+          })),
+        } satisfies SpecCoverageMatrixResponse)
+      }
+      if (name === 'ticket.list') return Promise.resolve({ tickets: [...tickets] })
+      if (name === 'issue.list_labels') return Promise.resolve({ labels: [] })
+      if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      if (name === 'ticket.graph.list') {
+        return Promise.resolve({
+          proposals: [
+            { id: 9, spec_id: 1, spec_version: 2, state: 'proposed', tickets: [], edges: [], version: 1 },
+          ],
+        } satisfies TicketGraphListResponse)
+      }
+      return planningHarness().query(name as never, {})
+    },
+    command: (name: string, request: unknown) => {
+      commands.push({ name, request })
+      if (name !== 'ticket.create') return Promise.resolve({})
+      const create = request as TicketCreateRequest
+      const created = ticket({
+        id: 40 + tickets.length,
+        project_id: create.project_id,
+        number: 3 + tickets.length,
+        kind: create.kind,
+        priority: create.priority,
+        state: 'draft',
+        spec_id: create.spec_id ?? null,
+        title: null,
+        slice: create.slice ?? null,
+        criteria: create.criteria ?? [],
+        subtype: null,
+        mode: null,
+        completion: [],
+        version: 1,
+      })
+      tickets.push(created)
+      return Promise.resolve(created)
+    },
+    subscribe: () => () => undefined,
+    onConnectionChange: () => () => undefined,
+  } as unknown as ShellTransport
+  return { transport, commands, tickets }
+}
+
+describe('covering a Story from planning', () => {
+  it('creates the Implementation on the Spec with the Story claimed, and the matrix reads it covered', async () => {
+    const core = coveringCore()
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    await router.push('/planning')
+    await router.isReady()
+    const surface = defineComponent({
+      render: () => [h(PlanningView), h(TicketEditorDialog)],
+    })
+    const wrapper = mount(surface, {
+      attachTo: document.body,
+      global: {
+        plugins: [pinia, router],
+        provide: { [kanbanTransportKey as symbol]: core.transport },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).toContain('CORE-S1-US3')
+
+    await wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Registration reports its gaps')
+    await wrapper.find('[data-testid="ticket-priority"]').setValue('2')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create'])
+    expect(core.commands[0]!.request).toMatchObject({
+      project_id: 4,
+      kind: 'implementation',
+      priority: 'high',
+      spec_id: 1,
+      slice: 'Registration reports its gaps',
+      criteria: [{ outcome: 'Covers story CORE-S1-US3.', stories: ['CORE-S1-US3'] }],
+    })
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    const covering = core.tickets[0]!
+    expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US3"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="coverage-cover-CORE-S1-US3"]').exists()).toBe(false)
+    expect(
+      wrapper.find(`[data-testid="coverage-claim-CORE-S1-US3-${covering.number}"]`).text(),
+    ).toContain('Covers story CORE-S1-US3.')
+    expect(wrapper.find('[data-testid="graph-blocking-9"]').text()).not.toContain('CORE-S1-US3')
   })
 })

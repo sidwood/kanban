@@ -2360,3 +2360,178 @@ fn save_issue_accepts_a_state_type_by_board_order() {
         "a reordered board changes the type's first state, and the type matches ignoring case"
     );
 }
+
+#[test]
+fn create_label_refuses_a_blank_group() {
+    let h = rules_harness();
+    let refusal = h
+        .session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "blank-group"),
+                "project_id": 1,
+                "name": "surgical",
+                "color": "#123456",
+                "group": "  ",
+            }),
+        )
+        .expect_err("a blank group is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("group"));
+}
+
+#[test]
+fn updated_since_accepts_a_plain_calendar_date() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "since-create",
+        json!({ "project_id": 1, "title": "Windowed issue" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET updated_at = '2020-01-01T00:00:00.123Z' WHERE id = ?1",
+            [saved.ticket_id as i64],
+        )
+        .unwrap();
+
+    let listed = |since: &str| -> usize {
+        session
+            .call(
+                "issue.list",
+                &json!({ "project_id": 1, "updated_since": since }),
+            )
+            .expect("the listing serves")["issues"]
+            .as_array()
+            .expect("an issues array")
+            .len()
+    };
+    assert_eq!(
+        listed("2020-01-01"),
+        1,
+        "a plain date starts at that day, UTC, so the issue counts"
+    );
+    assert_eq!(listed("2020-01-02"), 0, "the day after excludes the issue");
+    for refused in ["2020-13-01", "2026-1-5", "2020-01-01T00:00:00.123+99:00"] {
+        let error = session
+            .call(
+                "issue.list",
+                &json!({ "project_id": 1, "updated_since": refused }),
+            )
+            .expect_err("a malformed window is refused");
+        assert_eq!(
+            (error.code, error.field.as_deref()),
+            (ErrorCode::InvalidRequest, Some("updated_since")),
+            "{refused} is refused with the field named"
+        );
+    }
+}
+
+#[test]
+fn relation_lists_take_ticket_ids_and_name_their_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = save_issue(
+        session,
+        0,
+        "relations-first",
+        json!({ "project_id": 1, "title": "Relating issue" }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "relations-second",
+        json!({ "project_id": 1, "title": "Related issue" }),
+    );
+    let second_id = second.ticket_id.to_string();
+    let identifier = first.identifier.clone();
+
+    save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "relations-block",
+        json!({ "identifier": identifier, "add_blocks": [second_id.clone()] }),
+    );
+    let blocked = read_issue(session, &identifier);
+    assert_eq!(
+        blocked
+            .relations
+            .iter()
+            .filter(|relation| relation.kind == "blocks")
+            .count(),
+        1,
+        "a bare ticket id addresses a relation target"
+    );
+
+    save_issue(
+        session,
+        blocked.version,
+        "relations-blocked-by",
+        json!({ "identifier": identifier, "add_blocked_by": [second_id.clone()] }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "relations-related",
+        json!({ "identifier": identifier, "add_related": [second_id.clone()] }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "relations-remove-block",
+        json!({ "identifier": identifier, "remove_blocks": [second_id.clone()] }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "relations-remove-blocked-by",
+        json!({ "identifier": identifier, "remove_blocked_by": [second_id.clone()] }),
+    );
+    let last = save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "relations-remove-related",
+        json!({ "identifier": identifier, "remove_related": [second_id] }),
+    );
+    let _ = last;
+    assert_eq!(
+        read_issue(session, &identifier).relations,
+        Vec::<kanban_dto::IssueRelationRecord>::new(),
+        "every relation added by id is removed by id"
+    );
+
+    for (field, payload) in [
+        ("add_blocks", json!({ "add_blocks": ["NOPE-9"] })),
+        ("remove_blocks", json!({ "remove_blocks": ["NOPE-9"] })),
+        ("add_related", json!({ "add_related": ["NOPE-9"] })),
+        ("remove_related", json!({ "remove_related": ["NOPE-9"] })),
+        ("add_blocked_by", json!({ "add_blocked_by": ["NOPE-9"] })),
+        (
+            "remove_blocked_by",
+            json!({ "remove_blocked_by": ["NOPE-9"] }),
+        ),
+    ] {
+        let mut fields = json!({ "identifier": identifier });
+        if let Some(object) = fields.as_object_mut() {
+            for (key, value) in payload.as_object().expect("an object") {
+                object.insert(key.clone(), value.clone());
+            }
+        }
+        let refusal = try_save(
+            session,
+            read_issue(session, &identifier).version,
+            &format!("relations-refusal-{field}"),
+            fields,
+        )
+        .expect_err("an unknown relation target is refused");
+        assert_eq!(
+            (refusal.code, refusal.field.as_deref()),
+            (ErrorCode::NotFound, Some(field)),
+            "the refusal names the list it came from"
+        );
+    }
+}

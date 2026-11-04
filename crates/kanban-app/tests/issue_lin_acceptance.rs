@@ -2430,3 +2430,109 @@ fn save_issue_schema_documents_the_description_patch_object() {
         "the published schema names the patch fields"
     );
 }
+
+/// The second-project session with a Spec seated in project 1, so a
+/// non-ticket target with a real owner exists to be misaddressed.
+fn session_with_second_project_and_spec()
+-> (tempfile::TempDir, kanban_storage::Database, OperatorSession) {
+    let (dir, session) = session_with_second_project();
+    let database = kanban_storage::Database::open(&dir.path().join("kanban.sqlite"))
+        .expect("the harness database reopens");
+    {
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO specs (id, project_id, number, execution, plan_id, version)
+             VALUES (1, 1, 1, 'planned', NULL, 1)",
+            [],
+        )
+        .expect("the fixture Spec lands");
+        conn.execute(
+            "INSERT INTO spec_versions (
+                 spec_id, number, state, name, short_description, problem_statement,
+                 solution, user_stories, implementation_decisions, testing_decisions,
+                 out_of_scope, further_notes
+             ) VALUES (1, 1, 'approved', 'Login PRD', 'Short scope', 'Build login',
+                       'As a user', 'Use OAuth', 'Integration tests', 'Nothing',
+                       'Nothing more', 'None')",
+            [],
+        )
+        .expect("the fixture Spec version lands");
+    }
+    (dir, database, session)
+}
+
+#[test]
+fn comment_targets_outside_the_issue_model_belong_to_their_project() {
+    let (dir, _database, session) = session_with_second_project_and_spec();
+    let _ = dir;
+
+    // The seeded Spec belongs to project 1; a comment on it under
+    // project 2 is refused, exactly as an issue target already is.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "spec-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "spec", "id": "1" },
+                "text": "A comment on another project's spec",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign non-ticket target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    // The project target itself is its own owner: project 2 carries
+    // comments on project 2, and only on project 2.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "project-ownership-refused",
+                },
+                "project_id": 1,
+                "target": { "kind": "project", "id": "2" },
+                "text": "A comment addressed to another project",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign project target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "project-ownership-kept",
+                },
+                "project_id": 2,
+                "target": { "kind": "project", "id": "2" },
+                "text": "A comment on its own project",
+                "author": "operator",
+            }),
+        )
+        .expect("a comment on the owning project lands");
+    assert_eq!(own["project_id"], json!(2));
+}
+
+#[test]
+fn listing_comments_refuses_a_missing_non_ticket_target() {
+    let (dir, _database, session) = session_with_second_project_and_spec();
+    let _ = dir;
+    let refusal = session
+        .call(
+            "comment.list",
+            &json!({ "target": { "kind": "spec", "id": "77" } }),
+        )
+        .expect_err("a missing non-ticket target is refused");
+    assert_eq!(refusal.code, ErrorCode::NotFound);
+}

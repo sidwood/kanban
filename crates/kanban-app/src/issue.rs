@@ -148,6 +148,9 @@ pub trait IssueStore: Send + Sync {
     /// Whether one non-ticket comment target names a stored entity
     /// of its kind.
     fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError>;
+    /// The project that owns one non-ticket comment target of its
+    /// kind, or `None` when the kind carries no owning project.
+    fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError>;
     /// Refuse a label-add batch that cannot land: an unknown or
     /// retired label, or two distinct labels from one single-select
     /// group.

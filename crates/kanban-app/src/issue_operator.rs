@@ -373,6 +373,16 @@ impl CommandHandler for CreateLabel {
         let request: IssueCreateLabelRequest = parse_payload(&command.payload)?;
         resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
         refuse_blank_name(&request.name)?;
+        if request
+            .group
+            .as_deref()
+            .is_some_and(|group| group.trim().is_empty())
+        {
+            return Err(ApiError::invalid_request_field(
+                "group",
+                "group must not be blank",
+            ));
+        }
         validate_label_colour(&request.color)?;
         let row = self.0.issues.create_label(
             request.project_id as i64,
@@ -673,36 +683,68 @@ fn apply_issue_extensions(
     if let Some(add) = request.add_blocks.as_ref() {
         refuse_self_references(ctx, ticket_id, add, "add_blocks", "block")?;
         for target in add {
-            ctx.issues.add_relation(ticket_id, target, "blocks")?;
+            name_relation_refusal(
+                ctx.issues.add_relation(ticket_id, target, "blocks"),
+                "add_blocks",
+            )?;
         }
     }
     if let Some(remove) = request.remove_blocks.as_ref() {
         for target in remove {
-            ctx.issues.remove_relation(ticket_id, target, "blocks")?;
+            name_relation_refusal(
+                ctx.issues.remove_relation(ticket_id, target, "blocks"),
+                "remove_blocks",
+            )?;
         }
     }
     if let Some(add) = request.add_related.as_ref() {
         refuse_self_references(ctx, ticket_id, add, "add_related", "relate to")?;
         for target in add {
-            ctx.issues.add_relation(ticket_id, target, "related")?;
+            name_relation_refusal(
+                ctx.issues.add_relation(ticket_id, target, "related"),
+                "add_related",
+            )?;
         }
     }
     if let Some(remove) = request.remove_related.as_ref() {
         for target in remove {
-            ctx.issues.remove_relation(ticket_id, target, "related")?;
+            name_relation_refusal(
+                ctx.issues.remove_relation(ticket_id, target, "related"),
+                "remove_related",
+            )?;
         }
     }
     if let Some(add) = request.add_blocked_by.as_ref() {
         for target in add {
-            ctx.issues.add_blocked_by(ticket_id, target)?;
+            name_relation_refusal(
+                ctx.issues.add_blocked_by(ticket_id, target),
+                "add_blocked_by",
+            )?;
         }
     }
     if let Some(remove) = request.remove_blocked_by.as_ref() {
         for target in remove {
-            ctx.issues.remove_blocked_by(ticket_id, target)?;
+            name_relation_refusal(
+                ctx.issues.remove_blocked_by(ticket_id, target),
+                "remove_blocked_by",
+            )?;
         }
     }
     Ok(())
+}
+
+/// A relation list's `not_found` refusal names the list it came from,
+/// so the operator hears which key was unresolvable.
+fn name_relation_refusal(
+    outcome: Result<(), ApiError>,
+    field: &'static str,
+) -> Result<(), ApiError> {
+    match outcome {
+        Err(error) if error.code == kanban_dto::ErrorCode::NotFound => {
+            Err(ApiError::not_found_field(field, &error.message))
+        }
+        other => other,
+    }
 }
 
 fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, ApiError> {
@@ -880,15 +922,12 @@ fn list_issues(
     } else {
         request.limit.clamp(1, 100)
     };
-    if let Some(since) = request.updated_since.as_deref() {
-        time::OffsetDateTime::parse(since, &time::format_description::well_known::Rfc3339)
-            .map_err(|_| {
-                ApiError::invalid_request_field(
-                    "updated_since",
-                    "updated_since must be an RFC 3339 timestamp",
-                )
-            })?;
-    }
+    let updated_since = request
+        .updated_since
+        .as_deref()
+        .map(start_of_window)
+        .transpose()?;
+    let updated_since = updated_since.as_deref();
     let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
         Some(project_id) => {
             resolve_project(ctx.projects.as_ref(), project_id)?;
@@ -943,7 +982,7 @@ fn list_issues(
             }
             let record =
                 load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;
-            if let Some(since) = request.updated_since.as_deref()
+            if let Some(since) = updated_since
                 && record.updated_at.as_str() < since
             {
                 continue;
@@ -997,6 +1036,44 @@ fn list_issues(
         issues,
         next_cursor,
     })
+}
+
+/// The comparison form of one `updated_since` window: an RFC 3339
+/// timestamp keeps its bytes, and a plain `YYYY-MM-DD` calendar date
+/// opens at the start of that day, UTC, in the same millisecond
+/// shape the update stamps carry.
+fn start_of_window(raw: &str) -> Result<String, ApiError> {
+    if time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).is_ok() {
+        return Ok(raw.to_owned());
+    }
+    let bytes = raw.as_bytes();
+    let padded_shape = bytes.len() == 10
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..].iter().all(u8::is_ascii_digit);
+    if padded_shape {
+        let date = time::Date::parse(
+            raw,
+            &time::macros::format_description!("[year]-[month]-[day]"),
+        )
+        .map_err(|_| window_refused())?;
+        return Ok(format!(
+            "{:04}-{:02}-{:02}T00:00:00.000Z",
+            date.year(),
+            u8::from(date.month()),
+            date.day()
+        ));
+    }
+    Err(window_refused())
+}
+
+fn window_refused() -> ApiError {
+    ApiError::invalid_request_field(
+        "updated_since",
+        "updated_since must be an RFC 3339 timestamp or a YYYY-MM-DD date",
+    )
 }
 
 fn resolve_parent_filter(ctx: &IssueContext, raw: &str) -> Result<i64, ApiError> {
@@ -1070,7 +1147,13 @@ fn refuse_self_references(
     verb: &str,
 ) -> Result<(), ApiError> {
     for target in targets {
-        let referenced = resolve_parent_reference(ctx, target)?;
+        let referenced = match resolve_parent_reference(ctx, target) {
+            Ok(value) => value,
+            Err(error) if error.code == kanban_dto::ErrorCode::NotFound => {
+                return Err(ApiError::not_found_field(field, &error.message));
+            }
+            Err(error) => return Err(error),
+        };
         if referenced as i64 == ticket_id {
             return Err(ApiError::invalid_request_field(
                 field,

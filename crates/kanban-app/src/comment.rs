@@ -37,6 +37,12 @@ pub trait CommentIssueTargets: Send + Sync {
 
     /// Whether a non-ticket target names a stored entity of its kind.
     fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError>;
+
+    /// The project that owns a non-ticket target of its kind, or
+    /// `None` when the kind carries no owning project. Streams
+    /// outside the issue model keep their raw ids, so ownership
+    /// follows the target's own stored project reference.
+    fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError>;
 }
 
 /// [`CommentIssueTargets`] over the Linear issue store.
@@ -79,6 +85,10 @@ impl CommentIssueTargets for IssueStoreCommentTargets {
 
     fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError> {
         self.issues.comment_target_exists(kind, id)
+    }
+
+    fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError> {
+        self.issues.comment_target_project(kind, id)
     }
 }
 
@@ -223,6 +233,19 @@ impl CommandHandler for CreateComment {
                 target.kind(),
                 target.id()
             )));
+        } else if let Some(owner) = self
+            .targets
+            .comment_target_project(target.kind(), target.id())?
+            && owner != project.id().value()
+        {
+            return Err(ApiError::invalid_request_field(
+                "project_id",
+                &format!(
+                    "project_id does not own the target {} {}",
+                    target.kind(),
+                    target.id()
+                ),
+            ));
         }
         let parent_comment_id = validate_parent(
             self.store.as_ref(),
@@ -300,6 +323,17 @@ impl QueryHandler for ListCommentsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query: CommentListQuery = parse_issue_payload(payload)?;
         let target = resolve_target(self.targets.as_ref(), &query.target)?;
+        if target.kind() != TimelineEntityKind::Ticket.as_str()
+            && !self
+                .targets
+                .comment_target_exists(target.kind(), target.id())?
+        {
+            return Err(ApiError::not_found(&format!(
+                "{} {}",
+                target.kind(),
+                target.id()
+            )));
+        }
         let limit = if query.limit == 0 {
             50
         } else {
@@ -772,6 +806,14 @@ mod comments {
                 Some(key) => Ok(Some((key.clone(), key.number().value()))),
                 None => Ok(None),
             }
+        }
+
+        fn comment_target_project(
+            &self,
+            _kind: &str,
+            _id: &str,
+        ) -> Result<Option<u64>, kanban_dto::ApiError> {
+            Ok(None)
         }
 
         fn issue_project(&self, _ticket_id: u64) -> Result<Option<u64>, kanban_dto::ApiError> {

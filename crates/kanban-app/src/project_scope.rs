@@ -342,6 +342,10 @@ impl crate::comment::CommentIssueTargets for NumericIssueTargets {
         Ok(true)
     }
 
+    fn comment_target_project(&self, _kind: &str, _id: &str) -> Result<Option<u64>, ApiError> {
+        Ok(None)
+    }
+
     fn resolve_issue_reference(
         &self,
         reference: &str,

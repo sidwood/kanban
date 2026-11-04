@@ -905,8 +905,8 @@ impl SqliteIssueStore {
         kind: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, to_ticket_id)) = super::linear_issue::resolve_issue_key(&conn, to_identifier)
-            .map_err(internal_storage)?
+        let Some(to_ticket_id) =
+            resolve_relation_target(&conn, to_identifier).map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(to_identifier));
         };
@@ -936,8 +936,8 @@ impl SqliteIssueStore {
         kind: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, to_ticket_id)) = super::linear_issue::resolve_issue_key(&conn, to_identifier)
-            .map_err(internal_storage)?
+        let Some(to_ticket_id) =
+            resolve_relation_target(&conn, to_identifier).map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(to_identifier));
         };
@@ -1251,9 +1251,8 @@ impl SqliteIssueStore {
 
     pub fn add_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, blocker_id)) =
-            super::linear_issue::resolve_issue_key(&conn, blocker_identifier)
-                .map_err(internal_storage)?
+        let Some(blocker_id) =
+            resolve_relation_target(&conn, blocker_identifier).map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(blocker_identifier));
         };
@@ -1274,9 +1273,8 @@ impl SqliteIssueStore {
         blocker_identifier: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        let Some((_, blocker_id)) =
-            super::linear_issue::resolve_issue_key(&conn, blocker_identifier)
-                .map_err(internal_storage)?
+        let Some(blocker_id) =
+            resolve_relation_target(&conn, blocker_identifier).map_err(internal_storage)?
         else {
             return Err(ApiError::not_found(blocker_identifier));
         };
@@ -1425,6 +1423,76 @@ impl SqliteIssueStore {
             _ => Err(ApiError::internal(&format!(
                 "comment target kind `{kind}` has no existence check"
             ))),
+        }
+    }
+
+    /// The project that owns one non-ticket comment target of its
+    /// kind, or `None` when the kind carries no owning project. The
+    /// text-project columns hold the numeric id as text, the way the
+    /// comment rows themselves do.
+    pub fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError> {
+        let conn = self.lock();
+        let integer_project = |sql: &str, parameter: i64| -> Result<Option<u64>, ApiError> {
+            let project: Option<i64> = conn
+                .query_row(sql, params![parameter], |row| row.get(0))
+                .optional()
+                .map_err(internal)?;
+            Ok(project.map(|value| value as u64))
+        };
+        let text_project = |sql: &str, parameter: &str| -> Result<Option<u64>, ApiError> {
+            let project: Option<String> = conn
+                .query_row(sql, params![parameter], |row| row.get(0))
+                .optional()
+                .map_err(internal)?;
+            Ok(project.and_then(|value| value.parse().ok()))
+        };
+        match kind {
+            "project" => Ok(Some(id.parse::<i64>().map_err(|_| {
+                ApiError::internal("a resolved project target carries its numeric id")
+            })? as u64)),
+            "plan" => integer_project(
+                "SELECT project_id FROM plans WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved plan target is numeric"))?,
+            ),
+            "spec" => integer_project(
+                "SELECT project_id FROM specs WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved spec target is numeric"))?,
+            ),
+            "run" => integer_project(
+                "SELECT project_id FROM runs WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved run target is numeric"))?,
+            ),
+            "review" => integer_project(
+                "SELECT project_id FROM review_executions WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved review target is numeric"))?,
+            ),
+            "lane" => integer_project(
+                "SELECT project_id FROM lanes WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved lane target is numeric"))?,
+            ),
+            "attention_item" => integer_project(
+                "SELECT project_id FROM attention_items WHERE id = ?1",
+                id.parse()
+                    .map_err(|_| ApiError::internal("a resolved attention target is numeric"))?,
+            ),
+            "evidence" => text_project("SELECT project_id FROM evidence_items WHERE id = ?1", id),
+            "comment" => text_project("SELECT project_id FROM comments WHERE id = ?1", id),
+            "finding" => {
+                let identity = kanban_domain::finding::FindingIdentity::parse(id)
+                    .map_err(|_| ApiError::internal("a resolved finding target is valid"))?;
+                integer_project(
+                    "SELECT r.project_id FROM review_slots AS s
+                     JOIN review_executions AS r ON r.id = s.review_id
+                     WHERE s.id = ?1",
+                    identity.slot() as i64,
+                )
+            }
+            _ => Ok(None),
         }
     }
 
@@ -1821,6 +1889,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         SqliteIssueStore::comment_target_exists(self, kind, id)
     }
 
+    fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError> {
+        SqliteIssueStore::comment_target_project(self, kind, id)
+    }
+
     fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError> {
         SqliteIssueStore::validate_label_adds(self, project_id, names)
     }
@@ -2075,6 +2147,25 @@ pub(crate) fn auto_close_parent_if_children_done(
         serde_json::json!({ "action": "auto_close_sub_issues", "state": "Done" }),
     );
     apply_free_state_on(conn, parent_id, project_id, &done, envelope)
+}
+
+/// The ticket a relation target names: an issue key in any case, or a
+/// bare ticket id the way `parent_id` accepts one. `None` when no
+/// ticket carries the reference.
+fn resolve_relation_target(
+    conn: &rusqlite::Connection,
+    identifier: &str,
+) -> Result<Option<i64>, StorageError> {
+    if let Ok(id) = identifier.parse::<i64>() {
+        let found: Option<i64> = conn
+            .query_row("SELECT id FROM tickets WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(StorageError::from)?;
+        return Ok(found);
+    }
+    Ok(super::linear_issue::resolve_issue_key(conn, identifier)?.map(|(_, id)| id))
 }
 
 pub fn resolve_state_by_name(

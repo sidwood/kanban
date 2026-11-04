@@ -21,6 +21,7 @@ pub struct IssueSaveRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "description_patch_schema")]
     pub description_patch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
@@ -74,6 +75,32 @@ pub struct IssueSaveRequest {
         deserialize_with = "crate::nullable_patch::deserialize_string_patch"
     )]
     pub assignee: Option<Option<String>>,
+}
+
+/// The runtime accepts `description_patch` as a JSON-encoded object
+/// with string `find` and `replace` fields, not free text: the first
+/// occurrence of `find` in the description is replaced.
+fn description_patch_schema(
+    _generator: &mut schemars::r#gen::SchemaGenerator,
+) -> schemars::schema::Schema {
+    use schemars::schema::{InstanceType, Metadata, SchemaObject, SingleOrVec};
+    SchemaObject {
+        metadata: Some(Box::new(Metadata {
+            description: Some(
+                "A JSON-encoded object with string `find` and `replace` fields, \
+                 like `{\"find\":\"old text\",\"replace\":\"new text\"}`; \
+                 the first occurrence of `find` in the description is replaced."
+                    .to_owned(),
+            ),
+            ..Default::default()
+        })),
+        instance_type: Some(SingleOrVec::Vec(vec![
+            InstanceType::String,
+            InstanceType::Null,
+        ])),
+        ..Default::default()
+    }
+    .into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

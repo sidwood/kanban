@@ -73,6 +73,7 @@
       ]
     },
     "description_patch": {
+      "description": "A JSON-encoded object with string `find` and `replace` fields, like `{\"find\":\"old text\",\"replace\":\"new text\"}`; the first occurrence of `find` in the description is replaced.",
       "type": [
         "string",
         "null"

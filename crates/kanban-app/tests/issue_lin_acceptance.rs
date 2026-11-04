@@ -6,11 +6,11 @@ use kanban_app::{
     CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
     ProjectStore, TimelineEnvelope,
 };
+use kanban_domain::ProjectRegistration;
 use kanban_dto::{
     ErrorCode, IssueRecord, IssueSaveResponse, TimelineEntityKind, TimelineEntityRef,
     TimelineEventKind,
 };
-use kanban_domain::ProjectRegistration;
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
     AllowAllMigrations, Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore,
@@ -1281,25 +1281,47 @@ fn comment_revisions_keep_the_stored_body_verbatim() {
 #[test]
 fn non_ticket_targets_match_ids_exactly() {
     let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "exact-id-host",
+        json!({ "project_id": 1, "title": "Exact ids" }),
+    );
+    for key in ["exact-id-first", "exact-id-second"] {
+        session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, key),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                    "text": "On the issue",
+                    "author": "lin",
+                }),
+            )
+            .expect("the comment lands on the issue");
+    }
+
     let root = session
         .call(
             "comment.create",
             &json!({
                 "mutation": mutation(0, "exact-id-root"),
                 "project_id": 1,
-                "target": { "kind": "project", "id": "Alpha" },
-                "text": "On Alpha",
+                "target": { "kind": "comment", "id": "1" },
+                "text": "On the comment",
                 "author": "lin",
             }),
         )
-        .unwrap();
+        .expect("a stored comment is a valid target");
     let root_id = root["id"].as_u64().unwrap();
+    assert_eq!(root["target"]["id"], json!("1"), "the raw id is kept");
 
     let listed = session
         .call(
             "comment.list",
             &json!({
-                "target": { "kind": "project", "id": "alpha" },
+                "target": { "kind": "comment", "id": "3" },
                 "limit": 10,
             }),
         )
@@ -1307,7 +1329,7 @@ fn non_ticket_targets_match_ids_exactly() {
     assert_eq!(
         listed["comments"].as_array().unwrap().len(),
         0,
-        "a case-variant id is a different stream"
+        "an id no stored entity answers to is its own stream"
     );
 
     let cross = session
@@ -1316,7 +1338,7 @@ fn non_ticket_targets_match_ids_exactly() {
             &json!({
                 "mutation": mutation(0, "exact-id-cross"),
                 "project_id": 1,
-                "target": { "kind": "project", "id": "alpha" },
+                "target": { "kind": "comment", "id": "2" },
                 "text": "Wrong stream",
                 "author": "lin",
                 "parent_comment_id": root_id,
@@ -1453,6 +1475,105 @@ fn session_with_second_project() -> (tempfile::TempDir, OperatorSession) {
     let dir = h._dir;
     let core = Arc::new(h.core);
     (dir, OperatorSession::new(core))
+}
+
+#[test]
+fn list_issues_matches_state_types_and_case_insensitive_names() {
+    let (_dir, session) = session_with_second_project();
+
+    let backlog = save_issue(
+        &session,
+        0,
+        "filter-backlog",
+        json!({ "project_id": 1, "title": "Sits in the backlog" }),
+    );
+    let started = save_issue(
+        &session,
+        0,
+        "filter-started",
+        json!({
+            "project_id": 1,
+            "title": "Work in flight",
+            "state": "Active",
+            "add_labels": ["bug"],
+        }),
+    );
+    let completed = save_issue(
+        &session,
+        0,
+        "filter-completed",
+        json!({ "project_id": 1, "title": "Already finished", "state": "Done" }),
+    );
+
+    let identifiers = |payload: serde_json::Value| -> Vec<String> {
+        session
+            .call("issue.list", &payload)
+            .expect("the listing serves")["issues"]
+            .as_array()
+            .expect("an issues array")
+            .iter()
+            .map(|issue| {
+                issue["identifier"]
+                    .as_str()
+                    .expect("an identifier")
+                    .to_owned()
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "started" })),
+        vec![started.identifier.clone()],
+        "a workflow state type lists its issues"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "completed" })),
+        vec![completed.identifier.clone()],
+        "the completed type lists the Done issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "backlog" })),
+        vec![backlog.identifier.clone()],
+        "the backlog type lists the Draft issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "duplicate" })),
+        Vec::<String>::new(),
+        "a type no issue holds lists nothing"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "active" })),
+        vec![started.identifier.clone()],
+        "a lowercase state name lists its issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "ACTIVE" })),
+        vec![started.identifier.clone()],
+        "an uppercase state name lists its issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "BUG" })),
+        vec![started.identifier.clone()],
+        "a label name matches case-insensitively"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "updated_since": "2000-01-01T00:00:00Z" })),
+        vec![
+            completed.identifier.clone(),
+            started.identifier.clone(),
+            backlog.identifier.clone(),
+        ],
+        "a valid updated_since keeps filtering by recency"
+    );
+
+    let error = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "updated_since": "garbage" }),
+        )
+        .expect_err("an unparseable updated_since is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("updated_since"));
 }
 
 #[test]
@@ -1817,4 +1938,50 @@ fn issue_save_errors_carry_the_offending_field() {
         .expect_err("a non-numeric cursor is refused");
     assert_eq!(cursor.code, ErrorCode::InvalidRequest);
     assert_eq!(cursor.field.as_deref(), Some("cursor"));
+}
+
+#[test]
+fn save_issue_schema_documents_the_description_patch_object() {
+    let contracts = format!(
+        "{}/../../packages/contracts/src",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{contracts}/schemas/IssueSaveRequest.json"))
+            .expect("the schema file is committed"),
+    )
+    .expect("the schema is JSON");
+    let patch = &schema["properties"]["description_patch"];
+    let description = patch["description"]
+        .as_str()
+        .expect("description_patch carries a description");
+    assert!(
+        description.contains("find") && description.contains("replace"),
+        "the description names the patch fields: {description}"
+    );
+
+    let catalogue: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{contracts}/mcp-tools.json"))
+            .expect("the tool catalogue is committed"),
+    )
+    .expect("the catalogue is JSON");
+    let save = catalogue
+        .as_array()
+        .expect("a tool list")
+        .iter()
+        .find(|tool| tool["name"] == "save_issue")
+        .expect("save_issue is catalogued");
+    let published = &save["inputSchema"]["properties"]["description_patch"];
+    assert_eq!(
+        published["type"],
+        json!(["string", "null"]),
+        "the wire type stays a string or null"
+    );
+    assert!(
+        published["description"]
+            .as_str()
+            .expect("the published schema describes the patch")
+            .contains("find"),
+        "the published schema names the patch fields"
+    );
 }

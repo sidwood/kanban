@@ -1,6 +1,8 @@
 //! The on-demand start: a missing core is spawned and serves; a
 //! serving core is reused; a spawned core outlives the shell.
 
+mod common;
+
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -8,6 +10,8 @@ use std::time::Duration;
 
 use kanban_desktop_lib::ensure_core_running;
 use tempfile::TempDir;
+
+use common::cargo_target_dir;
 
 /// Env-var tests share one lock: std::env::set_var races otherwise.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -19,9 +23,8 @@ fn fake_core_binary() -> PathBuf {
         return PathBuf::from(path);
     }
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_owned());
-    let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .join("target")
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let built = cargo_target_dir(&manifest)
         .join(profile)
         .join("fake-core");
     assert!(

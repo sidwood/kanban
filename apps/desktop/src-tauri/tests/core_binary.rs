@@ -2,12 +2,16 @@
 //! builds honour the override; release builds resolve only the trusted
 //! packaged core beside the shell (DR-SS-09).
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
 use kanban_desktop_lib::locate_core_binary;
+
+use common::cargo_target_dir;
 
 /// Env-var tests share one lock: std::env::set_var races otherwise.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -18,25 +22,6 @@ const RELEASE_FIXTURE: &str = concat!(
 );
 
 const MALICIOUS_OVERRIDE: &str = "/malicious/kanban-service-override";
-
-fn cargo_target_dir(manifest: &Path) -> PathBuf {
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        return PathBuf::from(dir);
-    }
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--manifest-path"])
-        .arg(manifest)
-        .output()
-        .expect("cargo metadata runs");
-    assert!(output.status.success(), "cargo metadata must succeed");
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("cargo metadata is JSON");
-    PathBuf::from(
-        metadata["target_directory"]
-            .as_str()
-            .expect("target_directory in cargo metadata"),
-    )
-}
 
 /// The release probe is built outside the test crate graph so it
 /// carries `not(debug_assertions)` path resolution.

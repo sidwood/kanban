@@ -113,6 +113,12 @@ async function openDrawer(state: ReturnType<typeof harness>, ticketId = 8, pinia
   return wrapper
 }
 
+const submitButton = (testid: string): HTMLButtonElement => {
+  const element = document.querySelector(`[data-testid="${testid}"]`)
+  if (!(element instanceof HTMLButtonElement)) throw new Error(`no ${testid}`)
+  return element
+}
+
 async function click(testid: string): Promise<void> {
   const element = document.querySelector(`[data-testid="${testid}"]`)
   if (!(element instanceof HTMLElement)) throw new Error(`no ${testid}`)
@@ -420,5 +426,110 @@ describe('the human review decision in the drawer', () => {
     expect(document.querySelector('[data-testid="drawer-review-slot-72"]')).toBeNull()
     expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
     expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+  })
+})
+
+describe('the emergency recovery confirmation', () => {
+  it('sends nothing when it opens', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    await openDrawer(state)
+
+    await click('drawer-recover')
+
+    expect(document.querySelector('[data-testid="recovery-confirm"]')).not.toBeNull()
+    expect(state.command.mock.calls).toEqual([])
+  })
+
+  it('keeps Submit disabled, and sends nothing, until state, operator and reason are all set', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    await openDrawer(state)
+    await click('drawer-recover')
+    const form = () => document.querySelector('[data-testid="recovery-confirm"]') as HTMLFormElement
+    const submitIncomplete = async () => {
+      expect(submitButton('recovery-submit').disabled).toBe(true)
+      form().dispatchEvent(new Event('submit', { cancelable: true }))
+      await flushPromises()
+      expect(issued(state, 'ticket.emergency.override')).toEqual([])
+    }
+
+    await submitIncomplete()
+    await type('recovery-to', 'ready')
+    await submitIncomplete()
+    await type('recovery-who', 'Sid')
+    await submitIncomplete()
+    await type('recovery-to', '')
+    await type('recovery-why', 'The run died holding the lane.')
+    await submitIncomplete()
+    await type('recovery-to', 'ready')
+    await type('recovery-who', '')
+    await submitIncomplete()
+
+    await type('recovery-who', 'Sid')
+    expect(submitButton('recovery-submit').disabled).toBe(false)
+  })
+
+  it('Submit sends the override with the state, the operator and the reason', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    await openDrawer(state)
+
+    await click('drawer-recover')
+    await type('recovery-to', 'ready')
+    await type('recovery-who', 'Sid')
+    await type('recovery-why', 'The run died holding the lane.')
+    await click('recovery-submit')
+
+    expect(issued(state, 'ticket.emergency.override')).toEqual([
+      {
+        mutation: { optimistic_version: 5, idempotency_key: expect.any(String) },
+        ticket_id: 8,
+        to: 'ready',
+        who: 'Sid',
+        why: 'The run died holding the lane.',
+      },
+    ])
+    expect(document.querySelector('[data-testid="recovery-confirm"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Ready')
+  })
+
+  it('Cancel sends nothing and leaves the Ticket as it stood', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    await openDrawer(state)
+
+    await click('drawer-recover')
+    await type('recovery-to', 'ready')
+    await type('recovery-who', 'Sid')
+    await type('recovery-why', 'The run died holding the lane.')
+    await click('recovery-cancel')
+
+    expect(document.querySelector('[data-testid="recovery-confirm"]')).toBeNull()
+    expect(state.command.mock.calls).toEqual([])
+    expect(state.tickets).toEqual([implementation({ state: 'active' })])
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Active')
+  })
+
+  it('a refusal shows the core message and keeps the confirmation open', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    const core = state.command.getMockImplementation() as (
+      name: string,
+      request: unknown,
+    ) => Promise<unknown>
+    state.command.mockImplementation((name: string, request: unknown) =>
+      name === 'ticket.emergency.override'
+        ? Promise.reject({ code: 'invalid_request', message: 'a Ticket reason cannot be blank' })
+        : core(name, request),
+    )
+    await openDrawer(state)
+
+    await click('drawer-recover')
+    await type('recovery-to', 'ready')
+    await type('recovery-who', 'Sid')
+    await type('recovery-why', 'The run died holding the lane.')
+    await click('recovery-submit')
+
+    expect(document.querySelector('[data-testid="drawer-action-error"]')?.textContent).toContain(
+      'a Ticket reason cannot be blank',
+    )
+    expect(document.querySelector('[data-testid="recovery-confirm"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Active')
   })
 })

@@ -16,7 +16,9 @@ use serde_json::Value;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::issue::IssueStore;
-use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
+use crate::mutation::{
+    CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
+};
 use crate::project::{ProjectStore, resolve_project};
 
 /// The issue lookups Comment commands use to resolve a ticket target,
@@ -180,7 +182,7 @@ struct CreateComment {
 
 impl CommandHandler for CreateComment {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<CommentCreateRequest>(payload)?;
+        parse_issue_payload::<CommentCreateRequest>(payload)?;
         ParsedCommand::lift("comment", payload)
     }
 
@@ -247,7 +249,7 @@ struct EditComment {
 
 impl CommandHandler for EditComment {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<CommentEditRequest>(payload)?;
+        parse_issue_payload::<CommentEditRequest>(payload)?;
         ParsedCommand::lift("comment", payload)
     }
 
@@ -281,7 +283,7 @@ struct RevisionsQuery {
 
 impl QueryHandler for RevisionsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let query: CommentRevisionsQuery = parse_payload(payload)?;
+        let query: CommentRevisionsQuery = parse_issue_payload(payload)?;
         let (comment, revisions) = self.store.revisions(CommentId::new(query.comment_id))?;
         let response = CommentRevisionsResponse { comment, revisions };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
@@ -296,7 +298,7 @@ struct ListCommentsQuery {
 
 impl QueryHandler for ListCommentsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let query: CommentListQuery = parse_payload(payload)?;
+        let query: CommentListQuery = parse_issue_payload(payload)?;
         let target = resolve_target(self.targets.as_ref(), &query.target)?;
         let limit = if query.limit == 0 {
             50
@@ -338,7 +340,7 @@ struct ResolveComment {
 
 impl CommandHandler for ResolveComment {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<CommentResolveRequest>(payload)?;
+        parse_issue_payload::<CommentResolveRequest>(payload)?;
         ParsedCommand::lift("comment", payload)
     }
 

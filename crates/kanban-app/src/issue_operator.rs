@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::issue::{IssueStore, IssueWorkflowState};
-use crate::mutation::{CommandEffects, CommandHandler, ParsedCommand, parse_payload};
+use crate::mutation::{
+    CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
+};
 use crate::project::{ProjectStore, resolve_project};
 use crate::spec::SpecStore;
 use crate::ticket::{TicketStore, create_ticket, transition};
@@ -167,7 +169,7 @@ struct SaveIssue(IssueContext);
 
 impl CommandHandler for SaveIssue {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<IssueSaveRequest>(payload)?;
+        parse_issue_payload::<IssueSaveRequest>(payload)?;
         ParsedCommand::lift("issue", payload)
     }
 
@@ -207,7 +209,7 @@ struct GetIssue(IssueContext);
 
 impl QueryHandler for GetIssue {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let request: IssueGetQuery = parse_payload(payload)?;
+        let request: IssueGetQuery = parse_issue_payload(payload)?;
         let record = load_issue_record(&self.0, &request.identifier)?;
         serde_json::to_value(record).map_err(|_| ApiError::internal("issue response invalid"))
     }
@@ -217,7 +219,7 @@ struct ListIssues(IssueContext);
 
 impl QueryHandler for ListIssues {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let request: IssueListQuery = parse_payload(payload)?;
+        let request: IssueListQuery = parse_issue_payload(payload)?;
         let response = list_issues(&self.0, &request)?;
         serde_json::to_value(response).map_err(|_| ApiError::internal("issue list invalid"))
     }
@@ -227,7 +229,7 @@ struct ListWorkflowStates(IssueContext);
 
 impl QueryHandler for ListWorkflowStates {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let request: IssueWorkflowStatesQuery = parse_payload(payload)?;
+        let request: IssueWorkflowStatesQuery = parse_issue_payload(payload)?;
         resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let states = self
             .0
@@ -250,7 +252,7 @@ struct ListLabels(IssueContext);
 
 impl QueryHandler for ListLabels {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let request: IssueLabelsQuery = parse_payload(payload)?;
+        let request: IssueLabelsQuery = parse_issue_payload(payload)?;
         resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let labels = self
             .0
@@ -274,7 +276,7 @@ struct ListMilestones(IssueContext);
 
 impl QueryHandler for ListMilestones {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
-        let request: IssueMilestonesQuery = parse_payload(payload)?;
+        let request: IssueMilestonesQuery = parse_issue_payload(payload)?;
         resolve_project(self.0.projects.as_ref(), request.project_id)?;
         let milestones = self
             .0
@@ -319,7 +321,7 @@ struct CreateMilestone(IssueContext);
 
 impl CommandHandler for CreateMilestone {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<IssueCreateMilestoneRequest>(payload)?;
+        parse_issue_payload::<IssueCreateMilestoneRequest>(payload)?;
         ParsedCommand::lift("issue", payload)
     }
 
@@ -355,7 +357,7 @@ struct CreateLabel(IssueContext);
 
 impl CommandHandler for CreateLabel {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<IssueCreateLabelRequest>(payload)?;
+        parse_issue_payload::<IssueCreateLabelRequest>(payload)?;
         ParsedCommand::lift("issue", payload)
     }
 
@@ -394,7 +396,7 @@ struct RetireLabel(IssueContext);
 
 impl CommandHandler for RetireLabel {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<IssueRetireLabelRequest>(payload)?;
+        parse_issue_payload::<IssueRetireLabelRequest>(payload)?;
         ParsedCommand::lift("issue", payload)
     }
 
@@ -428,7 +430,7 @@ struct UpdateProjectSettings(IssueContext);
 
 impl CommandHandler for UpdateProjectSettings {
     fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
-        parse_payload::<IssueUpdateProjectSettingsRequest>(payload)?;
+        parse_issue_payload::<IssueUpdateProjectSettingsRequest>(payload)?;
         ParsedCommand::lift("issue", payload)
     }
 

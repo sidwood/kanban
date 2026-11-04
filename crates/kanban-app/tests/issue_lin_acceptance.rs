@@ -1949,6 +1949,60 @@ fn issue_save_errors_carry_the_offending_field() {
             "description_patch",
             ErrorCode::InvalidRequest,
         ),
+        (
+            "field-decode-priority-negative",
+            json!({ "identifier": host.identifier, "priority": -1 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-priority-overflow",
+            json!({ "identifier": host.identifier, "priority": 256 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-state-type",
+            json!({ "identifier": host.identifier, "state": 1 }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-milestone-text",
+            json!({ "identifier": host.identifier, "milestone_id": "bad" }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-labels-scalar",
+            json!({ "identifier": host.identifier, "add_labels": 1 }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-labels-entry",
+            json!({ "identifier": host.identifier, "add_labels": ["bug", 5] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-parent-object",
+            json!({ "identifier": host.identifier, "parent_id": {} }),
+            "parent_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-duplicate-object",
+            json!({ "identifier": host.identifier, "duplicate_of": {} }),
+            "duplicate_of",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-patch-object",
+            json!({ "identifier": host.identifier, "description_patch": {} }),
+            "description_patch",
+            ErrorCode::InvalidRequest,
+        ),
     ] {
         let error = session
             .call("issue.save", &save_payload(version, key, fields))
@@ -1962,6 +2016,36 @@ fn issue_save_errors_carry_the_offending_field() {
         .expect_err("a non-numeric cursor is refused");
     assert_eq!(cursor.code, ErrorCode::InvalidRequest);
     assert_eq!(cursor.field.as_deref(), Some("cursor"));
+
+    let bare = session
+        .call(
+            "issue.save",
+            &json!({ "project_id": 1, "title": "No mutation context" }),
+        )
+        .expect_err("a payload without a mutation context is refused");
+    assert_eq!(bare.code, ErrorCode::InvalidRequest);
+    assert_eq!(bare.field.as_deref(), Some("mutation"));
+
+    let identified = session
+        .call("issue.get", &json!({ "identifier": 9 }))
+        .expect_err("a non-string identifier is refused");
+    assert_eq!(identified.code, ErrorCode::InvalidRequest);
+    assert_eq!(identified.field.as_deref(), Some("identifier"));
+
+    let comment = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "field-decode-comment-author"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Decode check",
+                "author": 9,
+            }),
+        )
+        .expect_err("a non-string author is refused");
+    assert_eq!(comment.code, ErrorCode::InvalidRequest);
+    assert_eq!(comment.field.as_deref(), Some("author"));
 }
 
 #[test]

@@ -243,6 +243,58 @@ describe('the Ticket editor dialog', () => {
     })
   })
 
+  it('a title-only edit sends every other issue field as the record holds it', async () => {
+    const { transport, requests } = editorHarness({
+      tickets: [implementationTicket({ version: 3 })],
+      answer: (name) => {
+        if (name === 'issue.list_milestones') {
+          return Promise.resolve({
+            milestones: [{ id: 9, name: 'Beta', issues_done: 0, issues_total: 1 }],
+          })
+        }
+        if (name !== 'issue.get') return undefined
+        return Promise.resolve({
+          identifier: 'CORE-17',
+          url: 'kanban://issue/CORE-17',
+          ticket_id: 1,
+          project_id: 4,
+          title: 'Spec authoring creates content versions end to end',
+          description: 'Acceptance criteria and story links live in the description.',
+          state: 'Draft',
+          state_type: 'unstarted',
+          priority: 2,
+          due_date: '2026-12-01',
+          milestone_id: 9,
+          labels: [],
+          relations: [],
+          state_history: [],
+          version: 3,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        } satisfies IssueRecord)
+      },
+    })
+    const wrapper = open(transport)
+    useTicketDialogStore().openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
+    await flushPromises()
+
+    expect(requests('issue.save')).toEqual([
+      {
+        mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
+        identifier: 'CORE-17',
+        title: 'A sharper title',
+        description: 'Acceptance criteria and story links live in the description.',
+        priority: 2,
+        due_date: '2026-12-01',
+        milestone_id: 9,
+      },
+    ])
+  })
+
   it('a stale edit reports the core refusal rather than pretending it saved', async () => {
     const { transport } = editorHarness({
       tickets: [implementationTicket()],

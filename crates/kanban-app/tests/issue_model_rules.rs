@@ -2262,6 +2262,166 @@ fn removing_a_label_the_project_never_had_is_refused() {
     assert_eq!(after.updated_at, before.updated_at);
 }
 
+/// Create one ungrouped project label, the way an operator seeds a
+/// spelling.
+fn create_project_label(session: &OperatorSession, key: &str, name: &str) {
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, key),
+                "project_id": 1,
+                "name": name,
+                "color": "#336699",
+            }),
+        )
+        .expect("the label is created");
+}
+
+#[test]
+fn adding_a_label_by_exact_spelling_beats_its_case_variants() {
+    let h = rules_harness();
+    let session = &h.session;
+    create_project_label(session, "exact-add-lower", "web");
+    create_project_label(session, "exact-add-upper", "WEB");
+    let saved = save_issue(
+        session,
+        0,
+        "exact-add-host",
+        json!({ "project_id": 1, "title": "Exact spelling host" }),
+    );
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "exact-add-save",
+        json!({ "identifier": saved.identifier, "add_labels": ["web"] }),
+    );
+
+    assert_eq!(
+        read_issue(session, &saved.identifier).labels,
+        vec!["web".to_owned()],
+        "the exact spelling is the label that lands, not the uppercase twin"
+    );
+}
+
+#[test]
+fn removing_a_held_label_by_exact_spelling_removes_it() {
+    let h = rules_harness();
+    let session = &h.session;
+    create_project_label(session, "exact-remove-lower", "web");
+    let saved = save_issue(
+        session,
+        0,
+        "exact-remove-host",
+        json!({ "project_id": 1, "title": "Exact removal host", "add_labels": ["web"] }),
+    );
+    create_project_label(session, "exact-remove-upper", "WEB");
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "exact-remove-save",
+        json!({ "identifier": saved.identifier, "remove_labels": ["web"] }),
+    );
+
+    assert_eq!(
+        read_issue(session, &saved.identifier).labels,
+        Vec::<String>::new(),
+        "removing the exact held spelling removes it"
+    );
+}
+
+#[test]
+fn re_adding_a_held_label_by_exact_spelling_touches_nothing() {
+    let h = rules_harness();
+    let session = &h.session;
+    create_project_label(session, "exact-noop-lower", "web");
+    let saved = save_issue(
+        session,
+        0,
+        "exact-noop-host",
+        json!({ "project_id": 1, "title": "Exact no-op host", "add_labels": ["web"] }),
+    );
+    create_project_label(session, "exact-noop-upper", "WEB");
+    let before = read_issue(session, &saved.identifier);
+    wait_for_clock_past(&h, &before.updated_at);
+
+    save_issue(
+        session,
+        before.version,
+        "exact-noop-save",
+        json!({ "identifier": saved.identifier, "add_labels": ["web"] }),
+    );
+
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(after.labels, before.labels, "the membership stands");
+    assert_eq!(after.version, before.version, "the version stands");
+    assert_eq!(
+        after.updated_at, before.updated_at,
+        "the update time stands"
+    );
+}
+
+#[test]
+fn two_case_folded_label_spellings_refuse_by_their_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    create_project_label(session, "folded-refuse-mixed", "Web");
+    create_project_label(session, "folded-refuse-upper", "WEB");
+    let saved = save_issue(
+        session,
+        0,
+        "folded-refuse-host",
+        json!({ "project_id": 1, "title": "Ambiguous spelling host" }),
+    );
+    let before = read_issue(session, &saved.identifier);
+    wait_for_clock_past(&h, &before.updated_at);
+
+    let refused = try_save(
+        session,
+        before.version,
+        "folded-refuse-add",
+        json!({
+            "identifier": saved.identifier,
+            "title": "A title the refusal must not land",
+            "add_labels": ["web"],
+        }),
+    )
+    .expect_err("two case-folded spellings of one name are ambiguous");
+    assert_eq!(refused.code, ErrorCode::InvalidRequest);
+    assert_eq!(refused.field.as_deref(), Some("add_labels"));
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(after.labels, before.labels, "no membership moved");
+    assert_eq!(after.version, before.version, "no version moved");
+    assert_eq!(after.updated_at, before.updated_at, "no update time moved");
+    assert_eq!(
+        after.title, before.title,
+        "the rest of the refused save landed nothing"
+    );
+
+    save_issue(
+        session,
+        before.version,
+        "folded-refuse-hold",
+        json!({ "identifier": saved.identifier, "add_labels": ["Web"] }),
+    );
+    let holding = read_issue(session, &saved.identifier);
+    let refused = try_save(
+        session,
+        holding.version,
+        "folded-refuse-remove",
+        json!({ "identifier": saved.identifier, "remove_labels": ["web"] }),
+    )
+    .expect_err("an ambiguous removal refuses the same way");
+    assert_eq!(refused.code, ErrorCode::InvalidRequest);
+    assert_eq!(refused.field.as_deref(), Some("remove_labels"));
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(after.labels, holding.labels, "the held spelling stands");
+    assert_eq!(after.version, holding.version, "no version moved");
+    assert_eq!(after.updated_at, holding.updated_at, "no update time moved");
+}
+
 #[test]
 fn every_calendar_date_round_trips_through_the_due_date() {
     let h = rules_harness();

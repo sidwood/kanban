@@ -758,20 +758,44 @@ fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, 
     Ok(ticket_id as u64)
 }
 
-/// The project's stored spelling of one label name, matched the way
-/// the listings match — ignoring case — or `None` when no label of
-/// the project carries the name in any case.
+/// The project's stored spelling of one label name. An exact
+/// spelling always wins; only when the project holds no exact
+/// spelling does a case-insensitive match resolve, and then only
+/// when exactly one held spelling folds to the name — two held
+/// spellings of one name are ambiguous, so the caller's field
+/// refuses the request. `None` when no label of the project
+/// carries the name in any case.
 fn canonical_label_name(
     ctx: &IssueContext,
     project_id: i64,
     name: &str,
+    field: &'static str,
 ) -> Result<Option<String>, ApiError> {
-    Ok(ctx
+    let held: Vec<String> = ctx
         .issues
         .list_project_labels(project_id)?
         .into_iter()
         .map(|label| label.name)
-        .find(|held| equals_ignoring_case(held, name)))
+        .collect();
+    if let Some(exact) = held.iter().find(|stored| stored.as_str() == name) {
+        return Ok(Some(exact.clone()));
+    }
+    let mut folded = held
+        .into_iter()
+        .filter(|stored| equals_ignoring_case(stored, name));
+    let Some(unique) = folded.next() else {
+        return Ok(None);
+    };
+    if let Some(second) = folded.next() {
+        return Err(ApiError::invalid_request_field(
+            field,
+            &format!(
+                "labels `{unique}` and `{second}` both match `{name}`; \
+                 use an exact spelling"
+            ),
+        ));
+    }
+    Ok(Some(unique))
 }
 
 fn apply_label_changes(
@@ -784,7 +808,7 @@ fn apply_label_changes(
         let mut canonical = Vec::with_capacity(add.len());
         for label in add {
             canonical.push(
-                canonical_label_name(ctx, project_id, label)?.ok_or_else(|| {
+                canonical_label_name(ctx, project_id, label, "add_labels")?.ok_or_else(|| {
                     ApiError::invalid_request_field(
                         "add_labels",
                         &format!("unknown label `{label}`"),
@@ -799,9 +823,10 @@ fn apply_label_changes(
     }
     if let Some(remove) = request.remove_labels.as_ref() {
         for label in remove {
-            let canonical = canonical_label_name(ctx, project_id, label)?.ok_or_else(|| {
-                ApiError::not_found_field("remove_labels", &format!("unknown label `{label}`"))
-            })?;
+            let canonical = canonical_label_name(ctx, project_id, label, "remove_labels")?
+                .ok_or_else(|| {
+                    ApiError::not_found_field("remove_labels", &format!("unknown label `{label}`"))
+                })?;
             ctx.issues.remove_label(project_id, ticket_id, &canonical)?;
         }
     }

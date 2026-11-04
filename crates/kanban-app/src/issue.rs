@@ -139,4 +139,10 @@ pub trait IssueStore: Send + Sync {
     ) -> Result<IssueLabelRow, ApiError>;
     fn retire_label(&self, project_id: i64, name: &str) -> Result<IssueLabelRow, ApiError>;
     fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError>;
+    /// The project that owns one issue, or `None` when no such issue
+    /// exists, so comment streams can be tied to their owner.
+    fn issue_project(&self, ticket_id: i64) -> Result<Option<u64>, ApiError>;
+    /// Whether one non-ticket comment target names a stored entity
+    /// of its kind.
+    fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError>;
 }

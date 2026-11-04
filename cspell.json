@@ -27,6 +27,7 @@
     "Pinia",
     "Pocock",
     "RLENGTH",
+    "RRGGBB",
     "SQLite",
     "Tauri",
     "TypeScript",

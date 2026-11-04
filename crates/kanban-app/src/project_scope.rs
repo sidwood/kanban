@@ -334,6 +334,14 @@ impl RecordingEvidence {
 struct NumericIssueTargets;
 
 impl crate::comment::CommentIssueTargets for NumericIssueTargets {
+    fn issue_project(&self, _ticket_id: u64) -> Result<Option<u64>, ApiError> {
+        Ok(Some(1))
+    }
+
+    fn comment_target_exists(&self, _kind: &str, _id: &str) -> Result<bool, ApiError> {
+        Ok(true)
+    }
+
     fn resolve_issue_reference(
         &self,
         reference: &str,

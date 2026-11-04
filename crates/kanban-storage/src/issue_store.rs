@@ -1407,6 +1407,95 @@ impl SqliteIssueStore {
         Ok(enabled != 0)
     }
 
+    /// The project that owns one issue, or `None` when no such issue
+    /// exists. Comment streams live under the owning project.
+    pub fn issue_project(&self, ticket_id: i64) -> Result<Option<u64>, ApiError> {
+        let conn = self.lock();
+        let project: Option<i64> = conn
+            .query_row(
+                "SELECT project_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        Ok(project.map(|value| value as u64))
+    }
+
+    /// Whether one non-ticket comment target names a stored entity of
+    /// its kind. Streams outside the issue model keep their raw id,
+    /// so existence is the only membership check available.
+    pub fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        let numeric_table = match kind {
+            "initiative" => Some("initiatives"),
+            "project" => Some("projects"),
+            "plan" => Some("plans"),
+            "spec" => Some("specs"),
+            "run" => Some("runs"),
+            "review" => Some("review_executions"),
+            "evidence" => Some("evidence_items"),
+            "comment" => Some("comments"),
+            "workspace" => Some("workspaces"),
+            "lane" => Some("lanes"),
+            "profile" => Some("execution_profiles"),
+            _ => None,
+        };
+        if let Some(table) = numeric_table {
+            let Ok(numeric) = id.parse::<i64>() else {
+                return Ok(false);
+            };
+            let found: Option<i64> = conn
+                .query_row(
+                    &format!("SELECT 1 FROM {table} WHERE id = ?1"),
+                    params![numeric],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?;
+            return Ok(found.is_some());
+        }
+        match kind {
+            "attention_item" => {
+                let found: Option<i64> = conn
+                    .query_row(
+                        "SELECT 1 FROM attention_items WHERE id = ?1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(internal)?;
+                Ok(found.is_some())
+            }
+            "finding" => {
+                let Some(identity) = kanban_domain::finding::FindingIdentity::parse(id).ok() else {
+                    return Ok(false);
+                };
+                let record: Option<String> = conn
+                    .query_row(
+                        "SELECT v.record FROM review_slot_verdicts AS v
+                         JOIN review_slots AS s ON s.id = v.slot_id
+                         WHERE s.id = ?1 AND s.review_id = ?2",
+                        params![identity.slot() as i64, identity.review() as i64],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(internal)?;
+                let Some(record) = record else {
+                    return Ok(false);
+                };
+                let verdict: serde_json::Value = serde_json::from_str(&record)
+                    .map_err(|error| ApiError::internal(&error.to_string()))?;
+                Ok(verdict["findings"]
+                    .as_array()
+                    .is_some_and(|findings| findings.len() > identity.index() as usize))
+            }
+            _ => Err(ApiError::internal(&format!(
+                "comment target kind `{kind}` has no existence check"
+            ))),
+        }
+    }
+
     pub fn create_milestone(
         &self,
         project_id: i64,
@@ -1734,6 +1823,14 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
         SqliteIssueStore::auto_close_sub_issues_enabled(self, project_id)
+    }
+
+    fn issue_project(&self, ticket_id: i64) -> Result<Option<u64>, ApiError> {
+        SqliteIssueStore::issue_project(self, ticket_id)
+    }
+
+    fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError> {
+        SqliteIssueStore::comment_target_exists(self, kind, id)
     }
 
     fn create_milestone(

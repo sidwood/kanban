@@ -28,6 +28,13 @@ pub trait CommentIssueTargets: Send + Sync {
     /// or `None` when no such issue exists.
     fn resolve_issue_reference(&self, reference: &str)
     -> Result<Option<(IssueKey, u64)>, ApiError>;
+
+    /// The project that owns the resolved issue, or `None` when no
+    /// such issue exists.
+    fn issue_project(&self, ticket_id: u64) -> Result<Option<u64>, ApiError>;
+
+    /// Whether a non-ticket target names a stored entity of its kind.
+    fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError>;
 }
 
 /// [`CommentIssueTargets`] over the Linear issue store.
@@ -62,6 +69,14 @@ impl CommentIssueTargets for IssueStoreCommentTargets {
             .issues
             .resolve_identifier(reference)?
             .map(|(key, ticket_id)| (key, ticket_id as u64)))
+    }
+
+    fn issue_project(&self, ticket_id: u64) -> Result<Option<u64>, ApiError> {
+        self.issues.issue_project(ticket_id as i64)
+    }
+
+    fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError> {
+        self.issues.comment_target_exists(kind, id)
     }
 }
 
@@ -183,6 +198,30 @@ impl CommandHandler for CreateComment {
         let text = parse_stored_text(&request.text)?;
         let author = require_author(&request.author)?;
         let target = resolve_target(self.targets.as_ref(), &request.target)?;
+        if target.kind() == TimelineEntityKind::Ticket.as_str() {
+            let ticket_id: u64 = target.id().parse().map_err(|_| {
+                ApiError::internal("a resolved ticket target carries its numeric id")
+            })?;
+            let owner = self
+                .targets
+                .issue_project(ticket_id)?
+                .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
+            if owner != project.id().value() {
+                return Err(ApiError::invalid_request_field(
+                    "project_id",
+                    "project_id does not own the target issue",
+                ));
+            }
+        } else if !self
+            .targets
+            .comment_target_exists(target.kind(), target.id())?
+        {
+            return Err(ApiError::not_found(&format!(
+                "{} {}",
+                target.kind(),
+                target.id()
+            )));
+        }
         let parent_comment_id = validate_parent(
             self.store.as_ref(),
             self.targets.as_ref(),
@@ -729,6 +768,18 @@ mod comments {
                 Some(key) => Ok(Some((key.clone(), key.number().value()))),
                 None => Ok(None),
             }
+        }
+
+        fn issue_project(&self, _ticket_id: u64) -> Result<Option<u64>, kanban_dto::ApiError> {
+            Ok(Some(1))
+        }
+
+        fn comment_target_exists(
+            &self,
+            _kind: &str,
+            _id: &str,
+        ) -> Result<bool, kanban_dto::ApiError> {
+            Ok(true)
         }
     }
 

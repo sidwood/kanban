@@ -1508,3 +1508,181 @@ fn comment_create_requires_the_project_to_own_the_issue() {
         )
         .expect("the owning project may comment");
 }
+
+#[test]
+fn comment_create_refuses_non_ticket_targets_that_do_not_exist() {
+    let session = session();
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ghost-spec-target"),
+                "project_id": 1,
+                "target": { "kind": "spec", "id": "77" },
+                "text": "On nothing",
+                "author": "lin",
+            }),
+        )
+        .expect_err("a non-ticket target that does not exist is refused");
+    assert_eq!(error.code, ErrorCode::NotFound);
+    assert!(error.message.contains("spec 77"), "{}", error.message);
+
+    let missing_project = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ghost-project-target"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "42" },
+                "text": "On nothing",
+                "author": "lin",
+            }),
+        )
+        .expect_err("an unknown project target is refused");
+    assert_eq!(missing_project.code, ErrorCode::NotFound);
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "real-project-target"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "1" },
+                "text": "On the project",
+                "author": "lin",
+            }),
+        )
+        .expect("a stored project is a valid target");
+}
+
+#[test]
+fn milestone_and_label_creation_name_the_offending_field() {
+    let session = session();
+
+    let milestone_project = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-project"),
+                "project_id": 99,
+                "name": "Nowhere",
+            }),
+        )
+        .expect_err("an unknown project is not found");
+    assert_eq!(milestone_project.code, ErrorCode::NotFound);
+    assert_eq!(
+        milestone_project.field.as_deref(),
+        Some("project_id"),
+        "{}",
+        milestone_project.message
+    );
+
+    let label_project = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-project"),
+                "project_id": 99,
+                "name": "nowhere",
+                "color": "#336699",
+            }),
+        )
+        .expect_err("an unknown project is not found");
+    assert_eq!(label_project.code, ErrorCode::NotFound);
+    assert_eq!(label_project.field.as_deref(), Some("project_id"));
+
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-first"),
+                "project_id": 1,
+                "name": "Shared milestone",
+            }),
+        )
+        .expect("the first milestone lands");
+    let milestone_duplicate = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-duplicate"),
+                "project_id": 1,
+                "name": "Shared milestone",
+            }),
+        )
+        .expect_err("a duplicate milestone name conflicts");
+    assert_eq!(milestone_duplicate.code, ErrorCode::Conflict);
+    assert_eq!(milestone_duplicate.field.as_deref(), Some("name"));
+
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-first"),
+                "project_id": 1,
+                "name": "shared-label",
+                "color": "#336699",
+            }),
+        )
+        .expect("the first label lands");
+    let label_duplicate = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-duplicate"),
+                "project_id": 1,
+                "name": "shared-label",
+                "color": "#336699",
+            }),
+        )
+        .expect_err("a duplicate label name conflicts");
+    assert_eq!(label_duplicate.code, ErrorCode::Conflict);
+    assert_eq!(label_duplicate.field.as_deref(), Some("name"));
+
+    for (tool, key, name) in [
+        ("issue.create_milestone", "field-milestone-blank", "   "),
+        ("issue.create_label", "field-label-blank", "  "),
+    ] {
+        let mut payload = json!({
+            "mutation": mutation(0, key),
+            "project_id": 1,
+            "name": name,
+        });
+        if tool == "issue.create_label" {
+            payload["color"] = json!("#336699");
+        }
+        let blank = session
+            .call(tool, &payload)
+            .expect_err("a blank name is refused");
+        assert_eq!(blank.code, ErrorCode::InvalidRequest);
+        assert_eq!(blank.field.as_deref(), Some("name"), "{tool}");
+    }
+
+    let color = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-color"),
+                "project_id": 1,
+                "name": "coloured",
+                "color": "red-ish",
+            }),
+        )
+        .expect_err("a colour outside #RRGGBB is refused");
+    assert_eq!(color.code, ErrorCode::InvalidRequest);
+    assert_eq!(color.field.as_deref(), Some("color"));
+
+    for accepted in ["#336699", "#EF4444", "#10b981"] {
+        session
+            .call(
+                "issue.create_label",
+                &json!({
+                    "mutation": mutation(0, format!("field-label-color-{accepted}")),
+                    "project_id": 1,
+                    "name": format!("shade-{accepted}"),
+                    "color": accepted,
+                }),
+            )
+            .expect("a #RRGGBB colour is accepted");
+    }
+}

@@ -9,7 +9,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { TicketReadinessResponse, TicketRecord } from '@kanban/contracts'
+import type { TicketRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import { harness, ticket } from '../test/shell-harness'
@@ -115,22 +115,8 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const waiting = (from_number: number): TicketReadinessResponse['blocked_by'][number] => ({
-  Ticket: {
-    from_number,
-    from_project_id: 1,
-    from_state: 'active',
-    from_ticket_id: from_number,
-  },
-})
-
 const chip = (wrapper: VueWrapper, kind: string, ticketId: number) =>
   wrapper.find(`[data-testid="card-chip-${kind}-${ticketId}"]`)
-
-// A chip renders its label and its value in spans of their own; this
-// reads the value alone.
-const chipValue = (wrapper: VueWrapper, kind: string, ticketId: number) =>
-  chip(wrapper, kind, ticketId).findAll('span')[1]?.text()
 
 describe('board cards', () => {
   it('gives every card the fixed regions: number and title without kind badges', async () => {

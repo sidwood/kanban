@@ -79,7 +79,6 @@ import {
   STATUS_TONES,
   issueDisplayKey,
   statusSurfaceClass,
-  ticketTimelineId,
 } from './board-card'
 import { legacyStateToWorkflowName } from '../stores/issue-workflow'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'

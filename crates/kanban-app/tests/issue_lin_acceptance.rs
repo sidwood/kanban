@@ -1686,3 +1686,135 @@ fn milestone_and_label_creation_name_the_offending_field() {
             .expect("a #RRGGBB colour is accepted");
     }
 }
+
+#[test]
+fn issue_save_errors_carry_the_offending_field() {
+    let (_dir, session) = session_with_second_project();
+    let host = save_issue(
+        &session,
+        0,
+        "field-host",
+        json!({ "project_id": 1, "title": "Field checks" }),
+    );
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-own-milestone"),
+                "project_id": 1,
+                "name": "Home milestone",
+            }),
+        )
+        .expect("the home milestone lands");
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-edge-milestone"),
+                "project_id": 2,
+                "name": "Away milestone",
+            }),
+        )
+        .expect("the away milestone lands");
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-retire-label"),
+                "project_id": 1,
+                "name": "legacy",
+                "color": "#336699",
+            }),
+        )
+        .expect("the legacy label lands");
+    session
+        .call(
+            "issue.retire_label",
+            &json!({
+                "mutation": mutation(0, "field-retire-once"),
+                "project_id": 1,
+                "name": "legacy",
+            }),
+        )
+        .expect("the legacy label retires");
+    let child = save_issue(
+        &session,
+        0,
+        "field-child",
+        json!({
+            "project_id": 1,
+            "title": "Child issue",
+            "parent_id": host.ticket_id.to_string(),
+        }),
+    );
+
+    let version = issue_version(&session, &host.identifier);
+    for (key, fields, expected_field, expected_code) in [
+        (
+            "field-unknown-milestone",
+            json!({ "identifier": host.identifier, "milestone_id": 99 }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-foreign-milestone",
+            json!({ "identifier": host.identifier, "milestone_id": 2 }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-unknown-label",
+            json!({ "identifier": host.identifier, "add_labels": ["ghost"] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-retired-label",
+            json!({ "identifier": host.identifier, "add_labels": ["legacy"] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-unknown-state",
+            json!({ "identifier": host.identifier, "state": "Swimming" }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-priority-range",
+            json!({ "identifier": host.identifier, "priority": 9 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-cycle-parent",
+            json!({ "identifier": host.identifier, "parent_id": child.ticket_id.to_string() }),
+            "parent_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-self-duplicate",
+            json!({ "identifier": host.identifier, "duplicate_of": host.identifier }),
+            "duplicate_of",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-patch-shape",
+            json!({ "identifier": host.identifier, "description_patch": "just text" }),
+            "description_patch",
+            ErrorCode::InvalidRequest,
+        ),
+    ] {
+        let error = session
+            .call("issue.save", &save_payload(version, key, fields))
+            .expect_err("the invalid field is refused");
+        assert_eq!(error.code, expected_code, "{key}: {}", error.message);
+        assert_eq!(error.field.as_deref(), Some(expected_field), "{key}");
+    }
+
+    let cursor = session
+        .call("issue.list", &json!({ "project_id": 1, "cursor": "abc" }))
+        .expect_err("a non-numeric cursor is refused");
+    assert_eq!(cursor.code, ErrorCode::InvalidRequest);
+    assert_eq!(cursor.field.as_deref(), Some("cursor"));
+}

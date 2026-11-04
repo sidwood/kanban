@@ -333,6 +333,8 @@ impl CommandHandler for CreateMilestone {
         _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: IssueCreateMilestoneRequest = parse_payload(&command.payload)?;
+        resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
+        refuse_blank_name(&request.name)?;
         let row = self.0.issues.create_milestone(
             request.project_id as i64,
             &request.name,
@@ -367,6 +369,9 @@ impl CommandHandler for CreateLabel {
         _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: IssueCreateLabelRequest = parse_payload(&command.payload)?;
+        resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
+        refuse_blank_name(&request.name)?;
+        validate_label_colour(&request.color)?;
         let row = self.0.issues.create_label(
             request.project_id as i64,
             &request.name,
@@ -955,6 +960,42 @@ fn ticket_title(ticket: &Ticket) -> String {
             implementation.slice().to_owned()
         }
     }
+}
+
+/// Resolve the project a milestone or label lands on, naming the
+/// offending field when it does not exist.
+fn resolve_issue_project(projects: &dyn ProjectStore, project_id: u64) -> Result<(), ApiError> {
+    resolve_project(projects, project_id)
+        .map_err(|error| {
+            if error.code == kanban_dto::ErrorCode::NotFound {
+                return ApiError::not_found_field("project_id", &format!("project {project_id}"));
+            }
+            error
+        })
+        .map(|_| ())
+}
+
+/// A milestone or label name must carry visible characters.
+fn refuse_blank_name(name: &str) -> Result<(), ApiError> {
+    if name.trim().is_empty() {
+        return Err(ApiError::invalid_request_field(
+            "name",
+            "name must not be blank",
+        ));
+    }
+    Ok(())
+}
+
+/// A label colour is exactly `#` followed by six hex digits.
+fn validate_label_colour(color: &str) -> Result<(), ApiError> {
+    let shape = ApiError::invalid_request_field("color", "color must be #RRGGBB");
+    let Some(digits) = color.strip_prefix('#') else {
+        return Err(shape);
+    };
+    if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(shape);
+    }
+    Ok(())
 }
 
 fn linear_to_wire_priority(value: u8) -> TicketPriority {

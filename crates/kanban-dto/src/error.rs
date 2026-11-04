@@ -74,6 +74,15 @@ impl ApiError {
         }
     }
 
+    pub fn not_found_field(field: &str, subject: &str) -> Self {
+        Self {
+            code: ErrorCode::NotFound,
+            message: format!("{subject} was not found"),
+            field: Some(field.to_owned()),
+            current_version: None,
+        }
+    }
+
     pub fn invalid_request(reason: &str) -> Self {
         Self {
             code: ErrorCode::InvalidRequest,

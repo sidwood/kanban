@@ -165,7 +165,9 @@ mod file_installation_secret {
     }
 
     fn reject_non_regular_file_metadata(metadata: &fs::Metadata) -> Result<(), ApiError> {
-        if metadata.file_type().is_symlink() || metadata.file_type().is_fifo() || !metadata.is_file()
+        if metadata.file_type().is_symlink()
+            || metadata.file_type().is_fifo()
+            || !metadata.is_file()
         {
             return Err(unavailable());
         }

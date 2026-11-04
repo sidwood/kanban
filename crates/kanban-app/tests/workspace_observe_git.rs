@@ -161,9 +161,10 @@ fn shipped_observer_fixture_pins_main_under_a_hostile_default_branch() {
     let git_dir = TempDir::new().expect("a scratch directory is available");
     let repository = init_repo(git_dir.path());
 
-    let branch = common::git_test::git_command(Path::new(&repository), &["symbolic-ref", "--short", "HEAD"])
-        .output()
-        .expect("the fixture branch reads");
+    let branch =
+        common::git_test::git_command(Path::new(&repository), &["symbolic-ref", "--short", "HEAD"])
+            .output()
+            .expect("the fixture branch reads");
 
     assert!(branch.status.success(), "the fixture branch is readable");
     assert_eq!(

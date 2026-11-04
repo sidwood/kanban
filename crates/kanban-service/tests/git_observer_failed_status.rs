@@ -13,8 +13,8 @@ use std::path::Path;
 use std::process::Command;
 
 use kanban_app::WorkspaceGitObserver;
-use kanban_service::git_observer::LocalWorkspaceGitObserver;
 use kanban_service::git_env::configure_git_command;
+use kanban_service::git_observer::LocalWorkspaceGitObserver;
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {

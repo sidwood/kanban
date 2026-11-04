@@ -28,6 +28,7 @@ pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
 pub mod issue;
+pub mod issue_names;
 pub mod issue_operator;
 pub mod landing;
 pub mod lane;

@@ -1777,7 +1777,7 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
             }),
         )
         .expect("the sharp s label is created");
-    session
+    let twin = session
         .call(
             "issue.create_label",
             &json!({
@@ -1787,7 +1787,9 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
                 "color": "#336699",
             }),
         )
-        .expect("a label differing only by case folding is still its own name");
+        .expect_err("a label differing only by case folding is the same name");
+    assert_eq!(twin.code, ErrorCode::InvalidRequest);
+    assert_eq!(twin.field.as_deref(), Some("name"));
     let folded = save_issue(
         &session,
         0,

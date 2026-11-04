@@ -20,6 +20,7 @@ use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::issue::{IssuePageQuery, IssueStore, SecondaryEffect};
+use crate::issue_names::{NamedKind, refuse_taken_name};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
@@ -350,6 +351,15 @@ impl CommandHandler for CreateMilestone {
         let request: IssueCreateMilestoneRequest = parse_payload(&command.payload)?;
         resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
         refuse_blank_name(&request.name)?;
+        let stored = self
+            .0
+            .issues
+            .list_project_milestones(request.project_id as i64)?;
+        refuse_taken_name(
+            NamedKind::Milestone,
+            stored.iter().map(|milestone| milestone.name.as_str()),
+            &request.name,
+        )?;
         let row = self.0.issues.create_milestone(
             request.project_id as i64,
             &request.name,
@@ -397,6 +407,15 @@ impl CommandHandler for CreateLabel {
             ));
         }
         validate_label_colour(&request.color)?;
+        let stored = self
+            .0
+            .issues
+            .list_project_labels(request.project_id as i64)?;
+        refuse_taken_name(
+            NamedKind::Label,
+            stored.iter().map(|label| label.name.as_str()),
+            &request.name,
+        )?;
         let row = self.0.issues.create_label(
             request.project_id as i64,
             &request.name,

@@ -842,7 +842,7 @@ impl SqliteIssueStore {
                     identifier: format!("{code}-{number}"),
                     title,
                     state: state.unwrap_or_else(|| "Draft".to_owned()),
-                    sort_order: sort as i64,
+                    sort_order: sort,
                 })
             })
             .map_err(internal)?

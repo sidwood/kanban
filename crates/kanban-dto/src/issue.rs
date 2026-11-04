@@ -113,7 +113,7 @@ pub struct IssueChildRecord {
     pub identifier: String,
     pub title: String,
     pub state: String,
-    pub sort_order: i64,
+    pub sort_order: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

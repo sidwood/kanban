@@ -354,3 +354,96 @@ fn legacy_cancelling_stamps_the_issue_cancellation() {
         "the cancel closes the Ready row and opens a Cancelled row, saw {names:?}"
     );
 }
+
+#[test]
+fn fractional_child_ranks_survive_round_trips_and_swaps() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let parent = save_issue(
+        session,
+        0,
+        "ranks-parent",
+        json!({ "project_id": 1, "title": "Ranked parent" }),
+    );
+    let first = save_issue(
+        session,
+        0,
+        "ranks-first",
+        json!({
+            "project_id": 1,
+            "title": "First child",
+            "parent_id": parent.ticket_id,
+            "sort_order": 0.25,
+        }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "ranks-second",
+        json!({
+            "project_id": 1,
+            "title": "Second child",
+            "parent_id": parent.ticket_id,
+            "sort_order": 0.75,
+        }),
+    );
+
+    let read: serde_json::Value = session
+        .call("issue.get", &json!({ "identifier": parent.identifier }))
+        .expect("the parent reads");
+    let children = read["children"].as_array().expect("children listed");
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0]["identifier"], json!(first.identifier));
+    assert_eq!(
+        children[0]["sort_order"],
+        json!(0.25),
+        "a fractional rank reads back exactly from get_issue"
+    );
+    assert_eq!(children[1]["identifier"], json!(second.identifier));
+    assert_eq!(children[1]["sort_order"], json!(0.75));
+
+    save_issue(
+        session,
+        issue_version(session, &first.identifier),
+        "ranks-first-swap",
+        json!({ "identifier": first.identifier, "sort_order": 0.75 }),
+    );
+    save_issue(
+        session,
+        issue_version(session, &second.identifier),
+        "ranks-second-swap",
+        json!({ "identifier": second.identifier, "sort_order": 0.25 }),
+    );
+
+    let swapped: serde_json::Value = session
+        .call("issue.get", &json!({ "identifier": parent.identifier }))
+        .expect("the parent reads again");
+    let children = swapped["children"].as_array().expect("children listed");
+    assert_eq!(
+        children[0]["identifier"],
+        json!(second.identifier),
+        "swapping fractional ranks swaps the children order"
+    );
+    assert_eq!(children[0]["sort_order"], json!(0.25));
+    assert_eq!(children[1]["sort_order"], json!(0.75));
+
+    let listed: serde_json::Value = session
+        .call("issue.list", &json!({ "project_id": 1 }))
+        .expect("the project lists");
+    let listed_parent = listed["issues"]
+        .as_array()
+        .expect("a page")
+        .iter()
+        .find(|issue| issue["identifier"] == json!(parent.identifier))
+        .expect("the parent is listed");
+    let listed_children = listed_parent["children"]
+        .as_array()
+        .expect("children listed");
+    assert_eq!(
+        listed_children[0]["identifier"],
+        json!(second.identifier),
+        "list_issues carries the swapped fractional order"
+    );
+    assert_eq!(listed_children[0]["sort_order"], json!(0.25));
+}

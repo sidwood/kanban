@@ -9,7 +9,7 @@ import {
   type KanbanOperationName,
   type KanbanTransport,
 } from './client.js'
-import type { EventEnvelope } from './types.js'
+import type { CommentCreateRequest, EventEnvelope } from './types.js'
 
 describe('generated client', () => {
   it('maps every operation to its typed Tauri command', () => {
@@ -98,6 +98,16 @@ describe('generated client', () => {
     expect(() => parseKanbanLiveEvent(envelope)).toThrow(
       'unknown live event type `counter.bumped`',
     )
+  })
+
+  it('demands the author on every comment create request', () => {
+    // The runtime refuses a create without an author; the generated
+    // request type must refuse it at compile time too. If author
+    // were optional, `true` would not be assignable here.
+    type AuthorIsRequired = {} extends Pick<CommentCreateRequest, 'author'> ? false : true
+    const authorIsRequired: AuthorIsRequired = true
+
+    expect(authorIsRequired).toBe(true)
   })
 
   it('routes queries through the transport boundary', async () => {

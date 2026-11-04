@@ -187,7 +187,7 @@ export type CloneRemovedRecord = {
   workspace_id: number;
 };
 export type CommentCreateRequest = {
-  author?: string;
+  author: string;
   mutation: MutationContext;
   parent_comment_id?: number | null;
   project_id: number;

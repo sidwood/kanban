@@ -564,6 +564,25 @@ async fn operator_route_serves_one_comment_stream_per_issue() {
         "historically stored spellings keep listing over the operator route"
     );
 
+    // The advertised contract demands the author the runtime refuses
+    // to default.
+    let tools = client.list_all_tools().await.unwrap();
+    let create_tool = tools
+        .iter()
+        .find(|tool| tool.name == "comment_create")
+        .expect("the create tool is listed");
+    let create_schema = serde_json::to_value(&create_tool.input_schema).unwrap();
+    let required: Vec<_> = create_schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        required.contains(&"author"),
+        "the live input schema must require author: {required:?}"
+    );
+
     client.cancel().await.unwrap();
     service.shutdown();
 }

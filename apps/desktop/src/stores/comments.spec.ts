@@ -63,7 +63,7 @@ describe('comments store', () => {
     expect(comments.error).toBeNull()
   })
 
-  it('creating sends version zero and a fresh idempotency key', async () => {
+  it('creating sends the author, version zero and a fresh idempotency key', async () => {
     setActivePinia(createPinia())
     const { transport, operations, command, query } = harness()
     command.mockResolvedValue(record())
@@ -73,16 +73,18 @@ describe('comments store', () => {
     } satisfies CommentRevisionsResponse)
     const comments = useCommentsStore()
 
-    await comments.create(transport, 1, target(), 'First thought')
+    await comments.create(transport, 1, target(), 'First thought', 'lin')
 
     const create = operations.find((entry) => entry.name === 'comment.create')
     expect(create?.kind).toBe('command')
     const request = create?.request as {
       mutation: { optimistic_version: number; idempotency_key: string }
       project_id: number
+      author: string
       text: string
     }
     expect(request.project_id).toBe(1)
+    expect(request.author).toBe('lin')
     expect(request.text).toBe('First thought')
     expect(request.mutation.optimistic_version).toBe(0)
     expect(request.mutation.idempotency_key).toMatch(/[\w-]{8,}/)

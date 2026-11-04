@@ -170,6 +170,19 @@ use crate::workspace::{
     WorkspaceRetireRequest, WorkspaceReuseDto,
 };
 
+/// The create request with its author advertised as required. Serde
+/// defaults the field so an omitted author still reaches the
+/// command's named-field refusal instead of a generic parse error —
+/// a default schemars reads as optional — but the public contract
+/// must promise exactly what the runtime demands.
+fn comment_create_request_schema() -> RootSchema {
+    let mut schema = schema_for!(CommentCreateRequest);
+    if let Some(validation) = schema.schema.object.as_mut() {
+        validation.required.insert("author".to_owned());
+    }
+    schema
+}
+
 /// Every DTO schema exported to `packages/contracts`.
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
     vec![
@@ -284,7 +297,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("ChipKind", schema_for!(ChipKind)),
         ("ChipSet", schema_for!(ChipSet)),
         ("ChipVocabulary", schema_for!(ChipVocabulary)),
-        ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
+        ("CommentCreateRequest", comment_create_request_schema()),
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),
         ("CommentResolveRequest", schema_for!(CommentResolveRequest)),

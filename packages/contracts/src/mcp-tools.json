@@ -29153,7 +29153,7 @@
       "description": "Request payload for the `comment.create` command.",
       "properties": {
         "author": {
-          "description": "Optional author label stored on the comment row.",
+          "description": "The author the comment speaks for; required, because the core holds no operator identity to default from.",
           "type": "string"
         },
         "mutation": {
@@ -29187,6 +29187,7 @@
         }
       },
       "required": [
+        "author",
         "mutation",
         "project_id",
         "target",

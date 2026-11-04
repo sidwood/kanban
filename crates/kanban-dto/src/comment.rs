@@ -46,7 +46,8 @@ pub struct CommentCreateRequest {
     pub target: TimelineEntityRef,
     /// The initial text; blank text is refused.
     pub text: String,
-    /// Optional author label stored on the comment row.
+    /// The author the comment speaks for; required, because the core
+    /// holds no operator identity to default from.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub author: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -244,6 +245,40 @@ mod tests {
         let decoded: CommentResolveResponse =
             serde_json::from_value(encoded).expect("the response deserialises");
         assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn the_create_request_advertises_its_author_as_required() {
+        let (_, schema) = schema_definitions()
+            .into_iter()
+            .find(|(schema_name, _)| *schema_name == "CommentCreateRequest")
+            .expect("CommentCreateRequest is registered");
+
+        let required: Vec<_> = schema
+            .schema
+            .object
+            .as_ref()
+            .expect("the request schema is an object")
+            .required
+            .iter()
+            .collect();
+        assert!(
+            required.contains(&&"author".to_owned()),
+            "the contract must demand the author the runtime requires: {required:?}"
+        );
+
+        let encoded = serde_json::to_value(&schema).expect("the schema serialises");
+        let author = &encoded["properties"]["author"];
+        assert_eq!(
+            author["type"],
+            json!("string"),
+            "the author stays a plain string"
+        );
+        let description = author["description"].as_str().expect("described");
+        assert!(
+            description.contains("required"),
+            "the description must not promise an optional author: {description}"
+        );
     }
 
     #[test]

@@ -41,6 +41,7 @@ export const useCommentsStore = defineStore('comments', {
       projectId: number,
       target: TimelineEntityRef,
       text: string,
+      author: string,
     ): Promise<CommentRecord | null> {
       return this.mutate(transport, (client) =>
         client.commandCommentCreate({
@@ -48,6 +49,7 @@ export const useCommentsStore = defineStore('comments', {
           project_id: projectId,
           target,
           text,
+          author,
         }),
       )
     },

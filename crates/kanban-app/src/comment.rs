@@ -5,7 +5,8 @@
 use std::sync::Arc;
 
 use kanban_domain::{
-    Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError, displayed_comment_author,
+    Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError, UNKNOWN_COMMENT_AUTHOR,
+    displayed_comment_author, is_reserved_comment_author,
 };
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
@@ -429,12 +430,23 @@ fn name_missing(error: ApiError, field: &str) -> ApiError {
 }
 
 /// Every comment carries the identity it speaks for. The core holds
-/// no operator identity to default from, so the caller must name one.
+/// no operator identity to default from, so the caller must name one,
+/// and it may not claim the placeholder shown for comments whose
+/// author was never recorded.
 fn require_author(author: &str) -> Result<&str, ApiError> {
     if author.trim().is_empty() {
         return Err(ApiError::invalid_request_field(
             "author",
             "author is required; the core holds no operator identity to default from",
+        ));
+    }
+    if is_reserved_comment_author(author) {
+        return Err(ApiError::invalid_request_field(
+            "author",
+            &format!(
+                "author `{UNKNOWN_COMMENT_AUTHOR}` is reserved for comments whose author \
+                 was never recorded"
+            ),
         ));
     }
     Ok(author)
@@ -1521,6 +1533,27 @@ mod comments {
             .map(|row| row["author"].clone())
             .collect();
         assert_eq!(authors, vec![json!("Unknown author"), json!("tester")]);
+    }
+
+    #[test]
+    fn the_placeholder_author_is_reserved_without_recording_anything() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+
+        for author in ["Unknown author", " unknown AUTHOR "] {
+            let mut payload = create("Posing as nobody", "key-1", 0);
+            payload["author"] = json!(author);
+            let error = core
+                .command("comment.create", &payload)
+                .expect_err("the placeholder is not an author a caller can claim");
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.field.as_deref(), Some("author"));
+            assert!(
+                error.message.contains("reserved"),
+                "the refusal says why: {}",
+                error.message
+            );
+        }
+        assert!(store.snapshot().is_empty(), "no row may be written");
     }
 
     #[test]

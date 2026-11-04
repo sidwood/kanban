@@ -44,6 +44,14 @@ pub fn displayed_comment_author(stored: &str) -> &str {
     }
 }
 
+/// Whether a caller-supplied author would pass for
+/// [`UNKNOWN_COMMENT_AUTHOR`]. The placeholder is reserved so that a
+/// reader who sees it knows no author was recorded, rather than that
+/// someone chose the name.
+pub fn is_reserved_comment_author(author: &str) -> bool {
+    author.trim().eq_ignore_ascii_case(UNKNOWN_COMMENT_AUTHOR)
+}
+
 /// Why comment text was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextError {
@@ -260,7 +268,7 @@ impl Comment {
 mod tests {
     use super::{
         Comment, CommentId, CommentTarget, CommentText, TextError, UNKNOWN_COMMENT_AUTHOR,
-        displayed_comment_author,
+        displayed_comment_author, is_reserved_comment_author,
     };
 
     fn target() -> CommentTarget {
@@ -323,5 +331,15 @@ mod tests {
         assert_eq!(UNKNOWN_COMMENT_AUTHOR, "Unknown author");
         assert_eq!(displayed_comment_author(""), UNKNOWN_COMMENT_AUTHOR);
         assert_eq!(displayed_comment_author("   "), UNKNOWN_COMMENT_AUTHOR);
+    }
+
+    #[test]
+    fn only_the_placeholder_itself_is_reserved() {
+        for reserved in ["Unknown author", "unknown AUTHOR", "  Unknown author  "] {
+            assert!(is_reserved_comment_author(reserved), "{reserved:?}");
+        }
+        for free in ["Unknown", "Unknown authors", "lin", ""] {
+            assert!(!is_reserved_comment_author(free), "{free:?}");
+        }
     }
 }

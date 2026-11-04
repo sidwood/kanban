@@ -424,7 +424,7 @@ impl SqliteIssueStore {
                 "add_labels",
                 &format!("label `{name}` is retired"),
             ));
-        }
+        };
         let group: Option<(i64, i64)> = conn
             .query_row(
                 "SELECT g.id, g.single_select FROM issue_labels AS l
@@ -435,26 +435,46 @@ impl SqliteIssueStore {
             )
             .optional()
             .map_err(internal)?;
+        // A save that changes nothing must touch nothing: an add of a
+        // label the issue already holds — and that displaces no other
+        // member of its single-select group — leaves the update time
+        // and the version alone.
+        let held: Option<i64> = conn
+            .query_row(
+                "SELECT label_id FROM issue_ticket_labels
+                 WHERE ticket_id = ?1 AND label_id = ?2",
+                params![ticket_id, label_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        let mut changed = held.is_none();
         if let Some((group_id, single)) = group
             && single == 1
         {
-            conn.execute(
-                "DELETE FROM issue_ticket_labels
-                 WHERE ticket_id = ?1
-                   AND label_id IN (
-                       SELECT l.id FROM issue_labels AS l
-                       WHERE l.group_id = ?2
-                   )",
-                params![ticket_id, group_id],
-            )
-            .map_err(internal)?;
+            let displaced = conn
+                .execute(
+                    "DELETE FROM issue_ticket_labels
+                     WHERE ticket_id = ?1
+                       AND label_id <> ?3
+                       AND label_id IN (
+                           SELECT l.id FROM issue_labels AS l
+                           WHERE l.group_id = ?2
+                       )",
+                    params![ticket_id, group_id, label_id],
+                )
+                .map_err(internal)?;
+            changed = changed || displaced > 0;
         }
         conn.execute(
             "INSERT OR IGNORE INTO issue_ticket_labels (ticket_id, label_id) VALUES (?1, ?2)",
             params![ticket_id, label_id],
         )
         .map_err(internal)?;
-        self.touch_updated_at(ticket_id)
+        if changed {
+            self.touch_updated_at(ticket_id)?;
+        }
+        Ok(())
     }
 
     pub fn remove_label(
@@ -464,15 +484,29 @@ impl SqliteIssueStore {
         name: &str,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
-        conn.execute(
-            "DELETE FROM issue_ticket_labels
-             WHERE ticket_id = ?1
-               AND label_id = (
-                   SELECT id FROM issue_labels WHERE project_id = ?2 AND name = ?3
-               )",
-            params![ticket_id, project_id, name],
-        )
-        .map_err(internal)?;
+        let label_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM issue_labels WHERE project_id = ?1 AND name = ?2",
+                params![project_id, name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        let Some(label_id) = label_id else {
+            return Err(ApiError::not_found_field(
+                "remove_labels",
+                &format!("unknown label `{name}`"),
+            ));
+        };
+        let changed = conn
+            .execute(
+                "DELETE FROM issue_ticket_labels WHERE ticket_id = ?1 AND label_id = ?2",
+                params![ticket_id, label_id],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Ok(());
+        }
         self.touch_updated_at(ticket_id)
     }
 

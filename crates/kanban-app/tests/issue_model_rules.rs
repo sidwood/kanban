@@ -1995,3 +1995,89 @@ fn a_legacy_reassignment_seeds_the_replacement_issue() {
     );
     assert!(record.state_history[0].ended_at.is_none());
 }
+
+#[test]
+fn label_saves_that_change_nothing_touch_nothing() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "label-noop-create",
+        json!({ "project_id": 1, "title": "Labelled issue", "add_labels": ["task"] }),
+    );
+    let before = read_issue(session, &saved.identifier);
+
+    save_issue(
+        session,
+        before.version,
+        "label-noop-add",
+        json!({ "identifier": saved.identifier, "add_labels": ["task"] }),
+    );
+    let after_add = read_issue(session, &saved.identifier);
+    assert_eq!(
+        after_add.version, before.version,
+        "re-adding a held label keeps the version"
+    );
+    assert_eq!(
+        after_add.updated_at, before.updated_at,
+        "re-adding a held label keeps updated_at"
+    );
+
+    save_issue(
+        session,
+        before.version,
+        "label-noop-remove",
+        json!({
+            "identifier": saved.identifier,
+            "remove_labels": ["bug"],
+        }),
+    );
+    let after_remove = read_issue(session, &saved.identifier);
+    assert_eq!(
+        after_remove.version, before.version,
+        "removing a label the issue lacks keeps the version"
+    );
+    assert_eq!(
+        after_remove.updated_at, before.updated_at,
+        "removing a label the issue lacks keeps updated_at"
+    );
+    assert_eq!(
+        after_remove.labels,
+        vec!["task".to_owned()],
+        "the held labels stand"
+    );
+}
+
+#[test]
+fn removing_a_label_the_project_never_had_is_refused() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "label-unknown-create",
+        json!({ "project_id": 1, "title": "Guarded issue" }),
+    );
+    let before = read_issue(session, &saved.identifier);
+
+    let refusal = try_save(
+        session,
+        before.version,
+        "label-unknown-remove",
+        json!({
+            "identifier": saved.identifier,
+            "remove_labels": ["no-such-label"],
+        }),
+    )
+    .expect_err("an unknown label name is refused");
+    assert_eq!(refusal.code, ErrorCode::NotFound);
+    assert_eq!(
+        refusal.field.as_deref(),
+        Some("remove_labels"),
+        "the refusal names the list it came from"
+    );
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(after.version, before.version);
+    assert_eq!(after.updated_at, before.updated_at);
+}

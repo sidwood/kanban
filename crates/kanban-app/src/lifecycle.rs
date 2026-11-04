@@ -56,10 +56,9 @@ fn domain_state(state: TicketState) -> DomainState {
         TicketState::Done => DomainState::Done,
         TicketState::Cancelled => DomainState::Cancelled,
         TicketState::Superseded => DomainState::Superseded,
+        TicketState::Duplicate => DomainState::Duplicate,
     }
 }
-
-/// The domain form of one wire priority.
 fn domain_priority(priority: TicketPriority) -> DomainPriority {
     match priority {
         TicketPriority::Urgent => DomainPriority::Urgent,

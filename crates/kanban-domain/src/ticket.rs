@@ -256,6 +256,8 @@ pub enum TicketState {
     Cancelled,
     /// Terminal: replaced by a reassignment Ticket.
     Superseded,
+    /// Terminal: duplicate of another issue (Linear parity).
+    Duplicate,
 }
 
 impl TicketState {
@@ -273,12 +275,13 @@ impl TicketState {
         Self::Done,
         Self::Cancelled,
         Self::Superseded,
+        Self::Duplicate,
     ];
 
     /// Whether this state accepts no further lifecycle movement.
-    /// Cancelled and superseded are the terminal states (DR-LC-02).
+    /// Cancelled, superseded, and duplicate are terminal (DR-LC-02).
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Cancelled | Self::Superseded)
+        matches!(self, Self::Cancelled | Self::Superseded | Self::Duplicate)
     }
 
     /// The stored and wire name of this state.
@@ -296,6 +299,7 @@ impl TicketState {
             Self::Done => "done",
             Self::Cancelled => "cancelled",
             Self::Superseded => "superseded",
+            Self::Duplicate => "duplicate",
         }
     }
 
@@ -1777,7 +1781,7 @@ mod ticket_kinds {
         }
         assert_eq!(Priority::parse("ghost"), None);
 
-        assert_eq!(TicketState::ALL.len(), 12);
+        assert_eq!(TicketState::ALL.len(), 13);
         for state in TicketState::ALL {
             assert_eq!(
                 TicketState::parse(state.wire_name()),
@@ -1791,9 +1795,10 @@ mod ticket_kinds {
     }
 
     #[test]
-    fn terminal_states_are_cancelled_and_superseded() {
+    fn terminal_states_are_cancelled_superseded_and_duplicate() {
         assert!(TicketState::Cancelled.is_terminal());
         assert!(TicketState::Superseded.is_terminal());
+        assert!(TicketState::Duplicate.is_terminal());
         for open in [
             TicketState::Draft,
             TicketState::Parked,

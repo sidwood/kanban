@@ -840,10 +840,11 @@ fn state_of(state: DomainState) -> TicketState {
         DomainState::Done => TicketState::Done,
         DomainState::Cancelled => TicketState::Cancelled,
         DomainState::Superseded => TicketState::Superseded,
+        DomainState::Duplicate => TicketState::Duplicate,
     }
 }
 
-/// The DTO record for one Ticket. Story links render with the
+/// The DTO record for one Ticket.
 /// Project's code, the full `CORE-S3-US6` form.
 pub(crate) fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
     TicketRecord {

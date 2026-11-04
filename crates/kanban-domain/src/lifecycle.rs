@@ -206,7 +206,7 @@ pub fn legal_targets(state: TicketState) -> &'static [TicketState] {
         State::InReview => &[State::Active, State::Approved],
         State::Approved => &[State::Landing],
         State::Landing => &[State::Done],
-        State::Done | State::Cancelled | State::Superseded => &[],
+        State::Done | State::Cancelled | State::Superseded | State::Duplicate => &[],
     }
 }
 

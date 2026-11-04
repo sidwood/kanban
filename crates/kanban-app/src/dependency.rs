@@ -128,10 +128,9 @@ fn state_of(state: DomainState) -> TicketState {
         DomainState::Done => TicketState::Done,
         DomainState::Cancelled => TicketState::Cancelled,
         DomainState::Superseded => TicketState::Superseded,
+        DomainState::Duplicate => TicketState::Duplicate,
     }
 }
-
-/// Whether one approved Ticket graph holds both endpoints of an edge
 /// (DR-PS-17, Sid ruling 3): both Tickets attach to the same Spec and
 /// carry the same pinned Spec content version. The pin is exactly
 /// graph approval's mark (DR-DE-06) and one approved graph exists per

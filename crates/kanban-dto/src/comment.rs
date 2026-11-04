@@ -46,6 +46,9 @@ pub struct CommentCreateRequest {
     pub target: TimelineEntityRef,
     /// The initial text; blank text is refused.
     pub text: String,
+    /// Optional author label stored on the comment row.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
 }
 
 /// Request payload for the `comment.edit` command.
@@ -170,6 +173,7 @@ mod tests {
             project_id: 1,
             target: target(),
             text: "First".to_owned(),
+            author: "tester".to_owned(),
         };
         let encoded = serde_json::to_value(&create).expect("the request serialises");
         let decoded: CommentCreateRequest =

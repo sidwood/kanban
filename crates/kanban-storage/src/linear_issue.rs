@@ -111,7 +111,7 @@ const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
     ("Done", "completed", "done", 9),
     ("Cancelled", "canceled", "cancelled", 10),
     ("Superseded", "canceled", "superseded", 11),
-    ("Duplicate", "duplicate", "superseded", 12),
+    ("Duplicate", "duplicate", "duplicate", 12),
 ];
 
 /// Seed default workflow, Type labels, and label group for a new project.
@@ -210,7 +210,7 @@ mod tests {
     use crate::migrations::{AllowAllMigrations, LATEST_SCHEMA_VERSION};
 
     #[test]
-    fn migration_0053_seeds_twelve_workflow_states_per_project() {
+    fn migration_0053_seeds_thirteen_workflow_states_per_project() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("kanban.sqlite");
         let mut database = Database::open(&path).unwrap();
@@ -253,9 +253,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 13);
         let states = list_workflow_states(&database.connection(), 1).unwrap();
-        assert_eq!(states.len(), 12);
+        assert_eq!(states.len(), 13);
         assert_eq!(states[0].state_type, WorkflowStateType::Backlog);
     }
 }

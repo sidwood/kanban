@@ -50,6 +50,7 @@ impl CommentStore for RecordingComments {
         project_id: u64,
         _target: &CommentTarget,
         _text: &CommentText,
+        _author: &str,
     ) -> Result<Comment, ApiError> {
         let id = self.rows.lock().expect("the rows lock is sound").len() as u64 + 1;
         let comment = Comment::create(

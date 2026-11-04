@@ -509,7 +509,7 @@ mod admission_rules {
                 TicketState::Ready | TicketState::Active => {
                     assert_eq!(outcome, Ok(()), "{state:?}")
                 }
-                TicketState::Cancelled | TicketState::Superseded => {
+                TicketState::Cancelled | TicketState::Superseded | TicketState::Duplicate => {
                     assert_eq!(outcome, Err(AdmissionRefusal::TerminalTicket { state }))
                 }
                 other => assert_eq!(
@@ -535,7 +535,7 @@ mod admission_rules {
                         "{state:?}: a reviewer answers no readiness gate"
                     )
                 }
-                TicketState::Cancelled | TicketState::Superseded => {
+                TicketState::Cancelled | TicketState::Superseded | TicketState::Duplicate => {
                     assert_eq!(outcome, Err(AdmissionRefusal::TerminalTicket { state }))
                 }
                 other => assert_eq!(

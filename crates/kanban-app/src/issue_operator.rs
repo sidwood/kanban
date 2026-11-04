@@ -373,6 +373,9 @@ fn apply_issue_extensions(
         ctx.issues
             .set_duplicate_of(ticket_id, duplicate.as_deref())?;
     }
+    if let Some(sort) = request.sort_order {
+        ctx.issues.set_sub_issue_sort(ticket_id, sort)?;
+    }
     if let Some(add) = request.add_blocks.as_ref() {
         for target in add {
             ctx.issues.add_relation(ticket_id, target, "blocks")?;
@@ -469,6 +472,12 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         None
     };
     let children = ctx.issues.list_children(ticket_id)?;
+    let duplicate_of = if let Some(target_id) = fields.duplicate_of_ticket_id {
+        Some(ctx.issues.load_issue_key(target_id)?.display())
+    } else {
+        None
+    };
+    let duplicates = ctx.issues.list_duplicate_identifiers(ticket_id)?;
     Ok(IssueRecord {
         identifier: key.display(),
         url: key.deep_link(),
@@ -488,6 +497,8 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         created_at: fields.created_at,
         updated_at: fields.updated_at,
         parent,
+        duplicate_of,
+        duplicates: (!duplicates.is_empty()).then_some(duplicates),
         children: (!children.is_empty()).then_some(children),
     })
 }
@@ -501,10 +512,6 @@ fn list_issues(
     } else {
         request.limit.clamp(1, 100)
     };
-    let cursor_ticket = request
-        .cursor
-        .as_deref()
-        .and_then(|value| value.parse::<u64>().ok());
     let project_ids: Vec<u64> = match request.project_id {
         Some(project_id) => vec![project_id],
         None => ctx
@@ -564,18 +571,25 @@ fn list_issues(
             .cmp(&left.updated_at)
             .then_with(|| right.ticket_id.cmp(&left.ticket_id))
     });
-    let start = if let Some(cursor) = cursor_ticket {
+    let start = if let Some(raw) = request.cursor.as_deref() {
+        let cursor_ticket = raw
+            .parse::<u64>()
+            .map_err(|_| ApiError::invalid_request("cursor must be a numeric ticket id"))?;
         matches
             .iter()
-            .position(|record| record.ticket_id == cursor)
+            .position(|record| record.ticket_id == cursor_ticket)
             .map(|index| index + 1)
-            .unwrap_or(0)
+            .ok_or_else(|| ApiError::invalid_request("cursor does not match any listed issue"))?
     } else {
         0
     };
     let page: Vec<IssueRecord> = matches.into_iter().skip(start).collect();
     let next_cursor = if page.len() > limit as usize {
-        Some(page[limit as usize].ticket_id.to_string())
+        Some(
+            page[(limit as usize).saturating_sub(1)]
+                .ticket_id
+                .to_string(),
+        )
     } else {
         None
     };

@@ -365,6 +365,7 @@ fn domain_state(state: TicketState) -> DomainState {
         TicketState::Done => DomainState::Done,
         TicketState::Cancelled => DomainState::Cancelled,
         TicketState::Superseded => DomainState::Superseded,
+        TicketState::Duplicate => DomainState::Duplicate,
     }
 }
 

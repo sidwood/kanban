@@ -39,13 +39,14 @@ impl CommentStore for SqliteCommentStore {
         project_id: u64,
         target: &CommentTarget,
         text: &CommentText,
+        author: &str,
     ) -> Result<Comment, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         span.execute(
-            "INSERT INTO comments (project_id, entity_kind, entity_id, version)
-                 VALUES (?1, ?2, ?3, 1)",
-            params![project_id.to_string(), target.kind(), target.id()],
+            "INSERT INTO comments (project_id, entity_kind, entity_id, version, author)
+                 VALUES (?1, ?2, ?3, 1, ?4)",
+            params![project_id.to_string(), target.kind(), target.id(), author],
         )
         .map_err(internal)?;
         let id = CommentId::new(
@@ -173,10 +174,7 @@ impl CommentStore for SqliteCommentStore {
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                         (SELECT recorded_at FROM comment_revisions
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        (SELECT json_extract(detail, '$.author') FROM timeline_events
-                         WHERE kind = 'comment'
-                           AND json_extract(detail, '$.comment_id') = c.id
-                         ORDER BY recorded_at DESC LIMIT 1)
+                        COALESCE(c.author, '')
                  FROM comments AS c
                  WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
                  ORDER BY c.id ASC
@@ -424,7 +422,7 @@ mod revision_store {
         let (_dir, database, store) = store();
 
         let comment = store
-            .create(1, &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"), "test")
             .expect("the create lands");
 
         assert_eq!(comment.id().value(), 1);
@@ -447,7 +445,7 @@ mod revision_store {
     fn editing_appends_a_revision_and_updates_current_text() {
         let (_dir, database, store) = store();
         let mut comment = store
-            .create(1, &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"), "test")
             .expect("the create lands");
         comment
             .edit(text("corrected thought"))
@@ -474,7 +472,7 @@ mod revision_store {
     fn revisions_query_returns_history_in_order() {
         let (_dir, _database, store) = store();
         let mut comment = store
-            .create(1, &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"), "test")
             .expect("the create lands");
         comment
             .edit(text("second thought"))
@@ -498,7 +496,7 @@ mod revision_store {
     fn updating_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create(1, &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"), "test")
             .expect("the create lands");
 
         let outcome = database
@@ -516,7 +514,7 @@ mod revision_store {
     fn deleting_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create(1, &target(), &text("first thought"))
+            .create(1, &target(), &text("first thought"), "test")
             .expect("the create lands");
 
         let outcome = database

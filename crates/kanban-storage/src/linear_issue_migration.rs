@@ -147,6 +147,7 @@ pub(crate) fn apply_linear_issue_model(conn: &Connection) -> rusqlite::Result<()
             UNION ALL SELECT 'Done', 'completed', 'done', 9
             UNION ALL SELECT 'Cancelled', 'canceled', 'cancelled', 10
             UNION ALL SELECT 'Superseded', 'canceled', 'superseded', 11
+            UNION ALL SELECT 'Duplicate', 'duplicate', 'duplicate', 12
         ) AS v;
         INSERT OR IGNORE INTO issue_label_groups (project_id, name, single_select)
         SELECT id, 'Type', 1 FROM projects;
@@ -380,7 +381,7 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
              state TEXT NOT NULL CHECK (state IN (
                  'draft', 'parked', 'blocked', 'scheduled', 'ready', 'active',
                  'in_review', 'approved', 'landing', 'done', 'cancelled',
-                 'superseded'
+                 'superseded', 'duplicate'
              )),
              spec_id INTEGER REFERENCES specs (id),
              title TEXT,
@@ -759,6 +760,59 @@ fn preserve_legacy_external_blockers(conn: &Connection) -> rusqlite::Result<()> 
     Ok(())
 }
 
+/// Ensures Duplicate workflow maps to its own legacy ticket state and the
+/// `tickets.state` CHECK accepts `duplicate`.
+pub(crate) fn apply_duplicate_ticket_state(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE issue_workflow_states SET legacy_state = 'duplicate' WHERE name = 'Duplicate'",
+        [],
+    )?;
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO issue_workflow_states (project_id, name, type, legacy_state, position)
+         SELECT p.id, 'Duplicate', 'duplicate', 'duplicate', 12 FROM projects AS p",
+    )?;
+    let ddl: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ddl.contains("'duplicate'") {
+        return Ok(());
+    }
+    conn.execute_batch(include_str!(
+        "../migrations/0055_duplicate_ticket_state.sql"
+    ))?;
+    Ok(())
+}
+
+/// Adds comment authorship and backfills from timeline JSON where present.
+pub(crate) fn apply_comment_author_column(conn: &Connection) -> rusqlite::Result<()> {
+    if table_has_column(conn, "comments", "author")? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "ALTER TABLE comments ADD COLUMN author TEXT NOT NULL DEFAULT '';
+         UPDATE comments
+         SET author = COALESCE(
+             (SELECT json_extract(detail, '$.author')
+              FROM timeline_events
+              WHERE kind = 'comment'
+                AND json_extract(detail, '$.comment_id') = comments.id
+              ORDER BY recorded_at DESC
+              LIMIT 1),
+             ''
+         );",
+    )
+}
+
+pub(crate) fn apply_duplicate_ticket_state_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_duplicate_ticket_state(span)
+}
+
+pub(crate) fn apply_comment_author_column_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_comment_author_column(span)
+}
+
 pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     apply_linear_issue_relaxation(span)
 }
@@ -847,7 +901,7 @@ mod tests {
                  id, project_id, number, kind, priority, state, spec_id, title, slice,
                  criteria, subtype, mode, completion, version, created_at
              ) VALUES (
-                 1, 1, 1, 'implementation', 'normal', 'draft', 1, NULL, 'Login flow',
+                 1, 1, 1, 'implementation', 'normal', 'done', 1, NULL, 'Login flow',
                  '[{\"outcome\":\"User logs in\",\"stories\":[{\"spec\":1,\"story\":1}]}]', NULL, NULL, '[]', 1,
                  '2019-01-01T00:00:00.000000Z'
              );
@@ -886,6 +940,26 @@ mod tests {
             [format!(
                 "{{\"comment_id\":1,\"text\":\"Edited note\",\"revision\":2,\"recorded_at\":\"{COMMENT_EDITED}\",\"author\":\"{COMMENT_AUTHOR}\"}}"
             ), COMMENT_EDITED.to_owned()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (kind, detail, recorded_at, project_id, entity_kind, entity_id)
+             VALUES (
+                 'transition',
+                 '{\"from\":\"draft\",\"to\":\"active\"}',
+                 '2019-01-01T12:00:00.000000Z', '1', 'ticket', '1'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (kind, detail, recorded_at, project_id, entity_kind, entity_id)
+             VALUES (
+                 'transition',
+                 '{\"from\":\"active\",\"to\":\"done\"}',
+                 '2019-01-02T12:00:00.000000Z', '1', 'ticket', '1'
+             )",
+            [],
         )
         .unwrap();
     }
@@ -1079,6 +1153,31 @@ mod tests {
             !blocker.state_history.is_empty(),
             "state history should be backfilled from legacy transitions"
         );
+        assert_eq!(blocker.state_history.len(), 3);
+        assert_eq!(blocker.state_history[0].state, "Draft");
+        assert_eq!(
+            blocker.state_history[0].started_at,
+            "2019-01-01T00:00:00.000000Z"
+        );
+        assert_eq!(
+            blocker.state_history[0].ended_at.as_deref(),
+            Some("2019-01-01T12:00:00.000000Z")
+        );
+        assert_eq!(blocker.state_history[1].state, "Active");
+        assert_eq!(
+            blocker.state_history[1].started_at,
+            "2019-01-01T12:00:00.000000Z"
+        );
+        assert_eq!(
+            blocker.state_history[1].ended_at.as_deref(),
+            Some("2019-01-02T12:00:00.000000Z")
+        );
+        assert_eq!(blocker.state_history[2].state, "Done");
+        assert_eq!(
+            blocker.state_history[2].started_at,
+            "2019-01-02T12:00:00.000000Z"
+        );
+        assert!(blocker.state_history[2].ended_at.is_none());
 
         let comment_store = SqliteCommentStore::new(&database);
         let revisions = comment_store

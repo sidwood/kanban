@@ -26,6 +26,7 @@ pub trait CommentStore: Send + Sync {
         project_id: u64,
         target: &CommentTarget,
         text: &CommentText,
+        author: &str,
     ) -> Result<Comment, ApiError>;
 
     /// Load one Comment, if it exists.
@@ -106,7 +107,9 @@ impl CommandHandler for CreateComment {
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_text(&request.text)?;
         let target = parse_target(&request.target)?;
-        let comment = self.store.create(project.id().value(), &target, &text)?;
+        let comment = self
+            .store
+            .create(project.id().value(), &target, &text, &request.author)?;
         announce(effects, LiveEventName::CommentCreated, &comment);
         encode_record(&comment)
     }
@@ -271,6 +274,7 @@ mod comments {
             project_id: u64,
             target: &CommentTarget,
             text: &CommentText,
+            _author: &str,
         ) -> Result<Comment, kanban_dto::ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             state.next_id += 1;

@@ -16,30 +16,30 @@ it, and what still needs a product decision.
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
-| Fixed transition table | Domain enforces allowed transitions and actor ownership | Legacy `state` column kept; per-project `issue_workflow_states` with Linear **types** seeded from the twelve names. Operator `issue.save` applies **free transitions** via `IssueStore::apply_free_state`; UI drag still uses lifecycle rules until product changes. | None for operator path. |
+| Fixed transition table | Domain enforces allowed transitions and actor ownership | Legacy `state` column kept; per-project `issue_workflow_states` with Linear **types** seeded from the default names **plus Duplicate**. Operator `issue.save` applies **free transitions** via `IssueStore::apply_free_state` with history rows; UI drag still uses lifecycle rules until product changes. | None for operator path. |
 | Board driven by `TicketState` | `board_group_for(TicketState)` | Workflow states carry `legacy_state`; board projection unchanged until UI reads types. **Remaining:** map by state **type** when custom names differ. | None. |
-| Superseded vs duplicate | Superseded is terminal; no duplicate merge | `Superseded` mapped to canceled **type**; duplicate relation + merge **not implemented** yet. | Confirm duplicate merge moves relations like Linear. |
+| Superseded vs duplicate | Superseded is terminal; duplicate was mapped to superseded legacy | **Duplicate** has its own workflow state and legacy `duplicate` value. `duplicate_of` on save moves relations to the canonical issue and transitions the duplicate issue to Duplicate. | None. |
 
 ## Priority and dates
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
 | Urgent/High/Normal/Low text | No “none” level | `linear_priority` 0–4 added; legacy `priority` kept; mapped on migration. | None. |
-| Task due in `due` column | Optional on tasks only | `due_date` on all tickets; migration `0054` copies task `due` when unset. | Default `2099-12-31` for issues without a due date. |
+| Task due in `due` column | Optional on tasks only | `due_date` on all tickets; migration `0054` copies task `due` when unset. Cleared with JSON `null` on `issue.save`. | Unset due dates stored as SQL NULL (omitted on read). |
 | Estimates | Absent | `estimate` column added; unused. | None. |
 
 ## Relations
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
-| `ticket_dependencies` only | Blocks edges + external blockers | `issue_relations` with `blocks`/`related`/`duplicate`; blocks copied from dependencies. **Remaining:** blocked-by symmetry, related-from description mentions, duplicate merge. | None. |
-| No related/duplicate | — | Schema only. | — |
+| `ticket_dependencies` only | Blocks edges + external blockers | `issue_relations` with `blocks`/`related`/`duplicate`; blocks copied from dependencies. `issue.get` lists blocks, blocked-by, and **related from both endpoints**. | None. |
+| No related/duplicate | — | Related and duplicate-of implemented on operator save/get. | — |
 
 ## Comments
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
-| Flat comments with revisions | No threads/resolution | `parent_comment_id`, `resolved_at` on `comments`. **Remaining:** app/MCP expose thread + resolve. | None. |
+| Flat comments with revisions | No threads/resolution | `author` on `comments` (migration `0056`); `comment.list` returns author and timestamps. Thread columns exist; resolve UI not exposed. | None for list parity. |
 
 ## Projects and milestones
 
@@ -59,7 +59,7 @@ it, and what still needs a product decision.
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
 | Run-scoped tools only | Capability-bound agent session | Installation operator session on loopback `/mcp/operator` (Bearer only) exposes Linear parity tools (`save_issue`, …). Agent surface unchanged. | Confirm operator auth = installation credential only. |
-| Full ticket command surface | Hundreds of operator commands | Six issue operator commands registered; acceptance harness in `issue_mcp_acceptance.rs` covers create/read/state/errors. **Remaining:** relations, comments, duplicate merge per `mcp-acceptance-tests.md`. | None. |
+| Full ticket command surface | Hundreds of operator commands | Issue operator commands + `comment.list`; acceptance in `issue_mcp_acceptance.rs` and `issue_stage2_review.rs`. | None. |
 
 ## UI
 
@@ -72,9 +72,9 @@ it, and what still needs a product decision.
 
 Dispatch, runs, lanes, landing, review, and graph approval still target tickets/issues by id. They observe new state fields; operator MCP bypasses lifecycle enforcement for state changes.
 
-## Remaining work on this branch (honest)
+## Remaining work (product)
 
-1. Relations, duplicate merge, description mentions, comment threads in app/MCP.
-2. UI: issue fields in board, drawer, editors (no redesign).
-3. Full `mcp-acceptance-tests.md` coverage beyond the current harness.
-4. Board projection by workflow state **type** when names diverge from legacy twelve.
+1. Assignee/delegate field and filters.
+2. Comment threads and resolve in UI/MCP.
+3. Board projection by workflow state **type** when names diverge from legacy defaults.
+4. Linear “project” vs Kanban Project / Initiative mapping.

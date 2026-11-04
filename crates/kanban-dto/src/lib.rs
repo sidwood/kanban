@@ -33,6 +33,7 @@ pub mod issue;
 pub mod landing;
 pub mod lane;
 pub mod mutation;
+pub mod nullable_patch;
 pub mod plan;
 pub mod profile;
 pub mod project;

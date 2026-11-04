@@ -43,6 +43,7 @@ pub struct IssueTicketFields {
     pub created_at: String,
     pub version: u64,
     pub parent_ticket_id: Option<i64>,
+    pub duplicate_of_ticket_id: Option<i64>,
 }
 
 /// Loads and mutates Linear-shaped issue fields beside the Ticket port.
@@ -103,4 +104,6 @@ pub trait IssueStore: Send + Sync {
         ticket_id: i64,
         target_identifier: Option<&str>,
     ) -> Result<(), ApiError>;
+    fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError>;
+    fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError>;
 }

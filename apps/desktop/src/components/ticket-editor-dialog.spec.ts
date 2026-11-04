@@ -220,6 +220,22 @@ describe('the Ticket editor dialog', () => {
     ).toBe('A sharper slice')
   })
 
+  it('shows a project-missing alert and does not send issue.save when no project exists', async () => {
+    const { transport, operations } = editorHarness({ projects: [] })
+    const wrapper = open(transport)
+    useTicketDialogStore().openCreate({ projectId: null })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-project-missing"]').exists()).toBe(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-error"]').text()).toContain(
+      'Register a project before creating an issue.',
+    )
+    expect(operations.filter((entry) => entry.name === 'issue.save')).toHaveLength(0)
+  })
+
   it('create mode never surfaces Bug qualification controls', async () => {
     const { transport, requests } = editorHarness({
       projects: [editorProject, otherProject],

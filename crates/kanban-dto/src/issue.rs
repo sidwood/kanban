@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::mutation::MutationContext;
 
 /// Create or update one issue (`save_issue`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSaveRequest {
     pub mutation: MutationContext,
@@ -26,18 +26,36 @@ pub struct IssueSaveRequest {
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_string_patch"
+    )]
     pub due_date: Option<Option<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_u64_patch"
+    )]
     pub milestone_id: Option<Option<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_labels: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_labels: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_u64_patch"
+    )]
     pub parent_id: Option<Option<u64>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::nullable_patch::deserialize_string_patch"
+    )]
     pub duplicate_of: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_blocks: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,6 +130,10 @@ pub struct IssueRecord {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicates: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<IssueChildRecord>>,
 }
@@ -206,4 +228,30 @@ pub struct IssueMilestonesQuery {
 #[serde(deny_unknown_fields)]
 pub struct IssueMilestonesResponse {
     pub milestones: Vec<IssueMilestoneRecord>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::IssueSaveRequest;
+    use crate::mutation::MutationContext;
+
+    fn mutation() -> MutationContext {
+        MutationContext {
+            idempotency_key: "test".into(),
+            optimistic_version: 1,
+        }
+    }
+
+    #[test]
+    fn null_due_date_deserializes_as_explicit_clear() {
+        let request: IssueSaveRequest = serde_json::from_value(json!({
+            "mutation": mutation(),
+            "identifier": "CORE-1",
+            "due_date": null,
+        }))
+        .expect("payload parses");
+        assert_eq!(request.due_date.as_ref(), Some(&None));
+    }
 }

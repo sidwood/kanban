@@ -446,7 +446,11 @@ fn acceptance_state_history_lists_each_move() {
             .unwrap(),
     )
     .unwrap();
-    assert!(!read.state_history.is_empty());
+    assert_eq!(read.state_history.len(), 2);
+    assert_eq!(read.state_history[0].state, "Draft");
+    assert!(read.state_history[0].ended_at.is_some());
+    assert_eq!(read.state_history[1].state, "Active");
+    assert!(read.state_history[1].ended_at.is_none());
 }
 
 #[test]
@@ -586,6 +590,8 @@ fn acceptance_comment_tools_round_trip() {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0]["id"], json!(comment_id));
     assert_eq!(comments[0]["body"], "Ship report v2");
+    assert_eq!(comments[0]["author"], "");
+    assert!(comments[0]["created_at"].is_string());
     assert!(comments[0]["edited_at"].is_string());
 }
 

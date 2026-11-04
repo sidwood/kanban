@@ -82,11 +82,15 @@ impl SqliteIssueStore {
     pub fn set_due_date(&self, ticket_id: i64, due_date: Option<&str>) -> Result<(), ApiError> {
         let conn = self.lock();
         let stored = due_date.unwrap_or("2099-12-31");
-        conn.execute(
-            "UPDATE tickets SET due_date = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
-            params![ticket_id, stored],
-        )
-        .map_err(internal)?;
+        let changed = conn
+            .execute(
+                "UPDATE tickets SET due_date = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
+                params![ticket_id, stored],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Err(not_found_ticket(rusqlite::Error::QueryReturnedNoRows));
+        }
         Ok(())
     }
 
@@ -169,6 +173,39 @@ impl SqliteIssueStore {
                 .flatten(),
         };
         stamps.stamp_entry(to_state.state_type, &now);
+        let (created_at, prior_workflow): (String, Option<i64>) = span
+            .query_row(
+                "SELECT created_at, workflow_state_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(internal)?;
+        let history_rows: i64 = span
+            .query_row(
+                "SELECT COUNT(*) FROM issue_state_history WHERE ticket_id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        if history_rows == 0 {
+            let from_id = if let Some(id) = prior_workflow {
+                Some(id)
+            } else {
+                super::linear_issue::workflow_state_by_name(&conn, project_id, "Draft")
+                    .map_err(internal_storage)?
+                    .map(|state| state.id)
+            };
+            if let Some(from_id) = from_id
+                && from_id != to_state.id
+            {
+                span.execute(
+                    "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![ticket_id, from_id, &created_at, &now],
+                )
+                .map_err(internal)?;
+            }
+        }
         span.execute(
             "UPDATE issue_state_history SET ended_at = ?2
              WHERE ticket_id = ?1 AND ended_at IS NULL",
@@ -226,6 +263,32 @@ impl SqliteIssueStore {
 
     fn try_auto_close_parent_when_children_done(&self, parent_id: i64) -> Result<(), ApiError> {
         let conn = self.lock();
+        let project_id: i64 = conn
+            .query_row(
+                "SELECT project_id FROM tickets WHERE id = ?1",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .map_err(not_found_ticket)?;
+        let parent_type: Option<String> = conn
+            .query_row(
+                "SELECT s.type FROM tickets AS t
+                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.id = ?1",
+                [parent_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten();
+        drop(conn);
+        if parent_type
+            .as_deref()
+            .is_some_and(|kind| matches!(kind, "completed" | "canceled" | "duplicate"))
+        {
+            return Ok(());
+        }
+        let conn = self.lock();
         let child_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ?1",
@@ -251,14 +314,6 @@ impl SqliteIssueStore {
         if open > 0 {
             return Ok(());
         }
-        let project_id: i64 = self
-            .lock()
-            .query_row(
-                "SELECT project_id FROM tickets WHERE id = ?1",
-                [parent_id],
-                |row| row.get(0),
-            )
-            .map_err(not_found_ticket)?;
         let conn = self.lock();
         let done = workflow_state_by_name(&conn, project_id, "Done")
             .map_err(internal_storage)?
@@ -529,7 +584,7 @@ impl SqliteIssueStore {
     pub fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         let conn = self.lock();
         conn.query_row(
-            "SELECT description, linear_priority, due_date, milestone_id, updated_at, created_at, version, parent_ticket_id
+            "SELECT description, linear_priority, COALESCE(due_date, '2099-12-31'), milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id
              FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| {
@@ -542,6 +597,7 @@ impl SqliteIssueStore {
                     created_at: row.get(5)?,
                     version: row.get::<_, i64>(6)? as u64,
                     parent_ticket_id: row.get(7)?,
+                    duplicate_of_ticket_id: row.get(8)?,
                 })
             },
         )
@@ -760,40 +816,139 @@ impl SqliteIssueStore {
             else {
                 return Err(ApiError::not_found(identifier));
             };
+            if id == ticket_id {
+                return Err(ApiError::invalid_request(
+                    "an issue cannot be a duplicate of itself",
+                ));
+            }
             Some(id)
         } else {
             None
         };
-        conn.execute(
-            "UPDATE tickets SET duplicate_of_ticket_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
-             WHERE id = ?1",
-            params![ticket_id, target_id],
-        )
-        .map_err(internal)?;
+        let project_id: i64 = conn
+            .query_row(
+                "SELECT project_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(not_found_ticket)?;
+        drop(conn);
+
         if let Some(target_id) = target_id {
+            self.relink_relations_for_duplicate_merge(ticket_id, target_id)?;
+            let conn = self.lock();
             conn.execute(
-                "UPDATE issue_relations SET from_ticket_id = ?2 WHERE from_ticket_id = ?1",
+                "UPDATE tickets SET duplicate_of_ticket_id = ?2,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+                 WHERE id = ?1",
                 params![ticket_id, target_id],
             )
             .map_err(internal)?;
-            let project_id: i64 = conn
-                .query_row(
-                    "SELECT project_id FROM tickets WHERE id = ?1",
-                    [ticket_id],
-                    |row| row.get(0),
-                )
-                .map_err(not_found_ticket)?;
-            if let Some(duplicate_state) =
-                super::linear_issue::workflow_state_by_name(&conn, project_id, "Duplicate")
+            drop(conn);
+            let duplicate_state =
+                super::linear_issue::workflow_state_by_name(&self.lock(), project_id, "Duplicate")
                     .map_err(internal_storage)?
-            {
-                conn.execute(
-                    "UPDATE tickets SET workflow_state_id = ?2 WHERE id = ?1",
-                    params![ticket_id, duplicate_state.id],
-                )
-                .map_err(internal)?;
-            }
+                    .ok_or_else(|| ApiError::internal("Duplicate workflow state missing"))?;
+            let envelope = TimelineEnvelope::project(
+                project_id as u64,
+                kanban_dto::TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Ticket,
+                    id: ticket_id.to_string(),
+                }),
+                serde_json::json!({
+                    "action": "marked_duplicate",
+                    "duplicate_of": target_id,
+                }),
+            );
+            self.apply_free_state(ticket_id, project_id, &duplicate_state, envelope)?;
+        } else {
+            let conn = self.lock();
+            conn.execute(
+                "UPDATE tickets SET duplicate_of_ticket_id = NULL,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+                 WHERE id = ?1",
+                [ticket_id],
+            )
+            .map_err(internal)?;
         }
+        Ok(())
+    }
+
+    fn relink_relations_for_duplicate_merge(
+        &self,
+        ticket_id: i64,
+        target_id: i64,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "DELETE FROM issue_relations
+             WHERE from_ticket_id = ?1 AND to_ticket_id = ?1",
+            [ticket_id],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "DELETE FROM issue_relations
+             WHERE (from_ticket_id = ?1 AND to_ticket_id = ?2)
+                OR (from_ticket_id = ?2 AND to_ticket_id = ?1)",
+            params![ticket_id, target_id],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "UPDATE issue_relations SET from_ticket_id = ?2
+             WHERE from_ticket_id = ?1 AND to_ticket_id != ?2",
+            params![ticket_id, target_id],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "UPDATE issue_relations SET to_ticket_id = ?2
+             WHERE to_ticket_id = ?1 AND from_ticket_id != ?2",
+            params![ticket_id, target_id],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "DELETE FROM issue_relations
+             WHERE rowid NOT IN (
+                 SELECT MIN(rowid) FROM issue_relations
+                 GROUP BY from_ticket_id, to_ticket_id, kind
+             )",
+            [],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+
+    pub fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare(
+                "SELECT p.code, t.number
+                 FROM tickets AS t
+                 JOIN projects AS p ON p.id = t.project_id
+                 WHERE t.duplicate_of_ticket_id = ?1
+                 ORDER BY t.number",
+            )
+            .map_err(internal)?;
+        statement
+            .query_map([ticket_id], |row| {
+                let code: String = row.get(0)?;
+                let number: i64 = row.get(1)?;
+                Ok(format!("{code}-{number}"))
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)
+    }
+
+    pub fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tickets SET sub_issue_sort = ?2,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+             WHERE id = ?1",
+            params![ticket_id, sort],
+        )
+        .map_err(internal)?;
         Ok(())
     }
 
@@ -812,6 +967,18 @@ impl SqliteIssueStore {
                  JOIN tickets AS t ON t.id = r.from_ticket_id
                  JOIN projects AS p ON p.id = t.project_id
                  WHERE r.to_ticket_id = ?1 AND r.kind = 'blocks'
+                 UNION ALL
+                 SELECT 'related' AS kind, p.code, t.number
+                 FROM issue_relations AS r
+                 JOIN tickets AS t ON t.id = r.to_ticket_id
+                 JOIN projects AS p ON p.id = t.project_id
+                 WHERE r.from_ticket_id = ?1 AND r.kind = 'related'
+                 UNION ALL
+                 SELECT 'related', p.code, t.number
+                 FROM issue_relations AS r
+                 JOIN tickets AS t ON t.id = r.from_ticket_id
+                 JOIN projects AS p ON p.id = t.project_id
+                 WHERE r.to_ticket_id = ?1 AND r.kind = 'related'
                  ORDER BY kind, code, number",
             )
             .map_err(internal)?;
@@ -991,6 +1158,14 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         target_identifier: Option<&str>,
     ) -> Result<(), ApiError> {
         SqliteIssueStore::set_duplicate_of(self, ticket_id, target_identifier)
+    }
+
+    fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError> {
+        SqliteIssueStore::set_sub_issue_sort(self, ticket_id, sort)
+    }
+
+    fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {
+        SqliteIssueStore::list_duplicate_identifiers(self, ticket_id)
     }
 }
 

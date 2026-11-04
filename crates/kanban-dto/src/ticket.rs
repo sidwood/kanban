@@ -113,6 +113,8 @@ pub enum TicketState {
     Cancelled,
     /// Terminal: replaced by a reassignment Ticket.
     Superseded,
+    /// Terminal: duplicate of another issue.
+    Duplicate,
 }
 
 impl TicketState {
@@ -130,6 +132,7 @@ impl TicketState {
         Self::Done,
         Self::Cancelled,
         Self::Superseded,
+        Self::Duplicate,
     ];
 
     /// The wire name, matching this state's serialised form.
@@ -147,6 +150,7 @@ impl TicketState {
             Self::Done => "done",
             Self::Cancelled => "cancelled",
             Self::Superseded => "superseded",
+            Self::Duplicate => "duplicate",
         }
     }
 

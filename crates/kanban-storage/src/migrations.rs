@@ -324,6 +324,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "linear issue relaxation",
         sql: include_str!("../migrations/0054_linear_issue_relaxation.sql"),
     },
+    Migration {
+        version: 55,
+        name: "duplicate ticket state",
+        sql: include_str!("../migrations/0055_duplicate_ticket_state.sql"),
+    },
+    Migration {
+        version: 56,
+        name: "comment author",
+        sql: include_str!("../migrations/0056_comment_author.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -461,6 +471,22 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
         )?;
     } else if migration.version == 54 {
         crate::linear_issue_migration::apply_linear_issue_relaxation_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 55 {
+        crate::linear_issue_migration::apply_duplicate_ticket_state_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 56 {
+        crate::linear_issue_migration::apply_comment_author_column_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -1949,6 +1975,14 @@ mod tests {
                 PendingMigration {
                     version: 54,
                     name: "linear issue relaxation",
+                },
+                PendingMigration {
+                    version: 55,
+                    name: "duplicate ticket state",
+                },
+                PendingMigration {
+                    version: 56,
+                    name: "comment author",
                 },
             ]]
         );

@@ -20,7 +20,7 @@ use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::issue::{IssuePageQuery, IssueStore, SecondaryEffect};
-use crate::issue_names::{NamedKind, refuse_taken_name};
+use crate::issue_names::{NamedKind, refuse_taken_name, resolve_stored_name};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
@@ -453,10 +453,21 @@ impl CommandHandler for RetireLabel {
     ) -> Result<Value, ApiError> {
         let request: IssueRetireLabelRequest = parse_payload(&command.payload)?;
         resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
+        let stored = self
+            .0
+            .issues
+            .list_project_labels(request.project_id as i64)?;
+        let name = resolve_stored_name(
+            NamedKind::Label,
+            "name",
+            stored.iter().map(|label| label.name.as_str()),
+            &request.name,
+        )?
+        .ok_or_else(|| ApiError::not_found_field("name", &format!("label `{}`", request.name)))?;
         let row = self
             .0
             .issues
-            .retire_label(request.project_id as i64, &request.name)
+            .retire_label(request.project_id as i64, name)
             .map_err(|error| {
                 if error.code == kanban_dto::ErrorCode::NotFound && error.field.is_none() {
                     let subject = error
@@ -1031,62 +1042,33 @@ fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, 
     Ok(ticket_id as u64)
 }
 
-/// The project's stored spelling of one label name. An exact
-/// spelling always wins; only when the project holds no exact
-/// spelling does a case-insensitive match resolve, and then only
-/// when exactly one held spelling folds to the name — two held
-/// spellings of one name are ambiguous, so the caller's field
-/// refuses the request. `None` when no label of the project
-/// carries the name in any case.
-fn canonical_label_name(
-    ctx: &IssueContext,
-    project_id: i64,
-    name: &str,
-    field: &'static str,
-) -> Result<Option<String>, ApiError> {
-    let held: Vec<String> = ctx
-        .issues
-        .list_project_labels(project_id)?
-        .into_iter()
-        .map(|label| label.name)
-        .collect();
-    if let Some(exact) = held.iter().find(|stored| stored.as_str() == name) {
-        return Ok(Some(exact.clone()));
-    }
-    let mut folded = held
-        .into_iter()
-        .filter(|stored| equals_ignoring_case(stored, name));
-    let Some(unique) = folded.next() else {
-        return Ok(None);
-    };
-    if let Some(second) = folded.next() {
-        return Err(ApiError::invalid_request_field(
-            field,
-            &format!(
-                "labels `{unique}` and `{second}` both match `{name}`; \
-                 use an exact spelling"
-            ),
-        ));
-    }
-    Ok(Some(unique))
-}
-
 fn apply_label_changes(
     ctx: &IssueContext,
     project_id: i64,
     ticket_id: i64,
     request: &IssueSaveRequest,
 ) -> Result<(), ApiError> {
+    if request.add_labels.is_none() && request.remove_labels.is_none() {
+        return Ok(());
+    }
+    let stored = ctx.issues.list_project_labels(project_id)?;
     if let Some(add) = request.add_labels.as_ref() {
         let mut canonical = Vec::with_capacity(add.len());
         for label in add {
             canonical.push(
-                canonical_label_name(ctx, project_id, label, "add_labels")?.ok_or_else(|| {
+                resolve_stored_name(
+                    NamedKind::Label,
+                    "add_labels",
+                    stored.iter().map(|row| row.name.as_str()),
+                    label,
+                )?
+                .ok_or_else(|| {
                     ApiError::invalid_request_field(
                         "add_labels",
                         &format!("unknown label `{label}`"),
                     )
-                })?,
+                })?
+                .to_owned(),
             );
         }
         ctx.issues.validate_label_adds(project_id, &canonical)?;
@@ -1096,10 +1078,16 @@ fn apply_label_changes(
     }
     if let Some(remove) = request.remove_labels.as_ref() {
         for label in remove {
-            let canonical = canonical_label_name(ctx, project_id, label, "remove_labels")?
-                .ok_or_else(|| {
-                    ApiError::not_found_field("remove_labels", &format!("unknown label `{label}`"))
-                })?;
+            let canonical = resolve_stored_name(
+                NamedKind::Label,
+                "remove_labels",
+                stored.iter().map(|row| row.name.as_str()),
+                label,
+            )?
+            .ok_or_else(|| {
+                ApiError::not_found_field("remove_labels", &format!("unknown label `{label}`"))
+            })?
+            .to_owned();
             ctx.issues.remove_label(project_id, ticket_id, &canonical)?;
         }
     }
@@ -1205,10 +1193,6 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         children: (!children.is_empty()).then_some(children),
         assignee: (!fields.assignee.is_empty()).then_some(fields.assignee),
     })
-}
-
-fn equals_ignoring_case(left: &str, right: &str) -> bool {
-    focaccia::unicode_full_case_eq(left, right)
 }
 
 fn list_issues(

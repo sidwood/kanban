@@ -67,6 +67,9 @@ pub trait IssueStore: Send + Sync {
         to_state: &IssueWorkflowState,
         envelope: TimelineEnvelope,
     ) -> Result<(), ApiError>;
+    /// Record a new issue's first state: its workflow row, one open
+    /// history row, and the entry stamps, without a transition.
+    fn record_initial_state(&self, ticket_id: i64, state_name: &str) -> Result<(), ApiError>;
     fn list_labels(&self, ticket_id: i64) -> Result<Vec<String>, ApiError>;
     fn add_label(&self, project_id: i64, ticket_id: i64, name: &str) -> Result<(), ApiError>;
     fn remove_label(&self, project_id: i64, ticket_id: i64, name: &str) -> Result<(), ApiError>;

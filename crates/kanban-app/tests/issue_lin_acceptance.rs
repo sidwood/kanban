@@ -190,7 +190,7 @@ fn l3_get_issue_returns_lifecycle_timestamps() {
     );
     save_issue(
         &session,
-        2,
+        issue_version(&session, &saved.identifier),
         "l3-done",
         json!({ "identifier": saved.identifier, "state": "Done" }),
     );

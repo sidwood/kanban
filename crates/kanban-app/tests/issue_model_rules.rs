@@ -447,3 +447,61 @@ fn fractional_child_ranks_survive_round_trips_and_swaps() {
     );
     assert_eq!(listed_children[0]["sort_order"], json!(0.25));
 }
+
+#[test]
+fn creating_with_a_state_records_only_that_state() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let saved = save_issue(
+        session,
+        0,
+        "create-state-active",
+        json!({ "project_id": 1, "title": "Born active", "state": "Active" }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(
+        history_names(&read),
+        &["Active".to_string()],
+        "creation with a state records only that state"
+    );
+    assert!(read.state_history[0].ended_at.is_none());
+    assert!(
+        read.started_at.is_some(),
+        "entering a started state at birth stamps the start"
+    );
+
+    let done = save_issue(
+        session,
+        0,
+        "create-state-done",
+        json!({ "project_id": 1, "title": "Born done", "state": "Done" }),
+    );
+    let read_done = read_issue(session, &done.identifier);
+    assert_eq!(history_names(&read_done), &["Done".to_string()]);
+    assert!(
+        read_done.completed_at.is_some(),
+        "entering a completed state at birth stamps completion"
+    );
+}
+
+#[test]
+fn creating_without_a_state_records_the_initial_state() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let saved = save_issue(
+        session,
+        0,
+        "create-state-default",
+        json!({ "project_id": 1, "title": "Born default" }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(read.state, "Draft");
+    assert_eq!(
+        history_names(&read),
+        &["Draft".to_string()],
+        "creation without a state records one row for the initial state"
+    );
+    assert!(read.state_history[0].ended_at.is_none());
+}

@@ -537,9 +537,9 @@ fn create_issue(
     if let Some(due) = request.due_date.as_ref() {
         ctx.issues.set_due_date(ticket_id as i64, due.as_deref())?;
     }
-    if let Some(state) = request.state.as_deref() {
-        apply_named_state(ctx, ticket_id as i64, project_id, state, effects)?;
-    }
+    let initial_state = request.state.as_deref().unwrap_or("Draft");
+    ctx.issues
+        .record_initial_state(ticket_id as i64, initial_state)?;
     if let Some(milestone) = request.milestone_id.as_ref() {
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
@@ -714,13 +714,6 @@ fn apply_named_state(
     let to = ctx
         .issues
         .resolve_state_by_name(project_id as i64, state_name)?;
-    if ctx
-        .issues
-        .workflow_state_for_ticket(ticket_id)?
-        .is_some_and(|current| current.name == to.name)
-    {
-        return Ok(());
-    }
     let envelope = transition(
         ProjectId::new(project_id),
         TicketId::new(ticket_id as u64),

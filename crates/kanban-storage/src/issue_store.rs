@@ -170,6 +170,70 @@ impl SqliteIssueStore {
         Ok(())
     }
 
+    pub fn record_initial_state(&self, ticket_id: i64, state_name: &str) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let span = WriteSpan::begin(&conn).map_err(internal)?;
+        let (project_id, created_at, prior_workflow): (i64, String, Option<i64>) = span
+            .query_row(
+                "SELECT project_id, created_at, workflow_state_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(not_found_ticket)?;
+        let state = resolve_state_by_name(&span, project_id, state_name)?;
+        if prior_workflow.is_some() {
+            span.commit().map_err(internal)?;
+            return Ok(());
+        }
+        let legacy = TicketState::parse(&state.legacy_state)
+            .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
+        let mut stamps = IssueStateTimestamps::default();
+        stamps.stamp_entry(state.state_type, &created_at);
+        stamps.clear_terminal_on_reopen(state.state_type);
+        span.execute(
+            "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+             VALUES (?1, ?2, ?3, NULL)",
+            params![ticket_id, state.id, &created_at],
+        )
+        .map_err(internal)?;
+        span.execute(
+            "UPDATE tickets
+             SET state = ?2,
+                 workflow_state_id = ?3,
+                 started_at = ?4,
+                 completed_at = ?5,
+                 canceled_at = ?6
+             WHERE id = ?1",
+            params![
+                ticket_id,
+                legacy.wire_name(),
+                state.id,
+                stamps.started_at,
+                stamps.completed_at,
+                stamps.canceled_at,
+            ],
+        )
+        .map_err(internal)?;
+        let parent_id: Option<i64> = span
+            .query_row(
+                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten();
+        span.commit().map_err(internal)?;
+        if (state.state_type == WorkflowStateType::Completed
+            || state.state_type == WorkflowStateType::Canceled
+            || state.state_type == WorkflowStateType::Duplicate)
+            && let Some(parent_id) = parent_id
+        {
+            self.try_auto_close_parent_when_children_done(parent_id)?;
+        }
+        Ok(())
+    }
+
     pub fn apply_free_state(
         &self,
         ticket_id: i64,
@@ -233,24 +297,15 @@ impl SqliteIssueStore {
                 |row| row.get(0),
             )
             .map_err(internal)?;
-        if history_rows == 0 {
-            let from_id = if let Some(id) = prior_workflow {
-                Some(id)
-            } else {
-                super::linear_issue::workflow_state_by_name(&conn, project_id, "Draft")
-                    .map_err(internal_storage)?
-                    .map(|state| state.id)
-            };
-            if let Some(from_id) = from_id
-                && from_id != to_state.id
-            {
-                span.execute(
-                    "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![ticket_id, from_id, &created_at, &now],
-                )
-                .map_err(internal)?;
-            }
+        if history_rows == 0
+            && let Some(from_id) = prior_workflow
+        {
+            span.execute(
+                "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![ticket_id, from_id, &created_at, &now],
+            )
+            .map_err(internal)?;
         }
         span.execute(
             "UPDATE issue_state_history SET ended_at = ?2
@@ -1394,6 +1449,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
             position: 0,
         };
         SqliteIssueStore::apply_free_state(self, ticket_id, project_id, &record, envelope)
+    }
+
+    fn record_initial_state(&self, ticket_id: i64, state_name: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::record_initial_state(self, ticket_id, state_name)
     }
 
     fn list_labels(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {

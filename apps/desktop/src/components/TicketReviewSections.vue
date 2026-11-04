@@ -1,9 +1,4 @@
 <script setup lang="ts">
-// The open Ticket's review as the core holds it: the stages of the
-// review it is resolving, each slot's verdict, the prior attempts and
-// the revalidation the gate needs, and the findings recorded against
-// the Ticket. Every line comes from a record the core holds; where it
-// holds none, the section says so.
 import type { ReviewSlotRecord } from '@kanban/contracts'
 import { useTicketDetailStore } from '../stores/ticket-detail'
 import type { DetailSection } from '../stores/ticket-detail'

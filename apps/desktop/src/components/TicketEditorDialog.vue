@@ -44,9 +44,6 @@ const availableLabels = ref<IssueLabelRecord[]>([])
 const availableMilestones = ref<IssueMilestoneRecord[]>([])
 const selectedLabel = ref('')
 const readError = ref<string | null>(null)
-// An edit saves every issue field the form holds, so the form saves
-// nothing until the issue record has been read into it; a save before
-// then would overwrite the record's fields with blank ones.
 const issueSeeded = ref(false)
 const parentKey = computed(() => {
   const parentId = dialog.editor?.parentTicketId

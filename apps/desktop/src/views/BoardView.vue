@@ -767,8 +767,6 @@ async function followLink(ticketId: number | null): Promise<void> {
   await openTicket(ticketId)
 }
 
-// Every run the open Ticket has minted, oldest first; a recovery from
-// the drawer reads them again, on the drawer and on the board.
 const drawerAttempts = computed(() => detail.attempts)
 
 async function refreshAttempts(): Promise<void> {
@@ -784,9 +782,6 @@ function openNewTicket(): void {
   })
 }
 
-// A footer command moved the Ticket's state and version, so the issue
-// panel reads the issue again: it shows the new state and its next
-// save carries the new version.
 async function drawerActed(record: TicketRecord): Promise<void> {
   if (drawerTicket.value?.id !== record.id) return
   drawerTicket.value = record
@@ -800,8 +795,7 @@ async function drawerActed(record: TicketRecord): Promise<void> {
     issueOverlay.put(issue)
     drawerIssue.value = issueOverlay.issueFor(record.id) ?? issue
   } catch {
-    // The panel keeps the issue it holds; the core refuses a save at
-    // its version and the panel reports that refusal.
+    return
   }
 }
 
@@ -834,9 +828,6 @@ const drawerFacts = computed(() => {
   ]
 })
 
-// A save in the issue panel moves the Ticket's version, so the drawer
-// reads the Ticket again: the footer's next command carries the
-// version that save left.
 async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
   if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
   drawerIssue.value = issue
@@ -846,8 +837,7 @@ async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
     if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
     drawerTicket.value = record
   } catch {
-    // The footer keeps the Ticket it holds; the core refuses a command
-    // at its version and the footer reports that refusal.
+    return
   }
 }
 
@@ -1584,8 +1574,6 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           @recovered="refreshAttempts"
         />
 
-        <!-- The open review sits last, beside the footer's human
-             review decision it informs. -->
         <TicketReviewSections class="mt-6" />
       </template>
 

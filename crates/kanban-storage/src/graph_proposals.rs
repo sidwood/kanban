@@ -149,13 +149,16 @@ impl GraphProposalStore for SqliteGraphProposalStore {
             return Err(proposal_write_refused(&span, proposal.id(), preceding));
         }
         // Every pinned Ticket row moves beside it under the same
-        // guard, or the whole approval rolls back.
+        // guard, or the whole approval rolls back. The pin is a
+        // Ticket write like any other, so the row's update time
+        // moves with the new version in the same statement.
         for ticket in pinned {
             let ticket_preceding = ticket.version() - 1;
             let changed = span
                 .execute(
                     "UPDATE tickets
-                     SET pinned_version = ?2, version = ?3
+                     SET pinned_version = ?2, version = ?3,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                      WHERE id = ?1 AND version = ?4 AND pinned_version IS NULL",
                     params![
                         ticket.id().value() as i64,
@@ -846,6 +849,72 @@ mod tests {
                 })
                 .count();
         assert_eq!(pins, 2, "every pin appended exactly one row");
+    }
+
+    /// Every seeded Ticket's stored update time, in row order.
+    fn updated_times(database: &Database) -> Vec<String> {
+        database
+            .connection()
+            .prepare("SELECT updated_at FROM tickets ORDER BY id")
+            .expect("the rows are readable")
+            .query_map([], |row| row.get(0))
+            .expect("the query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the rows decode")
+    }
+
+    /// Wait until the SQLite clock's millisecond tick passes `earlier`,
+    /// so a stamp taken after the wait is strictly newer.
+    fn wait_for_clock_past(database: &Database, earlier: &str) {
+        for _ in 0..200 {
+            let now: String = database
+                .connection()
+                .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+                    row.get(0)
+                })
+                .expect("the clock serves");
+            if now.as_str() > earlier {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        panic!("the SQLite clock never advanced past {earlier}");
+    }
+
+    #[test]
+    fn approval_moves_each_pinned_tickets_update_time_with_its_version() {
+        let (_dir, database, store, tickets, spec) = seeded();
+        let proposal = store
+            .create(
+                spec,
+                1,
+                vec![TicketId::new(1), TicketId::new(2)],
+                Vec::new(),
+                &|id| envelope(&format!("graph_proposed_{id}")),
+            )
+            .expect("the graph records");
+        let before = updated_times(&database);
+        for stamp in &before {
+            wait_for_clock_past(&database, stamp);
+        }
+
+        let captured = [ticket(&tickets, 1), ticket(&tickets, 2)];
+        approved_over(&store, &captured, &proposal).expect("the approval lands");
+
+        let after = updated_times(&database);
+        for (id, (was, now)) in [1i64, 2].into_iter().zip(before.iter().zip(after.iter())) {
+            assert!(
+                now > was,
+                "ticket {id}'s update time moved with its version: {was} -> {now}"
+            );
+        }
+        for id in [1u64, 2] {
+            assert_eq!(
+                ticket(&tickets, id).version(),
+                2,
+                "the pin is one applied change"
+            );
+        }
     }
 
     #[test]

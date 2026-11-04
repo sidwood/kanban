@@ -2241,6 +2241,73 @@ fn issue_priority_changes_move_the_board_too() {
 }
 
 #[test]
+fn direct_priority_writes_move_the_board_too() {
+    let h = legacy_harness();
+    let low =
+        create_legacy_task_with_priority(&h.core, "board-direct-low", "Board low task", "low");
+    let normal = create_legacy_task(&h.core, "board-direct-normal", "Board normal task");
+    let low_id = low["id"].as_u64().expect("a ticket id");
+    let normal_id = normal["id"].as_u64().expect("a ticket id");
+
+    // The desktop editor writes the issue model's priority through
+    // the store directly, without the operator surface in between:
+    // the board must follow that write exactly as it follows a save.
+    let store = SqliteIssueStore::new(&h.database);
+    store
+        .set_linear_priority(low_id as i64, 1)
+        .expect("the direct raise lands");
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["urgent"] })),
+        vec![low_id],
+        "the urgent filter finds the directly raised task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["low"] })),
+        Vec::<u64>::new(),
+        "the low filter no longer holds the directly raised task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({})),
+        vec![low_id, normal_id],
+        "the board orders the directly raised task first"
+    );
+
+    // Clearing the priority through the store keeps the card on the
+    // board: No priority holds the legacy normal bucket.
+    store
+        .set_linear_priority(low_id as i64, 0)
+        .expect("the direct clear lands");
+    let mut normal_bucket = board_tickets(&h, json!({ "priorities": ["normal"] }));
+    normal_bucket.sort();
+    assert_eq!(
+        normal_bucket,
+        vec![low_id, normal_id],
+        "a directly cleared priority stays on the board in the normal bucket"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({ "priorities": ["urgent"] })),
+        Vec::<u64>::new(),
+        "the urgent filter released the directly cleared task"
+    );
+    assert_eq!(
+        board_tickets(&h, json!({})).len(),
+        2,
+        "no card dropped off the board"
+    );
+
+    // Lowering the other task through the store moves it behind the
+    // No-priority card in board order.
+    store
+        .set_linear_priority(normal_id as i64, 4)
+        .expect("the direct lower lands");
+    assert_eq!(
+        board_tickets(&h, json!({})),
+        vec![low_id, normal_id],
+        "the directly lowered task sorts behind the No-priority task"
+    );
+}
+
+#[test]
 fn save_issue_matches_state_and_label_names_ignoring_case() {
     let h = rules_harness();
     let session = &h.session;

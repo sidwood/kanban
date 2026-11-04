@@ -698,8 +698,23 @@ fn normalise_legacy_due_dates(conn: &Connection) -> rusqlite::Result<()> {
              WHEN due IS NOT NULL AND due <> '' AND length(due) >= 10 THEN substr(due, 1, 10)
              ELSE due_date
          END
-         WHERE due IS NOT NULL AND due <> '' AND due_date = '2099-12-31';
-         UPDATE tickets
+         WHERE due IS NOT NULL AND due <> '' AND due_date = '2099-12-31';",
+    )?;
+    truncate_datetime_due_dates(conn)
+}
+
+/// Truncates datetime-shaped due dates to their calendar date.
+///
+/// An earlier build copied legacy `due` timestamps into `due_date`
+/// verbatim. Converting those values shares one rule with the initial
+/// migration, but unlike it the forward repair must never fall back to
+/// the legacy `due` column: once migration has finished, a due date
+/// cleared through the issue store is stored as the no-date value
+/// while `due` keeps its historical timestamp, and restoring that
+/// timestamp would undo a deliberate edit.
+fn truncate_datetime_due_dates(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "UPDATE tickets
          SET due_date = substr(due_date, 1, 10)
          WHERE length(due_date) > 10;",
     )
@@ -1082,9 +1097,11 @@ pub(crate) fn apply_issue_assignee_column_in_span(span: &WriteSpan<'_>) -> rusql
 /// revisited its current state, and created the Severity and Mode label
 /// groups multi-select. The repair reuses the migration's own rules, so
 /// a database this build already migrated is left unchanged and a
-/// repeated run changes nothing.
+/// repeated run changes nothing. Due dates are only truncated to their
+/// calendar date: the legacy `due` column is not consulted, because a
+/// due date cleared after migration is stored as the no-date value.
 pub(crate) fn apply_linear_issue_fidelity(conn: &Connection) -> rusqlite::Result<()> {
-    normalise_legacy_due_dates(conn)?;
+    truncate_datetime_due_dates(conn)?;
     ensure_current_state_history_row(conn)?;
     backfill_lifecycle_timestamps_from_history(conn)?;
     conn.execute_batch(
@@ -1895,6 +1912,22 @@ mod tests {
         let (_dir, mut database) = earlier_build_database();
         database.migrate(&AllowAllMigrations).unwrap();
         assert_eq!(migrated_due_date(&database.connection(), 1), "2026-11-15");
+    }
+
+    #[test]
+    fn repair_migration_preserves_cleared_due_dates() {
+        let (_dir, mut database) = earlier_build_database();
+        IssueStoreImpl::new(&database)
+            .set_due_date(1, None)
+            .unwrap();
+        assert_eq!(migrated_due_date(&database.connection(), 1), "2099-12-31");
+
+        database.migrate(&AllowAllMigrations).unwrap();
+        assert_eq!(
+            migrated_due_date(&database.connection(), 1),
+            "2099-12-31",
+            "a due date cleared through the issue store stays cleared"
+        );
     }
 
     #[test]

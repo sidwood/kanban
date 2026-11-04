@@ -244,6 +244,8 @@ impl CommentStore for SqliteCommentStore {
                 "SELECT c.id, c.entity_id, c.version, c.created_at,
                         (SELECT text FROM comment_revisions
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+                        (SELECT revision FROM comment_revisions
+                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                         (SELECT recorded_at FROM comment_revisions
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                         COALESCE(c.author, ''),
@@ -261,16 +263,18 @@ impl CommentStore for SqliteCommentStore {
                 let version: i64 = row.get(2)?;
                 let created_at: String = row.get(3)?;
                 let body: String = row.get(4)?;
-                let latest_at: String = row.get(5)?;
-                let author: Option<String> = row.get(6)?;
-                let parent_comment_id: Option<i64> = row.get(7)?;
-                let resolved_at: Option<String> = row.get(8)?;
+                let latest_revision: i64 = row.get(5)?;
+                let latest_at: String = row.get(6)?;
+                let author: Option<String> = row.get(7)?;
+                let parent_comment_id: Option<i64> = row.get(8)?;
+                let resolved_at: Option<String> = row.get(9)?;
                 Ok((
                     id,
                     entity_id,
                     version,
                     created_at,
                     body,
+                    latest_revision,
                     latest_at,
                     author,
                     parent_comment_id,
@@ -286,6 +290,7 @@ impl CommentStore for SqliteCommentStore {
                 version,
                 created_at,
                 body,
+                latest_revision,
                 latest_at,
                 author,
                 parent_comment_id,
@@ -294,7 +299,11 @@ impl CommentStore for SqliteCommentStore {
             if !joins_stream(&entity_id)? {
                 continue;
             }
-            let edited_at = (version > 1).then_some(latest_at);
+            // Edit metadata follows the stored body revisions: a
+            // resolution change advances the aggregate without
+            // touching the body, so only a revision past the
+            // original reports an edit.
+            let edited_at = (latest_revision > 1).then_some(latest_at);
             items.push(CommentListItem {
                 id: id.unsigned_abs(),
                 author: author.unwrap_or_default(),
@@ -766,5 +775,93 @@ mod revision_store {
             .expect("the list serves");
         assert_eq!(items[0].version, 3);
         assert!(items[0].resolved_at.is_none());
+    }
+    #[test]
+    fn resolution_changes_never_report_a_body_edit() {
+        let (_dir, _database, store) = store();
+        store
+            .create(1, &target(), &text("first thought"), "tester", None)
+            .expect("the create lands");
+        let any_row = |_: &str| Ok(true);
+        let row = |store: &SqliteCommentStore| {
+            let (items, _) = store
+                .list_for_target(&target(), &any_row, 10, None)
+                .expect("the list serves");
+            items[0].clone()
+        };
+        let revision_count = |store: &SqliteCommentStore| {
+            store
+                .revisions(CommentId::new(1))
+                .expect("the revisions serve")
+                .1
+                .len()
+        };
+
+        let fresh = row(&store);
+        assert_eq!(fresh.version, 1);
+        assert!(
+            fresh.edited_at.is_none(),
+            "the original revision is not an edit"
+        );
+
+        for (expected_version, resolved) in [(2, true), (3, false), (4, true)] {
+            store
+                .set_resolved(CommentId::new(1), resolved)
+                .expect("the resolution change lands");
+            let changed = row(&store);
+            assert_eq!(
+                changed.version, expected_version,
+                "each resolution change advances the aggregate"
+            );
+            assert!(
+                changed.edited_at.is_none(),
+                "a resolution change is not a body edit"
+            );
+            assert_eq!(
+                revision_count(&store),
+                1,
+                "no body revision may appear without an edit"
+            );
+        }
+
+        let mut comment = store
+            .find(CommentId::new(1))
+            .expect("the find serves")
+            .expect("the Comment exists");
+        comment
+            .edit(text("corrected thought"))
+            .expect("the domain edit applies");
+        store.save(&comment).expect("the save lands");
+
+        let edited = row(&store);
+        let (_, revisions) = store
+            .revisions(CommentId::new(1))
+            .expect("the revisions serve");
+        assert_eq!(revisions.len(), 2);
+        let edit_stamp = edited.edited_at.clone().expect("the edit reports a stamp");
+        assert_eq!(
+            edit_stamp,
+            revisions[revisions.len() - 1].recorded_at,
+            "an actual edit reports the latest revision's stamp"
+        );
+
+        store
+            .set_resolved(CommentId::new(1), false)
+            .expect("the unresolve after the edit lands");
+        store
+            .set_resolved(CommentId::new(1), true)
+            .expect("the resolve after the edit lands");
+        let after = row(&store);
+        assert_eq!(after.version, 7);
+        assert_eq!(
+            after.edited_at,
+            Some(edit_stamp),
+            "resolution leaves the edit stamp alone"
+        );
+        assert_eq!(
+            revision_count(&store),
+            2,
+            "resolution adds no body revision"
+        );
     }
 }

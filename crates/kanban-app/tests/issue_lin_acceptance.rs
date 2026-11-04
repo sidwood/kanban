@@ -1123,6 +1123,116 @@ fn resolve_and_unresolve_bump_the_comment_version() {
     assert_eq!(listed["comments"][0]["version"], json!(3));
     assert!(listed["comments"][0]["resolved_at"].is_null());
 }
+#[test]
+fn resolution_changes_keep_the_body_unedited() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "unedited-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "unedited-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "Report\n",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["version"], json!(1));
+
+    let listed = |session: &OperatorSession| {
+        session
+            .call("comment.list", &json!({ "target": target, "limit": 10 }))
+            .unwrap()
+    };
+    let revision_rows = |session: &OperatorSession| {
+        session
+            .call("comment.revisions", &json!({ "comment_id": comment_id }))
+            .unwrap()["revisions"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+
+    let fresh = listed(&session);
+    assert!(
+        fresh["comments"][0]["edited_at"].is_null(),
+        "the original revision is not an edit"
+    );
+    assert_eq!(revision_rows(&session).len(), 1);
+
+    for (version, resolved) in [(1u64, true), (2, false), (3, true)] {
+        let response = session
+            .call(
+                "comment.resolve",
+                &json!({
+                    "mutation": mutation(version, format!("unedited-{version}")),
+                    "comment_id": comment_id,
+                    "resolved": resolved,
+                }),
+            )
+            .expect("the resolution change applies");
+        assert_eq!(response["version"], json!(version + 1));
+        let row = listed(&session);
+        assert_eq!(row["comments"][0]["version"], json!(version + 1));
+        assert!(
+            row["comments"][0]["edited_at"].is_null(),
+            "a resolution change is not a body edit"
+        );
+        assert_eq!(
+            revision_rows(&session).len(),
+            1,
+            "no body revision may appear without an edit"
+        );
+    }
+
+    let edited = session
+        .call(
+            "comment.edit",
+            &json!({
+                "mutation": mutation(4, "unedited-edit"),
+                "comment_id": comment_id,
+                "text": "Report v2\n",
+            }),
+        )
+        .expect("the edit applies");
+    assert_eq!(edited["version"], json!(5));
+
+    let row = listed(&session);
+    let revisions = revision_rows(&session);
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(
+        row["comments"][0]["edited_at"],
+        revisions[revisions.len() - 1]["recorded_at"],
+        "an actual edit reports the latest revision's stamp"
+    );
+
+    session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(5, "unresolve-after-edit"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve after the edit applies");
+    let after = listed(&session);
+    assert_eq!(
+        after["comments"][0]["edited_at"], row["comments"][0]["edited_at"],
+        "resolution leaves the edit stamp alone"
+    );
+    assert_eq!(after["comments"][0]["version"], json!(6));
+    assert_eq!(revision_rows(&session).len(), 2);
+}
 
 #[test]
 fn comment_revisions_keep_the_stored_body_verbatim() {

@@ -600,7 +600,10 @@ mod comments {
                         .first()
                         .cloned()
                         .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned()),
-                    edited_at: (comment.version() > 1).then(|| {
+                    // Edit metadata follows the body revisions, not
+                    // the aggregate version, so a resolution change
+                    // never reports an edit.
+                    edited_at: (comment.revisions().len() > 1).then(|| {
                         state
                             .revision_stamps
                             .last()
@@ -1384,5 +1387,71 @@ mod comments {
         assert_eq!(rest["comments"].as_array().unwrap().len(), 1);
         assert_eq!(rest["comments"][0]["body"], "Second thought");
         assert!(rest["next_cursor"].is_null());
+    }
+    #[test]
+    fn resolution_changes_never_mark_the_body_edited() {
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        core.command("comment.create", &create("First thought", "key-1", 0))
+            .expect("the create applies");
+
+        let listed = || {
+            core.query("comment.list", &json!({ "target": target(), "limit": 10 }))
+                .expect("the list serves")
+        };
+
+        assert!(
+            listed()["comments"][0]["edited_at"].is_null(),
+            "the original revision is not an edit"
+        );
+
+        for (version, resolved) in [(1u64, true), (2, false), (3, true)] {
+            let response = core
+                .command(
+                    "comment.resolve",
+                    &json!({
+                        "mutation": {
+                            "optimistic_version": version,
+                            "idempotency_key": format!("resolve-{version}"),
+                        },
+                        "comment_id": 1,
+                        "resolved": resolved,
+                    }),
+                )
+                .expect("the resolution change applies");
+            assert_eq!(response["version"], json!(version + 1));
+            let row = listed();
+            assert_eq!(row["comments"][0]["version"], json!(version + 1));
+            assert!(
+                row["comments"][0]["edited_at"].is_null(),
+                "a resolution change is not a body edit"
+            );
+        }
+
+        core.command("comment.edit", &edit(1, "Corrected thought", "key-edit", 4))
+            .expect("the edit applies");
+        let edited = listed();
+        assert!(
+            edited["comments"][0]["edited_at"].is_string(),
+            "an actual edit reports the latest revision's stamp"
+        );
+
+        core.command(
+            "comment.resolve",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 5,
+                    "idempotency_key": "resolve-after-edit",
+                },
+                "comment_id": 1,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve applies");
+        let after = listed();
+        assert_eq!(
+            after["comments"][0]["edited_at"], edited["comments"][0]["edited_at"],
+            "resolution leaves the edit stamp alone"
+        );
+        assert_eq!(after["comments"][0]["version"], json!(6));
     }
 }

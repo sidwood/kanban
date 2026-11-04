@@ -199,6 +199,17 @@ describe('board card due dates', () => {
   })
 })
 
+describe('board card assignee', () => {
+  it('shows the assignee an issue was given outside the board', async () => {
+    const { wrapper } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => Promise.resolve(issueRecord({ assignee: 'Morgan' }))),
+    })
+
+    expect(chip(wrapper, 'executor', 7).text()).toBe('AssigneeMorgan')
+  })
+})
+
 describe('board card chips across overlapping refreshes', () => {
   it('keeps the newer issue chips when an earlier refresh answers last', async () => {
     let loaded = false

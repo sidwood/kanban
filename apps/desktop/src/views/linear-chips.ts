@@ -73,8 +73,9 @@ export function linearChipsFor(
     chips.push(chip('spec', 'Milestone', context.milestoneName))
   }
 
-  if (context.assignee) {
-    chips.push(chip('executor', 'Assignee', context.assignee))
+  const assignee = context.assignee ?? issue?.assignee
+  if (assignee) {
+    chips.push(chip('executor', 'Assignee', assignee))
   }
 
   const progress = issue?.sub_issues

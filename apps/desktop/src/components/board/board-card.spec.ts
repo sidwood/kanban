@@ -124,3 +124,30 @@ describe('BoardCard label chips', () => {
     expect(duplicateKeyWarnings).toEqual([])
   })
 })
+
+describe('BoardCard assignee chip', () => {
+  const assigned = (assignee: string | null): IssueRecord => ({
+    ...issueWithLabels([]),
+    assignee,
+  })
+
+  it('shows the assignee the issue record carries when none is supplied beside it', () => {
+    const wrapper = mountCard(linearChipsFor(ticket(), { issue: assigned('Morgan') }))
+
+    expect(wrapper.get('[data-testid="card-chip-executor-7"]').text()).toBe('AssigneeMorgan')
+  })
+
+  it('shows an assignee supplied beside the issue over the record', () => {
+    const chips = linearChipsFor(ticket(), { issue: assigned('Morgan'), assignee: 'Riley' })
+
+    expect(chips.filter((chip) => chip.kind === 'executor')).toEqual([
+      { kind: 'executor', label: 'Assignee', value: 'Riley' },
+    ])
+  })
+
+  it('shows no assignee chip for an unassigned issue', () => {
+    const chips = linearChipsFor(ticket(), { issue: assigned(null) })
+
+    expect(chips.some((chip) => chip.kind === 'executor')).toBe(false)
+  })
+})

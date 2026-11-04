@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError};
+use kanban_domain::{
+    Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError, displayed_comment_author,
+};
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
     CommentListResponse, CommentRecord, CommentResolveRequest, CommentResolveResponse,
@@ -360,7 +362,12 @@ impl QueryHandler for ListCommentsQuery {
             .map_err(|_| {
                 ApiError::invalid_request_field("cursor", "cursor must be a comment id")
             })?;
-        let (comments, next_cursor) = self.store.list_for_target(&target, limit, cursor)?;
+        let (mut comments, next_cursor) = self.store.list_for_target(&target, limit, cursor)?;
+        // A comment with no recorded author reads under the placeholder;
+        // the stored row keeps its empty author.
+        for comment in &mut comments {
+            comment.author = displayed_comment_author(&comment.author).to_owned();
+        }
         let response = CommentListResponse {
             comments,
             next_cursor,
@@ -571,6 +578,7 @@ mod comments {
     struct MemoryState {
         comments: Vec<Comment>,
         parents: Vec<Option<u64>>,
+        authors: Vec<String>,
         next_id: u64,
         revision_stamps: Vec<String>,
     }
@@ -615,7 +623,7 @@ mod comments {
             project_id: u64,
             target: &CommentTarget,
             text: &CommentText,
-            _author: &str,
+            author: &str,
             parent_comment_id: Option<u64>,
         ) -> Result<Comment, kanban_dto::ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
@@ -625,6 +633,7 @@ mod comments {
                 Comment::create(CommentId::new(id), project_id, target.clone(), text.clone());
             state.comments.push(comment.clone());
             state.parents.push(parent_comment_id);
+            state.authors.push(author.to_owned());
             state
                 .revision_stamps
                 .push(format!("2026-09-04T12:00:{id:02}Z"));
@@ -685,9 +694,14 @@ mod comments {
                     continue;
                 }
                 let id = comment.id().value();
+                let at = state
+                    .comments
+                    .iter()
+                    .position(|row| row.id() == comment.id())
+                    .expect("the row is indexed");
                 items.push(CommentListItem {
                     id,
-                    author: String::new(),
+                    author: state.authors[at].clone(),
                     body: comment.current_text().as_str().to_owned(),
                     created_at: state
                         .revision_stamps
@@ -1478,6 +1492,35 @@ mod comments {
                 "comment.resolve",
             ]
         );
+    }
+
+    #[test]
+    fn a_comment_with_no_recorded_author_lists_under_the_placeholder() {
+        let (store, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        // A comment carried over from the ticket model, which recorded
+        // no author; the create command itself refuses a blank one.
+        store
+            .create(
+                1,
+                &CommentTarget::new("ticket", "11").expect("the target validates"),
+                &CommentText::new("Imported note").expect("the text validates"),
+                "",
+                None,
+            )
+            .expect("the imported row lands");
+        core.command("comment.create", &create("Fresh note", "key-1", 0))
+            .expect("the create applies");
+
+        let listed = core
+            .query("comment.list", &json!({ "target": target(), "limit": 10 }))
+            .expect("the list serves");
+        let authors: Vec<_> = listed["comments"]
+            .as_array()
+            .expect("comments array")
+            .iter()
+            .map(|row| row["author"].clone())
+            .collect();
+        assert_eq!(authors, vec![json!("Unknown author"), json!("tester")]);
     }
 
     #[test]

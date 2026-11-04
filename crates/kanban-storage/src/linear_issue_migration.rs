@@ -2036,6 +2036,128 @@ mod tests {
         assert_eq!(revisions.1[0].recorded_at, COMMENT_CREATED);
         assert_eq!(revisions.1[1].recorded_at, COMMENT_EDITED);
     }
+    /// The ticket model recorded no comment author, so migration 0056
+    /// leaves such a comment's author empty. Reads show the placeholder
+    /// while the stored row stays empty, and the comment still takes
+    /// replies, edits, and resolution.
+    #[test]
+    fn migrated_comments_without_an_author_read_as_unknown_and_stay_writable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        seed_schema_52_fixture(&database.connection());
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, created_at)
+                 VALUES (2, '1', 'ticket', '2', 1, '2020-06-03T09:00:00.000000Z');
+                 INSERT INTO comment_revisions (comment_id, revision, text, recorded_at)
+                 VALUES (2, 1, 'Unsigned note', '2020-06-03T09:00:00.000000Z');
+                 INSERT INTO timeline_events
+                     (kind, detail, recorded_at, project_id, entity_kind, entity_id)
+                 VALUES (
+                     'comment',
+                     '{\"comment_id\":2,\"text\":\"Unsigned note\",\"revision\":1,\"recorded_at\":\"2020-06-03T09:00:00.000000Z\"}',
+                     '2020-06-03T09:00:00.000000Z', '1', 'ticket', '2'
+                 );",
+            )
+            .unwrap();
+        database.migrate(&AllowAllMigrations).unwrap();
+        let stored_author = |database: &Database| -> String {
+            database
+                .connection()
+                .query_row("SELECT author FROM comments WHERE id = 2", [], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            stored_author(&database),
+            "",
+            "the migration records no author"
+        );
+
+        let attachments = dir.path().join("attachments");
+        std::fs::create_dir_all(&attachments).unwrap();
+        let idempotency = Arc::new(SqliteIdempotencyStore::new(
+            &database,
+            RetentionPolicy::keep_most_recent(NonZeroU32::new(100).unwrap()),
+        ));
+        let mut core = Core::new(exposed_operations(), idempotency, Arc::new(NoopEventSink));
+        register_operator_stack(&mut core, &database, &attachments);
+        let session = OperatorSession::new(Arc::new(core));
+        let list = || {
+            session
+                .call(
+                    "comment.list",
+                    &json!({ "target": { "kind": "ticket", "id": "CORE-2" }, "limit": 10 }),
+                )
+                .unwrap()["comments"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+
+        let listed = list();
+        assert_eq!(listed[0]["author"], json!(COMMENT_AUTHOR));
+        assert_eq!(listed[1]["id"], json!(2));
+        assert_eq!(listed[1]["author"], json!("Unknown author"));
+
+        session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "reply" },
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": "CORE-2" },
+                    "text": "Reply to the unsigned note",
+                    "author": "lin",
+                    "parent_comment_id": 2,
+                }),
+            )
+            .expect("a migrated comment takes a reply");
+        session
+            .call(
+                "comment.edit",
+                &json!({
+                    "mutation": { "optimistic_version": 1, "idempotency_key": "edit" },
+                    "comment_id": 2,
+                    "text": "Unsigned note, edited",
+                }),
+            )
+            .expect("a migrated comment takes an edit");
+        session
+            .call(
+                "comment.resolve",
+                &json!({
+                    "mutation": { "optimistic_version": 2, "idempotency_key": "resolve" },
+                    "comment_id": 2,
+                    "resolved": true,
+                }),
+            )
+            .expect("a migrated comment takes resolution");
+
+        let listed = list();
+        assert_eq!(listed.len(), 3);
+        let unsigned = &listed[1];
+        assert_eq!(unsigned["author"], json!("Unknown author"));
+        assert_eq!(unsigned["body"], json!("Unsigned note, edited"));
+        assert!(unsigned["edited_at"].is_string());
+        assert!(unsigned["resolved_at"].is_string());
+        assert_eq!(unsigned["version"], json!(3));
+        let reply = &listed[2];
+        assert_eq!(reply["author"], json!("lin"));
+        assert_eq!(reply["parent_comment_id"], json!(2));
+
+        assert_eq!(
+            stored_author(&database),
+            "",
+            "reads never rewrite the stored author, so the original stays recoverable"
+        );
+    }
+
     #[test]
     fn migration_converts_legacy_datetime_due_dates_to_calendar_dates() {
         let dir = tempfile::TempDir::new().unwrap();

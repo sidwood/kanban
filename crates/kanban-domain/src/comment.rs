@@ -27,6 +27,23 @@ impl fmt::Display for CommentId {
     }
 }
 
+/// The author a reader sees for a comment whose author was never
+/// recorded. The ticket model kept no comment author, so a comment
+/// carried over from it stores an empty one. The placeholder names no
+/// one, and it is applied on read and never written back, so the empty
+/// original stays in storage exactly as the migration left it.
+pub const UNKNOWN_COMMENT_AUTHOR: &str = "Unknown author";
+
+/// The author to show for a stored one: the stored author as written,
+/// or [`UNKNOWN_COMMENT_AUTHOR`] when none was recorded.
+pub fn displayed_comment_author(stored: &str) -> &str {
+    if stored.trim().is_empty() {
+        UNKNOWN_COMMENT_AUTHOR
+    } else {
+        stored
+    }
+}
+
 /// Why comment text was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextError {
@@ -241,7 +258,10 @@ impl Comment {
 
 #[cfg(test)]
 mod tests {
-    use super::{Comment, CommentId, CommentTarget, CommentText, TextError};
+    use super::{
+        Comment, CommentId, CommentTarget, CommentText, TextError, UNKNOWN_COMMENT_AUTHOR,
+        displayed_comment_author,
+    };
 
     fn target() -> CommentTarget {
         CommentTarget::new("ticket", "kan-t11").expect("the target validates")
@@ -290,5 +310,18 @@ mod tests {
     fn unknown_entity_kinds_are_refused() {
         let error = CommentTarget::new("ghost", "kan-t11").expect_err("unknown kinds are refused");
         assert_eq!(error.to_string(), "the target entity kind is unknown");
+    }
+
+    #[test]
+    fn a_recorded_author_reads_as_recorded() {
+        assert_eq!(displayed_comment_author("lin"), "lin");
+        assert_eq!(displayed_comment_author(" Sid "), " Sid ");
+    }
+
+    #[test]
+    fn an_unrecorded_author_reads_as_the_placeholder() {
+        assert_eq!(UNKNOWN_COMMENT_AUTHOR, "Unknown author");
+        assert_eq!(displayed_comment_author(""), UNKNOWN_COMMENT_AUTHOR);
+        assert_eq!(displayed_comment_author("   "), UNKNOWN_COMMENT_AUTHOR);
     }
 }

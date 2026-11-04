@@ -65,6 +65,7 @@ pub use clone::{
 };
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
+    UNKNOWN_COMMENT_AUTHOR, displayed_comment_author,
 };
 pub use coordinator::{execution_branch, execution_workspace_path, select_reusable_workspace};
 pub use coverage::{

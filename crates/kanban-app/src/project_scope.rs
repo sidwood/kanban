@@ -121,6 +121,19 @@ impl CommentStore for RecordingComments {
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         Ok((Vec::new(), None))
     }
+    fn thread_anchor(
+        &self,
+        id: CommentId,
+    ) -> Result<Option<(CommentTarget, Option<u64>)>, ApiError> {
+        Ok(self
+            .rows
+            .lock()
+            .expect("the rows lock is sound")
+            .iter()
+            .find(|row| row.id() == id)
+            .map(|row| (row.target().clone(), None)))
+    }
+
     fn set_resolved(&self, _id: CommentId, _resolved: bool) -> Result<(), ApiError> {
         Ok(())
     }

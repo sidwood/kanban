@@ -740,3 +740,133 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
         "the reply stores the canonical issue id"
     );
 }
+
+#[test]
+fn reply_parent_must_belong_to_the_same_issue() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "reply-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "reply-other",
+        json!({ "project_id": 1, "title": "Other" }),
+    );
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "reply-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = root["id"].as_u64().unwrap();
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "reply-cross"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "text": "Cross-issue reply",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .expect_err("a parent from another issue is refused");
+
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("parent_comment_id"));
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused reply stored nothing"
+    );
+}
+
+#[test]
+fn replies_nest_one_level() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "nesting-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = root["id"].as_u64().unwrap();
+    let reply = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .unwrap();
+    let reply_id = reply["id"].as_u64().unwrap();
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-reply-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply to the reply",
+                "author": "lin",
+                "parent_comment_id": reply_id,
+            }),
+        )
+        .expect_err("a reply to a reply is refused");
+
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("parent_comment_id"));
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        2,
+        "the refused second-level reply stored nothing"
+    );
+}

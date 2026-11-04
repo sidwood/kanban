@@ -101,6 +101,13 @@ pub trait CommentStore: Send + Sync {
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError>;
+
+    /// The target and parent of a stored Comment, so reply
+    /// validation can check stream membership and nesting depth.
+    fn thread_anchor(
+        &self,
+        id: CommentId,
+    ) -> Result<Option<(CommentTarget, Option<u64>)>, ApiError>;
 }
 
 impl Core {
@@ -171,12 +178,18 @@ impl CommandHandler for CreateComment {
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
         let text = parse_stored_text(&request.text)?;
         let resolved = resolve_target(self.targets.as_ref(), &request.target)?;
+        let parent_comment_id = validate_parent(
+            self.store.as_ref(),
+            self.targets.as_ref(),
+            request.parent_comment_id,
+            &resolved.target,
+        )?;
         let comment = self.store.create(
             project.id().value(),
             &resolved.target,
             &text,
             &request.author,
-            request.parent_comment_id,
+            parent_comment_id,
         )?;
         announce(effects, LiveEventName::CommentCreated, &comment);
         encode_record(&comment)
@@ -349,6 +362,57 @@ fn resolve_target(
     })
 }
 
+/// Replies join the stream they answer and nest one level, the way
+/// Linear threads comments. The parent must live on the same target
+/// and must itself be a top-level comment.
+fn validate_parent(
+    store: &dyn CommentStore,
+    targets: &dyn CommentIssueTargets,
+    parent_comment_id: Option<u64>,
+    target: &CommentTarget,
+) -> Result<Option<u64>, ApiError> {
+    let Some(parent_id) = parent_comment_id else {
+        return Ok(None);
+    };
+    let (parent_target, grandparent) = store
+        .thread_anchor(CommentId::new(parent_id))?
+        .ok_or_else(|| ApiError::not_found(&format!("comment {parent_id}")))?;
+    if !same_stream(targets, &parent_target, target)? {
+        return Err(ApiError::invalid_request_field(
+            "parent_comment_id",
+            "parent_comment_id names a comment on another target",
+        ));
+    }
+    if grandparent.is_some() {
+        return Err(ApiError::invalid_request_field(
+            "parent_comment_id",
+            "parent_comment_id names a reply; replies nest one level",
+        ));
+    }
+    Ok(Some(parent_id))
+}
+
+/// Whether a stored target and a resolved target address one entity.
+/// Legacy key-form rows resolve through the issue lookups.
+fn same_stream(
+    targets: &dyn CommentIssueTargets,
+    stored: &CommentTarget,
+    requested: &CommentTarget,
+) -> Result<bool, ApiError> {
+    if stored.kind() != requested.kind() {
+        return Ok(false);
+    }
+    if stored.id().eq_ignore_ascii_case(requested.id()) {
+        return Ok(true);
+    }
+    if stored.kind() == TimelineEntityKind::Ticket.as_str()
+        && let Some((_, stored_id)) = targets.resolve_issue_reference(stored.id())?
+    {
+        return Ok(stored_id.to_string() == requested.id());
+    }
+    Ok(false)
+}
+
 fn record_of(comment: &Comment) -> CommentRecord {
     CommentRecord {
         id: comment.id().value(),
@@ -399,6 +463,7 @@ mod comments {
     #[derive(Default)]
     struct MemoryState {
         comments: Vec<Comment>,
+        parents: Vec<Option<u64>>,
         next_id: u64,
         revision_stamps: Vec<String>,
     }
@@ -420,7 +485,7 @@ mod comments {
             target: &CommentTarget,
             text: &CommentText,
             _author: &str,
-            _parent_comment_id: Option<u64>,
+            parent_comment_id: Option<u64>,
         ) -> Result<Comment, kanban_dto::ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             state.next_id += 1;
@@ -428,10 +493,25 @@ mod comments {
             let comment =
                 Comment::create(CommentId::new(id), project_id, target.clone(), text.clone());
             state.comments.push(comment.clone());
+            state.parents.push(parent_comment_id);
             state
                 .revision_stamps
                 .push(format!("2026-09-04T12:00:{id:02}Z"));
             Ok(comment)
+        }
+
+        fn thread_anchor(
+            &self,
+            id: CommentId,
+        ) -> Result<Option<(CommentTarget, Option<u64>)>, kanban_dto::ApiError> {
+            let state = self.state.lock().expect("the memory store lock is sound");
+            let index = state.comments.iter().position(|row| row.id() == id);
+            Ok(index.map(|at| {
+                (
+                    state.comments[at].target().clone(),
+                    state.parents.get(at).copied().flatten(),
+                )
+            }))
         }
 
         fn find(&self, id: CommentId) -> Result<Option<Comment>, kanban_dto::ApiError> {
@@ -492,7 +572,17 @@ mod comments {
                                 .cloned()
                                 .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned())
                         }),
-                        parent_comment_id: None,
+                        parent_comment_id: state
+                            .parents
+                            .get(
+                                state
+                                    .comments
+                                    .iter()
+                                    .position(|row| row.id() == comment.id())
+                                    .expect("the row is indexed"),
+                            )
+                            .copied()
+                            .flatten(),
                         resolved_at: None,
                         version: comment.version(),
                     }
@@ -876,6 +966,83 @@ mod comments {
             "First thought",
             "the refusal changed nothing"
         );
+    }
+
+    #[test]
+    fn a_reply_joins_its_parents_stream_and_nests_one_level() {
+        let (_, core) = fixture(Arc::new(crate::events::NoopEventSink));
+        let root = core
+            .command("comment.create", &create("Root", "key-1", 0))
+            .expect("the root applies");
+        let root_id = root["id"].as_u64().unwrap();
+        let reply = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-2" },
+                    "project_id": 1,
+                    "target": target(),
+                    "text": "Reply",
+                    "parent_comment_id": root_id,
+                }),
+            )
+            .expect("the reply applies");
+        let reply_id = reply["id"].as_u64().unwrap();
+
+        core.command(
+            "comment.create",
+            &json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "key-3" },
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": "12" },
+                "text": "Elsewhere",
+            }),
+        )
+        .expect("the other-stream create applies");
+
+        let cross = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-4" },
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": "12" },
+                    "text": "Wrong stream",
+                    "parent_comment_id": root_id,
+                }),
+            )
+            .expect_err("a parent from another stream is refused");
+        assert_eq!(cross.code, ErrorCode::InvalidRequest);
+        assert_eq!(cross.field.as_deref(), Some("parent_comment_id"));
+
+        let nested = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-5" },
+                    "project_id": 1,
+                    "target": target(),
+                    "text": "Reply to the reply",
+                    "parent_comment_id": reply_id,
+                }),
+            )
+            .expect_err("a reply to a reply is refused");
+        assert_eq!(nested.code, ErrorCode::InvalidRequest);
+        assert_eq!(nested.field.as_deref(), Some("parent_comment_id"));
+
+        let ghost = core
+            .command(
+                "comment.create",
+                &json!({
+                    "mutation": { "optimistic_version": 0, "idempotency_key": "key-6" },
+                    "project_id": 1,
+                    "target": target(),
+                    "text": "Ghost parent",
+                    "parent_comment_id": 99,
+                }),
+            )
+            .expect_err("an unknown parent is refused");
+        assert_eq!(ghost.code, ErrorCode::NotFound);
     }
 
     #[test]

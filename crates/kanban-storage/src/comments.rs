@@ -72,6 +72,32 @@ impl CommentStore for SqliteCommentStore {
         ))
     }
 
+    fn thread_anchor(
+        &self,
+        id: CommentId,
+    ) -> Result<Option<(CommentTarget, Option<u64>)>, ApiError> {
+        let conn = self.lock();
+        let row = conn.query_row(
+            "SELECT entity_kind, entity_id, parent_comment_id
+             FROM comments WHERE id = ?1",
+            params![id.value() as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            },
+        );
+        let (entity_kind, entity_id, parent_comment_id) = match row {
+            Ok(values) => values,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(error) => return Err(ApiError::internal(&error.to_string())),
+        };
+        let target = decode_target(&entity_kind, &entity_id)?;
+        Ok(Some((target, parent_comment_id.map(|value| value as u64))))
+    }
+
     fn find(&self, id: CommentId) -> Result<Option<Comment>, ApiError> {
         let conn = self.lock();
         let row = conn.query_row(

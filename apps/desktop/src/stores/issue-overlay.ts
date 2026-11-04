@@ -62,6 +62,7 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
     put(issue: IssueRecord): void {
       if (olderThanCached(this, issue.ticket_id, issue)) return
       this.byTicketId[issue.ticket_id] = issue
+      this.cachedAt[issue.ticket_id] = ++this.refreshesIssued
     },
     async refreshForProject(
       transport: ShellTransport,

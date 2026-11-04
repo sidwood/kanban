@@ -243,4 +243,34 @@ describe('board card chips across overlapping refreshes', () => {
 
     expect(labels()).toEqual(['LabelShipped'])
   })
+
+  it('keeps the sub-issue progress the drawer read when an earlier refresh answers last', async () => {
+    let loaded = false
+    const answers: Array<(record: IssueRecord) => void> = []
+    const { wrapper, emit, tickets } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => {
+        if (!loaded) {
+          loaded = true
+          return Promise.resolve(issueRecord({ version: 4, sub_issues: { done: 0, total: 3 } }))
+        }
+        return new Promise<IssueRecord>((resolve) => answers.push(resolve))
+      }),
+    })
+    expect(chip(wrapper, 'progress', 7).text()).toBe('Sub-issues0/3 done')
+
+    emit({ sequence: 4, event_type: 'ticket.edited', payload: tickets[0] })
+    await flushPromises()
+    await wrapper.find('[data-testid="open-ticket-7"]').trigger('click')
+    await flushPromises()
+    expect(answers).toHaveLength(2)
+
+    answers[1](issueRecord({ version: 4, sub_issues: { done: 2, total: 3 } }))
+    await flushPromises()
+    expect(chip(wrapper, 'progress', 7).text()).toBe('Sub-issues2/3 done')
+    answers[0](issueRecord({ version: 4, sub_issues: { done: 1, total: 3 } }))
+    await flushPromises()
+
+    expect(chip(wrapper, 'progress', 7).text()).toBe('Sub-issues2/3 done')
+  })
 })

@@ -177,6 +177,51 @@ describe('issue overlay refreshes', () => {
     expect(overlay.issueFor(7)?.labels).toEqual(['Shipped'])
   })
 
+  it('keeps a same-version issue the drawer put when an earlier board refresh answers last', async () => {
+    const { transport, pending } = wire()
+    const overlay = useIssueOverlayStore()
+
+    const board = refreshBoard(transport)
+    await settle()
+    overlay.put(issue({ version: 4, sub_issues: { done: 2, total: 3 } }))
+    pending[0].resolve(issue({ version: 4, sub_issues: { done: 1, total: 3 } }))
+    await board
+
+    expect(overlay.issueFor(7)?.sub_issues).toEqual({ done: 2, total: 3 })
+  })
+
+  it('hands the drawer the same-version issue put while its own refresh was on the wire', async () => {
+    const { transport, pending } = wire()
+    const overlay = useIssueOverlayStore()
+
+    const drawer = refreshDrawer(transport)
+    await settle()
+    overlay.put(issue({ version: 4, sub_issues: { done: 2, total: 3 } }))
+    pending[0].resolve(issue({ version: 4, sub_issues: { done: 1, total: 3 } }))
+    const refreshed = await drawer
+
+    expect(refreshed?.sub_issues).toEqual({ done: 2, total: 3 })
+    expect(overlay.issueFor(7)?.sub_issues).toEqual({ done: 2, total: 3 })
+  })
+
+  it('takes a same-version answer to a refresh sent after the drawer put', async () => {
+    const { transport, pending } = wire()
+    const overlay = useIssueOverlayStore()
+
+    overlay.put(issue({ version: 4, sub_issues: { done: 1, total: 3 } }))
+    const board = refreshBoard(transport)
+    await settle()
+    const drawer = refreshDrawer(transport)
+    await settle()
+    pending[0].resolve(issue({ version: 4, sub_issues: { done: 2, total: 3 } }))
+    await board
+    expect(overlay.issueFor(7)?.sub_issues).toEqual({ done: 2, total: 3 })
+    pending[1].resolve(issue({ version: 4, sub_issues: { done: 3, total: 3 } }))
+
+    expect((await drawer)?.sub_issues).toEqual({ done: 3, total: 3 })
+    expect(overlay.issueFor(7)?.sub_issues).toEqual({ done: 3, total: 3 })
+  })
+
   it('takes every answer that is newer than the one cached', async () => {
     const { transport, pending } = wire()
     const overlay = useIssueOverlayStore()

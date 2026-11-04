@@ -21,6 +21,10 @@ mod common;
 
 use common::{harness, mutation};
 
+/// The schema a database written before the name case rule carries:
+/// the last migration before the rule landed.
+const PREVIOUS_BUILD_SCHEMA: i64 = migrations::LATEST_SCHEMA_VERSION - 1;
+
 fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
     let projects = Arc::new(SqliteProjectStore::new(database));
     let tickets = Arc::new(SqliteTicketStore::new(database));
@@ -315,7 +319,8 @@ fn upgraded_pair_session() -> NameCaseHarness {
     let dir = tempfile::TempDir::new().expect("scratch dir");
     let mut database =
         Database::open(&dir.path().join("kanban.sqlite")).expect("the database opens");
-    migrations::apply_through(&database.connection(), 65).expect("schema 65 applies");
+    migrations::apply_through(&database.connection(), PREVIOUS_BUILD_SCHEMA)
+        .expect("the previous build's schema applies");
     common::seed_project_profile(&database);
     database
         .connection()
@@ -723,7 +728,8 @@ fn an_upgraded_database_keeps_its_case_variant_pairs_usable() {
     let dir = tempfile::TempDir::new().expect("scratch dir");
     let mut database =
         Database::open(&dir.path().join("kanban.sqlite")).expect("the database opens");
-    migrations::apply_through(&database.connection(), 65).expect("schema 65 applies");
+    migrations::apply_through(&database.connection(), PREVIOUS_BUILD_SCHEMA)
+        .expect("the previous build's schema applies");
     common::seed_project_profile(&database);
     database
         .connection()
@@ -770,7 +776,11 @@ fn an_upgraded_database_keeps_its_case_variant_pairs_usable() {
     let report = database
         .migrate(&AllowAllMigrations)
         .expect("the upgrade applies over the stored pairs");
-    assert_eq!(report.applied, vec![66]);
+    assert_eq!(
+        report.applied.last(),
+        Some(&migrations::LATEST_SCHEMA_VERSION),
+        "the upgrade reaches the current schema"
+    );
     let session = &operator_over(&database, dir.path());
 
     // Still readable: nothing was renamed, merged, or dropped.

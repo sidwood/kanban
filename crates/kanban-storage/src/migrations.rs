@@ -2672,13 +2672,19 @@ mod tests {
         )
     }
 
-    /// A database may reach migration 0066 already holding label and
-    /// milestone names that differ only in letter case. The migration
-    /// keeps every such row and judges only later writes.
+    /// A database may already hold label and milestone names that differ
+    /// only in letter case when the name-case migration arrives. The
+    /// migration keeps every such row and judges only later writes.
     #[test]
-    fn migration_0066_keeps_case_variant_pairs_and_refuses_new_ones() {
+    fn name_case_migration_keeps_case_variant_pairs_and_refuses_new_ones() {
+        // Found by name, so the test holds if the migration is renumbered.
+        let version = MIGRATIONS
+            .iter()
+            .find(|migration| migration.name == "label milestone name case")
+            .expect("the name case migration is registered")
+            .version;
         let (_dir, mut database) = scratch_database();
-        apply_through(&database.connection(), 65).expect("schema 65 applies");
+        apply_through(&database.connection(), version - 1).expect("the earlier schema applies");
         database
             .connection()
             .execute_batch(
@@ -2702,7 +2708,7 @@ mod tests {
         let report = database
             .migrate(&AllowAllMigrations)
             .expect("the rule applies over existing case-variant pairs");
-        assert_eq!(report.applied, vec![66]);
+        assert!(report.applied.contains(&version), "{:?}", report.applied);
 
         let conn = database.connection();
         let names = |table: &str| -> Vec<String> {

@@ -134,8 +134,8 @@ impl CommentStore for RecordingComments {
             .map(|row| (row.target().clone(), None)))
     }
 
-    fn set_resolved(&self, _id: CommentId, _resolved: bool) -> Result<(), ApiError> {
-        Ok(())
+    fn set_resolved(&self, _id: CommentId, _resolved: bool) -> Result<u64, ApiError> {
+        Ok(1)
     }
 }
 

@@ -192,17 +192,22 @@ impl CommentStore for SqliteCommentStore {
         Ok((record_of(&comment), revisions))
     }
 
-    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<(), ApiError> {
+    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<u64, ApiError> {
         let conn = self.lock();
+        // Resolving and unresolving each advance the aggregate the
+        // way an edit does, so concurrent writers stay guarded.
         let changed = if resolved {
             conn.execute(
-                "UPDATE comments SET resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+                "UPDATE comments
+                 SET resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                     version = version + 1
+                 WHERE id = ?1",
                 params![id.value() as i64],
             )
             .map_err(internal)?
         } else {
             conn.execute(
-                "UPDATE comments SET resolved_at = NULL WHERE id = ?1",
+                "UPDATE comments SET resolved_at = NULL, version = version + 1 WHERE id = ?1",
                 params![id.value() as i64],
             )
             .map_err(internal)?
@@ -210,7 +215,14 @@ impl CommentStore for SqliteCommentStore {
         if changed == 0 {
             return Err(ApiError::not_found(&format!("comment {}", id.value())));
         }
-        Ok(())
+        let version: i64 = conn
+            .query_row(
+                "SELECT version FROM comments WHERE id = ?1",
+                params![id.value() as i64],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        Ok(version.unsigned_abs())
     }
 
     fn list_for_target(
@@ -624,5 +636,31 @@ mod revision_store {
             .expect_err("the unknown Comment is refused");
 
         assert_eq!(error.code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn resolving_and_unresolving_each_bump_the_version() {
+        let (_dir, _database, store) = store();
+        store
+            .create(1, &target(), &text("first thought"), "tester", None)
+            .expect("the create lands");
+
+        store
+            .set_resolved(CommentId::new(1), true)
+            .expect("the resolve lands");
+        let (items, _) = store
+            .list_for_target(&target(), &[], 10, None)
+            .expect("the list serves");
+        assert_eq!(items[0].version, 2);
+        assert!(items[0].resolved_at.is_some());
+
+        store
+            .set_resolved(CommentId::new(1), false)
+            .expect("the unresolve lands");
+        let (items, _) = store
+            .list_for_target(&target(), &[], 10, None)
+            .expect("the list serves");
+        assert_eq!(items[0].version, 3);
+        assert!(items[0].resolved_at.is_none());
     }
 }

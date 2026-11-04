@@ -838,7 +838,7 @@ define_exposed_catalogue! {
     "comment.resolve" => {
         kind: Command,
         request: "CommentResolveRequest",
-        response: "CommentResolveRequest",
+        response: "CommentResolveResponse",
         mcp: "resolve_comment",
         description: "Resolve or clear resolution on a comment thread.",
     },

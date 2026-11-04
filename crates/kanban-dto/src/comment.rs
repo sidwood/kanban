@@ -73,6 +73,18 @@ pub struct CommentResolveRequest {
     pub resolved: bool,
 }
 
+/// Response payload for the `comment.resolve` command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentResolveResponse {
+    /// The Comment whose resolution changed.
+    pub comment_id: u64,
+    /// Whether the Comment is now resolved.
+    pub resolved: bool,
+    /// The aggregate version after the change, for optimistic checks.
+    pub version: u64,
+}
+
 /// Request payload for the `comment.revisions` query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -135,8 +147,8 @@ mod tests {
 
     use super::{
         CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-        CommentListResponse, CommentRecord, CommentRevisionRecord, CommentRevisionsQuery,
-        CommentRevisionsResponse,
+        CommentListResponse, CommentRecord, CommentResolveResponse, CommentRevisionRecord,
+        CommentRevisionsQuery, CommentRevisionsResponse,
     };
     use crate::mutation::MutationContext;
     use crate::schema_definitions;
@@ -218,6 +230,23 @@ mod tests {
     }
 
     #[test]
+    fn a_resolve_response_carries_the_bumped_version() {
+        let response = CommentResolveResponse {
+            comment_id: 4,
+            resolved: true,
+            version: 2,
+        };
+        let encoded = serde_json::to_value(&response).expect("the response serialises");
+        assert_eq!(
+            encoded,
+            json!({ "comment_id": 4, "resolved": true, "version": 2 })
+        );
+        let decoded: CommentResolveResponse =
+            serde_json::from_value(encoded).expect("the response deserialises");
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
     fn a_revisions_response_carries_history() {
         let response = CommentRevisionsResponse {
             comment: CommentRecord {
@@ -287,6 +316,7 @@ mod tests {
             "CommentEditRequest",
             "CommentRecord",
             "CommentRevisionRecord",
+            "CommentResolveResponse",
             "CommentRevisionsQuery",
             "CommentRevisionsResponse",
             "CommentListQuery",

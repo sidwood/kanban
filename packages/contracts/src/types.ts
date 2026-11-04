@@ -230,6 +230,11 @@ export type CommentResolveRequest = {
   mutation: MutationContext;
   resolved: boolean;
 };
+export type CommentResolveResponse = {
+  comment_id: number;
+  resolved: boolean;
+  version: number;
+};
 export type CommentRevisionRecord = {
   recorded_at: string;
   revision: number;

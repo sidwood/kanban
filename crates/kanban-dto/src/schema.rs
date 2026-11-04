@@ -46,8 +46,8 @@ use crate::clone::{
 };
 use crate::comment::{
     CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentResolveResponse,
+    CommentRevisionRecord, CommentRevisionsQuery, CommentRevisionsResponse,
 };
 use crate::coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -288,6 +288,10 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),
         ("CommentResolveRequest", schema_for!(CommentResolveRequest)),
+        (
+            "CommentResolveResponse",
+            schema_for!(CommentResolveResponse),
+        ),
         ("CommentRevisionRecord", schema_for!(CommentRevisionRecord)),
         ("CommentListItem", schema_for!(CommentListItem)),
         ("CommentListQuery", schema_for!(CommentListQuery)),

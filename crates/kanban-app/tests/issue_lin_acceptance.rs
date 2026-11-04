@@ -920,3 +920,83 @@ fn comment_author_is_required_and_kept() {
         .unwrap();
     assert_eq!(listed["comments"][0]["author"], json!("lin"));
 }
+
+#[test]
+fn resolve_and_unresolve_bump_the_comment_version() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "resolve-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "resolve-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["version"], json!(1));
+
+    let resolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "resolve-on"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect("the resolve applies");
+    assert_eq!(
+        resolved,
+        json!({ "comment_id": comment_id, "resolved": true, "version": 2 })
+    );
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(2));
+    assert!(listed["comments"][0]["resolved_at"].is_string());
+
+    let stale = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "resolve-stale"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect_err("a stale optimistic version is refused");
+    assert_eq!(stale.code, ErrorCode::StaleVersion);
+    assert_eq!(stale.current_version, Some(2));
+
+    let unresolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(2, "resolve-off"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve applies");
+    assert_eq!(
+        unresolved,
+        json!({ "comment_id": comment_id, "resolved": false, "version": 3 })
+    );
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(3));
+    assert!(listed["comments"][0]["resolved_at"].is_null());
+}

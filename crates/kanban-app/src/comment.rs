@@ -7,10 +7,11 @@ use std::sync::Arc;
 use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, IssueKey, TextError};
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionsQuery,
-    CommentRevisionsResponse, ErrorCode, LiveEventName, TimelineEntityKind, TimelineEntityRef,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentResolveResponse,
+    CommentRevisionsQuery, CommentRevisionsResponse, ErrorCode, LiveEventName, TimelineEntityKind,
+    TimelineEntityRef,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
@@ -77,7 +78,9 @@ pub trait CommentStore: Send + Sync {
         parent_comment_id: Option<u64>,
     ) -> Result<Comment, ApiError>;
 
-    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<(), ApiError>;
+    /// Record a resolution change and answer with the new version;
+    /// resolving and unresolving each bump the aggregate like an edit.
+    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<u64, ApiError>;
 
     /// Load one Comment, if it exists.
     fn find(&self, id: CommentId) -> Result<Option<Comment>, ApiError>;
@@ -299,9 +302,15 @@ impl CommandHandler for ResolveComment {
         _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CommentResolveRequest = parse_payload(&command.payload)?;
-        self.store
+        let version = self
+            .store
             .set_resolved(CommentId::new(request.comment_id), request.resolved)?;
-        Ok(json!({ "comment_id": request.comment_id, "resolved": request.resolved }))
+        let response = CommentResolveResponse {
+            comment_id: request.comment_id,
+            resolved: request.resolved,
+            version,
+        };
+        serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
 }
 
@@ -613,10 +622,21 @@ mod comments {
 
         fn set_resolved(
             &self,
-            _id: CommentId,
+            id: CommentId,
             _resolved: bool,
-        ) -> Result<(), kanban_dto::ApiError> {
-            Ok(())
+        ) -> Result<u64, kanban_dto::ApiError> {
+            let mut state = self.state.lock().expect("the memory store lock is sound");
+            let Some(row) = state.comments.iter_mut().find(|row| row.id() == id) else {
+                return Err(kanban_dto::ApiError::not_found(&format!("comment {id}")));
+            };
+            *row = Comment::restore(
+                row.id(),
+                row.project_id(),
+                row.target().clone(),
+                row.revisions().to_vec(),
+                row.version() + 1,
+            );
+            Ok(row.version())
         }
 
         fn revisions(

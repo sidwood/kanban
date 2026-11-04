@@ -155,6 +155,8 @@
     "unpushed",
     "unredactable",
     "unredacted",
+    "unresolve",
+    "unresolving",
     "unstarted",
     "unstub",
     "usernotifications",

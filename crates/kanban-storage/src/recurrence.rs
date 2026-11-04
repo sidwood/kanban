@@ -165,8 +165,8 @@ fn insert_occurrence(
     )
     .map_err(internal)?;
     conn.execute("INSERT INTO tickets
-        (project_id, number, kind, priority, state, spec_id, title, criteria, subtype, mode, completion, version)
-        SELECT project_id, ?2, 'task', priority, 'draft', spec_id, title, '[]', subtype, mode, completion, 1
+        (project_id, number, kind, priority, state, spec_id, title, criteria, subtype, mode, completion, due_date, version)
+        SELECT project_id, ?2, 'task', priority, 'draft', spec_id, title, '[]', subtype, mode, completion, '', 1
         FROM tickets WHERE id = ?1", params![due.activation.ticket.id().value() as i64, number.value() as i64])
         .map_err(internal)?;
     // Capture the Ticket identity before the lineage and timeline allocate their own identities.
@@ -431,4 +431,90 @@ pub(crate) fn guard_occurrence_dispatch(
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     kanban_domain::recurrence::guard_recurring_dispatch(is_template, &peers).map_err(invalid)
+}
+
+#[cfg(test)]
+mod tests {
+    use kanban_app::recurrence::RecurrenceStore;
+    use kanban_domain::ScheduleId;
+    use kanban_domain::recurrence::RecurrenceAdvance;
+
+    use super::SqliteRecurrenceStore;
+    use crate::issue_store::SqliteIssueStore;
+    use crate::test_support::scratch_database;
+
+    /// A due cron schedule over one scheduled task, so `advance`
+    /// mints the occurrence the way the scheduler pass does.
+    fn due_fixture(database: &crate::db::Database) -> ScheduleId {
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO projects (
+                 id, code, name, repository, seed_workspace, default_branch,
+                 herdr_session, herdr_workspace, ticket_counter, spec_counter, version
+             ) VALUES (1, 'CORE', 'Control plane', '/repositories/kanban',
+                       '/workspaces/kanban.seed', 'main', 'kanban-main', 'kanban-main',
+                       2, 0, 1)",
+            [],
+        )
+        .expect("the fixture Project lands");
+        conn.execute(
+            "INSERT INTO execution_profiles (name, harness, model, effort, usage_pool, version)
+             VALUES ('standard', 'claude-code', 'opus', 'high', 'operator', 1)",
+            [],
+        )
+        .expect("the fixture profile lands");
+        conn.execute(
+            "INSERT INTO tickets (
+                 id, project_id, number, kind, priority, state, title, criteria,
+                 subtype, mode, completion, version
+             ) VALUES (1, 1, 1, 'task', 'normal', 'scheduled', 'Recurring task', '[]',
+                       'operational', 'human', '[\"done\"]', 1)",
+            [],
+        )
+        .expect("the fixture template lands");
+        conn.execute(
+            "INSERT INTO schedules (
+                 id, ticket_id, trigger_kind, cron_expression, timezone, profile,
+                 next_activation, state
+             ) VALUES (1, 1, 'cron', '*/15 * * * *', 'UTC', 'standard',
+                       '2026-11-04T00:00:00.000Z', 'waiting')",
+            [],
+        )
+        .expect("the fixture schedule lands");
+        ScheduleId::new(1)
+    }
+
+    #[test]
+    fn a_minted_occurrence_carries_no_due_date() {
+        let (_dir, mut database) = scratch_database();
+        database
+            .migrate(&crate::migrations::AllowAllMigrations)
+            .expect("the migrations apply");
+        let id = due_fixture(&database);
+        let store = SqliteRecurrenceStore::new(&database);
+
+        let committed = store
+            .advance(id, "2026-11-04T21:00:00.000Z", &|_due| {
+                Ok(Some(RecurrenceAdvance {
+                    occurrence_window: Some("2026-11-04T20:45:00.000Z".to_owned()),
+                    skipped: None,
+                    next_activation: "2026-11-04T21:15:00.000Z".to_owned(),
+                }))
+            })
+            .expect("the due recurrence advances")
+            .expect("the decision mints an occurrence");
+        let occurrence = committed.ticket.expect("the occurrence is committed");
+
+        // The occurrence is a fresh body: it starts with no deadline,
+        // and the retired sentinel must never read back as a real
+        // 2099-12-31 deadline on the issue model.
+        let fields = SqliteIssueStore::new(&database)
+            .issue_fields(occurrence.id().value() as i64)
+            .expect("the occurrence carries its issue fields");
+        assert_eq!(
+            fields.due_date, None,
+            "a minted occurrence starts without a deadline, saw {:?}",
+            fields.due_date
+        );
+    }
 }

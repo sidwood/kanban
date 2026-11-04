@@ -120,9 +120,9 @@ impl TicketStore for SqliteTicketStore {
                  (project_id, number, kind, priority, state, spec_id, title, slice,
                   criteria, actual_behaviour, reporter_evidence, bug_qualification,
                   bug_facts, subtype, mode, completion, scheduled_for, due,
-                  predecessor_id, version)
+                  due_date, predecessor_id, version)
              VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18, 1)",
+                     ?14, ?15, ?16, ?17, '', ?18, 1)",
             params![
                 project.id().value() as i64,
                 number.value() as i64,

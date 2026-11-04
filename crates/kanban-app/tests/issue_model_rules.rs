@@ -2008,6 +2008,70 @@ fn a_legacy_reassignment_seeds_the_replacement_issue() {
 }
 
 #[test]
+fn a_replacement_carries_no_due_date_until_one_is_set() {
+    let h = legacy_harness();
+    let created = create_legacy_task(&h.core, "legacy-reassign-date", "Dated task");
+    let identifier = legacy_identifier(&created);
+    let ticket_id = created["id"].as_u64().expect("a ticket id");
+
+    // The original carries a real deadline far inside the calendar,
+    // so the none marker cannot stand in for it on either row.
+    let dated = read_issue(&h.session, &identifier);
+    save_issue(
+        &h.session,
+        dated.version,
+        "legacy-reassign-date-set",
+        json!({ "identifier": identifier, "due_date": "2030-05-05" }),
+    );
+    assert_eq!(
+        read_issue(&h.session, &identifier).due_date,
+        Some("2030-05-05".to_owned())
+    );
+
+    let before = read_issue(&h.session, &identifier);
+    let replacement = h
+        .core
+        .command(
+            "ticket.reassign",
+            &json!({
+                "mutation": mutation(before.version, "legacy-reassign-date-move"),
+                "ticket_id": ticket_id,
+                "kind": "task",
+                "priority": "normal",
+                "title": "Replacement task",
+                "subtype": "operational",
+                "mode": "human",
+                "completion": ["Checked"],
+            }),
+        )
+        .expect("the reassignment lands");
+    let replacement_key = format!("CORE-{}", replacement["number"].as_u64().expect("a number"));
+
+    // A replacement is a new body, not a copy of the original's
+    // dates: it starts with no deadline at all, and the retired
+    // sentinel never reads back as a real 2099-12-31 deadline.
+    let record = read_issue(&h.session, &replacement_key);
+    assert_eq!(
+        record.due_date, None,
+        "the replacement starts without a deadline, saw {:?}",
+        record.due_date
+    );
+
+    // The replacement accepts and keeps a real deadline of its own.
+    save_issue(
+        &h.session,
+        record.version,
+        "legacy-reassign-date-replacement",
+        json!({ "identifier": replacement_key, "due_date": "2099-12-31" }),
+    );
+    assert_eq!(
+        read_issue(&h.session, &replacement_key).due_date,
+        Some("2099-12-31".to_owned()),
+        "the farthest real calendar date round-trips on the replacement"
+    );
+}
+
+#[test]
 fn label_saves_that_change_nothing_touch_nothing() {
     let h = rules_harness();
     let session = &h.session;

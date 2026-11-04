@@ -124,4 +124,42 @@ describe('IssueDetailPanel comments', () => {
 
     expect(wrapper.find('[data-testid="issue-comment-resolved-badge"]').exists()).toBe(true)
   })
+
+  it('shows an imported comment under the author the core lists for it', async () => {
+    // The core lists a comment whose author was never recorded under
+    // the `Unknown author` placeholder; the panel shows that name like
+    // any other, with no special case of its own.
+    const imported: CommentListItem = {
+      id: 1,
+      author: 'Unknown author',
+      body: 'Imported note',
+      created_at: '2020-06-03T09:00:00.000000Z',
+      version: 1,
+    }
+    const wrapper = mount(IssueDetailPanel, {
+      props: { issue: issue(), projectId: 1, projectCode: 'CORE' },
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: transport([imported]) },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    const card = wrapper.find('[data-testid="issue-comment-1"]')
+    expect(card.find('span').text()).toBe('Unknown author')
+    expect(card.text()).toContain('Imported note')
+
+    await wrapper.find('[data-testid="issue-comment-reply-1"]').trigger('click')
+    await wrapper.find('[data-testid="issue-comment-input"]').setValue('Answering the import')
+    await wrapper.find('[data-testid="issue-comment-post"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="issue-comment-resolve-1"]').trigger('click')
+    await flushPromises()
+
+    const replies = wrapper.find('[data-testid="issue-comment-replies-1"]')
+    expect(replies.text()).toContain('operator')
+    expect(replies.text()).toContain('Answering the import')
+    expect(wrapper.find('[data-testid="issue-comment-resolved-badge"]').exists()).toBe(true)
+  })
 })

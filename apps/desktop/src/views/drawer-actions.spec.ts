@@ -3,9 +3,15 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { TicketRecord } from '@kanban/contracts'
+import type {
+  ProfileSnapshotRecord,
+  ReviewExecutionRecord,
+  ReviewSlotRecord,
+  TicketRecord,
+} from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
+import { useTicketDetailStore } from '../stores/ticket-detail'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
 import { harness, ticket } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
@@ -28,14 +34,74 @@ const implementation = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
     ...overrides,
   })
 
+const snapshot = (name: string): ProfileSnapshotRecord => ({
+  name,
+  harness: 'claude-code',
+  model: 'opus',
+  effort: 'high',
+  usage_pool: 'operator',
+})
+
+const humanSlot = (id: number): ReviewSlotRecord => ({
+  id,
+  occupant: { kind: 'human' },
+  requirement: 'required',
+  requested: null,
+  effective: null,
+  fallback_path: [],
+  dispatch_request_id: null,
+  verdict: null,
+})
+
+const profileSlot = (id: number, verdict: ReviewSlotRecord['verdict'] = null): ReviewSlotRecord => ({
+  id,
+  occupant: { kind: 'profile', name: 'sol-reviewer' },
+  requirement: 'required',
+  requested: snapshot('sol-reviewer'),
+  effective: snapshot('sol-reviewer'),
+  fallback_path: [],
+  dispatch_request_id: 12,
+  verdict,
+})
+
+const approval = (summary: string): NonNullable<ReviewSlotRecord['verdict']> => ({
+  approve: true,
+  counts_for_resolution: true,
+  summary,
+  tip: 'f00dcafe',
+  submission_id: 9,
+  findings: [],
+})
+
+// One stage the core is resolving now: the agent slot has reported and
+// the human slot is the one it waits on.
+const review: ReviewExecutionRecord = {
+  id: 55,
+  project_id: 1,
+  ticket_id: 8,
+  submission_id: 9,
+  configuration_version: 2,
+  tip: 'f00dcafe',
+  status: 'in_progress',
+  version: 6,
+  bounce: null,
+  stages: [
+    {
+      index: 0,
+      status: 'waiting',
+      slots: [humanSlot(72), profileSlot(71, approval('The slice holds.'))],
+    },
+  ],
+}
+
 const mountedBoards: VueWrapper[] = []
 
-async function openDrawer(state: ReturnType<typeof harness>, ticketId = 8) {
+async function openDrawer(state: ReturnType<typeof harness>, ticketId = 8, pinia = createPinia()) {
   await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
     global: {
-      plugins: [createPinia(), router],
+      plugins: [pinia, router],
       provide: { [kanbanTransportKey as symbol]: state.transport },
     },
     attachTo: document.body,
@@ -216,5 +282,143 @@ describe('the drawer footer actions', () => {
         state: 'Active',
       },
     ])
+  })
+})
+
+describe('the human review decision in the drawer', () => {
+  it('offers a decision for the human slot the core is waiting on', async () => {
+    const state = harness({ tickets: [implementation()], reviews: [review] })
+    await openDrawer(state)
+
+    expect(state.query).toHaveBeenCalledWith('review.latest', { ticket_id: 8 })
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).not.toBeNull()
+    await click('drawer-review-decision')
+    expect(document.querySelector('[data-testid="review-decision"]')?.textContent).toContain(
+      'Human slot 72',
+    )
+    // Opening the decision sends nothing.
+    expect(issued(state, 'review.human.submit')).toEqual([])
+  })
+
+  it('Approve sends the review version, the review, the slot, the tip, and the summary', async () => {
+    const state = harness({ tickets: [implementation()], reviews: [review] })
+    await openDrawer(state)
+
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The slice holds; the gates are green.')
+    await click('review-decision-approve')
+    await click('review-decision-submit')
+
+    expect(issued(state, 'review.human.submit')).toEqual([
+      {
+        mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+        review_id: 55,
+        slot_id: 72,
+        tip: 'f00dcafe',
+        approve: true,
+        summary: 'The slice holds; the gates are green.',
+        findings: [],
+      },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    expect(state.reviews.get(55).status).toBe('approved')
+  })
+
+  it('Reject sends every field of the finding the rejection resolves on', async () => {
+    const state = harness({ tickets: [implementation()], reviews: [review] })
+    await openDrawer(state)
+
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The landing path is unguarded.')
+    await click('review-decision-reject')
+    await type('review-finding-severity', 'p1')
+    await type('review-finding-summary', 'Landing drops the integration branch.')
+    await type('review-finding-evidence', 'The landing log names the drop.')
+    await type('review-finding-location', 'crates/kanban-app/src/landing.rs:88')
+    await type('review-finding-resolution', 'Guard the branch before the merge.')
+    await click('review-decision-submit')
+
+    expect(issued(state, 'review.human.submit')).toEqual([
+      {
+        mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+        review_id: 55,
+        slot_id: 72,
+        tip: 'f00dcafe',
+        approve: false,
+        summary: 'The landing path is unguarded.',
+        findings: [
+          {
+            severity: 'p1',
+            in_scope: true,
+            summary: 'Landing drops the integration branch.',
+            evidence: 'The landing log names the drop.',
+            location: 'crates/kanban-app/src/landing.rs:88',
+            proposed_resolution: 'Guard the branch before the merge.',
+          },
+        ],
+      },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    expect(state.reviews.get(55).status).toBe('rejected')
+  })
+
+  it('offers no decision for a human slot in a stage the core has not reached', async () => {
+    const ordered: ReviewExecutionRecord = {
+      ...review,
+      stages: [
+        { index: 0, status: 'waiting', slots: [profileSlot(71)] },
+        { index: 1, status: 'waiting', slots: [humanSlot(72)] },
+      ],
+    }
+    const state = harness({ tickets: [implementation()], reviews: [ordered] })
+    await openDrawer(state)
+
+    expect(document.querySelector('[data-testid="drawer-review-slot-72"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
+    expect(document.querySelector('[data-testid="review-decision"]')).toBeNull()
+  })
+
+  it('writes nothing over the Ticket the drawer moved to when a verdict lands late', async () => {
+    const solo: ReviewExecutionRecord = {
+      ...review,
+      stages: [{ index: 0, status: 'waiting', slots: [humanSlot(72)] }],
+    }
+    const state = harness({
+      tickets: [implementation(), implementation({ id: 9, number: 14, title: 'Edge review' })],
+      reviews: [solo],
+    })
+    const core = state.command.getMockImplementation() as (
+      name: string,
+      request: unknown,
+    ) => Promise<unknown>
+    let release: (() => void) | null = null
+    state.command.mockImplementation((name: string, request: unknown) =>
+      name === 'review.human.submit'
+        ? new Promise((resolve, reject) => {
+            release = () => core(name, request).then(resolve, reject)
+          })
+        : core(name, request),
+    )
+    const pinia = createPinia()
+    const wrapper = await openDrawer(state, 8, pinia)
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The slice holds; the gates are green.')
+    await click('review-decision-submit')
+    expect(release).not.toBeNull()
+
+    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    await flushPromises()
+    release!()
+    await flushPromises()
+
+    expect(state.reviews.get(55).status).toBe('approved')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    const detail = useTicketDetailStore(pinia)
+    expect(detail.ticketId).toBe(9)
+    expect(detail.review).toBeNull()
+    expect(detail.error).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-review-slot-72"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
   })
 })

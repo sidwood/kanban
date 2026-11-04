@@ -504,12 +504,9 @@ fn create_issue(
         }
         project_id = parent_project;
     }
-    let title = request
-        .title
-        .as_deref()
-        .ok_or_else(|| {
-            ApiError::invalid_request_field("title", "title is required when creating")
-        })?;
+    let title = request.title.as_deref().ok_or_else(|| {
+        ApiError::invalid_request_field("title", "title is required when creating")
+    })?;
     if title.trim().is_empty() {
         return Err(ApiError::invalid_request_field(
             "title",
@@ -834,6 +831,13 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     })
 }
 
+/// Names match across case over their whole text, like Linear's
+/// filters, not only their ASCII letters.
+fn equals_ignoring_case(left: &str, right: &str) -> bool {
+    left.chars()
+        .flat_map(char::to_lowercase)
+        .eq(right.chars().flat_map(char::to_lowercase))
+}
 fn list_issues(
     ctx: &IssueContext,
     request: &IssueListQuery,
@@ -872,8 +876,8 @@ fn list_issues(
             if let Some(state) = request.state.as_deref() {
                 let workflow = ctx.issues.workflow_state_for_ticket(ticket_id as i64)?;
                 let matches_state = |value: &IssueWorkflowState| {
-                    value.name.eq_ignore_ascii_case(state)
-                        || value.state_type.wire_name().eq_ignore_ascii_case(state)
+                    equals_ignoring_case(&value.name, state)
+                        || equals_ignoring_case(value.state_type.wire_name(), state)
                 };
                 if workflow.as_ref().is_none_or(|value| !matches_state(value)) {
                     continue;
@@ -881,7 +885,7 @@ fn list_issues(
             }
             if let Some(label) = request.label.as_deref() {
                 let labels = ctx.issues.list_labels(ticket_id as i64)?;
-                if !labels.iter().any(|held| held.eq_ignore_ascii_case(label)) {
+                if !labels.iter().any(|held| equals_ignoring_case(held, label)) {
                     continue;
                 }
             }

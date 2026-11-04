@@ -1590,6 +1590,42 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
         "a valid updated_since keeps filtering by recency"
     );
 
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-unicode-label"),
+                "project_id": 1,
+                "name": "Årea",
+                "color": "#336699",
+            }),
+        )
+        .expect("the label with a non-ASCII name is created");
+    let unicode = save_issue(
+        &session,
+        0,
+        "filter-unicode",
+        json!({
+            "project_id": 1,
+            "title": "Non-ASCII label",
+            "add_labels": ["Årea"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "årea" })),
+        vec![unicode.identifier.clone()],
+        "a non-ASCII label name matches its lowercase form"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "ÅREA" })),
+        vec![unicode.identifier.clone()],
+        "a non-ASCII label name matches its uppercase form"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "ACTIVE" })),
+        vec![started.identifier.clone()],
+        "state names keep matching across case"
+    );
     let error = session
         .call(
             "issue.list",

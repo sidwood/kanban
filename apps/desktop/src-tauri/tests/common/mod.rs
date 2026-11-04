@@ -10,10 +10,11 @@ pub fn cargo_target_dir(manifest: &Path) -> PathBuf {
     {
         return PathBuf::from(dir);
     }
+    let manifest = std::path::absolute(manifest).expect("the manifest path can be made absolute");
     let output = Command::new("cargo")
         .current_dir(manifest.parent().expect("the manifest has a parent"))
         .args(["metadata", "--format-version", "1", "--manifest-path"])
-        .arg(manifest)
+        .arg(&manifest)
         .output()
         .expect("cargo metadata runs");
     assert!(output.status.success(), "cargo metadata must succeed");

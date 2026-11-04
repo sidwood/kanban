@@ -610,7 +610,17 @@ export function harness(options: HarnessOptions = {}): Harness {
     if (name === 'issue.save') {
       const projectId = body.project_id as number | undefined
       const title = body.title as string | undefined
+      const expected = (body.mutation as { optimistic_version: number }).optimistic_version
+      // The core's dispatcher admits a save only at the version the
+      // record stands at, and a creation only at version zero.
+      const stale = (current: number): Promise<never> =>
+        Promise.reject({
+          code: 'stale_version',
+          message: `optimistic version ${expected} is stale; the aggregate is at version ${current}`,
+          current_version: current,
+        })
       if (!body.identifier && projectId != null && title) {
+        if (expected !== 0) return stale(0)
         const code = projectId === edgeProject.id ? edgeProject.code : coreProject.code
         const number = 90 + tickets.length
         const created = ticket({
@@ -635,6 +645,7 @@ export function harness(options: HarnessOptions = {}): Harness {
       const found =
         tickets.find((entry) => entry.number === number) ??
         tickets.find((entry) => entry.id === (body.ticket_id as number | undefined))
+      if (found && expected !== found.version) return stale(found.version)
       const project_id = found?.project_id ?? (code === 'EDGE' ? 2 : 1)
       const legacy =
         stateName === 'Active'

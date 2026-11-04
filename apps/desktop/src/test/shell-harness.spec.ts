@@ -1,5 +1,3 @@
-// The shell double answers an issue save the way the core's dispatcher
-// does: a save is admitted only at the version the record stands at.
 import { describe, expect, it } from 'vitest'
 import { harness, ticket } from './shell-harness'
 

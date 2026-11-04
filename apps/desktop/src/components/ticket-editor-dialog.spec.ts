@@ -353,8 +353,6 @@ describe('the Ticket editor dialog', () => {
     const save = () => wrapper.find('[data-testid="ticket-save-issue"]')
     expect((save().element as HTMLButtonElement).disabled).toBe(true)
     await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
-    // The form itself is submitted, so a guard on the button alone
-    // would not hold the save back.
     await wrapper.find('[data-testid="ticket-edit-issue-form"]').trigger('submit')
     await flushPromises()
     expect(requests('issue.save')).toEqual([])

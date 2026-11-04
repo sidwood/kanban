@@ -611,8 +611,6 @@ export function harness(options: HarnessOptions = {}): Harness {
       const projectId = body.project_id as number | undefined
       const title = body.title as string | undefined
       const expected = (body.mutation as { optimistic_version: number }).optimistic_version
-      // The core's dispatcher admits a save only at the version the
-      // record stands at, and a creation only at version zero.
       const stale = (current: number): Promise<never> =>
         Promise.reject({
           code: 'stale_version',

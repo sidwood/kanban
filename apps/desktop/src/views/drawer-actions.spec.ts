@@ -74,8 +74,6 @@ const approval = (summary: string): NonNullable<ReviewSlotRecord['verdict']> => 
   findings: [],
 })
 
-// One stage the core is resolving now: the agent slot has reported and
-// the human slot is the one it waits on.
 const review: ReviewExecutionRecord = {
   id: 55,
   project_id: 1,
@@ -303,7 +301,6 @@ describe('the human review decision in the drawer', () => {
     expect(document.querySelector('[data-testid="review-decision"]')?.textContent).toContain(
       'Human slot 72',
     )
-    // Opening the decision sends nothing.
     expect(issued(state, 'review.human.submit')).toEqual([])
   })
 

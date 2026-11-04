@@ -206,9 +206,6 @@ export function editorHarness(options: EditorHarnessOptions = {}): EditorHarness
   const projects = options.projects ?? [editorProject]
   const specs = options.specs ?? [editorSpec]
   const tickets: TicketRecord[] = [...(options.tickets ?? [])]
-  // An issue's priority lives on the issue: a save sets it there and
-  // leaves the legacy Ticket priority as it stood. A Ticket no save
-  // has touched reads the priority it was migrated with.
   const issuePriorities = new Map<number, number>()
 
   function held(ticketId: number): TicketRecord | undefined {

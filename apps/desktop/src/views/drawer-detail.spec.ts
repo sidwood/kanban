@@ -37,8 +37,6 @@ const snapshot = (name: string): ProfileSnapshotRecord => ({
   usage_pool: 'operator',
 })
 
-// The stage the core is resolving: the agent slot rejected, and the
-// human slot is the one it waits on.
 const review: ReviewExecutionRecord = {
   id: 55,
   project_id: 1,
@@ -86,8 +84,6 @@ const review: ReviewExecutionRecord = {
   ],
 }
 
-// The prior gate the core expired: the only attempt and revalidation
-// the drawer can be shown are the ones a terminal execution wrote.
 const expired: ReviewExecutionRecord = {
   ...review,
   id: 54,
@@ -188,8 +184,6 @@ describe('the issue drawer detail', () => {
     expect(text('drawer-review-attempt-1')).toContain('expired')
     expect(text('drawer-review-attempt-1')).toContain('gate expired')
     expect(text('drawer-review-revalidation')).toContain('revalidation')
-    // The stage is shown beside the decision its waiting human slot is
-    // offered.
     expect(document.querySelector('[data-testid="drawer-review-decision"]')).not.toBeNull()
   })
 
@@ -358,8 +352,6 @@ describe('the issue drawer detail', () => {
       version: 5,
     })
     const shown = ticket({ id: 9, number: 14, title: 'Clone guard misses a dirty tree' })
-    // The Ticket the operator leaves has a human review slot waiting,
-    // so a detail read for it would offer that slot a decision.
     const waiting: ReviewExecutionRecord = {
       id: 55,
       project_id: 1,

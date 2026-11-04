@@ -1,6 +1,3 @@
-// The editor double keeps an issue's priority on the issue, the way
-// the core does: an issue save never rewrites the legacy Ticket
-// priority.
 import { describe, expect, it } from 'vitest'
 import { editorHarness, implementationTicket } from './editor-harness'
 

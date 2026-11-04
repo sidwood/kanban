@@ -649,8 +649,6 @@ describe('board store', () => {
     await board.refresh(transport, 1, emptyFilter())
 
     const moving = board.move(transport, 7, 'active')
-    // The move is past its save and waiting on the read of the moved
-    // Ticket when the board leaves; that read stays on the wire.
     await vi.waitFor(() => expect(query).toHaveBeenCalledWith('ticket.get', { ticket_id: 7 }))
     const leftFor = serving([task(), task({ id: 21, project_id: 2, number: 22 })])
     query.mockImplementation((name: string, request: unknown) => {

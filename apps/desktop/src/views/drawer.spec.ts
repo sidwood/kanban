@@ -15,8 +15,6 @@ import { harness, ticket } from '../test/shell-harness'
 import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
 
-// The Implementation every drawer opens on, unless a test names
-// another.
 const implementation = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
   ticket({
     id: 8,
@@ -53,7 +51,6 @@ const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
 
 const mountedBoards: VueWrapper[] = []
 
-// The board over one shell, with the drawer open on one Ticket.
 async function openDrawer(shell: ReturnType<typeof harness>, ticketId: number) {
   await router.push('/projects/1/board')
   await router.isReady()
@@ -87,8 +84,6 @@ async function click(testid: string): Promise<void> {
   await flushPromises()
 }
 
-// A run the core has judged stopped: it may be resumed in place or
-// retried in a new attempt.
 const stopped: RunRecoveryListResponse = {
   run_id: 3,
   version: 2,
@@ -172,7 +167,6 @@ describe('issue drawer', () => {
       request: unknown,
     ) => Promise<unknown>
     shell.command.mockImplementation((name: string, request: unknown) => {
-      // The core queues a new attempt for the Ticket when it retries.
       if (name === 'run.recovery.retry') {
         runs.push(run({ id: 7, created_at: 50, effective: snapshot('retried-run') }))
       }

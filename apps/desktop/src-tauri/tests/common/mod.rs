@@ -5,10 +5,13 @@ use std::process::Command;
 
 /// Resolve the workspace target directory honouring `CARGO_TARGET_DIR`.
 pub fn cargo_target_dir(manifest: &Path) -> PathBuf {
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR")
+        && Path::new(&dir).is_absolute()
+    {
         return PathBuf::from(dir);
     }
     let output = Command::new("cargo")
+        .current_dir(manifest.parent().expect("the manifest has a parent"))
         .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(manifest)
         .output()

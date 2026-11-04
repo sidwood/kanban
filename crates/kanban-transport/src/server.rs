@@ -793,10 +793,9 @@ mod tests {
                 std::time::Instant::now() + Duration::from_secs(5) + Duration::from_secs(2);
             let mut line = String::new();
             loop {
-                line.clear();
                 match self.reader.read_line(&mut line) {
                     Ok(0) => panic!("the server closed the connection early"),
-                    Ok(_) if !line.is_empty() => {
+                    Ok(_) if line.contains('\n') => {
                         return serde_json::from_str(line.trim_end()).expect("the frame decodes");
                     }
                     Ok(_) => {}
@@ -1683,5 +1682,41 @@ mod tests {
         assert!(socket_path.is_file(), "the file is untouched");
 
         drop(dir);
+    }
+
+    #[test]
+    fn recv_accumulates_a_frame_split_across_would_block_reads() {
+        use std::sync::{Arc, Mutex};
+
+        let (mut server, client) = UnixStream::pair().expect("socket pair");
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let payload = json!({ "value": 1, "version": 1 });
+        let line = format!(
+            "{}\n",
+            serde_json::to_string(&ResponseFrame::Response {
+                payload: payload.clone()
+            })
+            .unwrap()
+        );
+        let split = line.len() / 2;
+        server.write_all(&line.as_bytes()[..split]).unwrap();
+        server.flush().unwrap();
+        let server = Arc::new(Mutex::new(server));
+        let writer = server.clone();
+        let tail = line.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let mut server = writer.lock().unwrap();
+            server.write_all(&tail.as_bytes()[split..]).unwrap();
+            server.flush().unwrap();
+        });
+        let mut client = TestClient {
+            reader: BufReader::new(client.try_clone().unwrap()),
+            stream: client,
+        };
+        let frame = client.recv();
+        assert_eq!(frame, ResponseFrame::Response { payload });
     }
 }

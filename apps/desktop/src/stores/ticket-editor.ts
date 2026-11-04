@@ -50,6 +50,8 @@ export interface IssueCreateDraft {
   description: string
   priority: number
   dueDate: string
+  labels: string[]
+  milestoneId: number | null
 }
 
 export function blankIssueCreateDraft(): IssueCreateDraft {
@@ -58,6 +60,8 @@ export function blankIssueCreateDraft(): IssueCreateDraft {
     description: '',
     priority: 3,
     dueDate: '',
+    labels: [],
+    milestoneId: null,
   }
 }
 
@@ -206,11 +210,17 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
         state: 'Draft',
       }
       if (parentTicketId !== null) {
-        request.parent_id = parentTicketId
+        request.parent_id = String(parentTicketId)
       }
       const due = draft.dueDate.trim()
       if (due !== '') {
         request.due_date = due
+      }
+      if (draft.labels.length > 0) {
+        request.add_labels = [...draft.labels]
+      }
+      if (draft.milestoneId !== null) {
+        request.milestone_id = draft.milestoneId
       }
       try {
         await new KanbanClient(transport).commandIssueSave(request)
@@ -240,6 +250,10 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       }
       const due = draft.dueDate.trim()
       request.due_date = due === '' ? null : due
+      if (draft.labels.length > 0) {
+        request.add_labels = [...draft.labels]
+      }
+      request.milestone_id = draft.milestoneId
       try {
         await new KanbanClient(transport).commandIssueSave(request)
         this.error = null

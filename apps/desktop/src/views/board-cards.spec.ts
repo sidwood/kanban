@@ -133,28 +133,26 @@ const chipValue = (wrapper: VueWrapper, kind: string, ticketId: number) =>
   chip(wrapper, kind, ticketId).findAll('span')[1]?.text()
 
 describe('board cards', () => {
-  it('gives every card the fixed regions: number with Project code, kind, and title', async () => {
+  it('gives every card the fixed regions: number and title without kind badges', async () => {
     const { wrapper } = await mounted()
 
-    for (const [id, number, kindLabel, title] of [
-      [7, 'CORE-12', 'Task Ticket', 'Archive the old exports'],
-      [8, 'CORE-13', 'Implementation Ticket', 'Serve the lifecycle command surface'],
-      [9, 'CORE-14', 'Bug Ticket', 'Clone guard misses a dirty tree'],
+    for (const [id, number, title] of [
+      [7, 'CORE-12', 'Archive the old exports'],
+      [8, 'CORE-13', 'Serve the lifecycle command surface'],
+      [9, 'CORE-14', 'Clone guard misses a dirty tree'],
     ] as const) {
       expect(wrapper.find(`[data-testid="card-number-${id}"]`).text()).toBe(number)
-      expect(wrapper.find(`[data-testid="card-kind-${id}"]`).text()).toBe(kindLabel)
+      expect(wrapper.find(`[data-testid="card-kind-${id}"]`).exists()).toBe(false)
       expect(wrapper.find(`[data-testid="open-ticket-${id}"]`).text()).toBe(title)
     }
   })
 
-  it('shows the priority and progress chips on every card', async () => {
+  it('shows Linear priority chips on every card', async () => {
     const { wrapper } = await mounted()
 
     expect(chip(wrapper, 'priority', 7).text()).toBe('PriorityHigh')
-    expect(chip(wrapper, 'progress', 7).text()).toBe('Progress0/1 outcomes')
     expect(chip(wrapper, 'priority', 8).text()).toBe('PriorityUrgent')
-    expect(chip(wrapper, 'progress', 8).text()).toBe('Progress0/3 criteria')
-    expect(chip(wrapper, 'progress', 9).text()).toBe('Progress0/2 criteria')
+    expect(chip(wrapper, 'severity', 9).exists()).toBe(false)
   })
 
   it('reads the criterion bindings the core holds, so progress is completion and not a total', async () => {

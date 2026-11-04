@@ -6,7 +6,7 @@
 import { computed, inject, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
-import type { TicketRecord } from '@kanban/contracts'
+import type { IssueLabelRecord, IssueMilestoneRecord, TicketRecord } from '@kanban/contracts'
 import { asApiError, kanbanTransportKey } from '../core/transport'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
@@ -29,8 +29,68 @@ const editor = useTicketEditorStore()
 const projectId = ref<number | null>(null)
 const record = ref<TicketRecord | null>(null)
 const issueDraft = ref(blankIssueCreateDraft())
+const localTitle = ref('')
+const localDescription = ref('')
+const availableLabels = ref<IssueLabelRecord[]>([])
+const availableMilestones = ref<IssueMilestoneRecord[]>([])
+const selectedLabel = ref('')
 const readError = ref<string | null>(null)
-const saved = ref(false)
+const parentKey = computed(() => {
+  const parentId = dialog.editor?.parentTicketId
+  if (parentId == null || projectId.value == null) return null
+  const project = projects.projects.find((entry) => entry.id === projectId.value)
+  if (!project) return null
+  const parent = editor.tickets.find((entry) => entry.id === parentId)
+  return parent ? issueDisplayKey(project.code, parent.number) : `#${parentId}`
+})
+
+function syncLocalsFromDraft(): void {
+  localTitle.value = issueDraft.value.title
+  localDescription.value = issueDraft.value.description
+}
+
+function flushLocalsToDraft(): void {
+  issueDraft.value = {
+    ...issueDraft.value,
+    title: localTitle.value,
+    description: localDescription.value,
+  }
+}
+
+async function loadPickers(forProject: number): Promise<void> {
+  if (!transport) return
+  const client = new KanbanClient(transport)
+  const [labels, milestones] = await Promise.all([
+    client.queryIssueList_labels({ project_id: forProject }),
+    client.queryIssueList_milestones({ project_id: forProject }),
+  ])
+  availableLabels.value = labels.labels
+  availableMilestones.value = milestones.milestones
+}
+
+function toggleLabel(name: string): void {
+  const label = availableLabels.value.find((entry) => entry.name === name)
+  const group = label?.group ?? null
+  const selected = new Set(issueDraft.value.labels)
+  if (selected.has(name)) {
+    selected.delete(name)
+  } else {
+    if (group && (label as IssueLabelRecord & { group_single_select?: boolean }).group_single_select) {
+      for (const entry of availableLabels.value) {
+        if (entry.group === group) selected.delete(entry.name)
+      }
+    }
+    selected.add(name)
+  }
+  issueDraft.value = { ...issueDraft.value, labels: [...selected] }
+}
+
+function addLabelFromPicker(): void {
+  const name = selectedLabel.value.trim()
+  if (name === '') return
+  toggleLabel(name)
+  selectedLabel.value = ''
+}
 
 // Every read carries the opening it was issued under, so a dialog
 // the operator has closed or re-pointed never renders an answer
@@ -66,12 +126,14 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   record.value = null
   readError.value = null
   editor.error = null
-  saved.value = false
   if (!request || !transport) return
 
   issueDraft.value = blankIssueCreateDraft()
+  localTitle.value = ''
+  localDescription.value = ''
   if (request.story !== null) {
     issueDraft.value.description = `Covers story ${request.story}.`
+    localDescription.value = issueDraft.value.description
   }
   projectId.value = request.projectId
 
@@ -84,6 +146,10 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
       const first =
         projects.projects.find((entry) => !entry.archived) ?? projects.projects[0]
       projectId.value = first?.id ?? null
+    }
+    if (projectId.value !== null) {
+      await editor.refresh(transport, projectId.value)
+      await loadPickers(projectId.value)
     }
     if (request.mode === 'edit' && request.ticketId !== null) {
       const held = await new KanbanClient(transport).queryTicketGet({
@@ -102,8 +168,13 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
         title: issue.title,
         description: issue.description,
         priority: issue.priority,
-        dueDate: issue.due_date ?? '',
+        dueDate: issue.due_date?.slice(0, 10) ?? '',
+        labels: [...issue.labels],
+        milestoneId: issue.milestone_id ?? null,
       }
+      syncLocalsFromDraft()
+    } else {
+      syncLocalsFromDraft()
     }
   } catch (failure) {
     if (attempt !== opening) return
@@ -122,6 +193,7 @@ async function submitCreate(): Promise<void> {
     return
   }
   readError.value = null
+  flushLocalsToDraft()
   const landed = await editor.createIssue(
     transport,
     projectId.value,
@@ -140,13 +212,14 @@ async function submitEdit(): Promise<void> {
     return
   }
   const identifier = issueDisplayKey(project.code, held.number)
-  const saved = await editor.updateIssue(
+  flushLocalsToDraft()
+  const savedIssue = await editor.updateIssue(
     transport,
     identifier,
     held.version,
     issueDraft.value,
   )
-  if (saved) dialog.closeEditor()
+  if (savedIssue) dialog.closeEditor()
 }
 
 const FIELD_CLASS =
@@ -215,26 +288,36 @@ const FIELD_CLASS =
       <label class="flex flex-col gap-1 text-sm text-ink-muted">
         Title
         <input
-          v-model="issueDraft.title"
+          v-model="localTitle"
           data-testid="ticket-title"
           aria-label="Issue title"
           required
           placeholder="What needs doing?"
           :class="FIELD_CLASS"
+          @keydown.stop
         >
       </label>
 
       <label class="flex flex-col gap-1 text-sm text-ink-muted">
         Description
         <textarea
-          v-model="issueDraft.description"
+          v-model="localDescription"
           data-testid="ticket-description"
           aria-label="Issue description"
           rows="4"
           placeholder="Context, acceptance notes, links…"
           :class="FIELD_CLASS"
+          @keydown.stop
         />
       </label>
+
+      <p
+        v-if="parentKey"
+        class="text-sm text-ink-muted"
+        data-testid="ticket-parent"
+      >
+        Parent issue · {{ parentKey }}
+      </p>
 
       <div class="flex flex-wrap gap-3">
         <label class="flex flex-col gap-1 text-sm text-ink-muted">
@@ -258,13 +341,71 @@ const FIELD_CLASS =
           Due date (optional)
           <input
             v-model="issueDraft.dueDate"
+            type="date"
             data-testid="ticket-due"
-            aria-label="Due date, RFC 3339"
-            placeholder="2026-09-30T17:00:00Z"
-            class="rounded-control border border-line bg-surface px-3 py-2 font-mono text-sm text-ink"
+            aria-label="Due date"
+            class="rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
           >
         </label>
+        <label class="flex flex-col gap-1 text-sm text-ink-muted">
+          Milestone
+          <select
+            v-model="issueDraft.milestoneId"
+            data-testid="ticket-milestone"
+            aria-label="Milestone"
+            :class="FIELD_CLASS"
+          >
+            <option :value="null">
+              None
+            </option>
+            <option
+              v-for="milestone in availableMilestones"
+              :key="milestone.id"
+              :value="milestone.id"
+            >
+              {{ milestone.name }}
+            </option>
+          </select>
+        </label>
       </div>
+
+      <fieldset class="flex flex-col gap-2 text-sm text-ink-muted">
+        <legend>Labels</legend>
+        <label
+          v-for="label in availableLabels"
+          :key="label.name"
+          class="flex items-center gap-2"
+        >
+          <input
+            type="checkbox"
+            :checked="issueDraft.labels.includes(label.name)"
+            :data-testid="`ticket-label-${label.name}`"
+            @change="toggleLabel(label.name)"
+          >
+          {{ label.name }}
+          <span
+            v-if="label.group"
+            class="text-xs text-ink-subtle"
+          >({{ label.group }})</span>
+        </label>
+        <div class="flex gap-2">
+          <input
+            v-model="selectedLabel"
+            data-testid="ticket-label-add"
+            placeholder="Add label by name"
+            class="flex-1 rounded-control border border-line bg-surface px-2 py-1 text-sm"
+            @keydown.stop
+          >
+          <AppButton
+            variant="secondary"
+            type="button"
+            data-testid="ticket-label-add-button"
+            @click="addLabelFromPicker()"
+          >
+            Add
+          </AppButton>
+        </div>
+      </fieldset>
 
       <AppButton
         variant="primary"
@@ -293,22 +434,24 @@ const FIELD_CLASS =
         <label class="flex flex-col gap-1 text-sm text-ink-muted">
           Title
           <input
-            v-model="issueDraft.title"
+            v-model="localTitle"
             data-testid="ticket-title"
             aria-label="Issue title"
             required
             :class="FIELD_CLASS"
+            @keydown.stop
           >
         </label>
 
         <label class="flex flex-col gap-1 text-sm text-ink-muted">
           Description
           <textarea
-            v-model="issueDraft.description"
+            v-model="localDescription"
             data-testid="ticket-description"
             aria-label="Issue description"
             rows="4"
             :class="FIELD_CLASS"
+            @keydown.stop
           />
         </label>
 
@@ -334,11 +477,31 @@ const FIELD_CLASS =
             Due date (optional)
             <input
               v-model="issueDraft.dueDate"
+              type="date"
               data-testid="ticket-due"
-              aria-label="Due date, RFC 3339"
-              placeholder="2026-09-30T17:00:00Z"
-              class="rounded-control border border-line bg-surface px-3 py-2 font-mono text-sm text-ink"
+              aria-label="Due date"
+              class="rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
             >
+          </label>
+          <label class="flex flex-col gap-1 text-sm text-ink-muted">
+            Milestone
+            <select
+              v-model="issueDraft.milestoneId"
+              data-testid="ticket-milestone"
+              aria-label="Milestone"
+              :class="FIELD_CLASS"
+            >
+              <option :value="null">
+                None
+              </option>
+              <option
+                v-for="milestone in availableMilestones"
+                :key="milestone.id"
+                :value="milestone.id"
+              >
+                {{ milestone.name }}
+              </option>
+            </select>
           </label>
         </div>
 

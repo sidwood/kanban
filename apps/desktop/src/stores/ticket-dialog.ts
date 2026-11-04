@@ -51,7 +51,7 @@ export const useTicketDialogStore = defineStore('ticket-dialog', {
       this.editor = {
         mode: 'create',
         projectId: request.projectId,
-        kind: request.kind ?? 'implementation',
+        kind: request.kind ?? 'task',
         kindLocked: false,
         specId: null,
         story: null,

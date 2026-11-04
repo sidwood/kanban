@@ -28,26 +28,57 @@ const progress = computed(() => {
   return { done, total: children.length }
 })
 
+const emit = defineEmits<{
+  openIssue: [ticketId: number]
+}>()
+
+async function reload(): Promise<void> {
+  if (!transport) return
+  loading.value = true
+  error.value = null
+  try {
+    const client = new KanbanClient(transport)
+    const ticket = await client.queryTicketGet({ ticket_id: props.ticketId })
+    const key = `${props.projectCode}-${ticket.number}`
+    issue.value = await client.queryIssueGet({ identifier: key })
+  } catch (failure) {
+    issue.value = null
+    error.value = asApiError(failure).message
+  } finally {
+    loading.value = false
+  }
+}
+
 watch(
   () => [props.projectCode, props.ticketId] as const,
   async () => {
-    if (!transport) return
-    loading.value = true
-    error.value = null
-    try {
-      const client = new KanbanClient(transport)
-      const ticket = await client.queryTicketGet({ ticket_id: props.ticketId })
-      const key = `${props.projectCode}-${ticket.number}`
-      issue.value = await client.queryIssueGet({ identifier: key })
-    } catch (failure) {
-      issue.value = null
-      error.value = asApiError(failure).message
-    } finally {
-      loading.value = false
-    }
+    await reload()
   },
   { immediate: true },
 )
+
+watch(
+  () => dialog.editorOpen,
+  (open, wasOpen) => {
+    if (wasOpen && !open) void reload()
+  },
+)
+
+defineExpose({ reload })
+
+function openChild(child: { identifier: string }): void {
+  if (!transport) return
+  void (async () => {
+    try {
+      const loaded = await new KanbanClient(transport).queryIssueGet({
+        identifier: child.identifier,
+      })
+      emit('openIssue', loaded.ticket_id)
+    } catch {
+      // ignore navigation failures in the list row
+    }
+  })()
+}
 
 function addSubIssue(): void {
   dialog.openSubIssue({
@@ -97,7 +128,9 @@ function addSubIssue(): void {
       <li
         v-for="child in issue.children"
         :key="child.identifier"
-        class="flex items-center justify-between gap-2 rounded-control border border-line px-2 py-1"
+        class="flex cursor-pointer items-center justify-between gap-2 rounded-control border border-line px-2 py-1 hover:bg-surface/80"
+        :data-testid="`drawer-sub-issue-row-${child.identifier}`"
+        @click="openChild(child)"
       >
         <span class="font-mono text-xs text-ink-muted">{{ child.identifier }}</span>
         <span class="min-w-0 flex-1 truncate text-ink">{{ child.title }}</span>

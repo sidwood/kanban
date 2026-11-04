@@ -3,6 +3,6 @@ repos:
     rev: v10.0.1
     hooks:
       - id: cspell
-        # Use the host Python on Linux CI and locally; macOS keeps the same
-        # behaviour when `python3` is on PATH (pre-commit's default).
+        # cspell-cli is a Node hook; `language_version: system` selects the
+        # host Node on Linux CI without pinning a pre-commit Python runtime.
         language_version: system

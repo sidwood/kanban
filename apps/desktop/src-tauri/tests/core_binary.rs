@@ -20,6 +20,9 @@ const RELEASE_FIXTURE: &str = concat!(
 const MALICIOUS_OVERRIDE: &str = "/malicious/kanban-service-override";
 
 fn cargo_target_dir(manifest: &Path) -> PathBuf {
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(dir);
+    }
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(manifest)

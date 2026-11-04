@@ -118,4 +118,76 @@ describe('the issue drawer detail', () => {
       document.querySelector('[data-testid="issue-detail-labels"]')?.textContent?.trim(),
     ).toBe('Shipped')
   })
+
+  it('waits its turn behind the board refresh reads, keeping four issue reads on the wire', async () => {
+    const answers: Array<() => void> = []
+    let onWire = 0
+    let most = 0
+    const shell = harness({
+      tickets: [7, 8, 9, 10, 11].map((id) =>
+        ticket({ id, number: id + 5, state: 'ready', title: `Issue ${id + 5}` }),
+      ),
+      override: (name, request) => {
+        if (name !== 'issue.get') return undefined
+        const { identifier } = request as { identifier: string }
+        const number = Number(identifier.split('-')[1])
+        onWire += 1
+        most = Math.max(most, onWire)
+        return new Promise<IssueRecord>((resolve) =>
+          answers.push(() => {
+            onWire -= 1
+            resolve({
+              identifier,
+              url: `kanban://issue/${identifier}`,
+              ticket_id: number - 5,
+              project_id: 1,
+              title: `Issue ${number}`,
+              description: '',
+              state: 'Ready',
+              state_type: 'backlog',
+              priority: 3,
+              labels: [identifier],
+              relations: [],
+              state_history: [],
+              version: 4,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            })
+          }),
+        )
+      },
+    })
+    await router.push('/projects/1/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+      attachTo: document.body,
+    })
+    mountedBoards.push(wrapper)
+    await flushPromises()
+
+    for (const [index, held] of shell.tickets.slice(0, 4).entries()) {
+      shell.emit({ sequence: 4 + index, event_type: 'ticket.edited', payload: held })
+    }
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    await wrapper.find('[data-testid="open-ticket-11"]').trigger('click')
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    while (answers.length > 0) {
+      answers.shift()!()
+      await flushPromises()
+    }
+
+    expect(most).toBe(4)
+    expect(shell.query).toHaveBeenCalledWith('issue.get', { identifier: 'CORE-16' })
+    expect(
+      document.querySelector('[data-testid="issue-detail-labels"]')?.textContent?.trim(),
+    ).toBe('CORE-16')
+  })
 })

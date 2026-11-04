@@ -174,6 +174,9 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
         this.loading = false
       }
     },
+    readIssue(transport: ShellTransport, identifier: string): Promise<IssueRecord> {
+      return oneIssueRead(this, () => new KanbanClient(transport).queryIssueGet({ identifier }))
+    },
     async refreshOne(
       transport: ShellTransport,
       _projectId: number,

@@ -7,12 +7,39 @@ import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
 import { issueDisplayKey } from '../views/board-card'
 
+interface OverlayCache {
+  byTicketId: Record<number, IssueRecord>
+  refreshesIssued: number
+  clearedAt: number
+  cachedAt: Record<number, number>
+}
+
+function olderThanCached(cache: OverlayCache, ticketId: number, issue: IssueRecord): boolean {
+  const cached = cache.byTicketId[ticketId]
+  return cached !== undefined && issue.version < cached.version
+}
+
+function cacheAnswer(
+  cache: OverlayCache,
+  ticketId: number,
+  issue: IssueRecord,
+  generation: number,
+): void {
+  const supersededAt = Math.max(cache.clearedAt, cache.cachedAt[ticketId] ?? 0)
+  if (generation <= supersededAt || olderThanCached(cache, ticketId, issue)) return
+  cache.byTicketId[ticketId] = issue
+  cache.cachedAt[ticketId] = generation
+}
+
 export const useIssueOverlayStore = defineStore('issue-overlay', {
   state: () => ({
     byTicketId: {} as Record<number, IssueRecord>,
     milestonesByProject: {} as Record<number, Record<number, string>>,
     loading: false,
     error: null as string | null,
+    refreshesIssued: 0,
+    clearedAt: 0,
+    cachedAt: {} as Record<number, number>,
   }),
   getters: {
     issueFor: (state) => (ticketId: number): IssueRecord | null =>
@@ -29,8 +56,11 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
       this.byTicketId = {}
       this.milestonesByProject = {}
       this.error = null
+      this.clearedAt = this.refreshesIssued
+      this.cachedAt = {}
     },
     put(issue: IssueRecord): void {
+      if (olderThanCached(this, issue.ticket_id, issue)) return
       this.byTicketId[issue.ticket_id] = issue
     },
     async refreshForProject(
@@ -53,8 +83,9 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
             const number = ticketNumbers[ticketId]
             if (number === undefined) return
             const identifier = issueDisplayKey(projectCode, number)
+            const generation = ++this.refreshesIssued
             const issue = await client.queryIssueGet({ identifier })
-            this.byTicketId[ticketId] = issue
+            cacheAnswer(this, ticketId, issue, generation)
           }),
         )
       } catch (failure) {
@@ -73,10 +104,11 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
       try {
         const client = new KanbanClient(transport)
         const identifier = issueDisplayKey(projectCode, ticketNumber)
+        const generation = ++this.refreshesIssued
         const issue = await client.queryIssueGet({ identifier })
-        this.byTicketId[ticketId] = issue
+        cacheAnswer(this, ticketId, issue, generation)
         this.error = null
-        return issue
+        return this.byTicketId[ticketId] ?? issue
       } catch (failure) {
         this.error = asApiError(failure).message
         return null

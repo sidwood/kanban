@@ -198,3 +198,38 @@ describe('board card due dates', () => {
     expect(chip(wrapper, 'schedule', 7).text()).toBe('Due2026-09-20')
   })
 })
+
+describe('board card chips across overlapping refreshes', () => {
+  it('keeps the newer issue chips when an earlier refresh answers last', async () => {
+    let loaded = false
+    const answers: Array<(record: IssueRecord) => void> = []
+    const { wrapper, emit, tickets } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => {
+        if (!loaded) {
+          loaded = true
+          return Promise.resolve(issueRecord({ labels: ['Queued'] }))
+        }
+        return new Promise<IssueRecord>((resolve) => answers.push(resolve))
+      }),
+    })
+    const labels = () =>
+      wrapper
+        .findAll('[data-testid="card-chip-subtype-7"]')
+        .map((label) => label.text())
+    expect(labels()).toEqual(['LabelQueued'])
+
+    emit({ sequence: 4, event_type: 'ticket.edited', payload: tickets[0] })
+    await flushPromises()
+    emit({ sequence: 5, event_type: 'ticket.edited', payload: tickets[0] })
+    await flushPromises()
+    expect(answers).toHaveLength(2)
+
+    answers[1](issueRecord({ version: 5, labels: ['Shipped'] }))
+    await flushPromises()
+    answers[0](issueRecord({ version: 4, labels: ['In flight'] }))
+    await flushPromises()
+
+    expect(labels()).toEqual(['LabelShipped'])
+  })
+})

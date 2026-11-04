@@ -690,8 +690,8 @@ async function loadDrawer(ticketId: number): Promise<void> {
         const issue = await new KanbanClient(transport).queryIssueGet({
           identifier: issueDisplayKey(code, record.number),
         })
-        drawerIssue.value = issue
         issueOverlay.put(issue)
+        drawerIssue.value = issueOverlay.issueFor(ticketId) ?? issue
       } catch {
         drawerIssue.value = issueOverlay.issueFor(ticketId)
       }

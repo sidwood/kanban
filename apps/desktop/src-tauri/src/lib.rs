@@ -1446,7 +1446,7 @@ async fn comment_revisions(
 }
 
 #[tauri::command]
-async fn comment_list(
+async fn list_comments(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
 ) -> Result<CommentListResponse, ApiError> {
@@ -2629,7 +2629,7 @@ shell_handlers::shell_handler_catalogue! {
     comment_create,
     comment_edit,
     comment_revisions,
-    comment_list,
+    list_comments,
     ruling_record,
     ruling_supersede,
     ruling_list,

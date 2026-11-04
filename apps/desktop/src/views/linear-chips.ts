@@ -66,7 +66,9 @@ export function linearChipsFor(
     chips.push({ ...chip('subtype', 'Label', label), key: `label:${label}` })
   }
 
-  const due = issue?.due_date ?? (ticket.due ? ticket.due.slice(0, 10) : null)
+  // A loaded issue owns the due date, a cleared one included; the
+  // legacy Ticket column speaks only while no issue record has loaded.
+  const due = issue ? issue.due_date : ticket.due ? ticket.due.slice(0, 10) : null
   if (due) {
     chips.push(chip('schedule', 'Due', due))
   }

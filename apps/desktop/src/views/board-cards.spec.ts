@@ -9,7 +9,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { TicketRecord } from '@kanban/contracts'
+import type { IssueRecord, TicketRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import { harness, ticket } from '../test/shell-harness'
@@ -139,5 +139,64 @@ describe('board cards', () => {
     expect(chip(wrapper, 'priority', 7).text()).toBe('PriorityHigh')
     expect(chip(wrapper, 'priority', 8).text()).toBe('PriorityUrgent')
     expect(chip(wrapper, 'severity', 9).exists()).toBe(false)
+  })
+})
+
+// A migrated Task still carries the due date its legacy Ticket column
+// held; the issue record the board loads beside it is what counts.
+const legacyDue = ticket({ id: 7, number: 12, due: '2026-09-20T00:00:00Z' })
+
+function issueRecord(overrides: Partial<IssueRecord> = {}): IssueRecord {
+  return {
+    identifier: 'CORE-12',
+    url: 'kanban://issue/CORE-12',
+    ticket_id: 7,
+    project_id: 1,
+    title: 'Archive the old exports',
+    description: '',
+    state: 'Ready',
+    state_type: 'backlog',
+    priority: 3,
+    labels: [],
+    relations: [],
+    state_history: [],
+    version: 3,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function answeringIssue(answer: () => Promise<unknown>): HarnessOptions['override'] {
+  return (name) => (name === 'issue.get' ? answer() : undefined)
+}
+
+describe('board card due dates', () => {
+  it('shows no due date once the loaded issue has cleared it, whatever the legacy column holds', async () => {
+    const { wrapper } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => Promise.resolve(issueRecord({ due_date: null }))),
+    })
+
+    expect(wrapper.find('[data-testid="kanban-card-7"]').exists()).toBe(true)
+    expect(chip(wrapper, 'schedule', 7).exists()).toBe(false)
+  })
+
+  it('shows the loaded issue due date over the legacy column', async () => {
+    const { wrapper } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => Promise.resolve(issueRecord({ due_date: '2026-10-01' }))),
+    })
+
+    expect(chip(wrapper, 'schedule', 7).text()).toBe('Due2026-10-01')
+  })
+
+  it('falls back to the legacy due date while no issue record has loaded', async () => {
+    const { wrapper } = await mounted({
+      tickets: [legacyDue],
+      override: answeringIssue(() => Promise.reject({ code: 'not_found', message: 'CORE-12' })),
+    })
+
+    expect(chip(wrapper, 'schedule', 7).text()).toBe('Due2026-09-20')
   })
 })

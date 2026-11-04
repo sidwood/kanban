@@ -771,10 +771,25 @@ function openNewTicket(): void {
   })
 }
 
-function drawerActed(record: TicketRecord): void {
+// A footer command moved the Ticket's state and version, so the issue
+// panel reads the issue again: it shows the new state and its next
+// save carries the new version.
+async function drawerActed(record: TicketRecord): Promise<void> {
   if (drawerTicket.value?.id !== record.id) return
   drawerTicket.value = record
   void load()
+  const code = drawerProjectCode.value
+  if (!transport || !code) return
+  const attempt = drawerRequest
+  try {
+    const issue = await issueOverlay.readIssue(transport, issueDisplayKey(code, record.number))
+    if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
+    issueOverlay.put(issue)
+    drawerIssue.value = issueOverlay.issueFor(record.id) ?? issue
+  } catch {
+    // The panel keeps the issue it holds; the core refuses a save at
+    // its version and the panel reports that refusal.
+  }
 }
 
 // A human review verdict appends its audit against the Ticket without

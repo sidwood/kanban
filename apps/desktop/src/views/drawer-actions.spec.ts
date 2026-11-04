@@ -120,6 +120,58 @@ describe('the drawer footer actions', () => {
     expect(document.querySelector('[data-testid="drawer-unpark"]')).not.toBeNull()
   })
 
+  it.each([
+    {
+      command: 'Park',
+      from: 'ready' as const,
+      to: 'Parked',
+      act: () => click('drawer-park'),
+    },
+    {
+      command: 'Unpark',
+      from: 'parked' as const,
+      to: 'Ready',
+      act: () => click('drawer-unpark'),
+    },
+    {
+      command: 'a workflow move',
+      from: 'ready' as const,
+      to: 'Active',
+      act: () => type('drawer-move', 'Active'),
+    },
+    {
+      command: 'emergency recovery',
+      from: 'active' as const,
+      to: 'Ready',
+      act: async () => {
+        await click('drawer-recover')
+        await type('recovery-to', 'ready')
+        await type('recovery-who', 'Sid')
+        await type('recovery-why', 'The run died holding the lane.')
+        await click('recovery-submit')
+      },
+    },
+  ])('after $command the issue panel shows the new state and saves at the new version', async ({ from, to, act }) => {
+    const state = harness({ tickets: [implementation({ state: from })] })
+    await openDrawer(state)
+
+    await act()
+
+    expect(
+      document.querySelector('[data-testid="issue-history-row-0"] td')?.textContent?.trim(),
+    ).toBe(to)
+    await click('issue-description-edit')
+    await type('issue-description-input', 'The commands are served over the socket.')
+    await click('issue-description-save')
+
+    expect(issued(state, 'issue.save').at(-1)).toEqual({
+      mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+      identifier: 'CORE-13',
+      description: 'The commands are served over the socket.',
+    })
+    expect(document.querySelector('[data-testid="issue-description-input"]')).toBeNull()
+  })
+
   it('offers every workflow state except the current one in the move select', async () => {
     const state = harness({ tickets: [implementation({ state: 'ready' })] })
     await openDrawer(state)

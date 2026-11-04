@@ -177,8 +177,16 @@ async function moveChild(index: number, direction: -1 | 1): Promise<void> {
         :data-testid="`drawer-sub-issue-row-${child.identifier}`"
         @click="openChild(child)"
       >
-        <span class="font-mono text-xs text-ink-muted">{{ child.identifier }}</span>
-        <span class="min-w-0 flex-1 truncate text-ink">{{ child.title }}</span>
+        <!-- The row's click opens the child, for a pointer anywhere on
+             the row and for this button's keyboard activation alike. -->
+        <button
+          type="button"
+          class="flex min-w-0 flex-1 cursor-[inherit] items-center gap-2 text-left focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          :data-testid="`drawer-sub-issue-open-${child.identifier}`"
+        >
+          <span class="font-mono text-xs text-ink-muted">{{ child.identifier }}</span>
+          <span class="min-w-0 flex-1 truncate text-ink">{{ child.title }}</span>
+        </button>
         <span class="text-xs text-ink-muted">{{ child.state }}</span>
         <span
           v-if="issue.children.length > 1"

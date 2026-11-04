@@ -80,6 +80,7 @@ function transportFor(issue: IssueRecord, onSave?: (body: Record<string, unknown
           return Promise.resolve({
             ...current,
             identifier: child.identifier,
+            ticket_id: Number(child.identifier.split('-').pop()),
             title: child.title,
             state: child.state,
             children: [],
@@ -203,5 +204,45 @@ describe('IssueSubIssues progress', () => {
       { identifier: 'CORE-4', sort_order: 40 },
     ])
     expect(rowOrder(wrapper)).toEqual(['CORE-2', 'CORE-3', 'CORE-5', 'CORE-4'])
+  })
+})
+
+describe('IssueSubIssues keyboard access', () => {
+  it('opens a child from a focusable button holding its identifier and title', async () => {
+    const wrapper = mountWith(issueRecord())
+    await flushPromises()
+
+    const row = wrapper.find('[data-testid="drawer-sub-issue-row-CORE-3"]')
+    const open = row.find('button[data-testid="drawer-sub-issue-open-CORE-3"]')
+    expect(open.exists()).toBe(true)
+    expect(open.attributes('type')).toBe('button')
+    expect(open.text()).toContain('CORE-3')
+    expect(open.text()).toContain('Open child')
+
+    const button = open.element as HTMLButtonElement
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    expect(button.tabIndex).toBe(0)
+
+    // A browser turns Enter or Space on a focused button into a click.
+    button.click()
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toEqual([[3]])
+  })
+
+  it('keeps the reorder controls outside the open button', async () => {
+    const wrapper = mountWith(issueRecord())
+    await flushPromises()
+
+    const open = wrapper.find('[data-testid="drawer-sub-issue-open-CORE-3"]')
+    expect(open.find('[data-testid="drawer-sub-issue-up-CORE-3"]').exists()).toBe(false)
+    expect(open.find('[data-testid="drawer-sub-issue-down-CORE-3"]').exists()).toBe(false)
+    expect(open.text()).not.toContain('Up')
+
+    await wrapper.find('[data-testid="drawer-sub-issue-up-CORE-3"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toBeUndefined()
   })
 })

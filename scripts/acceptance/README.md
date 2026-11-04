@@ -1,0 +1,98 @@
+# Operator MCP acceptance runner
+
+A scripted, repeatable run of the Linear-parity acceptance tests against a
+real Kanban core over `POST /mcp/operator`. It uses only the Python 3
+standard library (3.9 or newer) and `git`.
+
+Tests 1–10 are the scenarios in
+[`docs/mcp-acceptance-tests.md`](../../docs/mcp-acceptance-tests.md); test 11
+covers sub-issues as [`docs/sub-issues.md`](../../docs/sub-issues.md) and
+[`docs/linear-issue-model.md`](../../docs/linear-issue-model.md) describe
+them. Every check asserts Linear's behaviour, not merely that a call
+succeeded.
+
+## Run it
+
+Build the core, then run from the repository root:
+
+```sh
+cargo build --locked -p kanban-service --bin kanban-service
+
+# Start a core on an empty data root, set up LIN and LTB, run all 11 tests.
+python3 -m scripts.acceptance --fresh
+
+# Re-read an existing database (for example a migrated copy of an old one):
+# tests 2, 9 and 10 only, and no writes.
+python3 -m scripts.acceptance --read-only --project LIN --data-dir /path/to/root
+```
+
+Options:
+
+- `--binary PATH`: the `kanban-service` to start (default
+  `target/debug/kanban-service`).
+- `--data-dir DIR`: the data root. The core's own directory is `DIR/Kanban`,
+  or `DIR` itself when it holds `kanban.sqlite`; `XDG_DATA_HOME` is set to its
+  parent. `--fresh` needs it empty or absent and otherwise makes a temporary
+  one, which it keeps and names at the end so it can be re-read.
+- `--port N`: the loopback HTTP port (default 9891).
+- `--tests 3,5`: run only those tests. Each fresh test creates its own issues,
+  so any subset works after setup.
+
+A fresh run takes a few seconds. It starts the core with
+`--loopback-http 127.0.0.1:PORT`, registers the LIN and LTB projects over the
+core socket (no MCP tool registers projects), creates milestones and labels
+with the MCP tools, runs the tests, and stops the core with `service.stop`.
+
+In `--read-only` mode the runner attaches to a core already serving the data
+directory, or starts one and stops it afterwards. Only query tools are allowed
+past the client, and the run ends by checking that no issue's version or
+`updated_at` moved. Stopping a core the runner started records one
+`service.stop` idempotency row; start the core yourself to avoid even that.
+
+## Output
+
+One line per check, then a per-test summary:
+
+```text
+PASS  3.15 add_labels adds without replacing the set -- ['frontend', 'size-small', 'storage']
+XFAIL 3.29 add_labels matches a label name ignoring case (FRONTEND -> frontend) -- invalid_request ...
+```
+
+- `PASS`: matches Linear. `FAIL`: does not.
+- `XFAIL`: a known gap, still open. `XPASS`: a known gap that now behaves
+  like Linear; turn its `rec.xfail` into `rec.check`.
+- `SKIP`: cannot run here (a write in read-only mode, or data the database
+  does not hold).
+
+A test's verdict is `pass` (no FAIL), `partial` (some FAIL) or `fail` (only
+FAIL). The exit code is 0 only when nothing FAILs; 2 means the runner could
+not drive the core.
+
+## Known gaps encoded as XFAIL
+
+- Legacy `ticket.create` writes no state history row and does not map
+  priority (urgent 1, high 2, normal 3, low 4).
+- Legacy `ticket.prioritise` does not change the issue's priority.
+- Legacy `ticket.edit` does not advance `updated_at`.
+- A no-op label add or remove moves `updated_at`.
+- Removing an unknown label is accepted instead of `not_found` with
+  `field: "remove_labels"`.
+- `save_issue` refuses `add_labels: ["FRONTEND"]` for label `frontend`, and
+  `state: "done"` or `state: "completed"`.
+
+## Secrets
+
+The bearer is derived in memory from the data directory's installation
+credential. It is never printed, logged or written, and every line of output
+passes through a redactor first.
+
+## Files
+
+- `__main__.py`: options, core lifecycle, test selection.
+- `harness.py`: the core process, its socket, and the MCP client.
+- `context.py`: shared helpers, and the read-only tool allow-list.
+- `scenarios.py`: setup and the 11 tests.
+- `checks.py`: outcomes and the summary.
+- `fixtures/long-report.md`: the report test 8 posts word for word.
+- `test_acceptance.py`: unit tests for the runner itself, needing no core:
+  `python3 -m unittest scripts.acceptance.test_acceptance -v`.

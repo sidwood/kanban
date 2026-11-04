@@ -25,8 +25,6 @@ use kanban_storage::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-mod common;
-
 fn git(dir: &Path, args: &[&str]) {
     common::git_test::git(dir, args);
 }

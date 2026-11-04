@@ -120,6 +120,42 @@ afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount()
 })
 
+function mountWith(issue: IssueRecord, onSave?: (body: Record<string, unknown>) => void) {
+  const wrapper = mount(IssueSubIssues, {
+    props: {
+      projectCode: 'CORE',
+      ticketId: 1,
+      projectId: 4,
+    },
+    attachTo: document.body,
+    global: {
+      plugins: [createPinia(), router],
+      provide: { [kanbanTransportKey as symbol]: transportFor(issue, onSave) },
+    },
+  })
+  mounted.push(wrapper)
+  return wrapper
+}
+
+// Stored sort values are not positions: other writers set them freely
+// and a child moving to another parent leaves a gap.
+function spacedChildren(): IssueRecord {
+  return issueRecord({
+    children: [
+      { identifier: 'CORE-2', title: 'First', state: 'Active', sort_order: 10 },
+      { identifier: 'CORE-3', title: 'Second', state: 'Active', sort_order: 20 },
+      { identifier: 'CORE-4', title: 'Third', state: 'Active', sort_order: 30 },
+      { identifier: 'CORE-5', title: 'Fourth', state: 'Active', sort_order: 40 },
+    ],
+  })
+}
+
+function rowOrder(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper
+    .findAll('[data-testid^="drawer-sub-issue-row-"]')
+    .map((row) => (row.attributes('data-testid') ?? '').replace('drawer-sub-issue-row-', ''))
+}
+
 describe('IssueSubIssues progress', () => {
   it('shows how many children are done (Done, Cancelled, Superseded, Duplicate)', async () => {
     const wrapper = mount(IssueSubIssues, {
@@ -139,33 +175,33 @@ describe('IssueSubIssues progress', () => {
     expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
   })
 
-  it('reorders sub-issues with issue.save sort_order (U4)', async () => {
+  it('swaps the stored sort values of a child moved down, gaps and all', async () => {
     const saves: Record<string, unknown>[] = []
-    const wrapper = mount(IssueSubIssues, {
-      props: {
-        projectCode: 'CORE',
-        ticketId: 1,
-        projectId: 4,
-      },
-      global: {
-        plugins: [createPinia(), router],
-        provide: {
-          [kanbanTransportKey as symbol]: transportFor(issueRecord(), (body) => saves.push(body)),
-        },
-      },
-    })
-    mounted.push(wrapper)
+    const wrapper = mountWith(spacedChildren(), (body) => saves.push(body))
     await flushPromises()
 
-    await wrapper.find('[data-testid="drawer-sub-issue-down-CORE-2"]').trigger('click')
+    await wrapper.find('[data-testid="drawer-sub-issue-down-CORE-3"]').trigger('click')
     await flushPromises()
 
-    expect(saves.length).toBeGreaterThanOrEqual(2)
-    expect(saves.some((body) => body.identifier === 'CORE-2' && body.sort_order === 1)).toBe(true)
-    expect(saves.some((body) => body.identifier === 'CORE-3' && body.sort_order === 0)).toBe(true)
+    expect(saves.map(({ identifier, sort_order }) => ({ identifier, sort_order }))).toEqual([
+      { identifier: 'CORE-3', sort_order: 30 },
+      { identifier: 'CORE-4', sort_order: 20 },
+    ])
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'CORE-4', 'CORE-3', 'CORE-5'])
+  })
 
-    const rows = wrapper.findAll('[data-testid^="drawer-sub-issue-row-"]')
-    expect(rows[0]?.attributes('data-testid')).toBe('drawer-sub-issue-row-CORE-3')
-    expect(rows[1]?.attributes('data-testid')).toBe('drawer-sub-issue-row-CORE-2')
+  it('swaps the stored sort values of a child moved up, gaps and all', async () => {
+    const saves: Record<string, unknown>[] = []
+    const wrapper = mountWith(spacedChildren(), (body) => saves.push(body))
+    await flushPromises()
+
+    await wrapper.find('[data-testid="drawer-sub-issue-up-CORE-5"]').trigger('click')
+    await flushPromises()
+
+    expect(saves.map(({ identifier, sort_order }) => ({ identifier, sort_order }))).toEqual([
+      { identifier: 'CORE-5', sort_order: 30 },
+      { identifier: 'CORE-4', sort_order: 40 },
+    ])
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'CORE-3', 'CORE-5', 'CORE-4'])
   })
 })

@@ -89,6 +89,9 @@ function addSubIssue(): void {
 
 const reordering = ref(false)
 
+// Moving a child swaps its stored sort value with its neighbour's. The
+// values are not positions: other writers set them freely and a child
+// moving to another parent leaves a gap, so only these two change.
 async function moveChild(index: number, direction: -1 | 1): Promise<void> {
   if (!transport || !issue.value?.children?.length) return
   const targetIndex = index + direction
@@ -111,7 +114,7 @@ async function moveChild(index: number, direction: -1 | 1): Promise<void> {
         idempotency_key: crypto.randomUUID(),
       },
       identifier: a.identifier,
-      sort_order: targetIndex,
+      sort_order: b.sort_order,
     })
     await client.commandIssueSave({
       mutation: {
@@ -119,7 +122,7 @@ async function moveChild(index: number, direction: -1 | 1): Promise<void> {
         idempotency_key: crypto.randomUUID(),
       },
       identifier: b.identifier,
-      sort_order: index,
+      sort_order: a.sort_order,
     })
     await reload()
   } catch (failure) {

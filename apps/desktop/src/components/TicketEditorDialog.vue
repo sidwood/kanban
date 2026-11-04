@@ -8,6 +8,7 @@ import { RouterLink } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
 import type { IssueLabelRecord, IssueMilestoneRecord, TicketRecord } from '@kanban/contracts'
 import { asApiError, kanbanTransportKey } from '../core/transport'
+import type { ShellTransport } from '../core/transport'
 import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { useTicketDialogStore } from '../stores/ticket-dialog'
@@ -15,8 +16,12 @@ import type { TicketEditorRequest } from '../stores/ticket-dialog'
 import {
   LINEAR_PRIORITIES,
   blankIssueCreateDraft,
+  storyCoverDraft,
+  storyCoverFieldsRequest,
+  ticketCreateRequestOf,
   useTicketEditorStore,
 } from '../stores/ticket-editor'
+import type { IssueCreateDraft } from '../stores/ticket-editor'
 import { issueDisplayKey } from '../views/board-card'
 import AppButton from './AppButton.vue'
 import AppDialog from './AppDialog.vue'
@@ -100,6 +105,9 @@ function addLabelFromPicker(): void {
 // the operator has closed or re-pointed never renders an answer
 // belonging to the record it left.
 let opening = 0
+// The opening whose Story cover is on the wire; a second Create there
+// does nothing until it settles rather than mint a second Implementation.
+let coverOnTheWire = 0
 
 const open = computed(() => dialog.editorOpen)
 const mode = computed(() => dialog.editor?.mode ?? 'create')
@@ -202,34 +210,69 @@ async function submitCreate(): Promise<void> {
   readError.value = null
   flushLocalsToDraft()
   const request = dialog.editor
-  const landed =
-    request?.specId != null && request.story !== null
-      ? await submitStoryCover(projectId.value, request.specId, request.story)
-      : await editor.createIssue(
-          transport,
-          projectId.value,
-          issueDraft.value,
-          request?.parentTicketId ?? null,
-        )
+  if (request?.specId != null && request.story !== null) {
+    await submitStoryCover(transport, projectId.value, request.specId, request.story)
+    return
+  }
+  const landed = await editor.createIssue(
+    transport,
+    projectId.value,
+    issueDraft.value,
+    request?.parentTicketId ?? null,
+  )
   if (landed) dialog.closeEditor()
 }
 
+// A Story cover belongs to the opening that submitted it, with the
+// fields as they stood at Create: a later opening never adopts its
+// Ticket, shows its refusals, or is closed by it.
 async function submitStoryCover(
+  shell: ShellTransport,
   forProject: number,
   specId: number,
   story: string,
-): Promise<boolean> {
-  if (!transport) return false
-  const covering =
-    coverLanded.value ??
-    (await editor.createStoryCover(transport, forProject, specId, story, issueDraft.value))
-  if (!covering) return false
-  coverLanded.value = covering
-  const project = projects.projects.find((entry) => entry.id === covering.project_id)
-  const identifier = project
-    ? issueDisplayKey(project.code, covering.number)
-    : `${covering.project_id}-${covering.number}`
-  return editor.saveStoryCoverFields(transport, identifier, covering, issueDraft.value)
+): Promise<void> {
+  const attempt = opening
+  if (coverOnTheWire === attempt) return
+  coverOnTheWire = attempt
+  const fields: IssueCreateDraft = { ...issueDraft.value, labels: [...issueDraft.value.labels] }
+  const client = new KanbanClient(shell)
+  try {
+    let landed = coverLanded.value
+    if (landed === null) {
+      try {
+        landed = await client.commandTicketCreate(
+          ticketCreateRequestOf(
+            forProject,
+            storyCoverDraft(specId, story, fields),
+            crypto.randomUUID(),
+          ),
+        )
+      } catch (failure) {
+        if (attempt === opening) readError.value = asApiError(failure).message
+        return
+      }
+      if (attempt === opening) coverLanded.value = landed
+    }
+    const covering = landed
+    const project = projects.projects.find((entry) => entry.id === covering.project_id)
+    const identifier = project
+      ? issueDisplayKey(project.code, covering.number)
+      : `${covering.project_id}-${covering.number}`
+    try {
+      await client.commandIssueSave(storyCoverFieldsRequest(identifier, covering, fields))
+    } catch (failure) {
+      if (attempt === opening) {
+        readError.value = `${identifier} was created, but its issue fields did not save: ${asApiError(failure).message}`
+      }
+      return
+    }
+    if (attempt !== opening) return
+    await editor.refresh(shell, covering.project_id)
+    if (attempt === opening) dialog.closeEditor()
+  } finally {
+    if (coverOnTheWire === attempt) coverOnTheWire = 0
+  }
 }
 
 async function submitEdit(): Promise<void> {

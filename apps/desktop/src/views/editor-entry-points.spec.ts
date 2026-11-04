@@ -220,10 +220,13 @@ describe('an uncovered Story', () => {
 // read after the create reports what the create actually claimed. Like
 // the real core it refuses a criterion that states no outcome, and it
 // keeps the issue fields a later `issue.save` gives a created Ticket.
-function coveringCore(options: { refusedFieldSaves?: number } = {}) {
+// A core that holds its creates answers each one only when the test
+// lands or refuses it.
+function coveringCore(options: { refusedFieldSaves?: number; holdCreates?: boolean } = {}) {
   const tickets: TicketRecord[] = []
   const commands: Array<{ name: string; request: unknown }> = []
   const issueFields: Record<string, IssueSaveRequest> = {}
+  const heldCreates: Array<{ land: () => void; refuse: (message: string) => void }> = []
   const stories = ['CORE-S1-US1', 'CORE-S1-US3']
   let refusedFieldSaves = options.refusedFieldSaves ?? 0
   const labels: IssueLabelRecord[] = [{ name: 'Urgent work', color: '#d33' }]
@@ -297,29 +300,38 @@ function coveringCore(options: { refusedFieldSaves?: number } = {}) {
           message: 'an Acceptance Criterion states an observable outcome',
         })
       }
-      const created = ticket({
-        id: 40 + tickets.length,
-        project_id: create.project_id,
-        number: 3 + tickets.length,
-        kind: create.kind,
-        priority: create.priority,
-        state: 'draft',
-        spec_id: create.spec_id ?? null,
-        title: null,
-        slice: create.slice ?? null,
-        criteria: create.criteria ?? [],
-        subtype: null,
-        mode: null,
-        completion: [],
-        version: 1,
+      const mint = (): TicketRecord => {
+        const created = ticket({
+          id: 40 + tickets.length,
+          project_id: create.project_id,
+          number: 3 + tickets.length,
+          kind: create.kind,
+          priority: create.priority,
+          state: 'draft',
+          spec_id: create.spec_id ?? null,
+          title: null,
+          slice: create.slice ?? null,
+          criteria: create.criteria ?? [],
+          subtype: null,
+          mode: null,
+          completion: [],
+          version: 1,
+        })
+        tickets.push(created)
+        return created
+      }
+      if (!options.holdCreates) return Promise.resolve(mint())
+      return new Promise((resolve, reject) => {
+        heldCreates.push({
+          land: () => resolve(mint()),
+          refuse: (message) => reject({ code: 'unavailable', message }),
+        })
       })
-      tickets.push(created)
-      return Promise.resolve(created)
     },
     subscribe: () => () => undefined,
     onConnectionChange: () => () => undefined,
   } as unknown as ShellTransport
-  return { transport, commands, tickets, issueFields }
+  return { transport, commands, tickets, issueFields, heldCreates }
 }
 
 async function mountCovering(core: ReturnType<typeof coveringCore>) {
@@ -491,6 +503,126 @@ describe('covering a Story from planning', () => {
     })
     expect(core.tickets).toHaveLength(1)
     expect(core.tickets[0]!.slice).toBe('Corrected title')
+    expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
+    expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
+  })
+})
+
+// Submit the third Story's cover while its create is still on the
+// wire, close that dialog, and open the first Story's cover.
+async function leaveACoverLanding(wrapper: VueWrapper): Promise<void> {
+  await wrapper.find('[data-testid="ticket-title"]').setValue('Cover the third Story')
+  await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+  await flushPromises()
+  await wrapper.find('[data-testid="ticket-dialog-close"]').trigger('click')
+  await flushPromises()
+  await wrapper.find('[data-testid="coverage-cover-CORE-S1-US1"]').trigger('click')
+  await flushPromises()
+  await wrapper.find('[data-testid="ticket-title"]').setValue('Cover the first Story')
+}
+
+describe('a Story cover still landing after its dialog closed', () => {
+  it('keeps its Ticket and refused fields out of the next Story, which gets its own cover', async () => {
+    const core = coveringCore({ holdCreates: true, refusedFieldSaves: 1 })
+    const { wrapper, pinia } = await mountCovering(core)
+    const dialog = useTicketDialogStore(pinia)
+    await leaveACoverLanding(wrapper)
+
+    core.heldCreates.shift()!.land()
+    await flushPromises()
+
+    expect(dialog.editor).toMatchObject({ story: 'CORE-S1-US1' })
+    expect(wrapper.find('[data-testid="ticket-error"]').exists()).toBe(false)
+    expect(core.commands[1]).toMatchObject({
+      name: 'issue.save',
+      request: {
+        identifier: 'CORE-3',
+        title: 'Cover the third Story',
+        description: 'Covers story CORE-S1-US3.',
+      },
+    })
+
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+    core.heldCreates.shift()!.land()
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual([
+      'ticket.create',
+      'issue.save',
+      'ticket.create',
+      'issue.save',
+    ])
+    expect(core.commands[2]!.request).toMatchObject({
+      spec_id: 1,
+      slice: 'Cover the first Story',
+      criteria: [{ outcome: 'Covers story CORE-S1-US1.', stories: ['CORE-S1-US1'] }],
+    })
+    expect(core.commands[3]!.request).toMatchObject({
+      identifier: 'CORE-4',
+      title: 'Cover the first Story',
+      description: 'Covers story CORE-S1-US1.',
+    })
+    expect(dialog.editorOpen).toBe(false)
+    expect(wrapper.find('[data-testid="coverage-gap-CORE-S1-US1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="coverage-claim-CORE-S1-US1-4"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="coverage-claim-CORE-S1-US3-3"]').exists()).toBe(true)
+  })
+
+  it('saves its own fields without closing the next Story\'s dialog', async () => {
+    const core = coveringCore({ holdCreates: true })
+    const { wrapper, pinia } = await mountCovering(core)
+    const dialog = useTicketDialogStore(pinia)
+    await leaveACoverLanding(wrapper)
+
+    core.heldCreates.shift()!.land()
+    await flushPromises()
+
+    expect(core.issueFields['CORE-3']).toMatchObject({
+      title: 'Cover the third Story',
+      description: 'Covers story CORE-S1-US3.',
+    })
+    expect(dialog.editor).toMatchObject({ story: 'CORE-S1-US1' })
+    expect(wrapper.find('[data-testid="ticket-title"]').element).toHaveProperty(
+      'value',
+      'Cover the first Story',
+    )
+    expect(wrapper.find('[data-testid="ticket-error"]').exists()).toBe(false)
+  })
+
+  it('says nothing of its refusal in the next Story\'s dialog', async () => {
+    const core = coveringCore({ holdCreates: true })
+    const { wrapper, pinia } = await mountCovering(core)
+    const dialog = useTicketDialogStore(pinia)
+    await leaveACoverLanding(wrapper)
+
+    core.heldCreates.shift()!.refuse('the third Story cover was refused')
+    await flushPromises()
+
+    expect(dialog.editor).toMatchObject({ story: 'CORE-S1-US1' })
+    expect(wrapper.find('[data-testid="ticket-error"]').exists()).toBe(false)
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create'])
+  })
+})
+
+describe('a Story cover on the wire', () => {
+  it('creates one Implementation however often Create is pressed before it lands', async () => {
+    const core = coveringCore({ holdCreates: true })
+    const { wrapper, pinia } = await mountCovering(core)
+
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Registration reports its gaps')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create'])
+
+    core.heldCreates.shift()!.land()
+    await flushPromises()
+
+    expect(core.commands.map((entry) => entry.name)).toEqual(['ticket.create', 'issue.save'])
+    expect(core.tickets).toHaveLength(1)
     expect(useTicketDialogStore(pinia).editorOpen).toBe(false)
     expectStoryCovered(wrapper, core.tickets[0]!.number, 'Covers story CORE-S1-US3.')
   })

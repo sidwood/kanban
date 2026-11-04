@@ -505,3 +505,74 @@ fn creating_without_a_state_records_the_initial_state() {
     );
     assert!(read.state_history[0].ended_at.is_none());
 }
+
+#[test]
+fn saving_unchanged_fields_keeps_version_and_history() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "noop-milestone"),
+                "project_id": 1,
+                "name": "Unchanged milestone",
+            }),
+        )
+        .expect("the milestone is created");
+
+    let saved = save_issue(
+        session,
+        0,
+        "noop-create",
+        json!({
+            "project_id": 1,
+            "title": "Unchanged title",
+            "description": "Unchanged description",
+            "state": "Active",
+            "priority": 2,
+            "due_date": "2026-12-01",
+            "milestone_id": 1,
+            "assignee": "sid",
+        }),
+    );
+    let before = read_issue(session, &saved.identifier);
+    assert_eq!(before.state, "Active");
+    assert_eq!(before.priority, 2);
+    assert_eq!(before.due_date.as_deref(), Some("2026-12-01"));
+    assert_eq!(before.milestone_id, Some(1));
+    assert_eq!(before.assignee.as_deref(), Some("sid"));
+
+    for key in ["noop-resave", "noop-resave-again"] {
+        save_issue(
+            session,
+            before.version,
+            key,
+            json!({
+                "identifier": saved.identifier,
+                "title": "Unchanged title",
+                "description": "Unchanged description",
+                "state": "Active",
+                "priority": 2,
+                "due_date": "2026-12-01",
+                "milestone_id": 1,
+                "assignee": "sid",
+            }),
+        );
+        let after = read_issue(session, &saved.identifier);
+        assert_eq!(
+            after.version, before.version,
+            "a save that changes nothing keeps the version ({key})"
+        );
+        assert_eq!(
+            after.updated_at, before.updated_at,
+            "a save that changes nothing keeps updated_at ({key})"
+        );
+        assert_eq!(
+            after.state_history.len(),
+            before.state_history.len(),
+            "a save that changes nothing writes no history ({key})"
+        );
+    }
+}

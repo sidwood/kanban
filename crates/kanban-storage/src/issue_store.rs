@@ -51,6 +51,17 @@ impl SqliteIssueStore {
 
     pub fn set_description(&self, ticket_id: i64, description: &str) -> Result<(), ApiError> {
         let conn = self.lock();
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT description FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current.as_deref() == Some(description) {
+            return Ok(());
+        }
         conn.execute(
             "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, description],
@@ -109,6 +120,17 @@ impl SqliteIssueStore {
             ));
         }
         let conn = self.lock();
+        let current: Option<i64> = conn
+            .query_row(
+                "SELECT linear_priority FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current == Some(i64::from(priority)) {
+            return Ok(());
+        }
         conn.execute(
             "UPDATE tickets SET linear_priority = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, i64::from(priority)],
@@ -123,6 +145,17 @@ impl SqliteIssueStore {
             None => "2099-12-31".to_owned(),
             Some(raw) => validate_calendar_due_date(raw)?,
         };
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT due_date FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current.as_deref() == Some(stored.as_str()) {
+            return Ok(());
+        }
         let changed = conn
             .execute(
                 "UPDATE tickets SET due_date = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
@@ -161,6 +194,17 @@ impl SqliteIssueStore {
                     "milestone belongs to a different project",
                 ));
             }
+        }
+        let current: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT milestone_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current.flatten() == milestone_id {
+            return Ok(());
         }
         conn.execute(
             "UPDATE tickets SET milestone_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
@@ -765,13 +809,17 @@ impl SqliteIssueStore {
 
     pub fn set_title(&self, ticket_id: i64, title: &str) -> Result<(), ApiError> {
         let conn = self.lock();
-        let kind: String = conn
+        let (kind, current): (String, Option<String>) = conn
             .query_row(
-                "SELECT kind FROM tickets WHERE id = ?1",
+                "SELECT kind, CASE kind WHEN 'implementation' THEN slice ELSE title END
+                 FROM tickets WHERE id = ?1",
                 [ticket_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(not_found_ticket)?;
+        if current.as_deref() == Some(title) {
+            return Ok(());
+        }
         let changed = if kind == "implementation" {
             conn.execute(
                 "UPDATE tickets SET slice = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
@@ -855,6 +903,17 @@ impl SqliteIssueStore {
             drop(conn);
         }
         let conn = self.lock();
+        let current: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current.flatten() == parent_id {
+            return Ok(());
+        }
         conn.execute(
             "UPDATE tickets SET parent_ticket_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
              WHERE id = ?1",
@@ -922,12 +981,16 @@ impl SqliteIssueStore {
                 "unsupported relation kind `{kind}`"
             )));
         }
-        conn.execute(
-            "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
-             VALUES (?1, ?2, ?3)",
-            params![from_ticket_id, to_ticket_id, kind],
-        )
-        .map_err(internal)?;
+        let changed = conn
+            .execute(
+                "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+                 VALUES (?1, ?2, ?3)",
+                params![from_ticket_id, to_ticket_id, kind],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Ok(());
+        }
         self.bump_version(from_ticket_id)?;
         Ok(())
     }
@@ -944,12 +1007,16 @@ impl SqliteIssueStore {
         else {
             return Err(ApiError::not_found(to_identifier));
         };
-        conn.execute(
-            "DELETE FROM issue_relations
-             WHERE from_ticket_id = ?1 AND to_ticket_id = ?2 AND kind = ?3",
-            params![from_ticket_id, to_ticket_id, kind],
-        )
-        .map_err(internal)?;
+        let changed = conn
+            .execute(
+                "DELETE FROM issue_relations
+                 WHERE from_ticket_id = ?1 AND to_ticket_id = ?2 AND kind = ?3",
+                params![from_ticket_id, to_ticket_id, kind],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Ok(());
+        }
         self.bump_version(from_ticket_id)?;
         Ok(())
     }
@@ -975,15 +1042,18 @@ impl SqliteIssueStore {
         } else {
             None
         };
-        let project_id: i64 = conn
+        let (project_id, current_target): (i64, Option<i64>) = conn
             .query_row(
-                "SELECT project_id FROM tickets WHERE id = ?1",
+                "SELECT project_id, duplicate_of_ticket_id FROM tickets WHERE id = ?1",
                 [ticket_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(not_found_ticket)?;
         drop(conn);
 
+        if current_target == target_id {
+            return Ok(());
+        }
         if let Some(target_id) = target_id {
             self.relink_relations_for_duplicate_merge(ticket_id, target_id)?;
             let conn = self.lock();
@@ -1092,6 +1162,17 @@ impl SqliteIssueStore {
 
     pub fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError> {
         let conn = self.lock();
+        let current: Option<f64> = conn
+            .query_row(
+                "SELECT sub_issue_sort FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current == Some(sort) {
+            return Ok(());
+        }
         conn.execute(
             "UPDATE tickets SET sub_issue_sort = ?2,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
@@ -1166,6 +1247,17 @@ impl SqliteIssueStore {
     pub fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError> {
         let conn = self.lock();
         let stored = assignee.unwrap_or("");
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT assignee FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if current.as_deref() == Some(stored) {
+            return Ok(());
+        }
         conn.execute(
             "UPDATE tickets SET assignee = ?2,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1

@@ -3,17 +3,128 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord, ReviewExecutionRecord, TicketRecord } from '@kanban/contracts'
+import type {
+  FindingRecord,
+  IssueRecord,
+  ProfileSnapshotRecord,
+  ReviewExecutionRecord,
+  TicketRecord,
+} from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import { useTicketDetailStore } from '../stores/ticket-detail'
 import { harness, ticket } from '../test/shell-harness'
+import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
+
+const implementation = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
+  ticket({
+    id: 8,
+    number: 13,
+    kind: 'implementation',
+    state: 'in_review',
+    title: null,
+    slice: 'Serve the lifecycle command surface',
+    version: 5,
+    ...overrides,
+  })
+
+const snapshot = (name: string): ProfileSnapshotRecord => ({
+  name,
+  harness: 'claude-code',
+  model: 'opus',
+  effort: 'high',
+  usage_pool: 'operator',
+})
+
+// The stage the core is resolving: the agent slot rejected, and the
+// human slot is the one it waits on.
+const review: ReviewExecutionRecord = {
+  id: 55,
+  project_id: 1,
+  ticket_id: 8,
+  submission_id: 9,
+  configuration_version: 2,
+  tip: 'f00dcafe',
+  status: 'in_progress',
+  version: 6,
+  bounce: null,
+  stages: [
+    {
+      index: 0,
+      status: 'waiting',
+      slots: [
+        {
+          id: 71,
+          occupant: { kind: 'profile', name: 'sol-reviewer' },
+          requirement: 'required',
+          requested: snapshot('sol-reviewer'),
+          effective: snapshot('sol-reviewer'),
+          fallback_path: [],
+          dispatch_request_id: 12,
+          verdict: {
+            approve: false,
+            counts_for_resolution: true,
+            summary: 'The landing path is unguarded.',
+            tip: 'f00dcafe',
+            submission_id: 9,
+            findings: [],
+          },
+        },
+        {
+          id: 72,
+          occupant: { kind: 'human' },
+          requirement: 'required',
+          requested: null,
+          effective: null,
+          fallback_path: [],
+          dispatch_request_id: null,
+          verdict: null,
+        },
+      ],
+    },
+  ],
+}
+
+// The prior gate the core expired: the only attempt and revalidation
+// the drawer can be shown are the ones a terminal execution wrote.
+const expired: ReviewExecutionRecord = {
+  ...review,
+  id: 54,
+  status: 'expired',
+  version: 3,
+  stages: [{ index: 0, status: 'waiting', slots: [] }],
+}
+
+const finding: FindingRecord = {
+  id: 'f-1',
+  project_id: 1,
+  ticket_id: 8,
+  review_id: 55,
+  slot_id: 71,
+  submission_id: 9,
+  tip: 'f00dcafe',
+  blocking: true,
+  counts_for_resolution: true,
+  promotion: null,
+  finding: {
+    severity: 'p1',
+    in_scope: true,
+    summary: 'Landing drops the integration branch.',
+    evidence: 'The landing log names the drop.',
+    location: 'crates/kanban-app/src/landing.rs:88',
+    proposed_resolution: 'Guard the branch before the merge.',
+  },
+}
 
 const mountedBoards: VueWrapper[] = []
 
-async function openDrawer(tickets: TicketRecord[], ticketId: number) {
-  const shell = harness({ tickets })
+async function openDrawer(
+  tickets: TicketRecord[],
+  ticketId: number,
+  options: Partial<HarnessOptions> = {},
+) {
+  const shell = harness({ tickets, ...options })
   await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
@@ -29,6 +140,9 @@ async function openDrawer(tickets: TicketRecord[], ticketId: number) {
   await flushPromises()
   return { wrapper, query: shell.query }
 }
+
+const text = (testid: string): string =>
+  document.querySelector(`[data-testid="${testid}"]`)?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
 
 beforeEach(() => {
   localStorage.clear()
@@ -60,6 +174,44 @@ describe('the issue drawer detail', () => {
   it('shows state history from the issue record', async () => {
     await openDrawer([ticket({ id: 7, number: 12, state: 'ready' })], 7)
     expect(document.querySelector('[data-testid="issue-state-history"]')).toBeTruthy()
+  })
+
+  it('reads the review stages, their verdicts, and the revalidation the core flags', async () => {
+    const { query } = await openDrawer([implementation()], 8, { reviews: [expired, review] })
+
+    expect(query).toHaveBeenCalledWith('review.history', { ticket_id: 8 })
+    expect(query).toHaveBeenCalledWith('review.latest', { ticket_id: 8 })
+    expect(text('drawer-review-slot-71')).toContain('sol-reviewer')
+    expect(text('drawer-review-slot-71')).toContain('rejected')
+    expect(text('drawer-review-slot-72')).toContain('Human')
+    expect(text('drawer-review-slot-72')).toContain('no verdict')
+    expect(text('drawer-review-attempt-1')).toContain('expired')
+    expect(text('drawer-review-attempt-1')).toContain('gate expired')
+    expect(text('drawer-review-revalidation')).toContain('revalidation')
+    // The stage is shown beside the decision its waiting human slot is
+    // offered.
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).not.toBeNull()
+  })
+
+  it('lists the findings the core holds for the Ticket with their full structure', async () => {
+    const { query } = await openDrawer([implementation()], 8, { findings: [finding] })
+
+    expect(query).toHaveBeenCalledWith('finding.list', { project_id: 1 })
+    const shown = text('drawer-finding-f-1')
+    expect(shown).toContain('p1')
+    expect(shown).toContain('Landing drops the integration branch.')
+    expect(shown).toContain('crates/kanban-app/src/landing.rs:88')
+    expect(shown).toContain('Guard the branch before the merge.')
+    expect(shown).toContain('blocking')
+  })
+
+  it('leaves out findings recorded against another Ticket', async () => {
+    await openDrawer([implementation()], 8, {
+      findings: [{ ...finding, id: 'f-2', ticket_id: 99 }],
+    })
+
+    expect(document.querySelector('[data-testid="drawer-finding-f-2"]')).toBeNull()
+    expect(text('drawer-findings')).toContain('No findings recorded')
   })
 
   it('keeps showing the newer cached issue when the drawer read answers after it', async () => {

@@ -34,6 +34,7 @@ import IssueSubIssues from '../components/IssueSubIssues.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import TicketDrawerActions from '../components/TicketDrawerActions.vue'
+import TicketReviewSections from '../components/TicketReviewSections.vue'
 import { kanbanTransportKey, asApiError } from '../core/transport'
 import { useBoardStore } from '../stores/board'
 import { useIssueOverlayStore } from '../stores/issue-overlay'
@@ -1582,6 +1583,10 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :attempts="drawerAttempts"
           @recovered="refreshAttempts"
         />
+
+        <!-- The open review sits last, beside the footer's human
+             review decision it informs. -->
+        <TicketReviewSections class="mt-6" />
       </template>
 
       <template

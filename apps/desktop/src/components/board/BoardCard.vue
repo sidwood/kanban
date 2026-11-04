@@ -84,12 +84,15 @@ function onOpen(): void {
         {{ kindLabel }}
       </span>
     </div>
-    <p
-      class="text-sm font-medium text-ink"
+    <!-- The card's click opens it, for a pointer anywhere on the card
+         and for this button's keyboard activation alike. -->
+    <button
+      type="button"
+      class="cursor-[inherit] text-left text-sm font-medium text-ink focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       :data-testid="`open-ticket-${ticketId}`"
     >
       {{ title }}
-    </p>
+    </button>
     <ul
       class="flex flex-wrap gap-1"
       :data-testid="`card-chips-${ticketId}`"

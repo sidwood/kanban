@@ -327,12 +327,32 @@ fn collapse_consecutive_duplicate_history(conn: &Connection) -> rusqlite::Result
     )
 }
 
-/// Guarantees every issue keeps a history row for its current workflow
-/// state, including issues whose only legacy events revisited that state
-/// and collapsed away entirely.
+/// Guarantees every issue keeps one open history row for its current
+/// workflow state, including issues whose only legacy events revisited
+/// that state and collapsed away entirely, and issues an earlier build
+/// left with their current state's latest row closed: that row reopens
+/// rather than gaining a duplicate beside it.
 fn ensure_current_state_history_row(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
-        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+        "UPDATE issue_state_history
+         SET ended_at = NULL
+         WHERE ended_at IS NOT NULL
+           AND id IN (
+               SELECT h.id
+               FROM issue_state_history AS h
+               JOIN tickets AS t ON t.id = h.ticket_id
+               WHERE t.workflow_state_id = h.workflow_state_id
+                 AND h.id = (
+                     SELECT MAX(h2.id) FROM issue_state_history AS h2
+                     WHERE h2.ticket_id = h.ticket_id
+                       AND h2.workflow_state_id = t.workflow_state_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM issue_state_history AS h3
+                     WHERE h3.ticket_id = h.ticket_id AND h3.ended_at IS NULL
+                 )
+           );
+         INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
          SELECT t.id, t.workflow_state_id, COALESCE(
              (SELECT MAX(COALESCE(h.ended_at, h.started_at))
               FROM issue_state_history AS h
@@ -1452,6 +1472,10 @@ mod tests {
             seed_legacy_transition(&conn, 9, "draft", "cancelled", "2026-11-03T21:48:10.000Z");
             seed_legacy_transition(&conn, 9, "cancelled", "active", "2026-11-03T21:48:20.000Z");
             seed_legacy_transition(&conn, 9, "active", "cancelled", "2026-11-03T21:48:30.000Z");
+
+            seed_legacy_task(&conn, 10, "parked", None, "2026-11-03T21:38:37.988Z");
+            seed_legacy_transition(&conn, 10, "draft", "parked", "2026-11-03T21:38:46.608Z");
+            seed_legacy_transition(&conn, 10, "parked", "parked", "2026-11-03T21:40:21.542Z");
         }
         database.migrate(&AllowAllMigrations).unwrap();
 
@@ -1478,6 +1502,8 @@ mod tests {
                      ORDER BY h.ended_at DESC LIMIT 1
                  );
                  DELETE FROM issue_state_history WHERE ticket_id = 4;
+                 UPDATE issue_state_history SET ended_at = '2026-11-03T21:40:21.542Z'
+                 WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
                  DELETE FROM schema_migrations WHERE version = 60;",
@@ -2045,6 +2071,28 @@ mod tests {
                 "2026-11-03T21:38:37.997Z".to_owned(),
                 None
             )]
+        );
+    }
+
+    #[test]
+    fn repair_migration_reopens_a_closed_current_state_row() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+        assert_eq!(
+            migrated_history(&database.connection(), 10),
+            vec![
+                (
+                    "Draft".to_owned(),
+                    "2026-11-03T21:38:37.988Z".to_owned(),
+                    Some("2026-11-03T21:38:46.608Z".to_owned())
+                ),
+                (
+                    "Parked".to_owned(),
+                    "2026-11-03T21:38:46.608Z".to_owned(),
+                    None
+                ),
+            ],
+            "the closed row for the current state reopens instead of staying shut"
         );
     }
 

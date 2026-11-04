@@ -147,10 +147,16 @@ mod file_installation_secret {
         if rc == 0 {
             return Ok(());
         }
-        match std::io::Error::last_os_error().raw_os_error() {
-            Some(libc::EEXIST) => Err(AtomicRenameError::Exists),
-            Some(libc::EINVAL) => Err(AtomicRenameError::InvalidArg),
-            _ => Err(AtomicRenameError::Failed),
+        Err(renameat2_error(
+            std::io::Error::last_os_error().raw_os_error(),
+        ))
+    }
+
+    pub(super) fn renameat2_error(errno: Option<i32>) -> AtomicRenameError {
+        match errno {
+            Some(libc::EEXIST) => AtomicRenameError::Exists,
+            Some(libc::EINVAL) | Some(libc::ENOSYS) => AtomicRenameError::InvalidArg,
+            _ => AtomicRenameError::Failed,
         }
     }
 
@@ -524,6 +530,15 @@ mod tests {
         Err(file_installation_secret::AtomicRenameError::InvalidArg)
     }
 
+    fn rename_reports_an_unimplemented_syscall(
+        _temp: &Path,
+        _path: &Path,
+    ) -> Result<(), file_installation_secret::AtomicRenameError> {
+        Err(file_installation_secret::renameat2_error(Some(
+            libc::ENOSYS,
+        )))
+    }
+
     #[test]
     fn file_store_provisions_when_renameat2_is_unavailable() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -534,6 +549,20 @@ mod tests {
             rename_returns_einval,
         )
         .expect("hard-link publish works");
+        let second = store.load_or_create().expect("second read");
+        assert!(credentials_match(&first, &second));
+    }
+
+    #[test]
+    fn file_store_provisions_when_renameat2_is_not_implemented() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = NativeKeychain::for_data_dir(dir.path()).unwrap();
+        let first = file_installation_secret::load_or_create_with_rename(
+            dir.path(),
+            &store.account,
+            rename_reports_an_unimplemented_syscall,
+        )
+        .expect("the hard-link publish covers kernels without renameat2");
         let second = store.load_or_create().expect("second read");
         assert!(credentials_match(&first, &second));
     }

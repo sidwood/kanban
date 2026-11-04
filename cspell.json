@@ -14,6 +14,7 @@
     "Deque",
     "EEXIST",
     "EINVAL",
+    "ENOSYS",
     "FDCWD",
     "GETFD",
     "Herdr",

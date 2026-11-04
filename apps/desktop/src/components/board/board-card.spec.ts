@@ -79,7 +79,6 @@ describe('BoardCard opening', () => {
     expect(document.activeElement).toBe(button)
     expect(button.tabIndex).toBe(0)
 
-    // A browser turns Enter or Space on a focused button into a click.
     button.click()
 
     expect(wrapper.emitted('open')).toHaveLength(1)

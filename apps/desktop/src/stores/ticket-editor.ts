@@ -232,10 +232,6 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
       await this.refresh(transport, projectId)
       return true
     },
-    // Save an edit of one issue. Labels go as the difference between
-    // the draft and the labels the issue already carries, never the
-    // whole set: the core refuses to add a retired label even when it
-    // is already attached.
     async updateIssue(
       transport: ShellTransport,
       identifier: string,

@@ -29,8 +29,6 @@ const editor = useTicketEditorStore()
 const projectId = ref<number | null>(null)
 const record = ref<TicketRecord | null>(null)
 const issueDraft = ref(blankIssueCreateDraft())
-// The labels the edited issue carried when it was read: an edit sends
-// only what the draft changes against them.
 const heldLabels = ref<string[]>([])
 const localTitle = ref('')
 const localDescription = ref('')

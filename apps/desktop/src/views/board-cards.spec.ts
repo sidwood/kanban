@@ -142,8 +142,6 @@ describe('board cards', () => {
   })
 })
 
-// A migrated Task still carries the due date its legacy Ticket column
-// held; the issue record the board loads beside it is what counts.
 const legacyDue = ticket({ id: 7, number: 12, due: '2026-09-20T00:00:00Z' })
 
 function issueRecord(overrides: Partial<IssueRecord> = {}): IssueRecord {

@@ -31,9 +31,6 @@ export interface CardChip {
   /** The fallback indicator an effective profile wears when the run
    * fell back from its planned profile (DR-BP-13). */
   fallback?: boolean
-  /** What tells this chip from the card's others where its kind
-   * repeats, as a Linear issue's labels do; the kind stands in when
-   * absent. */
   key?: string
 }
 

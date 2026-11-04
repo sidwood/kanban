@@ -89,9 +89,6 @@ function addSubIssue(): void {
 
 const reordering = ref(false)
 
-// Moving a child swaps its stored sort value with its neighbour's. The
-// values are not positions: other writers set them freely and a child
-// moving to another parent leaves a gap, so only these two change.
 async function moveChild(index: number, direction: -1 | 1): Promise<void> {
   if (!transport || !issue.value?.children?.length) return
   const targetIndex = index + direction
@@ -177,8 +174,6 @@ async function moveChild(index: number, direction: -1 | 1): Promise<void> {
         :data-testid="`drawer-sub-issue-row-${child.identifier}`"
         @click="openChild(child)"
       >
-        <!-- The row's click opens the child, for a pointer anywhere on
-             the row and for this button's keyboard activation alike. -->
         <button
           type="button"
           class="flex min-w-0 flex-1 cursor-[inherit] items-center gap-2 text-left focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"

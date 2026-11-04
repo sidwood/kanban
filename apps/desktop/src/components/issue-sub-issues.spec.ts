@@ -138,8 +138,6 @@ function mountWith(issue: IssueRecord, onSave?: (body: Record<string, unknown>) 
   return wrapper
 }
 
-// Stored sort values are not positions: other writers set them freely
-// and a child moving to another parent leaves a gap.
 function spacedChildren(): IssueRecord {
   return issueRecord({
     children: [
@@ -224,7 +222,6 @@ describe('IssueSubIssues keyboard access', () => {
     expect(document.activeElement).toBe(button)
     expect(button.tabIndex).toBe(0)
 
-    // A browser turns Enter or Space on a focused button into a click.
     button.click()
     await flushPromises()
 

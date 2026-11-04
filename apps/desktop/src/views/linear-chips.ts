@@ -60,8 +60,10 @@ export function linearChipsFor(
     chips.push(chip('lane', 'State', workflowState, 'progress'))
   }
 
+  // Every label shares one chip kind, so each keeps its own key: the
+  // label name, unique among one issue's labels.
   for (const label of issue?.labels ?? []) {
-    chips.push(chip('subtype', 'Label', label))
+    chips.push({ ...chip('subtype', 'Label', label), key: `label:${label}` })
   }
 
   const due = issue?.due_date ?? (ticket.due ? ticket.due.slice(0, 10) : null)

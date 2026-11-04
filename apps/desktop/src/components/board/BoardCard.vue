@@ -108,7 +108,7 @@ function onOpen(): void {
       </li>
       <li
         v-for="chip in chips"
-        :key="chip.kind"
+        :key="chip.key ?? chip.kind"
         class="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] leading-[1.3]"
         :class="chipSurfaceClass(chip.tone)"
         :data-tone="chip.tone ?? 'neutral'"

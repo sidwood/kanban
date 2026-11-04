@@ -46,8 +46,8 @@ use crate::clone::{
 };
 use crate::comment::{
     CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentRevisionRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionRecord,
+    CommentRevisionsQuery, CommentRevisionsResponse,
 };
 use crate::coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -88,11 +88,13 @@ use crate::initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 use crate::issue::{
-    IssueChildRecord, IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse,
-    IssueListQuery, IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery,
-    IssueMilestonesResponse, IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
-    IssueStateHistoryRecord, IssueWorkflowStateRecord, IssueWorkflowStatesQuery,
-    IssueWorkflowStatesResponse,
+    IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
+    IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
+    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
+    IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,
+    IssueRelationRecord, IssueSaveRequest, IssueSaveResponse, IssueStateHistoryRecord,
+    IssueSubIssueProgress, IssueUpdateProjectSettingsRequest, IssueWorkflowStateRecord,
+    IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
 use crate::lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -285,6 +287,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),
+        ("CommentResolveRequest", schema_for!(CommentResolveRequest)),
         ("CommentRevisionRecord", schema_for!(CommentRevisionRecord)),
         ("CommentListItem", schema_for!(CommentListItem)),
         ("CommentListQuery", schema_for!(CommentListQuery)),
@@ -423,6 +426,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             schema_for!(InitiativeRenameRequest),
         ),
         ("IssueChildRecord", schema_for!(IssueChildRecord)),
+        (
+            "IssueCreateLabelRequest",
+            schema_for!(IssueCreateLabelRequest),
+        ),
+        (
+            "IssueCreateMilestoneRequest",
+            schema_for!(IssueCreateMilestoneRequest),
+        ),
         ("IssueGetQuery", schema_for!(IssueGetQuery)),
         ("IssueLabelRecord", schema_for!(IssueLabelRecord)),
         ("IssueLabelsQuery", schema_for!(IssueLabelsQuery)),
@@ -435,6 +446,13 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "IssueMilestonesResponse",
             schema_for!(IssueMilestonesResponse),
         ),
+        ("IssueProjectRecord", schema_for!(IssueProjectRecord)),
+        (
+            "IssueProjectSettingsResponse",
+            schema_for!(IssueProjectSettingsResponse),
+        ),
+        ("IssueProjectsQuery", schema_for!(IssueProjectsQuery)),
+        ("IssueProjectsResponse", schema_for!(IssueProjectsResponse)),
         ("IssueRecord", schema_for!(IssueRecord)),
         ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
         ("IssueSaveRequest", schema_for!(IssueSaveRequest)),
@@ -442,6 +460,11 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         (
             "IssueStateHistoryRecord",
             schema_for!(IssueStateHistoryRecord),
+        ),
+        ("IssueSubIssueProgress", schema_for!(IssueSubIssueProgress)),
+        (
+            "IssueUpdateProjectSettingsRequest",
+            schema_for!(IssueUpdateProjectSettingsRequest),
         ),
         (
             "IssueWorkflowStateRecord",

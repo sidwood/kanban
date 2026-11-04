@@ -63,7 +63,7 @@ pub fn resolve_issue_key(
         .query_row(
             "SELECT t.id FROM tickets AS t
              JOIN projects AS p ON p.id = t.project_id
-             WHERE p.code = ?1 AND t.number = ?2",
+             WHERE UPPER(p.code) = UPPER(?1) AND t.number = ?2",
             rusqlite::params![code, i64::try_from(number).unwrap_or(i64::MAX)],
             |row| row.get(0),
         )

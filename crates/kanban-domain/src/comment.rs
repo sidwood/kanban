@@ -58,6 +58,14 @@ impl CommentText {
         Ok(Self(trimmed.to_owned()))
     }
 
+    /// Store operator comment bodies without trimming trailing whitespace.
+    pub fn new_stored(raw: &str) -> Result<Self, TextError> {
+        if raw.trim().is_empty() {
+            return Err(TextError::Blank);
+        }
+        Ok(Self(raw.to_owned()))
+    }
+
     /// The trimmed text.
     pub fn as_str(&self) -> &str {
         &self.0

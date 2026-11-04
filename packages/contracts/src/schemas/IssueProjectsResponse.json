@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "IssueProjectRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "projects": {
+      "items": {
+        "$ref": "#/definitions/IssueProjectRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "projects"
+  ],
+  "title": "IssueProjectsResponse",
+  "type": "object"
+}

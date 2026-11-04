@@ -68,6 +68,14 @@
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },
+    "parent_comment_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "project_id": {
       "description": "The owning Project, resolved before any write.",
       "format": "uint64",

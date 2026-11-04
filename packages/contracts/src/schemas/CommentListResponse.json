@@ -25,6 +25,20 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "parent_comment_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resolved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

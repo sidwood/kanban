@@ -29159,6 +29159,14 @@
         "mutation": {
           "$ref": "#/definitions/MutationContext"
         },
+        "parent_comment_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "project_id": {
           "description": "The owning Project, resolved before any write.",
           "format": "uint64",
@@ -29671,6 +29679,20 @@
               "format": "uint64",
               "minimum": 0.0,
               "type": "integer"
+            },
+            "parent_comment_id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "resolved_at": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -29701,6 +29723,102 @@
         "comments"
       ],
       "title": "CommentListResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Resolve or clear resolution on a comment thread.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `comment.resolve` command.",
+      "properties": {
+        "comment_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "comment_id",
+        "mutation",
+        "resolved"
+      ],
+      "title": "CommentResolveRequest",
+      "type": "object"
+    },
+    "name": "resolve_comment",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "Request payload for the `comment.resolve` command.",
+      "properties": {
+        "comment_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "comment_id",
+        "mutation",
+        "resolved"
+      ],
+      "title": "CommentResolveRequest",
       "type": "object"
     }
   },
@@ -40460,6 +40578,15 @@
       },
       "description": "Create or update one issue (`save_issue`).",
       "properties": {
+        "add_blocked_by": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "add_blocks": {
           "items": {
             "type": "string"
@@ -40530,10 +40657,8 @@
           "$ref": "#/definitions/MutationContext"
         },
         "parent_id": {
-          "format": "uint64",
-          "minimum": 0.0,
           "type": [
-            "integer",
+            "string",
             "null"
           ]
         },
@@ -40551,6 +40676,15 @@
           "minimum": 0.0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "remove_blocked_by": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -40720,15 +40854,47 @@
             "state_type"
           ],
           "type": "object"
+        },
+        "IssueSubIssueProgress": {
+          "additionalProperties": false,
+          "properties": {
+            "done": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "total": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "done",
+            "total"
+          ],
+          "type": "object"
         }
       },
       "properties": {
+        "canceled_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "children": {
           "items": {
             "$ref": "#/definitions/IssueChildRecord"
           },
           "type": [
             "array",
+            "null"
+          ]
+        },
+        "completed_at": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -40798,6 +40964,12 @@
           },
           "type": "array"
         },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "state": {
           "type": "string"
         },
@@ -40809,6 +40981,16 @@
         },
         "state_type": {
           "type": "string"
+        },
+        "sub_issues": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IssueSubIssueProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "ticket_id": {
           "format": "uint64",
@@ -40857,6 +41039,12 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
       "properties": {
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cursor": {
           "type": [
             "string",
@@ -40874,6 +41062,14 @@
           "format": "uint32",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "milestone_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "parent_id": {
           "format": "uint64",
@@ -40900,6 +41096,14 @@
         "state": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "team_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -40946,12 +41150,24 @@
         "IssueRecord": {
           "additionalProperties": false,
           "properties": {
+            "canceled_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "children": {
               "items": {
                 "$ref": "#/definitions/IssueChildRecord"
               },
               "type": [
                 "array",
+                "null"
+              ]
+            },
+            "completed_at": {
+              "type": [
+                "string",
                 "null"
               ]
             },
@@ -41021,6 +41237,12 @@
               },
               "type": "array"
             },
+            "started_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "state": {
               "type": "string"
             },
@@ -41032,6 +41254,16 @@
             },
             "state_type": {
               "type": "string"
+            },
+            "sub_issues": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/IssueSubIssueProgress"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "ticket_id": {
               "format": "uint64",
@@ -41111,6 +41343,26 @@
             "started_at",
             "state",
             "state_type"
+          ],
+          "type": "object"
+        },
+        "IssueSubIssueProgress": {
+          "additionalProperties": false,
+          "properties": {
+            "done": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "total": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "done",
+            "total"
           ],
           "type": "object"
         }
@@ -41226,6 +41478,10 @@
                 "null"
               ]
             },
+            "group_single_select": {
+              "default": false,
+              "type": "boolean"
+            },
             "name": {
               "type": "string"
             },
@@ -41287,6 +41543,16 @@
               "minimum": 0.0,
               "type": "integer"
             },
+            "issues_done": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "issues_total": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
             "name": {
               "type": "string"
             },
@@ -41299,6 +41565,8 @@
           },
           "required": [
             "id",
+            "issues_done",
+            "issues_total",
             "name"
           ],
           "type": "object"
@@ -41316,6 +41584,316 @@
         "milestones"
       ],
       "title": "IssueMilestonesResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "List registered projects (teams) for operator lookups.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "title": "IssueProjectsQuery",
+      "type": "object"
+    },
+    "name": "list_projects",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "IssueProjectRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "id",
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "projects": {
+          "items": {
+            "$ref": "#/definitions/IssueProjectRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "projects"
+      ],
+      "title": "IssueProjectsResponse",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Create a milestone on one project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "target_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mutation",
+        "name",
+        "project_id"
+      ],
+      "title": "IssueCreateMilestoneRequest",
+      "type": "object"
+    },
+    "name": "create_milestone",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "issues_done": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "issues_total": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "issues_done",
+        "issues_total",
+        "name"
+      ],
+      "title": "IssueMilestoneRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Create a label (and optional group) on one project.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_single_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "name": {
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "color",
+        "mutation",
+        "name",
+        "project_id"
+      ],
+      "title": "IssueCreateLabelRequest",
+      "type": "object"
+    },
+    "name": "create_label",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_single_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "retired": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "color",
+        "name"
+      ],
+      "title": "IssueLabelRecord",
+      "type": "object"
+    }
+  },
+  {
+    "description": "Update per-project Linear settings such as auto-close sub-issues.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "MutationContext": {
+          "additionalProperties": false,
+          "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+          "properties": {
+            "idempotency_key": {
+              "type": "string"
+            },
+            "optimistic_version": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "idempotency_key",
+            "optimistic_version"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "auto_close_sub_issues": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "mutation": {
+          "$ref": "#/definitions/MutationContext"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mutation",
+        "project_id"
+      ],
+      "title": "IssueUpdateProjectSettingsRequest",
+      "type": "object"
+    },
+    "name": "update_project_settings",
+    "outputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "auto_close_sub_issues": {
+          "type": "boolean"
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "auto_close_sub_issues",
+        "project_id"
+      ],
+      "title": "IssueProjectSettingsResponse",
       "type": "object"
     }
   }

@@ -51,6 +51,7 @@ impl CommentStore for RecordingComments {
         _target: &CommentTarget,
         _text: &CommentText,
         _author: &str,
+        _parent_comment_id: Option<u64>,
     ) -> Result<Comment, ApiError> {
         let id = self.rows.lock().expect("the rows lock is sound").len() as u64 + 1;
         let comment = Comment::create(
@@ -118,6 +119,10 @@ impl CommentStore for RecordingComments {
         _cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         Ok((Vec::new(), None))
+    }
+
+    fn set_resolved(&self, _id: CommentId, _resolved: bool) -> Result<(), ApiError> {
+        Ok(())
     }
 }
 

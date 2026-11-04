@@ -101,8 +101,8 @@ pub use clone::{
 };
 pub use comment::{
     CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentRevisionRecord, CommentRevisionsQuery,
-    CommentRevisionsResponse,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionRecord,
+    CommentRevisionsQuery, CommentRevisionsResponse,
 };
 pub use coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -146,11 +146,13 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use issue::{
-    IssueChildRecord, IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse,
-    IssueListQuery, IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery,
-    IssueMilestonesResponse, IssueRecord, IssueRelationRecord, IssueSaveRequest, IssueSaveResponse,
-    IssueStateHistoryRecord, IssueWorkflowStateRecord, IssueWorkflowStatesQuery,
-    IssueWorkflowStatesResponse,
+    IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
+    IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
+    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
+    IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,
+    IssueRelationRecord, IssueSaveRequest, IssueSaveResponse, IssueStateHistoryRecord,
+    IssueSubIssueProgress, IssueUpdateProjectSettingsRequest, IssueWorkflowStateRecord,
+    IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
 pub use landing::{
     LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,

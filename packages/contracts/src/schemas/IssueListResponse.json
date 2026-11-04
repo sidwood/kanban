@@ -30,12 +30,24 @@
     "IssueRecord": {
       "additionalProperties": false,
       "properties": {
+        "canceled_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "children": {
           "items": {
             "$ref": "#/definitions/IssueChildRecord"
           },
           "type": [
             "array",
+            "null"
+          ]
+        },
+        "completed_at": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -105,6 +117,12 @@
           },
           "type": "array"
         },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "state": {
           "type": "string"
         },
@@ -116,6 +134,16 @@
         },
         "state_type": {
           "type": "string"
+        },
+        "sub_issues": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IssueSubIssueProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "ticket_id": {
           "format": "uint64",
@@ -195,6 +223,26 @@
         "started_at",
         "state",
         "state_type"
+      ],
+      "type": "object"
+    },
+    "IssueSubIssueProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "done": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "done",
+        "total"
       ],
       "type": "object"
     }

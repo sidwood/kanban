@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use kanban_domain::{ProjectId, Ticket, TicketId};
 use kanban_dto::{
-    ApiError, IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse,
-    IssueListQuery, IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery,
-    IssueMilestonesResponse, IssueRecord, IssueSaveRequest, IssueSaveResponse,
+    ApiError, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
+    IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
+    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
+    IssueProjectSettingsResponse, IssueProjectsResponse, IssueRecord, IssueSaveRequest,
+    IssueSaveResponse, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
     IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
     TaskMode as WireMode, TaskSubtype as WireSubtype, TicketCreateRequest, TicketKind,
     TicketPriority,
@@ -27,12 +29,17 @@ pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
     "issue.list",
     "issue.list_labels",
     "issue.list_milestones",
+    "issue.list_projects",
     "issue.list_workflow_states",
     "issue.save",
+    "issue.create_milestone",
+    "issue.create_label",
+    "issue.update_project_settings",
     "comment.create",
     "comment.edit",
     "comment.list",
     "comment.revisions",
+    "comment.resolve",
 ];
 
 struct IssueContext {
@@ -100,6 +107,42 @@ impl Core {
         self.register_query(
             "issue.list_milestones",
             Arc::new(ListMilestones(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_query(
+            "issue.list_projects",
+            Arc::new(ListProjects(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_command(
+            "issue.create_milestone",
+            Arc::new(CreateMilestone(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_command(
+            "issue.create_label",
+            Arc::new(CreateLabel(IssueContext {
+                tickets: tickets.clone(),
+                projects: projects.clone(),
+                specs: specs.clone(),
+                issues: issues.clone(),
+            })),
+        )?;
+        self.register_command(
+            "issue.update_project_settings",
+            Arc::new(UpdateProjectSettings(IssueContext {
                 tickets,
                 projects,
                 specs,
@@ -206,6 +249,7 @@ impl QueryHandler for ListLabels {
                 name: label.name,
                 color: label.color,
                 group: label.group,
+                group_single_select: label.group_single_select,
                 retired: label.retired,
             })
             .collect();
@@ -228,10 +272,138 @@ impl QueryHandler for ListMilestones {
                 id: milestone.id,
                 name: milestone.name,
                 target_date: milestone.target_date,
+                issues_total: milestone.issues_total,
+                issues_done: milestone.issues_done,
             })
             .collect();
         serde_json::to_value(IssueMilestonesResponse { milestones })
             .map_err(|_| ApiError::internal("milestones response invalid"))
+    }
+}
+
+struct ListProjects(IssueContext);
+
+impl QueryHandler for ListProjects {
+    fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
+        let _payload = payload;
+        let projects = self
+            .0
+            .projects
+            .list()?
+            .into_iter()
+            .map(|project| IssueProjectRecord {
+                id: project.id().value(),
+                code: project.code().as_str().to_owned(),
+                name: project.registration().name().to_owned(),
+            })
+            .collect();
+        serde_json::to_value(IssueProjectsResponse { projects })
+            .map_err(|_| ApiError::internal("projects response invalid"))
+    }
+}
+
+struct CreateMilestone(IssueContext);
+
+impl CommandHandler for CreateMilestone {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<IssueCreateMilestoneRequest>(payload)?;
+        ParsedCommand::lift("issue", payload)
+    }
+
+    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: IssueCreateMilestoneRequest = parse_payload(&command.payload)?;
+        let row = self.0.issues.create_milestone(
+            request.project_id as i64,
+            &request.name,
+            request.target_date.as_deref(),
+        )?;
+        serde_json::to_value(IssueMilestoneRecord {
+            id: row.id,
+            name: row.name,
+            target_date: row.target_date,
+            issues_total: row.issues_total,
+            issues_done: row.issues_done,
+        })
+        .map_err(|_| ApiError::internal("milestone response invalid"))
+    }
+}
+
+struct CreateLabel(IssueContext);
+
+impl CommandHandler for CreateLabel {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<IssueCreateLabelRequest>(payload)?;
+        ParsedCommand::lift("issue", payload)
+    }
+
+    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: IssueCreateLabelRequest = parse_payload(&command.payload)?;
+        let row = self.0.issues.create_label(
+            request.project_id as i64,
+            &request.name,
+            &request.color,
+            request.group.as_deref(),
+            request.group_single_select,
+        )?;
+        serde_json::to_value(IssueLabelRecord {
+            name: row.name,
+            color: row.color,
+            group: row.group,
+            group_single_select: row.group_single_select,
+            retired: row.retired,
+        })
+        .map_err(|_| ApiError::internal("label response invalid"))
+    }
+}
+
+struct UpdateProjectSettings(IssueContext);
+
+impl CommandHandler for UpdateProjectSettings {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<IssueUpdateProjectSettingsRequest>(payload)?;
+        ParsedCommand::lift("issue", payload)
+    }
+
+    fn current_version(&self, _command: &ParsedCommand) -> Result<u64, ApiError> {
+        Ok(0)
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: IssueUpdateProjectSettingsRequest = parse_payload(&command.payload)?;
+        if let Some(enabled) = request.auto_close_sub_issues {
+            self.0
+                .issues
+                .set_auto_close_sub_issues(request.project_id as i64, enabled)?;
+        }
+        let enabled = self
+            .0
+            .issues
+            .auto_close_sub_issues_enabled(request.project_id as i64)?;
+        let response = IssueProjectSettingsResponse {
+            project_id: request.project_id,
+            auto_close_sub_issues: enabled,
+        };
+        serde_json::to_value(response).map_err(|_| ApiError::internal("settings response invalid"))
     }
 }
 
@@ -243,7 +415,8 @@ fn create_issue(
     let mut project_id = request
         .project_id
         .ok_or_else(|| ApiError::invalid_request("project_id is required when creating"))?;
-    if let Some(parent_id) = request.parent_id.flatten() {
+    if let Some(parent_ref) = request.parent_id.as_ref().and_then(|value| value.as_deref()) {
+        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
         let parent = ctx
             .tickets
             .find(TicketId::new(parent_id))?
@@ -303,7 +476,8 @@ fn create_issue(
     if let Some(milestone) = request.milestone_id.as_ref() {
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
-    } else if let Some(parent_id) = request.parent_id.flatten() {
+    } else if let Some(parent_ref) = request.parent_id.as_ref().and_then(|value| value.as_deref()) {
+        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
         let fields = ctx.issues.issue_fields(parent_id as i64)?;
         if let Some(milestone_id) = fields.milestone_id {
             ctx.issues
@@ -366,8 +540,11 @@ fn apply_issue_extensions(
     request: &IssueSaveRequest,
 ) -> Result<(), ApiError> {
     if let Some(parent) = request.parent_id.as_ref() {
-        ctx.issues
-            .set_parent(ticket_id, parent.map(|value| value as i64))?;
+        let parent_id = match parent {
+            None => None,
+            Some(reference) => Some(resolve_parent_reference(ctx, reference)? as i64),
+        };
+        ctx.issues.set_parent(ticket_id, parent_id)?;
     }
     if let Some(duplicate) = request.duplicate_of.as_ref() {
         ctx.issues
@@ -396,7 +573,28 @@ fn apply_issue_extensions(
             ctx.issues.remove_relation(ticket_id, target, "related")?;
         }
     }
+    if let Some(add) = request.add_blocked_by.as_ref() {
+        for target in add {
+            ctx.issues.add_blocked_by(ticket_id, target)?;
+        }
+    }
+    if let Some(remove) = request.remove_blocked_by.as_ref() {
+        for target in remove {
+            ctx.issues.remove_blocked_by(ticket_id, target)?;
+        }
+    }
     Ok(())
+}
+
+fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, ApiError> {
+    if let Ok(id) = reference.parse::<u64>() {
+        return Ok(id);
+    }
+    let (_, ticket_id) = ctx
+        .issues
+        .resolve_identifier(reference)?
+        .ok_or_else(|| ApiError::not_found(reference))?;
+    Ok(ticket_id as u64)
 }
 
 fn apply_label_changes(
@@ -478,6 +676,7 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         None
     };
     let duplicates = ctx.issues.list_duplicate_identifiers(ticket_id)?;
+    let (sub_done, sub_total) = ctx.issues.sub_issue_progress(ticket_id)?;
     Ok(IssueRecord {
         identifier: key.display(),
         url: key.deep_link(),
@@ -496,7 +695,14 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         version: fields.version,
         created_at: fields.created_at,
         updated_at: fields.updated_at,
+        started_at: fields.started_at,
+        completed_at: fields.completed_at,
+        canceled_at: fields.canceled_at,
         parent,
+        sub_issues: (sub_total > 0).then_some(IssueSubIssueProgress {
+            done: sub_done,
+            total: sub_total,
+        }),
         duplicate_of,
         duplicates: (!duplicates.is_empty()).then_some(duplicates),
         children: (!children.is_empty()).then_some(children),
@@ -512,7 +718,7 @@ fn list_issues(
     } else {
         request.limit.clamp(1, 100)
     };
-    let project_ids: Vec<u64> = match request.project_id {
+    let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
         Some(project_id) => vec![project_id],
         None => ctx
             .projects
@@ -543,6 +749,15 @@ fn list_issues(
                 if fields.parent_ticket_id != Some(parent_id as i64) {
                     continue;
                 }
+            }
+            if let Some(milestone_id) = request.milestone_id {
+                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
+                if fields.milestone_id != Some(milestone_id as i64) {
+                    continue;
+                }
+            }
+            if request.assignee.is_some() {
+                continue;
             }
             let record =
                 load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;

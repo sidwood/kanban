@@ -227,6 +227,7 @@ fn a_fresh_database_lands_every_row_under_one_scope() {
             &kanban_domain::CommentTarget::new("ticket", "kan-t10").expect("the target validates"),
             &kanban_domain::CommentText::new("one timeline").expect("the text validates"),
             "migration",
+            None,
         )
         .expect("the comment lands");
     let evidence = SqliteEvidenceStore::new(&database, dir.path().join("attachments"));

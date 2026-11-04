@@ -835,6 +835,13 @@ define_exposed_catalogue! {
         mcp: "list_comments",
         description: "List comments on one timeline entity, oldest first, with cursor paging.",
     },
+    "comment.resolve" => {
+        kind: Command,
+        request: "CommentResolveRequest",
+        response: "CommentResolveRequest",
+        mcp: "resolve_comment",
+        description: "Resolve or clear resolution on a comment thread.",
+    },
     "ruling.record" => {
         kind: Command,
         request: "RulingRecordRequest",
@@ -1144,6 +1151,34 @@ define_exposed_catalogue! {
         response: "IssueMilestonesResponse",
         mcp: "list_milestones",
         description: "List milestones for one project.",
+    },
+    "issue.list_projects" => {
+        kind: Query,
+        request: "IssueProjectsQuery",
+        response: "IssueProjectsResponse",
+        mcp: "list_projects",
+        description: "List registered projects (teams) for operator lookups.",
+    },
+    "issue.create_milestone" => {
+        kind: Command,
+        request: "IssueCreateMilestoneRequest",
+        response: "IssueMilestoneRecord",
+        mcp: "create_milestone",
+        description: "Create a milestone on one project.",
+    },
+    "issue.create_label" => {
+        kind: Command,
+        request: "IssueCreateLabelRequest",
+        response: "IssueLabelRecord",
+        mcp: "create_label",
+        description: "Create a label (and optional group) on one project.",
+    },
+    "issue.update_project_settings" => {
+        kind: Command,
+        request: "IssueUpdateProjectSettingsRequest",
+        response: "IssueProjectSettingsResponse",
+        mcp: "update_project_settings",
+        description: "Update per-project Linear settings such as auto-close sub-issues.",
     },
 }
 

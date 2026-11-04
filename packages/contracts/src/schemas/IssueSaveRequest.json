@@ -24,6 +24,15 @@
   },
   "description": "Create or update one issue (`save_issue`).",
   "properties": {
+    "add_blocked_by": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "add_blocks": {
       "items": {
         "type": "string"
@@ -94,10 +103,8 @@
       "$ref": "#/definitions/MutationContext"
     },
     "parent_id": {
-      "format": "uint64",
-      "minimum": 0.0,
       "type": [
-        "integer",
+        "string",
         "null"
       ]
     },
@@ -115,6 +122,15 @@
       "minimum": 0.0,
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "remove_blocked_by": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
         "null"
       ]
     },

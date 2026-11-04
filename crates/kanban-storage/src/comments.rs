@@ -40,13 +40,20 @@ impl CommentStore for SqliteCommentStore {
         target: &CommentTarget,
         text: &CommentText,
         author: &str,
+        parent_comment_id: Option<u64>,
     ) -> Result<Comment, ApiError> {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         span.execute(
-            "INSERT INTO comments (project_id, entity_kind, entity_id, version, author)
-                 VALUES (?1, ?2, ?3, 1, ?4)",
-            params![project_id.to_string(), target.kind(), target.id(), author],
+            "INSERT INTO comments (project_id, entity_kind, entity_id, version, author, parent_comment_id)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?5)",
+            params![
+                project_id.to_string(),
+                target.kind(),
+                target.id(),
+                author,
+                parent_comment_id.map(|value| value as i64)
+            ],
         )
         .map_err(internal)?;
         let id = CommentId::new(
@@ -159,6 +166,27 @@ impl CommentStore for SqliteCommentStore {
         Ok((record_of(&comment), revisions))
     }
 
+    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let changed = if resolved {
+            conn.execute(
+                "UPDATE comments SET resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+                params![id.value() as i64],
+            )
+            .map_err(internal)?
+        } else {
+            conn.execute(
+                "UPDATE comments SET resolved_at = NULL WHERE id = ?1",
+                params![id.value() as i64],
+            )
+            .map_err(internal)?
+        };
+        if changed == 0 {
+            return Err(ApiError::not_found(&format!("comment {}", id.value())));
+        }
+        Ok(())
+    }
+
     fn list_for_target(
         &self,
         target: &CommentTarget,
@@ -174,7 +202,9 @@ impl CommentStore for SqliteCommentStore {
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
                         (SELECT recorded_at FROM comment_revisions
                          WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        COALESCE(c.author, '')
+                        COALESCE(c.author, ''),
+                        c.parent_comment_id,
+                        c.resolved_at
                  FROM comments AS c
                  WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
                  ORDER BY c.id ASC
@@ -190,6 +220,8 @@ impl CommentStore for SqliteCommentStore {
                 let body: String = row.get(3)?;
                 let latest_at: String = row.get(4)?;
                 let author: Option<String> = row.get(5)?;
+                let parent_comment_id: Option<i64> = row.get(6)?;
+                let resolved_at: Option<String> = row.get(7)?;
                 Ok((
                     id,
                     version,
@@ -197,13 +229,23 @@ impl CommentStore for SqliteCommentStore {
                     body,
                     latest_at,
                     author.unwrap_or_default(),
+                    parent_comment_id,
+                    resolved_at,
                 ))
             })
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let mut items = Vec::new();
         for row in rows {
-            let (id, version, created_at, body, latest_at, author) =
-                row.map_err(|error| ApiError::internal(&error.to_string()))?;
+            let (
+                id,
+                version,
+                created_at,
+                body,
+                latest_at,
+                author,
+                parent_comment_id,
+                resolved_at,
+            ) = row.map_err(|error| ApiError::internal(&error.to_string()))?;
             let edited_at = (version > 1).then_some(latest_at);
             items.push(CommentListItem {
                 id: id.unsigned_abs(),
@@ -211,6 +253,8 @@ impl CommentStore for SqliteCommentStore {
                 body,
                 created_at,
                 edited_at,
+                parent_comment_id: parent_comment_id.map(|value| value as u64),
+                resolved_at,
             });
         }
         let next_cursor = if items.len() > limit as usize {
@@ -422,7 +466,7 @@ mod revision_store {
         let (_dir, database, store) = store();
 
         let comment = store
-            .create(1, &target(), &text("first thought"), "test")
+            .create(1, &target(), &text("first thought"), "test", None)
             .expect("the create lands");
 
         assert_eq!(comment.id().value(), 1);
@@ -445,7 +489,7 @@ mod revision_store {
     fn editing_appends_a_revision_and_updates_current_text() {
         let (_dir, database, store) = store();
         let mut comment = store
-            .create(1, &target(), &text("first thought"), "test")
+            .create(1, &target(), &text("first thought"), "test", None)
             .expect("the create lands");
         comment
             .edit(text("corrected thought"))
@@ -472,7 +516,7 @@ mod revision_store {
     fn revisions_query_returns_history_in_order() {
         let (_dir, _database, store) = store();
         let mut comment = store
-            .create(1, &target(), &text("first thought"), "test")
+            .create(1, &target(), &text("first thought"), "test", None)
             .expect("the create lands");
         comment
             .edit(text("second thought"))
@@ -496,7 +540,7 @@ mod revision_store {
     fn updating_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create(1, &target(), &text("first thought"), "test")
+            .create(1, &target(), &text("first thought"), "test", None)
             .expect("the create lands");
 
         let outcome = database
@@ -514,7 +558,7 @@ mod revision_store {
     fn deleting_comment_revisions_fails() {
         let (_dir, database, store) = store();
         store
-            .create(1, &target(), &text("first thought"), "test")
+            .create(1, &target(), &text("first thought"), "test", None)
             .expect("the create lands");
 
         let outcome = database

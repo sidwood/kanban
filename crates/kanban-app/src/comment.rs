@@ -7,10 +7,10 @@ use std::sync::Arc;
 use kanban_domain::{Comment, CommentId, CommentTarget, CommentText, TextError};
 use kanban_dto::{
     ApiError, CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
-    CommentListResponse, CommentRecord, CommentRevisionsQuery, CommentRevisionsResponse,
-    LiveEventName, TimelineEntityKind, TimelineEntityRef,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionsQuery,
+    CommentRevisionsResponse, LiveEventName, TimelineEntityKind, TimelineEntityRef,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
@@ -27,7 +27,10 @@ pub trait CommentStore: Send + Sync {
         target: &CommentTarget,
         text: &CommentText,
         author: &str,
+        parent_comment_id: Option<u64>,
     ) -> Result<Comment, ApiError>;
+
+    fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<(), ApiError>;
 
     /// Load one Comment, if it exists.
     fn find(&self, id: CommentId) -> Result<Option<Comment>, ApiError>;
@@ -77,7 +80,11 @@ impl Core {
                 store: store.clone(),
             }),
         )?;
-        self.register_query("comment.list", Arc::new(ListCommentsQuery { store }))?;
+        self.register_query("comment.list", Arc::new(ListCommentsQuery { store: store.clone() }))?;
+        self.register_command(
+            "comment.resolve",
+            Arc::new(ResolveComment { store }),
+        )?;
         Ok(())
     }
 }
@@ -105,11 +112,15 @@ impl CommandHandler for CreateComment {
     ) -> Result<Value, ApiError> {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
         let project = resolve_project(self.projects.as_ref(), request.project_id)?;
-        let text = parse_text(&request.text)?;
+        let text = parse_stored_text(&request.text)?;
         let target = parse_target(&request.target)?;
-        let comment = self
-            .store
-            .create(project.id().value(), &target, &text, &request.author)?;
+        let comment = self.store.create(
+            project.id().value(),
+            &target,
+            &text,
+            &request.author,
+            request.parent_comment_id,
+        )?;
         announce(effects, LiveEventName::CommentCreated, &comment);
         encode_record(&comment)
     }
@@ -192,6 +203,34 @@ impl QueryHandler for ListCommentsQuery {
     }
 }
 
+struct ResolveComment {
+    store: Arc<dyn CommentStore>,
+}
+
+impl CommandHandler for ResolveComment {
+    fn parse(&self, payload: &Value) -> Result<ParsedCommand, ApiError> {
+        parse_payload::<CommentResolveRequest>(payload)?;
+        ParsedCommand::lift("comment", payload)
+    }
+
+    fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
+        let request: CommentResolveRequest = parse_payload(&command.payload)?;
+        let comment = load(&self.store, request.comment_id)?;
+        Ok(comment.version())
+    }
+
+    fn apply(
+        &self,
+        command: &ParsedCommand,
+        _effects: &dyn CommandEffects,
+    ) -> Result<Value, ApiError> {
+        let request: CommentResolveRequest = parse_payload(&command.payload)?;
+        self.store
+            .set_resolved(CommentId::new(request.comment_id), request.resolved)?;
+        Ok(json!({ "comment_id": request.comment_id, "resolved": request.resolved }))
+    }
+}
+
 fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
     store
         .find(CommentId::new(id))?
@@ -200,6 +239,11 @@ fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
 
 fn parse_text(raw: &str) -> Result<CommentText, ApiError> {
     CommentText::new(raw).map_err(|error: TextError| ApiError::invalid_request(&error.to_string()))
+}
+
+fn parse_stored_text(raw: &str) -> Result<CommentText, ApiError> {
+    CommentText::new_stored(raw)
+        .map_err(|error: TextError| ApiError::invalid_request(&error.to_string()))
 }
 
 fn parse_target(target: &TimelineEntityRef) -> Result<CommentTarget, ApiError> {
@@ -275,6 +319,7 @@ mod comments {
             target: &CommentTarget,
             text: &CommentText,
             _author: &str,
+            _parent_comment_id: Option<u64>,
         ) -> Result<Comment, kanban_dto::ApiError> {
             let mut state = self.state.lock().expect("the memory store lock is sound");
             state.next_id += 1;
@@ -342,6 +387,8 @@ mod comments {
                                 .cloned()
                                 .unwrap_or_else(|| "2026-09-04T12:00:00Z".to_owned())
                         }),
+                        parent_comment_id: None,
+                        resolved_at: None,
                     }
                 })
                 .collect();
@@ -353,6 +400,14 @@ mod comments {
             };
             items.truncate(limit as usize);
             Ok((items, next_cursor))
+        }
+
+        fn set_resolved(
+            &self,
+            _id: CommentId,
+            _resolved: bool,
+        ) -> Result<(), kanban_dto::ApiError> {
+            Ok(())
         }
 
         fn revisions(

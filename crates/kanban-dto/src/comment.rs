@@ -49,6 +49,8 @@ pub struct CommentCreateRequest {
     /// Optional author label stored on the comment row.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub author: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_comment_id: Option<u64>,
 }
 
 /// Request payload for the `comment.edit` command.
@@ -60,6 +62,15 @@ pub struct CommentEditRequest {
     pub comment_id: u64,
     /// The revised text; blank text is refused.
     pub text: String,
+}
+
+/// Request payload for the `comment.resolve` command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommentResolveRequest {
+    pub mutation: super::MutationContext,
+    pub comment_id: u64,
+    pub resolved: bool,
 }
 
 /// Request payload for the `comment.revisions` query.
@@ -102,6 +113,10 @@ pub struct CommentListItem {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_comment_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 /// Response payload for the `comment.list` query.

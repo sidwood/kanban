@@ -334,6 +334,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "comment author",
         sql: include_str!("../migrations/0056_comment_author.sql"),
     },
+    Migration {
+        version: 57,
+        name: "project auto close setting",
+        sql: include_str!("../migrations/0057_project_auto_close_setting.sql"),
+    },
+    Migration {
+        version: 58,
+        name: "comment thread",
+        sql: include_str!("../migrations/0058_comment_thread.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -487,6 +497,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
         )?;
     } else if migration.version == 56 {
         crate::linear_issue_migration::apply_comment_author_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 58 {
+        crate::linear_issue_migration::apply_comment_thread_columns_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -1983,6 +2001,14 @@ mod tests {
                 PendingMigration {
                     version: 56,
                     name: "comment author",
+                },
+                PendingMigration {
+                    version: 57,
+                    name: "project auto close setting",
+                },
+                PendingMigration {
+                    version: 58,
+                    name: "comment thread",
                 },
             ]]
         );

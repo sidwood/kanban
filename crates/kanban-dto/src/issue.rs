@@ -45,9 +45,9 @@ pub struct IssueSaveRequest {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::nullable_patch::deserialize_u64_patch"
+        deserialize_with = "crate::nullable_patch::deserialize_parent_patch"
     )]
-    pub parent_id: Option<Option<u64>>,
+    pub parent_id: Option<Option<String>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -64,6 +64,10 @@ pub struct IssueSaveRequest {
     pub add_related: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_related: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_blocked_by: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_blocked_by: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -106,6 +110,13 @@ pub struct IssueChildRecord {
     pub sort_order: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueSubIssueProgress {
+    pub done: u32,
+    pub total: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueRecord {
@@ -129,7 +140,15 @@ pub struct IssueRecord {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canceled_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_issues: Option<IssueSubIssueProgress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_of: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +172,12 @@ pub struct IssueListQuery {
     pub updated_since: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
     #[serde(default)]
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +219,8 @@ pub struct IssueLabelRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     #[serde(default)]
+    pub group_single_select: bool,
+    #[serde(default)]
     pub retired: bool,
 }
 
@@ -216,6 +243,65 @@ pub struct IssueMilestoneRecord {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_date: Option<String>,
+    pub issues_total: u32,
+    pub issues_done: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueProjectRecord {
+    pub id: u64,
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueProjectsQuery {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueProjectsResponse {
+    pub projects: Vec<IssueProjectRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueCreateMilestoneRequest {
+    pub mutation: MutationContext,
+    pub project_id: u64,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_date: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueCreateLabelRequest {
+    pub mutation: MutationContext,
+    pub project_id: u64,
+    pub name: String,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub group_single_select: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueUpdateProjectSettingsRequest {
+    pub mutation: MutationContext,
+    pub project_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_close_sub_issues: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IssueProjectSettingsResponse {
+    pub project_id: u64,
+    pub auto_close_sub_issues: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

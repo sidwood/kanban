@@ -466,9 +466,23 @@ fn sub_issue_sort_order_is_respected_when_listing_children() {
     assert_eq!(children[1].identifier, first.identifier);
 }
 
+fn enable_auto_close(session: &OperatorSession, project_id: u64) {
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({
+                "mutation": mutation(0, "enable-auto-close"),
+                "project_id": project_id,
+                "auto_close_sub_issues": true,
+            }),
+        )
+        .expect("enable auto-close");
+}
+
 #[test]
 fn auto_close_parent_when_all_sub_issues_complete() {
     let (session, database_path, _dir) = session_with_path();
+    enable_auto_close(&session, 1);
     let parent = save_issue(
         &session,
         0,
@@ -530,6 +544,7 @@ fn auto_close_parent_when_all_sub_issues_complete() {
 #[test]
 fn auto_close_skips_parent_already_terminal() {
     let (session, database_path, _dir) = session_with_path();
+    enable_auto_close(&session, 1);
     let parent = save_issue(
         &session,
         0,

@@ -84,7 +84,7 @@ impl IssueKey {
 
     pub fn parse(identifier: &str) -> Option<Self> {
         let (code, number) = identifier.rsplit_once('-')?;
-        let code = ProjectCode::new(code).ok()?;
+        let code = ProjectCode::new(&code.to_ascii_uppercase()).ok()?;
         let number = TicketNumber::new(number.parse().ok()?).ok()?;
         Some(Self { code, number })
     }
@@ -112,6 +112,19 @@ impl IssueStateTimestamps {
                 self.canceled_at = Some(at.to_owned());
             }
             WorkflowStateType::Backlog | WorkflowStateType::Unstarted => {}
+        }
+    }
+
+    /// Clear terminal timestamps when an issue reopens from completed/canceled.
+    pub fn clear_terminal_on_reopen(&mut self, to_state: WorkflowStateType) {
+        if matches!(
+            to_state,
+            WorkflowStateType::Started
+                | WorkflowStateType::Backlog
+                | WorkflowStateType::Unstarted
+        ) {
+            self.completed_at = None;
+            self.canceled_at = None;
         }
     }
 }

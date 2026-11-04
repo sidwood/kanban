@@ -510,6 +510,34 @@ pub(crate) fn apply_linear_issue_relaxation(conn: &Connection) -> rusqlite::Resu
     backfill_issue_descriptions(conn)?;
     preserve_legacy_external_blockers(conn)?;
     backfill_issue_state_history_from_timeline(conn)?;
+    dedupe_issue_state_history(conn)?;
+    backfill_ticket_updated_at_from_timeline(conn)?;
+    Ok(())
+}
+
+fn dedupe_issue_state_history(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM issue_state_history
+         WHERE rowid NOT IN (
+             SELECT MIN(rowid)
+             FROM issue_state_history
+             GROUP BY ticket_id, workflow_state_id, started_at, COALESCE(ended_at, '')
+         )",
+        [],
+    )?;
+    Ok(())
+}
+
+fn backfill_ticket_updated_at_from_timeline(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE tickets
+         SET updated_at = COALESCE(
+             (SELECT MAX(recorded_at) FROM timeline_events
+              WHERE entity_kind = 'ticket' AND entity_id = CAST(tickets.id AS TEXT)),
+             updated_at
+         )",
+        [],
+    )?;
     Ok(())
 }
 
@@ -783,6 +811,21 @@ pub(crate) fn apply_duplicate_ticket_state(conn: &Connection) -> rusqlite::Resul
         "../migrations/0055_duplicate_ticket_state.sql"
     ))?;
     Ok(())
+}
+
+pub(crate) fn apply_comment_thread_columns(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "comments",
+        "parent_comment_id",
+        "parent_comment_id INTEGER REFERENCES comments (id)",
+    )?;
+    add_column(conn, "comments", "resolved_at", "resolved_at TEXT")?;
+    Ok(())
+}
+
+pub(crate) fn apply_comment_thread_columns_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_comment_thread_columns(span)
 }
 
 /// Adds comment authorship and backfills from timeline JSON where present.

@@ -188,6 +188,7 @@ export type CloneRemovedRecord = {
 export type CommentCreateRequest = {
   author?: string;
   mutation: MutationContext;
+  parent_comment_id?: number | null;
   project_id: number;
   target: TimelineEntityRef;
   text: string;
@@ -203,6 +204,8 @@ export type CommentListItem = {
   created_at: string;
   edited_at?: string | null;
   id: number;
+  parent_comment_id?: number | null;
+  resolved_at?: string | null;
 };
 export type CommentListQuery = {
   cursor?: string | null;
@@ -219,6 +222,11 @@ export type CommentRecord = {
   target: TimelineEntityRef;
   text: string;
   version: number;
+};
+export type CommentResolveRequest = {
+  comment_id: number;
+  mutation: MutationContext;
+  resolved: boolean;
 };
 export type CommentRevisionRecord = {
   recorded_at: string;
@@ -572,12 +580,27 @@ export type IssueChildRecord = {
   state: string;
   title: string;
 };
+export type IssueCreateLabelRequest = {
+  color: string;
+  group?: string | null;
+  group_single_select?: boolean;
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+};
+export type IssueCreateMilestoneRequest = {
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+  target_date?: string | null;
+};
 export type IssueGetQuery = {
   identifier: string;
 };
 export type IssueLabelRecord = {
   color: string;
   group?: string | null;
+  group_single_select?: boolean;
   name: string;
   retired?: boolean;
 };
@@ -588,13 +611,16 @@ export type IssueLabelsResponse = {
   labels: IssueLabelRecord[];
 };
 export type IssueListQuery = {
+  assignee?: string | null;
   cursor?: string | null;
   label?: string | null;
   limit?: number;
+  milestone_id?: number | null;
   parent_id?: number | null;
   project_id?: number | null;
   query?: string | null;
   state?: string | null;
+  team_id?: number | null;
   updated_since?: string | null;
 };
 export type IssueListResponse = {
@@ -603,6 +629,8 @@ export type IssueListResponse = {
 };
 export type IssueMilestoneRecord = {
   id: number;
+  issues_done: number;
+  issues_total: number;
   name: string;
   target_date?: string | null;
 };
@@ -612,8 +640,23 @@ export type IssueMilestonesQuery = {
 export type IssueMilestonesResponse = {
   milestones: IssueMilestoneRecord[];
 };
+export type IssueProjectRecord = {
+  code: string;
+  id: number;
+  name: string;
+};
+export type IssueProjectSettingsResponse = {
+  auto_close_sub_issues: boolean;
+  project_id: number;
+};
+export type IssueProjectsQuery = Record<string, never>;
+export type IssueProjectsResponse = {
+  projects: IssueProjectRecord[];
+};
 export type IssueRecord = {
+  canceled_at?: string | null;
   children?: IssueChildRecord[] | null;
+  completed_at?: string | null;
   created_at: string;
   description: string;
   due_date?: string | null;
@@ -626,9 +669,11 @@ export type IssueRecord = {
   priority: number;
   project_id: number;
   relations: IssueRelationRecord[];
+  started_at?: string | null;
   state: string;
   state_history: IssueStateHistoryRecord[];
   state_type: string;
+  sub_issues?: IssueSubIssueProgress | null;
   ticket_id: number;
   title: string;
   updated_at: string;
@@ -640,6 +685,7 @@ export type IssueRelationRecord = {
   kind: string;
 };
 export type IssueSaveRequest = {
+  add_blocked_by?: string[] | null;
   add_blocks?: string[] | null;
   add_labels?: string[] | null;
   add_related?: string[] | null;
@@ -650,9 +696,10 @@ export type IssueSaveRequest = {
   identifier?: string | null;
   milestone_id?: number | null;
   mutation: MutationContext;
-  parent_id?: number | null;
+  parent_id?: string | null;
   priority?: number | null;
   project_id?: number | null;
+  remove_blocked_by?: string[] | null;
   remove_blocks?: string[] | null;
   remove_labels?: string[] | null;
   remove_related?: string[] | null;
@@ -670,6 +717,15 @@ export type IssueStateHistoryRecord = {
   started_at: string;
   state: string;
   state_type: string;
+};
+export type IssueSubIssueProgress = {
+  done: number;
+  total: number;
+};
+export type IssueUpdateProjectSettingsRequest = {
+  auto_close_sub_issues?: boolean | null;
+  mutation: MutationContext;
+  project_id: number;
 };
 export type IssueWorkflowStateRecord = {
   name: string;

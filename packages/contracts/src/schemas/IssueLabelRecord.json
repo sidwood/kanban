@@ -11,6 +11,10 @@
         "null"
       ]
     },
+    "group_single_select": {
+      "default": false,
+      "type": "boolean"
+    },
     "name": {
       "type": "string"
     },

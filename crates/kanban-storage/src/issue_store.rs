@@ -48,6 +48,8 @@ impl SqliteIssueStore {
             params![ticket_id, description],
         )
         .map_err(internal)?;
+        drop(conn);
+        self.sync_description_mentions(ticket_id, description)?;
         Ok(())
     }
 
@@ -60,16 +62,44 @@ impl SqliteIssueStore {
                 |row| row.get(0),
             )
             .map_err(not_found_ticket)?;
-        let merged = format!("{current}{patch}");
+        let merged = if let Ok(value) = serde_json::from_str::<serde_json::Value>(patch) {
+            let find = value
+                .get("find")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ApiError::invalid_request("description_patch.find is required"))?;
+            let replace = value
+                .get("replace")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ApiError::invalid_request("description_patch.replace is required")
+                })?;
+            if !current.contains(find) {
+                return Err(ApiError::invalid_request(
+                    "description_patch.find did not match the current description",
+                ));
+            }
+            current.replacen(find, replace, 1)
+        } else {
+            return Err(ApiError::invalid_request(
+                "description_patch must be a JSON object with find and replace",
+            ));
+        };
         conn.execute(
             "UPDATE tickets SET description = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
             params![ticket_id, &merged],
         )
         .map_err(internal)?;
+        drop(conn);
+        self.sync_description_mentions(ticket_id, &merged)?;
         Ok(merged)
     }
 
     pub fn set_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError> {
+        if priority > 4 {
+            return Err(ApiError::invalid_request(
+                "priority must be between 0 and 4",
+            ));
+        }
         let conn = self.lock();
         conn.execute(
             "UPDATE tickets SET linear_priority = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 WHERE id = ?1",
@@ -173,6 +203,7 @@ impl SqliteIssueStore {
                 .flatten(),
         };
         stamps.stamp_entry(to_state.state_type, &now);
+        stamps.clear_terminal_on_reopen(to_state.state_type);
         let (created_at, prior_workflow): (String, Option<i64>) = span
             .query_row(
                 "SELECT created_at, workflow_state_id FROM tickets WHERE id = ?1",
@@ -270,6 +301,18 @@ impl SqliteIssueStore {
                 |row| row.get(0),
             )
             .map_err(not_found_ticket)?;
+        let enabled: i64 = conn
+            .query_row(
+                "SELECT auto_close_sub_issues FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        drop(conn);
+        if enabled == 0 {
+            return Ok(());
+        }
+        let conn = self.lock();
         let parent_type: Option<String> = conn
             .query_row(
                 "SELECT s.type FROM tickets AS t
@@ -303,9 +346,12 @@ impl SqliteIssueStore {
             .query_row(
                 "SELECT COUNT(*)
                  FROM tickets AS t
-                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
                  WHERE t.parent_ticket_id = ?1
-                   AND s.type NOT IN ('completed', 'canceled', 'duplicate')",
+                   AND (
+                     t.workflow_state_id IS NULL
+                     OR s.type NOT IN ('completed', 'canceled', 'duplicate')
+                   )",
                 [parent_id],
                 |row| row.get(0),
             )
@@ -527,7 +573,7 @@ impl SqliteIssueStore {
         let conn = self.lock();
         let mut statement = conn
             .prepare(
-                "SELECT l.name, l.color, g.name, l.retired_at IS NOT NULL
+                "SELECT l.name, l.color, g.name, COALESCE(g.single_select, 0), l.retired_at IS NOT NULL
                  FROM issue_labels AS l
                  LEFT JOIN issue_label_groups AS g ON g.id = l.group_id
                  WHERE l.project_id = ?1
@@ -540,7 +586,8 @@ impl SqliteIssueStore {
                     name: row.get(0)?,
                     color: row.get(1)?,
                     group: row.get(2)?,
-                    retired: row.get(3)?,
+                    group_single_select: row.get::<_, i64>(3)? != 0,
+                    retired: row.get(4)?,
                 })
             })
             .map_err(internal)?
@@ -555,8 +602,14 @@ impl SqliteIssueStore {
         let conn = self.lock();
         let mut statement = conn
             .prepare(
-                "SELECT id, name, target_date FROM issue_milestones
-                 WHERE project_id = ?1 ORDER BY sort_order, name",
+                "SELECT m.id, m.name, m.target_date,
+                        (SELECT COUNT(*) FROM tickets AS t WHERE t.milestone_id = m.id),
+                        (SELECT COUNT(*) FROM tickets AS t
+                         JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                         WHERE t.milestone_id = m.id
+                           AND s.type IN ('completed', 'canceled', 'duplicate'))
+                 FROM issue_milestones AS m
+                 WHERE m.project_id = ?1 ORDER BY m.sort_order, m.name",
             )
             .map_err(internal)?;
         statement
@@ -565,6 +618,8 @@ impl SqliteIssueStore {
                     id: row.get::<_, i64>(0)? as u64,
                     name: row.get(1)?,
                     target_date: row.get(2)?,
+                    issues_total: row.get::<_, i64>(3)? as u32,
+                    issues_done: row.get::<_, i64>(4)? as u32,
                 })
             })
             .map_err(internal)?
@@ -584,7 +639,7 @@ impl SqliteIssueStore {
     pub fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         let conn = self.lock();
         conn.query_row(
-            "SELECT description, linear_priority, COALESCE(due_date, '2099-12-31'), milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id
+            "SELECT description, linear_priority, COALESCE(due_date, '2099-12-31'), milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id, started_at, completed_at, canceled_at
              FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| {
@@ -598,6 +653,9 @@ impl SqliteIssueStore {
                     version: row.get::<_, i64>(6)? as u64,
                     parent_ticket_id: row.get(7)?,
                     duplicate_of_ticket_id: row.get(8)?,
+                    started_at: row.get(9)?,
+                    completed_at: row.get(10)?,
+                    canceled_at: row.get(11)?,
                 })
             },
         )
@@ -701,6 +759,25 @@ impl SqliteIssueStore {
                 .map_err(internal)?;
             if exists.is_none() {
                 return Err(ApiError::not_found("parent issue"));
+            }
+            let child_project: i64 = conn
+                .query_row(
+                    "SELECT project_id FROM tickets WHERE id = ?1",
+                    [ticket_id],
+                    |row| row.get(0),
+                )
+                .map_err(not_found_ticket)?;
+            let parent_project: i64 = conn
+                .query_row(
+                    "SELECT project_id FROM tickets WHERE id = ?1",
+                    [parent_id],
+                    |row| row.get(0),
+                )
+                .map_err(not_found_ticket)?;
+            if child_project != parent_project {
+                return Err(ApiError::invalid_request(
+                    "parent issue must belong to the same project",
+                ));
             }
             drop(conn);
         }
@@ -952,6 +1029,180 @@ impl SqliteIssueStore {
         Ok(())
     }
 
+    pub fn sub_issue_progress(&self, ticket_id: i64) -> Result<(u32, u32), ApiError> {
+        let conn = self.lock();
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        let done: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM tickets AS t
+                 JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.parent_ticket_id = ?1
+                   AND s.type IN ('completed', 'canceled', 'duplicate')",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        Ok((done as u32, total as u32))
+    }
+
+    pub fn add_blocked_by(
+        &self,
+        ticket_id: i64,
+        blocker_identifier: &str,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let Some((_, blocker_id)) =
+            super::linear_issue::resolve_issue_key(&conn, blocker_identifier)
+                .map_err(internal_storage)?
+        else {
+            return Err(ApiError::not_found(blocker_identifier));
+        };
+        drop(conn);
+        if blocker_id == ticket_id {
+            return Err(ApiError::invalid_request(
+                "an issue cannot block itself",
+            ));
+        }
+        let key = self.load_issue_key(ticket_id)?;
+        self.add_relation(blocker_id, &key.display(), "blocks")
+    }
+
+    pub fn remove_blocked_by(
+        &self,
+        ticket_id: i64,
+        blocker_identifier: &str,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let Some((_, blocker_id)) =
+            super::linear_issue::resolve_issue_key(&conn, blocker_identifier)
+                .map_err(internal_storage)?
+        else {
+            return Err(ApiError::not_found(blocker_identifier));
+        };
+        drop(conn);
+        let key = self.load_issue_key(ticket_id)?;
+        self.remove_relation(blocker_id, &key.display(), "blocks")
+    }
+
+    pub fn sync_description_mentions(
+        &self,
+        ticket_id: i64,
+        description: &str,
+    ) -> Result<(), ApiError> {
+        let self_key = self.load_issue_key(ticket_id)?.display();
+        let mut mentioned = Vec::new();
+        for token in description.split_whitespace() {
+            let trimmed = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+            if kanban_domain::IssueKey::parse(trimmed).is_some() {
+                mentioned.push(trimmed.to_owned());
+            }
+        }
+        mentioned.sort();
+        mentioned.dedup();
+        for identifier in mentioned {
+            if identifier.eq_ignore_ascii_case(&self_key) {
+                continue;
+            }
+            let _ = self.add_relation(ticket_id, &identifier, "related");
+        }
+        Ok(())
+    }
+
+    pub fn set_auto_close_sub_issues(&self, project_id: i64, enabled: bool) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let changed = conn
+            .execute(
+                "UPDATE projects SET auto_close_sub_issues = ?2 WHERE id = ?1",
+                params![project_id, i64::from(enabled)],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Err(ApiError::not_found("project"));
+        }
+        Ok(())
+    }
+
+    pub fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        let enabled: i64 = conn
+            .query_row(
+                "SELECT auto_close_sub_issues FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| ApiError::not_found("project"))?;
+        Ok(enabled != 0)
+    }
+
+    pub fn create_milestone(
+        &self,
+        project_id: i64,
+        name: &str,
+        target_date: Option<&str>,
+    ) -> Result<kanban_app::IssueMilestoneRow, ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO issue_milestones (project_id, name, sort_order, target_date)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM issue_milestones WHERE project_id = ?1), ?3)",
+            params![project_id, name, target_date],
+        )
+        .map_err(internal)?;
+        let id = conn.last_insert_rowid() as u64;
+        Ok(kanban_app::IssueMilestoneRow {
+            id,
+            name: name.to_owned(),
+            target_date: target_date.map(str::to_owned),
+            issues_total: 0,
+            issues_done: 0,
+        })
+    }
+
+    pub fn create_label(
+        &self,
+        project_id: i64,
+        name: &str,
+        color: &str,
+        group: Option<&str>,
+        group_single_select: bool,
+    ) -> Result<kanban_app::IssueLabelRow, ApiError> {
+        let conn = self.lock();
+        let group_id = if let Some(group_name) = group {
+            conn.execute(
+                "INSERT OR IGNORE INTO issue_label_groups (project_id, name, single_select)
+                 VALUES (?1, ?2, ?3)",
+                params![project_id, group_name, i64::from(group_single_select)],
+            )
+            .map_err(internal)?;
+            Some(conn.query_row(
+                "SELECT id FROM issue_label_groups WHERE project_id = ?1 AND name = ?2",
+                params![project_id, group_name],
+                |row| row.get::<_, i64>(0),
+            ).map_err(internal)?)
+        } else {
+            None
+        };
+        conn.execute(
+            "INSERT INTO issue_labels (project_id, name, color, group_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![project_id, name, color, group_id],
+        )
+        .map_err(internal)?;
+        Ok(kanban_app::IssueLabelRow {
+            name: name.to_owned(),
+            color: color.to_owned(),
+            group: group.map(str::to_owned),
+            group_single_select,
+            retired: false,
+        })
+    }
+
     pub fn list_relations(&self, ticket_id: i64) -> Result<Vec<IssueRelationRecord>, ApiError> {
         let conn = self.lock();
         let mut statement = conn
@@ -1166,6 +1417,50 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {
         SqliteIssueStore::list_duplicate_identifiers(self, ticket_id)
+    }
+
+    fn sub_issue_progress(&self, ticket_id: i64) -> Result<(u32, u32), ApiError> {
+        SqliteIssueStore::sub_issue_progress(self, ticket_id)
+    }
+
+    fn add_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::add_blocked_by(self, ticket_id, blocker_identifier)
+    }
+
+    fn remove_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::remove_blocked_by(self, ticket_id, blocker_identifier)
+    }
+
+    fn sync_description_mentions(&self, ticket_id: i64, description: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::sync_description_mentions(self, ticket_id, description)
+    }
+
+    fn set_auto_close_sub_issues(&self, project_id: i64, enabled: bool) -> Result<(), ApiError> {
+        SqliteIssueStore::set_auto_close_sub_issues(self, project_id, enabled)
+    }
+
+    fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
+        SqliteIssueStore::auto_close_sub_issues_enabled(self, project_id)
+    }
+
+    fn create_milestone(
+        &self,
+        project_id: i64,
+        name: &str,
+        target_date: Option<&str>,
+    ) -> Result<kanban_app::IssueMilestoneRow, ApiError> {
+        SqliteIssueStore::create_milestone(self, project_id, name, target_date)
+    }
+
+    fn create_label(
+        &self,
+        project_id: i64,
+        name: &str,
+        color: &str,
+        group: Option<&str>,
+        group_single_select: bool,
+    ) -> Result<kanban_app::IssueLabelRow, ApiError> {
+        SqliteIssueStore::create_label(self, project_id, name, color, group, group_single_select)
     }
 }
 

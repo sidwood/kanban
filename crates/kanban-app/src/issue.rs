@@ -21,6 +21,7 @@ pub struct IssueLabelRow {
     pub name: String,
     pub color: String,
     pub group: Option<String>,
+    pub group_single_select: bool,
     pub retired: bool,
 }
 
@@ -30,6 +31,8 @@ pub struct IssueMilestoneRow {
     pub id: u64,
     pub name: String,
     pub target_date: Option<String>,
+    pub issues_total: u32,
+    pub issues_done: u32,
 }
 
 /// Issue-specific columns on the ticket row.
@@ -44,6 +47,9 @@ pub struct IssueTicketFields {
     pub version: u64,
     pub parent_ticket_id: Option<i64>,
     pub duplicate_of_ticket_id: Option<i64>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub canceled_at: Option<String>,
 }
 
 /// Loads and mutates Linear-shaped issue fields beside the Ticket port.
@@ -106,4 +112,24 @@ pub trait IssueStore: Send + Sync {
     ) -> Result<(), ApiError>;
     fn set_sub_issue_sort(&self, ticket_id: i64, sort: f64) -> Result<(), ApiError>;
     fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError>;
+    fn sub_issue_progress(&self, ticket_id: i64) -> Result<(u32, u32), ApiError>;
+    fn add_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError>;
+    fn remove_blocked_by(&self, ticket_id: i64, blocker_identifier: &str) -> Result<(), ApiError>;
+    fn sync_description_mentions(&self, ticket_id: i64, description: &str) -> Result<(), ApiError>;
+    fn set_auto_close_sub_issues(&self, project_id: i64, enabled: bool) -> Result<(), ApiError>;
+    fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError>;
+    fn create_milestone(
+        &self,
+        project_id: i64,
+        name: &str,
+        target_date: Option<&str>,
+    ) -> Result<IssueMilestoneRow, ApiError>;
+    fn create_label(
+        &self,
+        project_id: i64,
+        name: &str,
+        color: &str,
+        group: Option<&str>,
+        group_single_select: bool,
+    ) -> Result<IssueLabelRow, ApiError>;
 }

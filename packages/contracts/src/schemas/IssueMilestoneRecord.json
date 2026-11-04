@@ -7,6 +7,16 @@
       "minimum": 0.0,
       "type": "integer"
     },
+    "issues_done": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "issues_total": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
     "name": {
       "type": "string"
     },
@@ -19,6 +29,8 @@
   },
   "required": [
     "id",
+    "issues_done",
+    "issues_total",
     "name"
   ],
   "title": "IssueMilestoneRecord",

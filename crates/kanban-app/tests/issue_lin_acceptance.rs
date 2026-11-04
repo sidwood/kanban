@@ -616,7 +616,7 @@ fn comment_targets_must_name_an_existing_issue() {
             .call(
                 "comment.create",
                 &json!({
-                    "mutation": mutation(0, &format!("unknown-{raw}")),
+                    "mutation": mutation(0, format!("unknown-{raw}")),
                     "project_id": 1,
                     "target": { "kind": "ticket", "id": raw },
                     "text": "Ghost",
@@ -888,7 +888,7 @@ fn comment_author_is_required_and_kept() {
         ("blank", Some("   ")),
     ] {
         let mut payload = json!({
-            "mutation": mutation(0, &format!("author-{label}")),
+            "mutation": mutation(0, format!("author-{label}")),
             "project_id": 1,
             "target": target,
             "text": "Note",

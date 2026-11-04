@@ -80,16 +80,14 @@ describe('the issue drawer detail', () => {
       updated_at: '2026-01-01T00:00:00Z',
       ...overrides,
     })
-    let loaded = false
     const answers: Array<(issue: IssueRecord) => void> = []
     const shell = harness({
       tickets: [ticket({ id: 7, number: 12, state: 'ready' })],
       override: (name) => {
-        if (name !== 'issue.get') return undefined
-        if (!loaded) {
-          loaded = true
-          return Promise.resolve(record({ labels: ['Queued'] }))
+        if (name === 'issue.list') {
+          return Promise.resolve({ issues: [record({ labels: ['Queued'] })], next_cursor: null })
         }
+        if (name !== 'issue.get') return undefined
         return new Promise<IssueRecord>((resolve) => answers.push(resolve))
       },
     })

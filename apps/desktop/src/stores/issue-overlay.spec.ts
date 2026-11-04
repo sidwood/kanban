@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord } from '@kanban/contracts'
+import type { IssueListResponse, IssueRecord } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
 import { useIssueOverlayStore } from './issue-overlay'
 
@@ -31,9 +31,16 @@ interface Pending {
 
 function wire() {
   const pending: Pending[] = []
+  const reads: Array<{ name: string; request: unknown }> = []
   const transport = {
-    query: (name: string) => {
+    query: (name: string, request: unknown) => {
       if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      reads.push({ name, request })
+      if (name === 'issue.list') {
+        return new Promise<IssueListResponse>((resolve) => {
+          pending.push({ resolve: (record) => resolve({ issues: [record], next_cursor: null }) })
+        })
+      }
       if (name === 'issue.get') {
         return new Promise<IssueRecord>((resolve) => {
           pending.push({ resolve })
@@ -44,13 +51,13 @@ function wire() {
     command: () => Promise.reject(new Error('commands are forbidden here')),
     subscribe: () => () => undefined,
   } as unknown as ShellTransport
-  return { transport, pending }
+  return { transport, pending, reads }
 }
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 function refreshBoard(transport: ShellTransport): Promise<void> {
-  return useIssueOverlayStore().refreshForProject(transport, 1, 'CORE', [7], { 7: 12 })
+  return useIssueOverlayStore().refreshForProject(transport, 1, [7])
 }
 
 function refreshDrawer(transport: ShellTransport): Promise<IssueRecord | null> {
@@ -235,5 +242,118 @@ describe('issue overlay refreshes', () => {
 
     expect(overlay.issueFor(7)?.version).toBe(5)
     expect(overlay.issueFor(7)?.labels).toEqual(['Released'])
+  })
+})
+
+function listing(records: readonly IssueRecord[], pageSize: number) {
+  const reads: Array<{ name: string; request: unknown }> = []
+  const transport = {
+    query: (name: string, request: unknown) => {
+      if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      reads.push({ name, request })
+      if (name !== 'issue.list') return Promise.reject(new Error(`unexpected query ${name}`))
+      const { cursor } = request as { cursor?: string | null }
+      const start = cursor
+        ? records.findIndex((record) => String(record.ticket_id) === cursor) + 1
+        : 0
+      const page = records.slice(start, start + pageSize)
+      const more = start + pageSize < records.length
+      return Promise.resolve({
+        issues: page,
+        next_cursor: more ? String(page[page.length - 1]!.ticket_id) : null,
+      } satisfies IssueListResponse)
+    },
+    command: () => Promise.reject(new Error('commands are forbidden here')),
+    subscribe: () => () => undefined,
+  } as unknown as ShellTransport
+  return { transport, reads }
+}
+
+function held(ticketId: number, number: number): IssueRecord {
+  return issue({ ticket_id: ticketId, identifier: `CORE-${number}`, title: `Issue ${number}` })
+}
+
+describe('issue overlay reads', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('reads a project board through its paged issue list, never one issue at a time', async () => {
+    const { transport, reads } = listing([held(9, 14), held(8, 13), held(7, 12)], 2)
+    const overlay = useIssueOverlayStore()
+
+    await overlay.refreshForProject(transport, 1, [7, 8, 9])
+
+    expect(reads).toEqual([
+      { name: 'issue.list', request: { project_id: 1, limit: 100 } },
+      { name: 'issue.list', request: { project_id: 1, limit: 100, cursor: '8' } },
+    ])
+    expect([7, 8, 9].map((ticketId) => overlay.issueFor(ticketId)?.identifier)).toEqual([
+      'CORE-12',
+      'CORE-13',
+      'CORE-14',
+    ])
+  })
+
+  it('stops reading pages once every card it refreshes has been read', async () => {
+    const { transport, reads } = listing([held(9, 14), held(8, 13), held(7, 12), held(6, 11)], 2)
+    const overlay = useIssueOverlayStore()
+
+    await overlay.refreshForProject(transport, 1, [8, 9])
+
+    expect(reads).toHaveLength(1)
+    expect(overlay.issueFor(9)?.identifier).toBe('CORE-14')
+    expect(overlay.issueFor(8)?.identifier).toBe('CORE-13')
+  })
+
+  it('keeps at most four issue reads on the wire, across concurrent refreshes', async () => {
+    const waiting: Array<() => void> = []
+    const identifiers: string[] = []
+    let onWire = 0
+    let most = 0
+    const transport = {
+      query: (name: string, request: unknown) => {
+        if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+        if (name !== 'issue.get') return Promise.reject(new Error(`unexpected query ${name}`))
+        const { identifier } = request as { identifier: string }
+        identifiers.push(identifier)
+        onWire += 1
+        most = Math.max(most, onWire)
+        const number = Number(identifier.split('-')[1])
+        return new Promise<IssueRecord>((resolve) => {
+          waiting.push(() => {
+            onWire -= 1
+            resolve(held(number - 5, number))
+          })
+        })
+      },
+      command: () => Promise.reject(new Error('commands are forbidden here')),
+      subscribe: () => () => undefined,
+    } as unknown as ShellTransport
+    const overlay = useIssueOverlayStore()
+    const named = [7, 8, 9, 10, 11, 12].map((ticketId) => ({
+      ticketId,
+      projectId: 1,
+      projectCode: 'CORE',
+      number: ticketId + 5,
+    }))
+
+    const event = overlay.refreshIssues(transport, named)
+    const drawer = overlay.refreshOne(transport, 1, 'CORE', 13, 18)
+    await settle()
+    expect(identifiers).toHaveLength(4)
+
+    while (waiting.length > 0) {
+      waiting.shift()!()
+      await settle()
+    }
+    await event
+    await drawer
+
+    expect(most).toBe(4)
+    expect(identifiers).toHaveLength(7)
+    expect([7, 8, 9, 10, 11, 12, 13].map((ticketId) => overlay.issueFor(ticketId)?.ticket_id)).toEqual([
+      7, 8, 9, 10, 11, 12, 13,
+    ])
   })
 })

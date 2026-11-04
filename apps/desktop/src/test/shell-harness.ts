@@ -289,6 +289,38 @@ function admits(filter: BoardFilter, entry: TicketRecord, extras: Partial<BoardG
   return true
 }
 
+function issueOf(found: TicketRecord, identifier: string): IssueRecord {
+  return {
+    identifier,
+    ticket_id: found.id,
+    project_id: found.project_id,
+    title: found.title ?? found.slice ?? 'Untitled',
+    description: found.slice ?? found.title ?? '',
+    priority: found.priority === 'urgent' ? 1 : found.priority === 'high' ? 2 : found.priority === 'low' ? 4 : 3,
+    state: legacyStateToWorkflowName(found.state),
+    state_type: 'backlog',
+    labels: [],
+    relations: [],
+    state_history: [
+      {
+        state: legacyStateToWorkflowName(found.state),
+        state_type: 'backlog',
+        started_at: '2026-01-01T00:00:00Z',
+        ended_at: null,
+      },
+    ],
+    due_date: found.due,
+    milestone_id: null,
+    parent: null,
+    children: [],
+    sub_issues: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    url: `kanban://issue/${identifier}`,
+    version: found.version,
+  }
+}
+
 export function harness(options: HarnessOptions = {}): Harness {
   const tickets: TicketRecord[] = [...(options.tickets ?? [])]
   const extras = options.extras ?? {}
@@ -459,36 +491,26 @@ export function harness(options: HarnessOptions = {}): Harness {
         if (!found) {
           return Promise.reject({ code: 'not_found', message: identifier })
         }
-        const issue: IssueRecord = {
-          identifier,
-          ticket_id: found.id,
-          project_id: found.project_id,
-          title: found.title ?? found.slice ?? 'Untitled',
-          description: found.slice ?? found.title ?? '',
-          priority: found.priority === 'urgent' ? 1 : found.priority === 'high' ? 2 : found.priority === 'low' ? 4 : 3,
-          state: legacyStateToWorkflowName(found.state),
-          state_type: 'backlog',
-          labels: [],
-          relations: [],
-          state_history: [
-            {
-              state: legacyStateToWorkflowName(found.state),
-              state_type: 'backlog',
-              started_at: '2026-01-01T00:00:00Z',
-              ended_at: null,
-            },
-          ],
-          due_date: found.due,
-          milestone_id: null,
-          parent: null,
-          children: [],
-          sub_issues: null,
-          created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z',
-          url: `kanban://issue/${identifier}`,
-          version: found.version,
+        return Promise.resolve(issueOf(found, identifier))
+      }
+      case 'issue.list': {
+        const { project_id, cursor, limit } = request as {
+          project_id: number
+          cursor?: string | null
+          limit?: number
         }
-        return Promise.resolve(issue)
+        const code = project_id === edgeProject.id ? edgeProject.code : coreProject.code
+        const listed = tickets
+          .filter((entry) => entry.project_id === project_id)
+          .sort((left, right) => right.id - left.id)
+        const start = cursor ? listed.findIndex((entry) => String(entry.id) === cursor) + 1 : 0
+        const size = limit || 50
+        const page = listed.slice(start, start + size)
+        return Promise.resolve({
+          issues: page.map((entry) => issueOf(entry, `${code}-${entry.number}`)),
+          next_cursor:
+            start + size < listed.length ? String(page[page.length - 1]!.id) : null,
+        })
       }
       case 'comment.list':
         return Promise.resolve({ comments: [] })

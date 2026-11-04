@@ -166,7 +166,13 @@ function issueRecord(overrides: Partial<IssueRecord> = {}): IssueRecord {
 }
 
 function answeringIssue(answer: () => Promise<unknown>): HarnessOptions['override'] {
-  return (name) => (name === 'issue.get' ? answer() : undefined)
+  return (name) => {
+    if (name === 'issue.get') return answer()
+    if (name === 'issue.list') {
+      return answer().then((record) => ({ issues: [record], next_cursor: null }))
+    }
+    return undefined
+  }
 }
 
 describe('board card due dates', () => {
@@ -272,5 +278,48 @@ describe('board card chips across overlapping refreshes', () => {
     await flushPromises()
 
     expect(chip(wrapper, 'progress', 7).text()).toBe('Sub-issues2/3 done')
+  })
+})
+
+describe('board issue reads', () => {
+  const issueReads = (query: ReturnType<typeof harness>['query'], name: string) =>
+    query.mock.calls.filter(([called]) => called === name).map(([, request]) => request)
+
+  it('reads a twelve-card board once per project, never once per card', async () => {
+    const cards = Array.from({ length: 12 }, (_, index) =>
+      ticket({ id: 101 + index, number: 1 + index, project_id: index < 7 ? 1 : 2 }),
+    )
+    const shell = harness({ tickets: cards })
+    await router.push('/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+    })
+    mountedBoards.push(wrapper)
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid^="kanban-card-"]')).toHaveLength(12)
+    expect(issueReads(shell.query, 'issue.get')).toEqual([])
+    expect(issueReads(shell.query, 'issue.list')).toEqual([
+      { project_id: 1, limit: 100 },
+      { project_id: 2, limit: 100 },
+    ])
+    expect(chip(wrapper, 'lane', 101).text()).toBe('StateReady')
+    expect(chip(wrapper, 'lane', 112).text()).toBe('StateReady')
+  })
+
+  it('reads only the issue a live event names', async () => {
+    const { emit, query, tickets } = await mounted()
+    query.mockClear()
+
+    emit({ sequence: 4, event_type: 'ticket.edited', payload: tickets[0]! })
+    await flushPromises()
+
+    expect(issueReads(query, 'issue.get')).toEqual([{ identifier: 'CORE-12' }])
+    expect(issueReads(query, 'issue.list')).toEqual([])
   })
 })

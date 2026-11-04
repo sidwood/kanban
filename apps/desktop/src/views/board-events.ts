@@ -5,7 +5,7 @@
 // the generated event catalogue, so an event kind added to the schema
 // has no entry here until one is written — the type errors rather
 // than the board silently ignoring it.
-import type { KanbanEventName } from '@kanban/contracts'
+import type { KanbanEventName, KanbanLiveEvent } from '@kanban/contracts'
 
 const REFRESHES_BOARD: Readonly<Record<KanbanEventName, boolean>> = {
   // The Initiative and Project axes the filter offers, and the code
@@ -77,4 +77,26 @@ const REFRESHES_BOARD: Readonly<Record<KanbanEventName, boolean>> = {
 /** Whether this announcement can change what a mounted board shows. */
 export function refreshesBoard(event: KanbanEventName): boolean {
   return REFRESHES_BOARD[event] === true
+}
+
+export function issuesNamedBy(event: KanbanLiveEvent): readonly number[] | null {
+  switch (event.event_type) {
+    case 'ticket.created':
+    case 'ticket.assigned':
+    case 'ticket.state.changed':
+    case 'ticket.edited':
+    case 'ticket.spec.moved':
+    case 'ticket.pinned':
+      return [event.payload.id]
+    case 'ticket.review.configured':
+    case 'criterion.binding.changed':
+    case 'dispatch.requested':
+    case 'dispatch.claimed':
+    case 'run.acknowledged':
+      return [event.payload.ticket_id]
+    case 'ticket.graph.approved':
+      return event.payload.tickets
+    default:
+      return null
+  }
 }

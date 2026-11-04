@@ -82,7 +82,7 @@ import {
 } from './board-card'
 import { legacyStateToWorkflowName } from '../stores/issue-workflow'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
-import { refreshesBoard } from './board-events'
+import { issuesNamedBy, refreshesBoard } from './board-events'
 import { linearChipsFor } from './linear-chips'
 import type { CardChip } from './board-chips'
 import {
@@ -197,7 +197,7 @@ onMounted(() => {
   if (!transport) return
   listening.push(
     transport.subscribe((event) => {
-      if (refreshesBoard(event.event_type)) void project_()
+      if (refreshesBoard(event.event_type)) void project_(issuesNamedBy(event))
     }),
     transport.onConnectionChange((state) => {
       if (state === 'connected') void load()
@@ -228,36 +228,36 @@ async function load(): Promise<void> {
 // Re-query the projection under the working filter; the views stand.
 // The store's own request generation settles overlapping reads, so
 // the projection on screen is always the newest answer.
-async function project_(): Promise<void> {
+async function project_(named: readonly number[] | null = null): Promise<void> {
   if (!transport || scope.value === null) return
   await board.refresh(transport, scope.value, owned.value.filter)
-  await refreshIssueOverlay()
+  await refreshIssueOverlay(named)
 }
 
-async function refreshIssueOverlay(): Promise<void> {
+async function refreshIssueOverlay(named: readonly number[] | null): Promise<void> {
   if (!transport || board.cards.length === 0) return
-  const grouped = new Map<
-    number,
-    { code: string; ids: number[]; numbers: Record<number, number> }
-  >()
-  for (const card of board.cards) {
-    const projectId = card.ticket.project_id
-    let bucket = grouped.get(projectId)
-    if (!bucket) {
-      bucket = { code: card.project_code, ids: [], numbers: {} }
-      grouped.set(projectId, bucket)
-    }
-    bucket.ids.push(card.ticket.id)
-    bucket.numbers[card.ticket.id] = card.ticket.number
-  }
-  for (const [projectId, bucket] of grouped) {
-    await issueOverlay.refreshForProject(
+  if (named !== null) {
+    await issueOverlay.refreshIssues(
       transport,
-      projectId,
-      bucket.code,
-      bucket.ids,
-      bucket.numbers,
+      board.cards
+        .filter((card) => named.includes(card.ticket.id))
+        .map((card) => ({
+          ticketId: card.ticket.id,
+          projectId: card.ticket.project_id,
+          projectCode: card.project_code,
+          number: card.ticket.number,
+        })),
     )
+    return
+  }
+  const grouped = new Map<number, number[]>()
+  for (const card of board.cards) {
+    const ids = grouped.get(card.ticket.project_id) ?? []
+    ids.push(card.ticket.id)
+    grouped.set(card.ticket.project_id, ids)
+  }
+  for (const [projectId, ids] of grouped) {
+    await issueOverlay.refreshForProject(transport, projectId, ids)
   }
 }
 

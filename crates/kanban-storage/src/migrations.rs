@@ -349,6 +349,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "issue assignee",
         sql: include_str!("../migrations/0059_issue_assignee.sql"),
     },
+    Migration {
+        version: 60,
+        name: "linear issue fidelity",
+        sql: include_str!("../migrations/0060_linear_issue_fidelity.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -526,6 +531,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
         )?;
     } else if migration.version == 59 {
         crate::linear_issue_migration::apply_issue_assignee_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 60 {
+        crate::linear_issue_migration::apply_linear_issue_fidelity_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -2034,6 +2047,10 @@ mod tests {
                 PendingMigration {
                     version: 59,
                     name: "issue assignee",
+                },
+                PendingMigration {
+                    version: 60,
+                    name: "linear issue fidelity",
                 },
             ]]
         );

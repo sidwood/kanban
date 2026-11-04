@@ -1061,6 +1061,30 @@ pub(crate) fn apply_issue_assignee_column_in_span(span: &WriteSpan<'_>) -> rusql
     apply_issue_assignee_column(span)
 }
 
+/// Repairs the linear issue migration on databases that applied an
+/// earlier build of migrations 53 through 59.
+///
+/// Those builds copied legacy due timestamps in verbatim, left the
+/// terminal stamps empty, dropped the history row of an issue that only
+/// revisited its current state, and created the Severity and Mode label
+/// groups multi-select. The repair reuses the migration's own rules, so
+/// a database this build already migrated is left unchanged and a
+/// repeated run changes nothing.
+pub(crate) fn apply_linear_issue_fidelity(conn: &Connection) -> rusqlite::Result<()> {
+    normalise_legacy_due_dates(conn)?;
+    ensure_current_state_history_row(conn)?;
+    backfill_lifecycle_timestamps_from_history(conn)?;
+    conn.execute_batch(
+        "UPDATE issue_label_groups
+         SET single_select = 1
+         WHERE name IN ('Severity', 'Mode');",
+    )
+}
+
+pub(crate) fn apply_linear_issue_fidelity_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_linear_issue_fidelity(span)
+}
+
 pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     apply_linear_issue_relaxation(span)
 }
@@ -1323,6 +1347,70 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
+    }
+
+    /// A database that applied an earlier build of the linear issue
+    /// migrations: due dates carry legacy timestamps, terminal stamps
+    /// were never backfilled, the history row for an issue that only
+    /// revisited its current state collapsed away, and the Severity and
+    /// Mode groups were created multi-select.
+    fn earlier_build_database() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_task(
+                &conn,
+                1,
+                "active",
+                Some("2026-11-15T17:00:00.000Z"),
+                "2026-11-03T21:38:37.985Z",
+            );
+            seed_legacy_transition(&conn, 1, "draft", "active", "2026-11-03T21:39:55.127Z");
+
+            seed_legacy_task(&conn, 2, "done", None, "2026-11-03T21:38:37.981Z");
+            seed_legacy_transition(&conn, 2, "draft", "ready", "2026-11-03T21:38:46.601Z");
+            seed_legacy_transition(&conn, 2, "ready", "active", "2026-11-03T21:38:50.957Z");
+            seed_legacy_transition(&conn, 2, "active", "landing", "2026-11-03T21:39:00.402Z");
+            seed_legacy_transition(&conn, 2, "landing", "done", "2026-11-03T21:39:00.405Z");
+
+            seed_legacy_bug(&conn, 3, "cancelled", None, "2026-11-03T21:38:37.996Z");
+            seed_legacy_transition(&conn, 3, "draft", "cancelled", "2026-11-03T21:39:55.119Z");
+
+            seed_legacy_bug(
+                &conn,
+                4,
+                "draft",
+                Some("critical"),
+                "2026-11-03T21:38:37.997Z",
+            );
+            seed_legacy_transition(&conn, 4, "draft", "draft", "2026-11-03T21:40:21.545Z");
+
+            seed_legacy_task(&conn, 5, "active", None, "2026-11-03T21:38:37.985Z");
+            conn.execute(
+                "UPDATE tickets SET mode = 'agent', subtype = 'investigative' WHERE id = 5",
+                [],
+            )
+            .unwrap();
+            seed_legacy_transition(&conn, 5, "draft", "active", "2026-11-03T21:39:55.127Z");
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        database
+            .connection()
+            .execute_batch(
+                "UPDATE tickets SET due_date = '2026-11-15T17:00:00.000Z' WHERE id = 1;
+                 UPDATE tickets SET completed_at = NULL, canceled_at = NULL;
+                 DELETE FROM issue_state_history WHERE ticket_id = 4;
+                 UPDATE issue_label_groups SET single_select = 0
+                 WHERE name IN ('Severity', 'Mode');
+                 DELETE FROM schema_migrations WHERE version = 60;",
+            )
+            .unwrap();
+        (dir, database)
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -1737,6 +1825,99 @@ mod tests {
             ],
             "an issue carries at most one severity and one mode, like its type"
         );
+    }
+
+    #[test]
+    fn repair_migration_converts_earlier_build_datetime_due_dates() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+        assert_eq!(migrated_due_date(&database.connection(), 1), "2026-11-15");
+    }
+
+    #[test]
+    fn repair_migration_backfills_earlier_build_terminal_stamps() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 2);
+        assert_eq!(completed.as_deref(), Some("2026-11-03T21:39:00.405Z"));
+        assert_eq!(canceled, None);
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 3);
+        assert_eq!(completed, None);
+        assert_eq!(canceled.as_deref(), Some("2026-11-03T21:39:55.119Z"));
+        let (_, completed, canceled) = migrated_lifecycle_timestamps(&conn, 1);
+        assert_eq!(completed, None, "an active issue is not terminal");
+        assert_eq!(canceled, None);
+    }
+
+    #[test]
+    fn repair_migration_restores_earlier_build_current_state_rows() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+        assert_eq!(
+            migrated_history(&database.connection(), 4),
+            vec![(
+                "Draft".to_owned(),
+                "2026-11-03T21:38:37.997Z".to_owned(),
+                None
+            )]
+        );
+    }
+
+    #[test]
+    fn repair_migration_makes_earlier_build_groups_single_select() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare("SELECT name, single_select FROM issue_label_groups ORDER BY name")
+            .unwrap();
+        let groups = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            groups,
+            vec![
+                ("Mode".to_owned(), 1),
+                ("Severity".to_owned(), 1),
+                ("Subtype".to_owned(), 0),
+                ("Type".to_owned(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn repair_migration_reapplies_are_idempotent() {
+        let (_dir, mut database) = earlier_build_database();
+        database.migrate(&AllowAllMigrations).unwrap();
+        {
+            let conn = database.connection();
+            apply_linear_issue_fidelity(&conn).unwrap();
+            apply_linear_issue_fidelity(&conn).unwrap();
+        }
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let conn = database.connection();
+        assert_eq!(migrated_due_date(&conn, 1), "2026-11-15");
+        assert_eq!(
+            migrated_lifecycle_timestamps(&conn, 2).1.as_deref(),
+            Some("2026-11-03T21:39:00.405Z")
+        );
+        assert_eq!(migrated_history(&conn, 4).len(), 1);
+        let mode_select: i64 = conn
+            .query_row(
+                "SELECT single_select FROM issue_label_groups WHERE name = 'Mode'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mode_select, 1);
     }
 
     #[test]

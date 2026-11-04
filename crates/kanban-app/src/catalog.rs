@@ -1115,7 +1115,7 @@ define_exposed_catalogue! {
         request: "IssueSaveRequest",
         response: "IssueSaveResponse",
         mcp: "save_issue",
-        description: "Create or update one Linear-shaped issue and return its key and deep link.",
+        description: "Create or update one Linear-shaped issue and return its key and deep link. Label names in add_labels and remove_labels match ignoring letter case.",
     },
     "issue.get" => {
         kind: Query,
@@ -1164,21 +1164,21 @@ define_exposed_catalogue! {
         request: "IssueCreateMilestoneRequest",
         response: "IssueMilestoneRecord",
         mcp: "create_milestone",
-        description: "Create a milestone on one project.",
+        description: "Create a milestone on one project. Milestone names are unique within a project ignoring letter case.",
     },
     "issue.create_label" => {
         kind: Command,
         request: "IssueCreateLabelRequest",
         response: "IssueLabelRecord",
         mcp: "create_label",
-        description: "Create a label (and optional group) on one project.",
+        description: "Create a label (and optional group) on one project. Label names are unique within a project ignoring letter case, and a group name joins the stored group it matches ignoring case.",
     },
     "issue.retire_label" => {
         kind: Command,
         request: "IssueRetireLabelRequest",
         response: "IssueLabelRecord",
         mcp: "retire_label",
-        description: "Retire (archive) a label on one project.",
+        description: "Retire (archive) a label on one project, named in any letter case.",
     },
     "issue.update_project_settings" => {
         kind: Command,

@@ -40539,7 +40539,7 @@
     }
   },
   {
-    "description": "Create or update one Linear-shaped issue and return its key and deep link. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Create or update one Linear-shaped issue and return its key and deep link. Label names in add_labels and remove_labels match ignoring letter case. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41654,7 +41654,7 @@
     }
   },
   {
-    "description": "Create a milestone on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Create a milestone on one project. Milestone names are unique within a project ignoring letter case. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41746,7 +41746,7 @@
     }
   },
   {
-    "description": "Create a label (and optional group) on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Create a label (and optional group) on one project. Label names are unique within a project ignoring letter case, and a group name joins the stored group it matches ignoring case. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41840,7 +41840,7 @@
     }
   },
   {
-    "description": "Retire (archive) a label on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Retire (archive) a label on one project, named in any letter case. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,

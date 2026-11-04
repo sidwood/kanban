@@ -47,6 +47,7 @@ it, and what still needs a product decision.
 |---|---|---|---|
 | Linear **Project** vs Kanban **Project** | Kanban Project = repo + seed | Kanban Project unchanged; Linear “project” maps to **Initiative** or nested naming **not done**. Milestones table is per Kanban project. | Sid: map Linear project to Initiative, Spec, or label? |
 | Milestones | Absent | `issue_milestones` per project; optional FK on tickets. | None. |
+| Name letter case | Label, label group, and milestone names were unique by exact spelling, so `WEB` could sit beside `web` | Unique per project ignoring letter case (Unicode full case folding), judged in `kanban-app` (`issue_names`) with migration `0066` triggers as an ASCII backstop. By-name lookups take the exact spelling, then the one case-insensitive match. Pairs stored before `0066` are kept, stay assignable by exact spelling, and make any other spelling an `invalid_request` instead of a guess. See [mcp-operator.md](./mcp-operator.md#label-and-milestone-names). | A case variant is `invalid_request` on `name` while an exact repeat stays `conflict`. |
 
 ## Keys and links
 

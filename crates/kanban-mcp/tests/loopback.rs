@@ -135,7 +135,7 @@ async fn loopback_auth_matches_socket_allow_deny_revoke_and_idempotency() {
         ),
         (
             "comment_create",
-            json!({"mutation":common::mutation(0,"same-replay"), "project_id":1, "target":{"kind":"ticket","id":f.ticket.to_string()}, "text":"one durable comment"}),
+            json!({"mutation":common::mutation(0,"same-replay"), "project_id":1, "target":{"kind":"ticket","id":f.ticket.to_string()}, "text":"one durable comment", "author":"operator"}),
             false,
         ),
     ] {
@@ -216,7 +216,7 @@ async fn loopback_auth_secret_exclusion_covers_evidence_and_managed_artifacts() 
     assert!(!result.to_string().contains(f.secret.expose()));
     for input in [
         json!({"jsonrpc":"2.0","id":f.secret.expose(),"method":"not-a-method"}),
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comment_create","arguments":{"mutation":common::mutation(0,"raw-secret"),"project_id":1,"target":{"kind":"ticket","id":f.ticket.to_string()},"text":f.secret.expose()}}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comment_create","arguments":{"mutation":common::mutation(0,"raw-secret"),"project_id":1,"target":{"kind":"ticket","id":f.ticket.to_string()},"text":f.secret.expose(),"author":"operator"}}}),
         json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":f.secret.expose()}}}),
     ] {
         let response = http
@@ -265,7 +265,7 @@ async fn loopback_auth_secret_exclusion_covers_evidence_and_managed_artifacts() 
 async fn loopback_auth_rechecks_credentials_before_a_recorded_replay() {
     let f = Fixture::new(true);
     let client = f.client().await;
-    let args = json!({"mutation":common::mutation(0,"authenticated-replay"), "project_id":1,"target":{"kind":"ticket","id":f.ticket.to_string()},"text":"only once"});
+    let args = json!({"mutation":common::mutation(0,"authenticated-replay"), "project_id":1,"target":{"kind":"ticket","id":f.ticket.to_string()},"text":"only once","author":"operator"});
     assert!(
         !client
             .call_tool(call("comment_create", args.clone()))
@@ -334,4 +334,177 @@ async fn loopback_auth_sdk_client_reaches_the_running_core() {
         .unwrap();
     assert_eq!(result.structured_content.unwrap()["id"], f.ticket);
     client.cancel().await.unwrap();
+}
+
+/// A client on the installation-authenticated operator route: bearer
+/// credential only, no capability header.
+async fn operator_client(
+    service: &kanban_service::CoreProcess,
+    secret: &InstallationSecret,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    let uri = format!("http://{}/mcp/operator", service.http_address().unwrap());
+    let config = StreamableHttpClientTransportConfig::with_uri(uri).auth_header(secret.expose());
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        ().serve(StreamableHttpClientTransport::with_client(http, config)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_route_serves_one_comment_stream_per_issue() {
+    let h = common::harness();
+    let secret = Arc::new(InstallationSecret::from_key(&[41; 32]));
+    let service = kanban_service::serve_with_http(
+        h._dir.path(),
+        kanban_service::ServiceRuntime {
+            mcp_executable: env!("CARGO_BIN_EXE_kanban-mcp").into(),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let client = operator_client(&service, &secret).await;
+
+    let issue = client
+        .call_tool(call(
+            "save_issue",
+            json!({"mutation":common::mutation(0,"stream-issue"), "project_id":1, "title":"Stream host"}),
+        ))
+        .await
+        .unwrap();
+    let issue = issue.structured_content.unwrap();
+    let key = issue["identifier"].as_str().unwrap().to_owned();
+    let ticket_id = issue["ticket_id"].as_u64().unwrap();
+
+    let by_key = client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-by-key"), "project_id":1,
+                   "target":{"kind":"ticket","id":key}, "text":"Posted by key", "author":"lin"}),
+        ))
+        .await
+        .unwrap();
+    let by_key = by_key.structured_content.unwrap();
+    assert_eq!(
+        by_key["target"],
+        json!({"kind":"ticket","id":ticket_id.to_string()}),
+        "a comment addressed by key stores the issue id"
+    );
+    client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-by-id"), "project_id":1,
+                   "target":{"kind":"ticket","id":ticket_id.to_string()}, "text":"Posted by id", "author":"lin"}),
+        ))
+        .await
+        .unwrap();
+
+    let listed_by_id = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target":{"kind":"ticket","id":ticket_id.to_string()}, "limit":10}),
+        ))
+        .await
+        .unwrap();
+    let listed_by_key = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target":{"kind":"ticket","id":key}, "limit":10}),
+        ))
+        .await
+        .unwrap();
+    let stream = listed_by_id.structured_content.unwrap();
+    assert_eq!(
+        stream["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|comment| comment["body"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("Posted by key"), json!("Posted by id")],
+        "both address forms read and write one stream"
+    );
+    assert_eq!(
+        listed_by_key.structured_content.unwrap()["comments"],
+        stream["comments"]
+    );
+
+    let unknown = client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-unknown"), "project_id":1,
+                   "target":{"kind":"ticket","id":"CORE-999"}, "text":"Ghost", "author":"lin"}),
+        ))
+        .await
+        .unwrap();
+    assert!(unknown.is_error.unwrap_or(false));
+    assert_eq!(
+        unknown.structured_content.unwrap()["code"],
+        json!("not_found")
+    );
+
+    let root_id = by_key["id"].as_u64().unwrap();
+    let reply = client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-reply"), "project_id":1,
+                   "target":{"kind":"ticket","id":ticket_id.to_string()}, "text":"Reply", "author":"lin",
+                   "parent_comment_id":root_id}),
+        ))
+        .await
+        .unwrap();
+    assert!(!reply.is_error.unwrap_or(true));
+    let nested = client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-nested"), "project_id":1,
+                   "target":{"kind":"ticket","id":ticket_id.to_string()}, "text":"Reply to the reply", "author":"lin",
+                   "parent_comment_id":reply.structured_content.unwrap()["id"].as_u64().unwrap()}),
+        ))
+        .await
+        .unwrap();
+    assert!(nested.is_error.unwrap_or(false));
+    let nested = nested.structured_content.unwrap();
+    assert_eq!(nested["code"], json!("invalid_request"));
+    assert_eq!(nested["field"], json!("parent_comment_id"));
+
+    let unnamed = client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"stream-unnamed"), "project_id":1,
+                   "target":{"kind":"ticket","id":ticket_id.to_string()}, "text":"No author"}),
+        ))
+        .await
+        .unwrap();
+    assert!(unnamed.is_error.unwrap_or(false));
+    let unnamed = unnamed.structured_content.unwrap();
+    assert_eq!(unnamed["code"], json!("invalid_request"));
+    assert_eq!(unnamed["field"], json!("author"));
+
+    let resolved = client
+        .call_tool(call(
+            "resolve_comment",
+            json!({"mutation":common::mutation(1,"stream-resolve"), "comment_id":root_id, "resolved":true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.structured_content.unwrap()["version"],
+        json!(2),
+        "resolving bumps the comment version"
+    );
+
+    client.cancel().await.unwrap();
+    service.shutdown();
 }

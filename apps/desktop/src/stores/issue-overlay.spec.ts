@@ -243,6 +243,77 @@ describe('issue overlay refreshes', () => {
     expect(overlay.issueFor(7)?.version).toBe(5)
     expect(overlay.issueFor(7)?.labels).toEqual(['Released'])
   })
+
+  it('keeps a cleared overlay empty when the remaining pages of an earlier refresh answer', async () => {
+    const { transport, pages, reads } = pagedWire()
+    const overlay = useIssueOverlayStore()
+
+    const board = overlay.refreshForProject(transport, 1, [7, 8])
+    await settle()
+    overlay.clear()
+    pages.shift()!({ issues: [held(7, 12)], next_cursor: '7' })
+    await settle()
+    pages.shift()?.({ issues: [held(8, 13)], next_cursor: null })
+    await board
+
+    expect(overlay.byTicketId).toEqual({})
+    expect(reads).toHaveLength(1)
+  })
+
+  it('keeps a cleared overlay empty when the queued reads of an earlier refresh answer', async () => {
+    const { transport, answers } = heldReads()
+    const overlay = useIssueOverlayStore()
+
+    const event = overlay.refreshIssues(transport, [7, 8, 9, 10, 11].map(named))
+    await settle()
+    expect(answers).toHaveLength(4)
+    overlay.clear()
+    while (answers.length > 0) {
+      answers.shift()!()
+      await settle()
+    }
+    await event
+
+    expect(overlay.byTicketId).toEqual({})
+  })
+
+  it('keeps an issue put while a refresh waits for a read slot over that refresh answer', async () => {
+    const { transport, answers } = heldReads({ labels: ['Stale'] })
+    const overlay = useIssueOverlayStore()
+
+    const event = overlay.refreshIssues(transport, [7, 8, 9, 10, 11].map(named))
+    await settle()
+    expect(answers).toHaveLength(4)
+    overlay.put(held(11, 16, { version: 3, labels: ['Fresh'] }))
+    while (answers.length > 0) {
+      answers.shift()!()
+      await settle()
+    }
+    await event
+
+    expect(overlay.issueFor(11)?.labels).toEqual(['Fresh'])
+  })
+
+  it('keeps a later refresh answer when a later page of an earlier refresh answers after it', async () => {
+    const { transport, pages } = pagedWire()
+    const overlay = useIssueOverlayStore()
+
+    const earlier = overlay.refreshForProject(transport, 1, [7, 8])
+    await settle()
+    const later = overlay.refreshForProject(transport, 1, [8])
+    await settle()
+    expect(pages).toHaveLength(2)
+
+    pages[1]!({ issues: [held(8, 13, { labels: ['Newer'] })], next_cursor: null })
+    await later
+    pages[0]!({ issues: [held(7, 12)], next_cursor: '7' })
+    await settle()
+    expect(pages).toHaveLength(3)
+    pages[2]!({ issues: [held(8, 13, { labels: ['Older'] })], next_cursor: null })
+    await earlier
+
+    expect(overlay.issueFor(8)?.labels).toEqual(['Newer'])
+  })
 })
 
 function listing(records: readonly IssueRecord[], pageSize: number) {
@@ -269,8 +340,50 @@ function listing(records: readonly IssueRecord[], pageSize: number) {
   return { transport, reads }
 }
 
-function held(ticketId: number, number: number): IssueRecord {
-  return issue({ ticket_id: ticketId, identifier: `CORE-${number}`, title: `Issue ${number}` })
+function held(ticketId: number, number: number, overrides: Partial<IssueRecord> = {}): IssueRecord {
+  return issue({
+    ticket_id: ticketId,
+    identifier: `CORE-${number}`,
+    title: `Issue ${number}`,
+    ...overrides,
+  })
+}
+
+function named(ticketId: number) {
+  return { ticketId, projectId: 1, projectCode: 'CORE', number: ticketId + 5 }
+}
+
+function pagedWire() {
+  const pages: Array<(page: IssueListResponse) => void> = []
+  const reads: unknown[] = []
+  const transport = {
+    query: (name: string, request: unknown) => {
+      if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      if (name !== 'issue.list') return Promise.reject(new Error(`unexpected query ${name}`))
+      reads.push(request)
+      return new Promise<IssueListResponse>((resolve) => pages.push(resolve))
+    },
+    command: () => Promise.reject(new Error('commands are forbidden here')),
+    subscribe: () => () => undefined,
+  } as unknown as ShellTransport
+  return { transport, pages, reads }
+}
+
+function heldReads(overrides: Partial<IssueRecord> = {}) {
+  const answers: Array<() => void> = []
+  const transport = {
+    query: (name: string, request: unknown) => {
+      if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+      if (name !== 'issue.get') return Promise.reject(new Error(`unexpected query ${name}`))
+      const number = Number((request as { identifier: string }).identifier.split('-')[1])
+      return new Promise<IssueRecord>((resolve) =>
+        answers.push(() => resolve(held(number - 5, number, overrides))),
+      )
+    },
+    command: () => Promise.reject(new Error('commands are forbidden here')),
+    subscribe: () => () => undefined,
+  } as unknown as ShellTransport
+  return { transport, answers }
 }
 
 describe('issue overlay reads', () => {

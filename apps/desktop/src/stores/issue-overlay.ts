@@ -117,15 +117,16 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
       projectId: number,
       ticketIds: readonly number[],
     ): Promise<void> {
+      const generation = ++this.refreshesIssued
       this.loading = true
       this.error = null
       try {
         const client = new KanbanClient(transport)
-        this.milestonesByProject[projectId] = await milestoneNames(client, projectId)
+        const names = await milestoneNames(client, projectId)
+        if (generation > this.clearedAt) this.milestonesByProject[projectId] = names
         const unread = new Set(ticketIds)
         let cursor: string | null = null
         do {
-          const generation = ++this.refreshesIssued
           const page = await client.queryIssueList({
             project_id: projectId,
             limit: ISSUE_PAGE,
@@ -136,7 +137,7 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
             cacheAnswer(this, issue.ticket_id, issue, generation)
           }
           cursor = page.next_cursor ?? null
-        } while (cursor !== null && unread.size > 0)
+        } while (cursor !== null && unread.size > 0 && generation > this.clearedAt)
       } catch (failure) {
         this.error = asApiError(failure).message
       } finally {
@@ -147,6 +148,7 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
       transport: ShellTransport,
       issues: readonly IssueReference[],
     ): Promise<void> {
+      const generation = ++this.refreshesIssued
       this.loading = true
       this.error = null
       try {
@@ -154,13 +156,14 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
         const projects = [...new Set(issues.map((entry) => entry.projectId))]
         await Promise.all(
           projects.map(async (projectId) => {
-            this.milestonesByProject[projectId] = await milestoneNames(client, projectId)
+            const names = await milestoneNames(client, projectId)
+            if (generation > this.clearedAt) this.milestonesByProject[projectId] = names
           }),
         )
         await Promise.all(
           issues.map((entry) =>
             oneIssueRead(this, async () => {
-              const generation = ++this.refreshesIssued
+              if (generation <= this.clearedAt) return
               const issue = await client.queryIssueGet({
                 identifier: issueDisplayKey(entry.projectCode, entry.number),
               })
@@ -187,8 +190,8 @@ export const useIssueOverlayStore = defineStore('issue-overlay', {
       try {
         const client = new KanbanClient(transport)
         const identifier = issueDisplayKey(projectCode, ticketNumber)
+        const generation = ++this.refreshesIssued
         const issue = await oneIssueRead(this, async () => {
-          const generation = ++this.refreshesIssued
           const answer = await client.queryIssueGet({ identifier })
           cacheAnswer(this, ticketId, answer, generation)
           return answer

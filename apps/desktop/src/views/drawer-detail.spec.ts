@@ -3,9 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord, TicketRecord } from '@kanban/contracts'
+import type { IssueRecord, ReviewExecutionRecord, TicketRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
+import { useTicketDetailStore } from '../stores/ticket-detail'
 import { harness, ticket } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
 
@@ -189,5 +190,113 @@ describe('the issue drawer detail', () => {
     expect(
       document.querySelector('[data-testid="issue-detail-labels"]')?.textContent?.trim(),
     ).toBe('CORE-16')
+  })
+
+  it.each([
+    ['answers', true],
+    ['fails', false],
+  ])('keeps a late issue read that %s for the Ticket the operator left off the Ticket now on show', async (_outcome, answers) => {
+    const left = ticket({
+      id: 8,
+      number: 13,
+      kind: 'implementation',
+      state: 'in_review',
+      title: null,
+      slice: 'Serve the lifecycle command surface',
+      version: 5,
+    })
+    const shown = ticket({ id: 9, number: 14, title: 'Clone guard misses a dirty tree' })
+    // The Ticket the operator leaves has a human review slot waiting,
+    // so a detail read for it would offer that slot a decision.
+    const waiting: ReviewExecutionRecord = {
+      id: 55,
+      project_id: 1,
+      ticket_id: 8,
+      submission_id: 9,
+      configuration_version: 2,
+      tip: 'f00dcafe',
+      status: 'in_progress',
+      version: 6,
+      bounce: null,
+      stages: [
+        {
+          index: 0,
+          status: 'waiting',
+          slots: [
+            {
+              id: 72,
+              occupant: { kind: 'human' },
+              requirement: 'required',
+              requested: null,
+              effective: null,
+              fallback_path: [],
+              dispatch_request_id: null,
+              verdict: null,
+            },
+          ],
+        },
+      ],
+    }
+    let holding = false
+    let releaseLeft: (() => void) | null = null
+    const shell = harness({
+      tickets: [left, shown],
+      reviews: [waiting],
+      override: (name, request) => {
+        if (name !== 'issue.get' || !holding) return undefined
+        if ((request as { identifier: string }).identifier !== 'CORE-13') return undefined
+        return new Promise<IssueRecord>((resolve, reject) => {
+          releaseLeft = () =>
+            answers
+              ? resolve({
+                  identifier: 'CORE-13',
+                  url: 'kanban://issue/CORE-13',
+                  ticket_id: 8,
+                  project_id: 1,
+                  title: 'Serve the lifecycle command surface',
+                  description: 'Serve the lifecycle command surface',
+                  state: 'In Review',
+                  state_type: 'started',
+                  priority: 3,
+                  labels: [],
+                  relations: [],
+                  state_history: [],
+                  version: 5,
+                  created_at: '2026-01-01T00:00:00Z',
+                  updated_at: '2026-01-01T00:00:00Z',
+                })
+              : reject({ code: 'unavailable', message: 'the issue read failed' })
+        })
+      },
+    })
+    const pinia = createPinia()
+    await router.push('/projects/1/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      global: {
+        plugins: [pinia, router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+      attachTo: document.body,
+    })
+    mountedBoards.push(wrapper)
+    await flushPromises()
+
+    holding = true
+    await wrapper.find('[data-testid="open-ticket-8"]').trigger('click')
+    await flushPromises()
+    expect(releaseLeft).not.toBeNull()
+    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    await flushPromises()
+    releaseLeft!()
+    await flushPromises()
+
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(
+      document.querySelector('[data-testid="issue-description-body"]')?.textContent?.trim(),
+    ).toBe('Clone guard misses a dirty tree')
+    expect(useTicketDetailStore(pinia).ticketId).toBe(9)
+    expect(useTicketDetailStore(pinia).review).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
   })
 })

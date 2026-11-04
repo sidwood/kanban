@@ -691,9 +691,11 @@ async function loadDrawer(ticketId: number): Promise<void> {
           transport,
           issueDisplayKey(code, record.number),
         )
+        if (attempt !== drawerRequest) return
         issueOverlay.put(issue)
         drawerIssue.value = issueOverlay.issueFor(ticketId) ?? issue
       } catch {
+        if (attempt !== drawerRequest) return
         drawerIssue.value = issueOverlay.issueFor(ticketId)
       }
     }

@@ -10,10 +10,13 @@ System packages (Debian/Ubuntu-like):
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential pkg-config git \
+  build-essential pkg-config git rsync \
   libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
   patchelf
 ```
+
+`rsync` is required for `just check` / repository gates (not only
+`just check-ci-matrix`).
 
 Tooling:
 
@@ -35,16 +38,32 @@ From the repository root:
 just bootstrap
 ```
 
+## Platform gaps on Linux
+
+Launch at login and native macOS notifications are **unavailable** on Linux;
+the desktop shell does not register a systemd user unit or show Notification
+Center alerts. Use ordinary process supervision or your session manager if you
+need auto-start.
+
 ## Installation credentials on Linux
 
-Managed startup stores the 32-byte installation secret in a mode `0600` file
-inside a mode `0700` directory named `installation-credential` under the data
-directory. The store refuses to load if either path is group- or world-accessible.
-macOS continues to use Keychain with the same service/account naming; custom
-`--data-dir` paths still get isolated accounts (Keychain account or file name).
+Managed startup stores the 32-byte installation secret in a mode **`0600`**
+regular file inside a mode **`0700`** directory named `installation-credential`
+under the data directory. This is **not** Keychain parity: the bytes are stored
+**unencrypted**, protected only by `0700`/`0600` permissions and same-user
+access, and they are included in home-directory backups. See
+[`docs/decisions/linux-file-installation-credential.md`](decisions/linux-file-installation-credential.md).
 
-Secrets never appear in environment variables, `config.json`, CLI arguments, logs,
-or SQLite.
+The store opens the directory with `O_DIRECTORY|O_NOFOLLOW`, verifies owner and
+exact mode **`0700`**, and refuses symlinks, FIFOs, hard-linked credential
+files, or credential files whose mode is not exactly **`0600`**. Looser modes
+(for example `0701` or `0604`) are rejected.
+
+Custom `--data-dir` paths use an isolated file name (`data-<sha256>` of the
+canonical path), matching the macOS account naming scheme.
+
+Secrets never appear in environment variables, `config.json`, CLI arguments,
+logs, or SQLite.
 
 Default managed data lives at `$XDG_DATA_HOME/Kanban` (usually
 `~/.local/share/Kanban`).
@@ -53,11 +72,11 @@ Default managed data lives at `$XDG_DATA_HOME/Kanban` (usually
 
 ```bash
 cargo build -p kanban-service -p kanban-mcp
-DATA="$(mktemp -d)"
+export DATA="$(mktemp -d)"
 ./target/debug/kanban-service --data-dir "$DATA"
 ```
 
-In another terminal, health check:
+In another terminal, health check (reuse the same `DATA` value):
 
 ```bash
 ./target/debug/kanban-service --data-dir "$DATA"   # exits 0 when already running
@@ -74,7 +93,18 @@ print(s.makefile().readline())
 PY
 ```
 
-(Set `DATA` in the environment to the same directory.)
+## Loopback HTTP credential (Linux)
+
+When loopback HTTP is enabled, read the raw 32-byte secret from:
+
+```text
+<data>/installation-credential/installation
+```
+
+(or `<data>/installation-credential/data-<sha256>` for a non-default data
+directory). Encode it as `kanban_` followed by URL-safe base64 without padding
+for the `Authorization: Bearer` header, same as on macOS Keychain. Keep the
+derived credential in memory only.
 
 ## MCP
 
@@ -120,10 +150,9 @@ just check
 This runs formatting, Clippy, the full Rust and web test matrices, contract
 drift checks, spelling, workflow policy, and packaging smoke tests.
 
-`just check-ci-matrix` additionally requires `brew` and `rsync`; it mirrors the
-GitHub Actions command list from a fresh clone and is intended as an occasional
-audit (see the README continuous-integration section). It is not part of
-`just check`.
+`just check-ci-matrix` additionally requires `brew` and mirrors the GitHub
+Actions command list from a fresh clone; it is an occasional audit (see the
+README continuous-integration section).
 
 Native macOS packaging (`just package`, `just check-packaging-native`) remains
 macOS-only.

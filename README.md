@@ -40,21 +40,24 @@ Generated tools expose only that grant's operations; calls still check
 scope and expiry, including before replay and mutation. Ending the client
 connection or stopping the service cleans up its adapter.
 
-The Unix socket trusts the current macOS user, like the native UI. This
-is not an OS sandbox against another process running as that same user.
+The Unix socket trusts the current interactive user on macOS and Linux, like
+the native UI. This is not an OS sandbox against another process running as
+that same user.
 MCP tool arguments cannot replace the service-selected grant.
 
 Managed startup keeps installation credentials in macOS Keychain under
 service `dev.kanban.desktop.installation`, account `installation`.
-On Linux, the same logical credential lives in a mode `0600` file inside
-a mode `0700` directory under the managed data path; see
-[`docs/linux.md`](docs/linux.md). An explicitly selected non-default data
-directory uses account `data-` followed by the lowercase SHA-256 of its
-canonical path bytes instead.
+On Linux, the same logical credential is stored **unencrypted** in a mode
+`0600` file inside a mode `0700` directory under the managed data path;
+protection is Unix permissions and same-user access only, and the file is
+included in home backups. See [`docs/linux.md`](docs/linux.md) and
+[`docs/decisions/linux-file-installation-credential.md`](docs/decisions/linux-file-installation-credential.md).
+An explicitly selected non-default data directory uses account `data-`
+followed by the lowercase SHA-256 of its canonical path bytes instead.
 Startup acquires installation ownership before requesting credentials.
 Credentials never belong in client configuration, prompts, SQLite, or
-environment variables. Credential storage failure refuses managed startup;
-there is no plaintext fallback. HTTP is not enabled by this stdio integration.
+environment variables. Credential storage failure refuses managed startup on
+either platform. HTTP is not enabled by this stdio integration.
 
 ## Optional loopback HTTP
 
@@ -81,17 +84,19 @@ silently running without the requested transport.
 Use a native MCP client with Streamable HTTP at the exact configured
 `http://ADDRESS/mcp` URL. Each request needs:
 
-- `Authorization: Bearer <Keychain-derived credential>`.
+- `Authorization: Bearer <installation-derived credential>`.
 - `X-Kanban-Capability: <numeric dispatch capability ID>` for an acknowledged,
   executing Run, as with the socket adapter.
 
-A native client must retrieve the existing 32-byte installation item from
-Keychain using the service/account above, then encode it as `kanban_`
-followed by URL-safe base64 without padding. Keep the derived credential
-in memory only; never put it in configuration, command arguments,
-environment variables, prompts, logs, or SQLite. The Core creates the
-Keychain item on managed startup and never reads a configuration secret.
-There is no credential-printing or plaintext provisioning command.
+On macOS, read the existing 32-byte installation item from Keychain using the
+service/account above. On Linux, read the same-length secret from
+`<data>/installation-credential/installation` (or the `data-<sha256>` file for a
+custom data directory); see [`docs/linux.md`](docs/linux.md). Encode either
+source as `kanban_` followed by URL-safe base64 without padding. Keep the
+derived credential in memory only; never put it in configuration, command
+arguments, environment variables, prompts, logs, or SQLite. The Core creates
+the secret on managed startup and never reads a configuration secret. There is
+no credential-printing or plaintext provisioning command.
 
 HTTP adds installation authentication, not Operator authority. It uses
 the same generated tools and application authorization as the socket MCP

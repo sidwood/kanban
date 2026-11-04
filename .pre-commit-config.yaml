@@ -3,4 +3,6 @@ repos:
     rev: v10.0.1
     hooks:
       - id: cspell
+        # Use the host Python on Linux CI and locally; macOS keeps the same
+        # behaviour when `python3` is on PATH (pre-commit's default).
         language_version: system

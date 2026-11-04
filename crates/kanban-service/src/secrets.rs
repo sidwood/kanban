@@ -1,7 +1,9 @@
 //! Native installation credential storage for managed startup.
 use kanban_app::secrets::{InstallationSecret, InstallationSecretStore};
 use kanban_dto::ApiError;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_os = "macos"))]
+use std::path::PathBuf;
 
 pub struct NativeKeychain {
     account: String,

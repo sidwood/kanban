@@ -86,6 +86,7 @@ const GROUP_OF: Record<TicketRecord['state'], BoardGlobalCard['group'] | null> =
   done: 'done',
   cancelled: null,
   superseded: null,
+  duplicate: null,
 }
 
 // The canonical lifecycle, as the core's own table fixes it: what a
@@ -103,6 +104,7 @@ const LEGAL_TARGETS: Record<TicketRecord['state'], TicketRecord['state'][]> = {
   done: [],
   cancelled: [],
   superseded: [],
+  duplicate: [],
 }
 
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
@@ -119,6 +121,7 @@ const READINESS_RANK: Record<TicketRecord['state'], number> = {
   done: 9,
   cancelled: -1,
   superseded: -1,
+  duplicate: -1,
 }
 
 /** The projection the core would return: grouped by the fixed

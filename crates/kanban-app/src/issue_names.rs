@@ -15,6 +15,7 @@ use kanban_dto::ApiError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NamedKind {
     Label,
+    LabelGroup,
     Milestone,
 }
 
@@ -22,6 +23,7 @@ impl NamedKind {
     fn noun(self) -> &'static str {
         match self {
             Self::Label => "label",
+            Self::LabelGroup => "label group",
             Self::Milestone => "milestone",
         }
     }

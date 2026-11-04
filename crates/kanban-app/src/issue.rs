@@ -84,6 +84,8 @@ pub trait IssueStore: Send + Sync {
     fn resolve_identifier(&self, identifier: &str) -> Result<Option<(IssueKey, i64)>, ApiError>;
     fn list_workflow_states(&self, project_id: i64) -> Result<Vec<IssueWorkflowState>, ApiError>;
     fn list_project_labels(&self, project_id: i64) -> Result<Vec<IssueLabelRow>, ApiError>;
+    /// Every label group name in one project, groups without labels included.
+    fn list_label_groups(&self, project_id: i64) -> Result<Vec<String>, ApiError>;
     fn list_project_milestones(&self, project_id: i64) -> Result<Vec<IssueMilestoneRow>, ApiError>;
     fn resolve_state_by_name(
         &self,

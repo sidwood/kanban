@@ -578,3 +578,85 @@ fn the_label_filter_matches_every_stored_case_variant() {
         "a filter reads, so it matches every spelling of the name rather than refusing"
     );
 }
+
+fn create_grouped_label(
+    session: &OperatorSession,
+    key: &str,
+    name: &str,
+    group: &str,
+) -> Result<Value, ApiError> {
+    session.call(
+        "issue.create_label",
+        &json!({
+            "mutation": mutation(0, key),
+            "project_id": 1,
+            "name": name,
+            "color": "#336699",
+            "group": group,
+            "group_single_select": true,
+        }),
+    )
+}
+
+#[test]
+fn a_label_joins_its_group_whatever_case_names_the_group() {
+    let h = session();
+    let session = &h.session;
+    create_grouped_label(session, "tier-simple", "tier-simple", "Model tier")
+        .expect("the group lands with its first label");
+
+    let joined = create_grouped_label(session, "tier-standard", "tier-standard", "model TIER")
+        .expect("a label names its group in another case");
+    assert_eq!(joined["group"], json!("Model tier"));
+
+    let grouped: Vec<_> = labels(session, 1)
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("tier-"))
+        .collect();
+    assert_eq!(
+        grouped,
+        vec![
+            ("tier-simple".to_owned(), Some("Model tier".to_owned())),
+            ("tier-standard".to_owned(), Some("Model tier".to_owned())),
+        ],
+        "one group holds both labels"
+    );
+
+    let issue = new_issue(session, "tier-host", "One tier");
+    let error = save_issue(
+        session,
+        "tier-both",
+        json!({ "identifier": issue, "add_labels": ["tier-simple", "tier-standard"] }),
+    )
+    .expect_err("the joined group stays single-select");
+    assert_eq!(error.field.as_deref(), Some("add_labels"));
+}
+
+#[test]
+fn a_stored_case_variant_group_pair_refuses_to_guess() {
+    let h = session();
+    let session = &h.session;
+    h.database
+        .connection()
+        .execute_batch(
+            "INSERT INTO issue_label_groups (project_id, name, single_select)
+             VALUES (1, 'Area', 0), (1, 'AREA', 0);",
+        )
+        .expect("the legacy group rows land");
+    let before = labels(session, 1);
+
+    let error = create_grouped_label(session, "area-guess", "web", "area")
+        .expect_err("an ambiguous group name is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("group"));
+    assert!(
+        error.message.contains("`AREA` and `Area`"),
+        "{}",
+        error.message
+    );
+    assert_eq!(labels(session, 1), before, "a refused label lands nothing");
+
+    let exact = create_grouped_label(session, "area-exact", "web", "AREA")
+        .expect("an exact spelling names its own group");
+    assert_eq!(exact["group"], json!("AREA"));
+}

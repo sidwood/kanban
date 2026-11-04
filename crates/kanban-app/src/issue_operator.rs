@@ -416,11 +416,26 @@ impl CommandHandler for CreateLabel {
             stored.iter().map(|label| label.name.as_str()),
             &request.name,
         )?;
+        // A named group joins the stored group it names in any case,
+        // and only a name no group answers to starts a new one.
+        let group = match request.group.as_deref() {
+            Some(requested) => {
+                let groups = self.0.issues.list_label_groups(request.project_id as i64)?;
+                let found = resolve_stored_name(
+                    NamedKind::LabelGroup,
+                    "group",
+                    groups.iter().map(String::as_str),
+                    requested,
+                )?;
+                Some(found.unwrap_or(requested).to_owned())
+            }
+            None => None,
+        };
         let row = self.0.issues.create_label(
             request.project_id as i64,
             &request.name,
             &request.color,
-            request.group.as_deref(),
+            group.as_deref(),
             request.group_single_select,
         )?;
         serde_json::to_value(IssueLabelRecord {

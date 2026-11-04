@@ -697,6 +697,18 @@ impl SqliteIssueStore {
             .map_err(internal)
     }
 
+    pub fn list_label_groups(&self, project_id: i64) -> Result<Vec<String>, ApiError> {
+        let conn = self.lock();
+        let mut statement = conn
+            .prepare("SELECT name FROM issue_label_groups WHERE project_id = ?1 ORDER BY name")
+            .map_err(internal)?;
+        statement
+            .query_map([project_id], |row| row.get(0))
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)
+    }
+
     pub fn list_project_milestones(
         &self,
         project_id: i64,
@@ -2186,6 +2198,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         project_id: i64,
     ) -> Result<Vec<kanban_app::IssueLabelRow>, ApiError> {
         SqliteIssueStore::list_project_labels(self, project_id)
+    }
+
+    fn list_label_groups(&self, project_id: i64) -> Result<Vec<String>, ApiError> {
+        SqliteIssueStore::list_label_groups(self, project_id)
     }
 
     fn list_project_milestones(

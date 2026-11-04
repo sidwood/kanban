@@ -269,7 +269,7 @@ impl CommandHandler for EditComment {
         let mut comment = load(&self.store, request.comment_id)?;
         comment
             .edit(text)
-            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+            .map_err(|error| ApiError::invalid_request_field("text", &error.to_string()))?;
         self.store.save(&comment)?;
         announce(effects, LiveEventName::CommentEdited, &comment);
         encode_record(&comment)
@@ -310,7 +310,9 @@ impl QueryHandler for ListCommentsQuery {
             .as_deref()
             .map(str::parse::<u64>)
             .transpose()
-            .map_err(|_| ApiError::invalid_request("cursor must be a comment id"))?;
+            .map_err(|_| {
+                ApiError::invalid_request_field("cursor", "cursor must be a comment id")
+            })?;
         // Ticket streams admit every stored spelling the issue
         // lookups resolve to the same issue; every other kind keeps
         // the exact id it always had.
@@ -388,12 +390,12 @@ fn require_author(author: &str) -> Result<&str, ApiError> {
 
 fn parse_stored_text(raw: &str) -> Result<CommentText, ApiError> {
     CommentText::new_stored(raw)
-        .map_err(|error: TextError| ApiError::invalid_request(&error.to_string()))
+        .map_err(|error: TextError| ApiError::invalid_request_field("text", &error.to_string()))
 }
 
 fn parse_target(target: &TimelineEntityRef) -> Result<CommentTarget, ApiError> {
     CommentTarget::new(target.kind.as_str(), &target.id)
-        .map_err(|error| ApiError::invalid_request(&error.to_string()))
+        .map_err(|error| ApiError::invalid_request_field("target", &error.to_string()))
 }
 
 /// Resolve the target a command addressed. Ticket targets resolve
@@ -413,7 +415,7 @@ fn resolve_target(
         .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
     let canonical = ticket_id.to_string();
     CommentTarget::new(target.kind(), &canonical)
-        .map_err(|error| ApiError::invalid_request(&error.to_string()))
+        .map_err(|error| ApiError::invalid_request_field("target", &error.to_string()))
 }
 
 /// Whether a stored ticket address names the same issue as the

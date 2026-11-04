@@ -513,6 +513,12 @@ fn create_issue(
             "a Ticket title cannot be blank",
         ));
     }
+    if resolve_project(ctx.projects.as_ref(), project_id)?.is_archived() {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            "archived is terminal; the Project accepts no further changes",
+        ));
+    }
     let linear_priority = request.priority.unwrap_or(0);
     let create = TicketCreateRequest {
         mutation: request.mutation.clone(),

@@ -1477,6 +1477,57 @@ fn session_with_second_project() -> (tempfile::TempDir, OperatorSession) {
     (dir, OperatorSession::new(core))
 }
 
+/// A session whose second project is archived, so writes against it
+/// meet the terminal-archive rule while project 1 stays writable.
+fn session_with_archived_project() -> (tempfile::TempDir, OperatorSession) {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let closed = ProjectRegistration::new(
+        "ARCH",
+        "Closed tooling",
+        "/repositories/closed",
+        "/workspaces/closed.seed",
+        "main",
+        "closed.seed",
+        Some("closed-main"),
+        None,
+    )
+    .expect("the closed registration validates");
+    let mut archived = projects
+        .create(&closed, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the closed project lands");
+    archived.archive().expect("the project archives");
+    projects
+        .save(
+            &archived,
+            TimelineEnvelope::project(
+                archived.id().value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: archived.id().value().to_string(),
+                }),
+                json!({ "action": "archived" }),
+            ),
+        )
+        .expect("the archive lands");
+    let dir = h._dir;
+    (dir, OperatorSession::new(Arc::new(h.core)))
+}
+
 #[test]
 fn list_issues_matches_state_types_and_case_insensitive_names() {
     let (_dir, session) = session_with_second_project();
@@ -1804,6 +1855,169 @@ fn comment_create_refuses_non_ticket_targets_that_do_not_exist() {
             }),
         )
         .expect("a stored project is a valid target");
+}
+#[test]
+fn issue_creation_in_an_archived_project_names_the_project() {
+    let (_dir, session) = session_with_archived_project();
+
+    let error = session
+        .call(
+            "issue.save",
+            &save_payload(
+                0,
+                "archived-project-create",
+                json!({ "project_id": 2, "title": "Must refuse archived" }),
+            ),
+        )
+        .expect_err("an archived project accepts no new issues");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("project_id"));
+    assert!(
+        error.message.contains("archived is terminal"),
+        "the refusal keeps its wording: {}",
+        error.message
+    );
+
+    let archived_issues = session
+        .call("issue.list", &json!({ "project_id": 2 }))
+        .expect("the archived project still lists")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .len();
+    assert_eq!(archived_issues, 0, "the refused create stored nothing");
+
+    let live = save_issue(
+        &session,
+        0,
+        "archived-beside-live-create",
+        json!({ "project_id": 1, "title": "Still open for business" }),
+    );
+    assert_eq!(live.identifier, "CORE-1");
+}
+
+#[test]
+fn blank_comment_text_names_the_text_field_on_create_and_edit() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "blank-text-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+
+    for (label, text) in [("empty", ""), ("whitespace", " \t ")] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, format!("blank-text-create-{label}")),
+                    "project_id": 1,
+                    "target": target,
+                    "text": text,
+                    "author": "lin",
+                }),
+            )
+            .expect_err("blank comment text is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} text");
+        assert_eq!(error.field.as_deref(), Some("text"), "{label} text");
+        assert!(
+            error.message.contains("cannot be blank"),
+            "the refusal keeps its wording: {}",
+            error.message
+        );
+    }
+
+    let stored = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "blank-text-create-stored"),
+                "project_id": 1,
+                "target": target,
+                "text": "line\r\n\t  ",
+                "author": "lin",
+            }),
+        )
+        .expect("surrounding whitespace still stores verbatim");
+    let comment_id = stored["id"].as_u64().expect("a comment id");
+
+    for (label, text) in [("empty", ""), ("whitespace", " \t ")] {
+        let error = session
+            .call(
+                "comment.edit",
+                &json!({
+                    "mutation": mutation(1, format!("blank-text-edit-{label}")),
+                    "comment_id": comment_id,
+                    "text": text,
+                }),
+            )
+            .expect_err("blank edited text is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} edit");
+        assert_eq!(error.field.as_deref(), Some("text"), "{label} edit");
+    }
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .expect("the stream lists");
+    assert_eq!(
+        listed["comments"][0]["body"], "line\r\n\t  ",
+        "the refused edits changed nothing"
+    );
+    assert_eq!(
+        listed["comments"][0]["version"], 1,
+        "the refused edits bumped nothing"
+    );
+}
+
+#[test]
+fn a_blank_comment_target_names_the_target_field() {
+    let session = session();
+
+    for (label, id) in [("empty", ""), ("whitespace", "  ")] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, format!("blank-target-{label}")),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": id },
+                    "text": "On nothing",
+                    "author": "lin",
+                }),
+            )
+            .expect_err("a blank comment target is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} target");
+        assert_eq!(error.field.as_deref(), Some("target"), "{label} target");
+    }
+}
+
+#[test]
+fn a_non_numeric_comment_cursor_names_the_cursor_field() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "cursor-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+
+    let error = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "cursor": "bad",
+            }),
+        )
+        .expect_err("a non-numeric cursor is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("cursor"));
+    assert!(
+        error.message.contains("cursor"),
+        "the refusal keeps its wording: {}",
+        error.message
+    );
 }
 
 #[test]

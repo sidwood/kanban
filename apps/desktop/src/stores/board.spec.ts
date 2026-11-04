@@ -649,13 +649,21 @@ describe('board store', () => {
     await board.refresh(transport, 1, emptyFilter())
 
     const moving = board.move(transport, 7, 'active')
-    query.mockImplementation(serving([task({ id: 21, project_id: 2, number: 22 })]))
-    await board.refresh(transport, 2, emptyFilter())
+    // The move is past its save and waiting on the read of the moved
+    // Ticket when the board leaves; that read stays on the wire.
+    await vi.waitFor(() => expect(query).toHaveBeenCalledWith('ticket.get', { ticket_id: 7 }))
+    const leftFor = serving([task(), task({ id: 21, project_id: 2, number: 22 })])
+    query.mockImplementation((name: string, request: unknown) => {
+      if (name === 'ticket.get') return slow.promise
+      return leftFor(name, request)
+    })
+    await board.refresh(transport, 'all', emptyFilter())
 
     slow.settle(task({ state: 'active', version: 4 }))
     expect(await moving).toBe(false)
 
-    expect(board.cards.map((card) => card.ticket.id)).toEqual([21])
+    expect(board.cards.map((card) => card.ticket.id)).toEqual([7, 21])
+    expect(board.cardOf(7)).toMatchObject({ group: 'backlog', ticket: { state: 'ready', version: 3 } })
     expect(board.error).toBeNull()
   })
   it('reads the criterion bindings and the legal moves beside the projection', async () => {

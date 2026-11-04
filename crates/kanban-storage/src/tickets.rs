@@ -94,9 +94,7 @@ impl TicketStore for SqliteTicketStore {
             ));
         }
         // The supersession moves the original's state and version
-        // alone: every other recorded fact stands. The issue
-        // projection follows the superseded state inside the same
-        // write, exactly as any other legacy move does.
+        // alone: every other recorded fact stands.
         let preceding = original.version() - 1;
         let changed = span
             .execute(

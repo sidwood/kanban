@@ -1055,10 +1055,6 @@ impl SqliteIssueStore {
             .map_err(not_found_ticket)?;
         drop(conn);
 
-        // Naming the target the issue already names is a no-op only
-        // while its effects still hold: an issue that moved out of
-        // Duplicate re-enters it, because naming a duplicate target
-        // moves the issue to Duplicate.
         if current_target == target_id
             && (target_id.is_none() || self.sits_in_duplicate_state(ticket_id)?)
         {
@@ -1105,8 +1101,6 @@ impl SqliteIssueStore {
         Ok(())
     }
 
-    /// Whether the issue currently reports the Duplicate workflow
-    /// state, including through the legacy fallback.
     fn sits_in_duplicate_state(&self, ticket_id: i64) -> Result<bool, ApiError> {
         Ok(self
             .workflow_state_for_ticket(ticket_id)?

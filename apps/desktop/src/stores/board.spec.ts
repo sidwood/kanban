@@ -448,14 +448,11 @@ describe('board store', () => {
 
     expect(await board.move(transport, 7, 'active')).toBe(true)
 
-    expect(command).toHaveBeenCalledWith(
-      'issue.save',
-      expect.objectContaining({
-        identifier: 'CORE-12',
-        state: 'Active',
-        mutation: expect.objectContaining({ optimistic_version: 3 }),
-      }),
-    )
+    expect(command).toHaveBeenCalledWith('issue.save', {
+      mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
+      identifier: 'CORE-12',
+      state: 'Active',
+    })
     const moved = board.cardOf(7)
     expect(moved?.ticket.state).toBe('active')
     expect(moved?.ticket.version).toBe(4)

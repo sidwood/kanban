@@ -99,13 +99,11 @@ describe('lifecycle actions store', () => {
     expect(landed).toBe(true)
     const dragged = operations.find((entry) => entry.name === 'issue.save')
     expect(dragged?.kind).toBe('command')
-    expect(dragged?.request).toEqual(
-      expect.objectContaining({
-        mutation: mutationOf(4),
-        identifier: 'CORE-3',
-        state: 'Ready',
-      }),
-    )
+    expect(dragged?.request).toEqual({
+      mutation: mutationOf(4),
+      identifier: 'CORE-3',
+      state: 'Ready',
+    })
     expect(actions.ticket?.state).toBe('ready')
     expect(actions.ticket?.version).toBe(5)
   })

@@ -209,9 +209,12 @@ describe('the drawer footer actions', () => {
 
     await type('drawer-move', 'Active')
 
-    expect(issued(state, 'issue.save')[0]).toMatchObject({
-      identifier: 'CORE-12',
-      state: 'Active',
-    })
+    expect(issued(state, 'issue.save')).toEqual([
+      {
+        mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
+        identifier: 'CORE-12',
+        state: 'Active',
+      },
+    ])
   })
 })

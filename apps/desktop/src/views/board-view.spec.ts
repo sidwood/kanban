@@ -375,14 +375,11 @@ describe('the board', () => {
     )
     await flushPromises()
 
-    expect(command).toHaveBeenCalledWith(
-      'issue.save',
-      expect.objectContaining({
-        identifier: 'CORE-12',
-        state: 'Active',
-        mutation: expect.objectContaining({ optimistic_version: 3 }),
-      }),
-    )
+    expect(command).toHaveBeenCalledWith('issue.save', {
+      mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
+      identifier: 'CORE-12',
+      state: 'Active',
+    })
     expect(wrapper.find('[data-testid="kanban-column-current"] [data-testid="kanban-card-7"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="kanban-column-backlog"] [data-testid="kanban-card-7"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
@@ -405,10 +402,11 @@ describe('the board', () => {
     )
     await flushPromises()
 
-    expect(command).toHaveBeenCalledWith(
-      'issue.save',
-      expect.objectContaining({ identifier: 'CORE-14', state: 'Active' }),
-    )
+    expect(command).toHaveBeenCalledWith('issue.save', {
+      mutation: { optimistic_version: 2, idempotency_key: expect.any(String) },
+      identifier: 'CORE-14',
+      state: 'Active',
+    })
     expect(wrapper.get('[data-testid="board-error"]').text()).toContain('the issue moved on')
     expect(wrapper.find('[data-testid="kanban-column-staged"] [data-testid="kanban-card-9"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="kanban-card-9"]').attributes('data-state')).toBe('approved')
@@ -492,10 +490,11 @@ describe('the board', () => {
 
     await wrapper.get('[data-testid="move-7"]').setValue('current')
     await flushPromises()
-    expect(command).toHaveBeenCalledWith(
-      'issue.save',
-      expect.objectContaining({ identifier: 'CORE-12', state: 'Active' }),
-    )
+    expect(command).toHaveBeenCalledWith('issue.save', {
+      mutation: { optimistic_version: 3, idempotency_key: expect.any(String) },
+      identifier: 'CORE-12',
+      state: 'Active',
+    })
     expect((wrapper.get('[data-testid="move-7"]').element as HTMLSelectElement).value).toBe('')
   })
 

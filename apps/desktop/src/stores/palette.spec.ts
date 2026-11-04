@@ -198,6 +198,51 @@ describe('palette store', () => {
     }
   })
 
+  it('drops a search answer that arrives after the input has changed', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      const answers: Array<(response: SearchGlobalResponse) => void> = []
+      const { transport, queries } = harness(
+        () => new Promise<SearchGlobalResponse>((resolve) => answers.push(resolve)),
+      )
+      const palette = usePaletteStore()
+      const search = useSearchStore()
+      palette.openPalette()
+
+      void palette.setQuery(transport, 'arch')
+      await vi.advanceTimersByTimeAsync(200)
+      expect(queries).toEqual([{ name: 'search.global', request: { q: 'arch' } }])
+
+      const next = palette.setQuery(transport, 'archive')
+      answers[0]({
+        hits: [{ kind: 'project', id: 4, identifier: 'ARCH', label: 'Architecture notes', project_id: 4 }],
+      })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(queries).toHaveLength(1)
+      expect(search.hits).toEqual([])
+      expect(palette.selectedItem()).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(100)
+      expect(queries.at(-1)).toEqual({ name: 'search.global', request: { q: 'archive' } })
+      const archived = {
+        kind: 'ticket' as const,
+        id: 2,
+        identifier: 'CORE-2',
+        label: 'Archive the register',
+        project_id: 1,
+      }
+      answers[1]({ hits: [archived] })
+      await next
+
+      expect(search.hits).toEqual([archived])
+      expect(palette.selectedItem()?.identifier).toBe('CORE-2')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears search state when it closes', async () => {
     setActivePinia(createPinia())
     const answer = vi.fn(() => Promise.resolve({ hits: [] }))

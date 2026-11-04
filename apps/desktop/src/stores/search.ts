@@ -19,6 +19,7 @@ export const useSearchStore = defineStore('search', {
   actions: {
     setQuery(value: string): void {
       this.query = value
+      this.issued += 1
     },
     clear(): void {
       this.query = ''

@@ -2,7 +2,8 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
-import type { SearchGlobalResponse } from '@kanban/contracts'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import type { SearchGlobalHit, SearchGlobalResponse } from '@kanban/contracts'
 import CommandPalette from './CommandPalette.vue'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -67,5 +68,64 @@ describe('CommandPalette', () => {
     expect(queries).toEqual([{ name: 'search.global', request: { q: 'archive' } }])
     expect(commands).toEqual([])
     expect(wrapper.text()).toContain('CORE-1')
+  })
+
+  it('chooses nothing on Enter from a search the input has already left behind', async () => {
+    vi.useFakeTimers()
+    try {
+      const answers: Array<(response: SearchGlobalResponse) => void> = []
+      const { transport } = harness(
+        () => new Promise<SearchGlobalResponse>((resolve) => answers.push(resolve)),
+      )
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: '/:anywhere(.*)*', component: RouterStub }],
+      })
+      const push = vi.spyOn(router, 'push')
+      const wrapper = mount(CommandPalette, {
+        attachTo: document.body,
+        global: {
+          plugins: [router],
+          provide: { [kanbanTransportKey as symbol]: transport },
+        },
+      })
+      usePaletteStore().openPalette()
+      await nextTick()
+      const input = wrapper.get('[data-testid="palette-query"]')
+      const enter = () =>
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+
+      await input.setValue('arch')
+      await vi.advanceTimersByTimeAsync(200)
+      await input.setValue('archive')
+      const superseded: SearchGlobalHit = {
+        kind: 'project',
+        id: 4,
+        identifier: 'ARCH',
+        label: 'Architecture notes',
+        project_id: 4,
+      }
+      answers[0]({ hits: [superseded] })
+      await vi.advanceTimersByTimeAsync(50)
+
+      expect(wrapper.text()).not.toContain('ARCH')
+      enter()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(push).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(150)
+      answers[1]({
+        hits: [
+          { kind: 'ticket', id: 2, identifier: 'CORE-2', label: 'Archive the register', project_id: 1 },
+        ],
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      enter()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(push).toHaveBeenCalledWith('/projects/1/board?ticket=2')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

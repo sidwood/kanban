@@ -4,6 +4,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
+  IssueRecord,
   ProfileSnapshotRecord,
   ReviewExecutionRecord,
   ReviewSlotRecord,
@@ -328,6 +329,101 @@ describe('the human review decision in the drawer', () => {
     ])
     expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
     expect(state.reviews.get(55).status).toBe('approved')
+  })
+
+  it('after a verdict lands the issue panel reads the issue again and saves at the version it reads', async () => {
+    const state = harness({ tickets: [implementation()], reviews: [review] })
+    const core = state.command.getMockImplementation() as (
+      name: string,
+      request: unknown,
+    ) => Promise<unknown>
+    state.command.mockImplementation(async (name: string, request: unknown) => {
+      const answer = await core(name, request)
+      if (name === 'review.human.submit') {
+        const held = state.tickets.findIndex((entry) => entry.id === 8)
+        state.tickets.splice(held, 1, { ...state.tickets[held]!, state: 'approved', version: 6 })
+      }
+      return answer
+    })
+    await openDrawer(state)
+
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The slice holds; the gates are green.')
+    await click('review-decision-submit')
+
+    expect(
+      document.querySelector('[data-testid="issue-history-row-0"] td')?.textContent?.trim(),
+    ).toBe('Approved')
+    await click('issue-description-edit')
+    await type('issue-description-input', 'The commands are served over the socket.')
+    await click('issue-description-save')
+
+    expect(issued(state, 'issue.save').at(-1)).toEqual({
+      mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+      identifier: 'CORE-13',
+      description: 'The commands are served over the socket.',
+    })
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+  })
+
+  it('keeps the issue a verdict reads again off the Ticket the drawer moved to', async () => {
+    const solo: ReviewExecutionRecord = {
+      ...review,
+      stages: [{ index: 0, status: 'waiting', slots: [humanSlot(72)] }],
+    }
+    let holding = false
+    const held: (() => void)[] = []
+    const state = harness({
+      tickets: [
+        implementation(),
+        implementation({ id: 9, number: 14, title: 'Edge review', slice: 'Guard the edge review' }),
+      ],
+      reviews: [solo],
+      override: (name, request) => {
+        if (name !== 'issue.get' || !holding) return undefined
+        if ((request as { identifier: string }).identifier !== 'CORE-13') return undefined
+        return new Promise<IssueRecord>((resolve) => {
+          held.push(() =>
+            resolve({
+              identifier: 'CORE-13',
+              url: 'kanban://issue/CORE-13',
+              ticket_id: 8,
+              project_id: 1,
+              title: 'Serve the lifecycle command surface',
+              description: 'Serve the lifecycle command surface',
+              state: 'Approved',
+              state_type: 'started',
+              priority: 3,
+              labels: [],
+              relations: [],
+              state_history: [],
+              version: 5,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            }),
+          )
+        })
+      },
+    })
+    const pinia = createPinia()
+    const wrapper = await openDrawer(state, 8, pinia)
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The slice holds; the gates are green.')
+    holding = true
+    await click('review-decision-submit')
+    expect(issued(state, 'review.human.submit')).toHaveLength(1)
+    expect(held.length).toBeGreaterThan(0)
+
+    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    await flushPromises()
+    for (const release of held.splice(0)) release()
+    await flushPromises()
+
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(
+      document.querySelector('[data-testid="issue-description-body"]')?.textContent?.trim(),
+    ).toBe('Guard the edge review')
+    expect(useTicketDetailStore(pinia).ticketId).toBe(9)
   })
 
   it('Reject sends every field of the finding the rejection resolves on', async () => {

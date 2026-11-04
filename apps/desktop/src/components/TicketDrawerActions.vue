@@ -28,7 +28,7 @@ const { ticket, legalTargets, projectCode } = defineProps<{
 const emit = defineEmits<{
   acted: [record: TicketRecord]
   /** A human verdict landed: the audit the core appended is new. */
-  reviewed: []
+  reviewed: [ticketId: number]
 }>()
 
 const transport = inject(kanbanTransportKey)
@@ -173,6 +173,7 @@ async function move(event: Event): Promise<void> {
 async function submitReview(): Promise<void> {
   const slot = waitingSlot.value
   if (!transport || !slot || reviewGap.value !== null) return
+  const ticketId = ticket.id
   actionError.value = null
   const findings: ReviewFindingRecord[] =
     reviewApprove.value || findingSeverity.value === ''
@@ -201,7 +202,7 @@ async function submitReview(): Promise<void> {
   clearReview()
   // The verdict appended an audit row against the Ticket; the
   // timeline reads again rather than standing on its earlier answer.
-  emit('reviewed')
+  emit('reviewed', ticketId)
 }
 
 async function confirmRecovery(): Promise<void> {

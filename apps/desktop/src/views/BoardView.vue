@@ -782,10 +782,7 @@ function openNewTicket(): void {
   })
 }
 
-async function drawerActed(record: TicketRecord): Promise<void> {
-  if (drawerTicket.value?.id !== record.id) return
-  drawerTicket.value = record
-  void load()
+async function rereadDrawerIssue(record: TicketRecord): Promise<void> {
   const code = drawerProjectCode.value
   if (!transport || !code) return
   const attempt = drawerRequest
@@ -799,14 +796,24 @@ async function drawerActed(record: TicketRecord): Promise<void> {
   }
 }
 
+async function drawerActed(record: TicketRecord): Promise<void> {
+  if (drawerTicket.value?.id !== record.id) return
+  drawerTicket.value = record
+  void load()
+  await rereadDrawerIssue(record)
+}
+
 // A human review verdict appends its audit against the Ticket without
 // moving the Ticket's own version, so the timeline is told to read
 // again rather than inferring the change from a version that did not
 // change (KAN-T139-AC5).
 const drawerReviewTick = ref(0)
 
-function drawerReviewed(): void {
+async function drawerReviewed(ticketId: number): Promise<void> {
   drawerReviewTick.value += 1
+  const record = drawerTicket.value
+  if (record?.id !== ticketId) return
+  await rereadDrawerIssue(record)
 }
 
 // The facts the drawer shows for the open Ticket; the Spec identity

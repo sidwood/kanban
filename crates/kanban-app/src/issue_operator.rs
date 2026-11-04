@@ -831,13 +831,10 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     })
 }
 
-/// Names match across case over their whole text, like Linear's
-/// filters, not only their ASCII letters.
 fn equals_ignoring_case(left: &str, right: &str) -> bool {
-    left.chars()
-        .flat_map(char::to_lowercase)
-        .eq(right.chars().flat_map(char::to_lowercase))
+    focaccia::unicode_full_case_eq(left, right)
 }
+
 fn list_issues(
     ctx: &IssueContext,
     request: &IssueListQuery,

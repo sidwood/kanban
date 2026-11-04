@@ -29,6 +29,8 @@
     "RLENGTH",
     "RRGGBB",
     "SQLite",
+    "STRASSE",
+    "Straße",
     "Tauri",
     "TypeScript",
     "Unlayered",
@@ -133,6 +135,7 @@
     "shadcn",
     "staticlib",
     "stdio",
+    "strasse",
     "strftime",
     "stripspace",
     "subschemas",
@@ -170,6 +173,8 @@
     "worktrees",
     "writable",
     "xhigh",
-    "Årea"
+    "Årea",
+    "ΟΔΟΣ",
+    "οδος"
   ]
 }

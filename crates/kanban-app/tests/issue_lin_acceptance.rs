@@ -1621,6 +1621,76 @@ fn list_issues_matches_state_types_and_case_insensitive_names() {
         vec![unicode.identifier.clone()],
         "a non-ASCII label name matches its uppercase form"
     );
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-folded-label"),
+                "project_id": 1,
+                "name": "Straße",
+                "color": "#336699",
+            }),
+        )
+        .expect("the sharp s label is created");
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-folded-twin-label"),
+                "project_id": 1,
+                "name": "strasse",
+                "color": "#336699",
+            }),
+        )
+        .expect("a label differing only by case folding is still its own name");
+    let folded = save_issue(
+        &session,
+        0,
+        "filter-folded",
+        json!({
+            "project_id": 1,
+            "title": "Folded label",
+            "add_labels": ["Straße"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "STRASSE" })),
+        vec![folded.identifier.clone()],
+        "a label name matches the unfolded spelling of its sharp s"
+    );
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-sigma-label"),
+                "project_id": 1,
+                "name": "ΟΔΟΣ",
+                "color": "#336699",
+            }),
+        )
+        .expect("the sigma label is created");
+    let sigma = save_issue(
+        &session,
+        0,
+        "filter-sigma",
+        json!({
+            "project_id": 1,
+            "title": "Sigma label",
+            "add_labels": ["ΟΔΟΣ"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "οδος" })),
+        vec![sigma.identifier.clone()],
+        "a label name matches the final-sigma spelling of its sigma"
+    );
+    let folded_read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": folded.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(folded_read.labels, vec!["Straße".to_owned()]);
     assert_eq!(
         identifiers(json!({ "project_id": 1, "state": "ACTIVE" })),
         vec![started.identifier.clone()],

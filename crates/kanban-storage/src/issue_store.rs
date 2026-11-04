@@ -2082,8 +2082,22 @@ pub fn resolve_state_by_name(
     project_id: i64,
     name: &str,
 ) -> Result<WorkflowStateRecord, ApiError> {
-    workflow_state_by_name(conn, project_id, name)
-        .map_err(internal_storage)?
+    // A save matches state names the way the listings do — ignoring
+    // case — and then a workflow state type, which resolves to the
+    // project's first state of that type in board order, the way
+    // Linear uses the team's default state for the type.
+    let states =
+        super::linear_issue::list_workflow_states(conn, project_id).map_err(internal_storage)?;
+    let matches = |value: &str| focaccia::unicode_full_case_eq(value, name);
+    states
+        .iter()
+        .find(|state| matches(&state.name))
+        .or_else(|| {
+            states
+                .iter()
+                .find(|state| matches(state.state_type.wire_name()))
+        })
+        .cloned()
         .ok_or_else(|| ApiError::invalid_request_field("state", &format!("unknown state `{name}`")))
 }
 

@@ -2239,3 +2239,124 @@ fn issue_priority_changes_move_the_board_too() {
         "the low task now sorts behind the No-priority task"
     );
 }
+
+#[test]
+fn save_issue_matches_state_and_label_names_ignoring_case() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "case-fold-create",
+        json!({ "project_id": 1, "title": "Case folded issue" }),
+    );
+    let identifier = saved.identifier.clone();
+    let before = read_issue(session, &identifier);
+
+    save_issue(
+        session,
+        before.version,
+        "case-fold-state",
+        json!({ "identifier": identifier, "state": "dOnE" }),
+    );
+    let done = read_issue(session, &identifier);
+    assert_eq!(done.state, "Done", "a state name matches ignoring case");
+    assert!(done.completed_at.is_some());
+
+    save_issue(
+        session,
+        done.version,
+        "case-fold-label",
+        json!({ "identifier": identifier, "add_labels": ["BUG"] }),
+    );
+    assert_eq!(
+        read_issue(session, &identifier).labels,
+        vec!["bug".to_owned()],
+        "a label name matches ignoring case"
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &identifier).version,
+        "case-fold-remove",
+        json!({ "identifier": identifier, "remove_labels": ["Bug"] }),
+    );
+    assert_eq!(
+        read_issue(session, &identifier).labels,
+        Vec::<String>::new(),
+        "a removed label name matches ignoring case"
+    );
+
+    let refusal = try_save(
+        session,
+        read_issue(session, &identifier).version,
+        "case-fold-unknown-state",
+        json!({ "identifier": identifier, "state": "FINISHED" }),
+    )
+    .expect_err("an unknown state name is still refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("state"));
+}
+
+#[test]
+fn save_issue_accepts_a_state_type_by_board_order() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "state-type-create",
+        json!({ "project_id": 1, "title": "State typed issue" }),
+    );
+    let identifier = saved.identifier.clone();
+    let before = read_issue(session, &identifier);
+
+    save_issue(
+        session,
+        before.version,
+        "state-type-started",
+        json!({ "identifier": identifier, "state": "started" }),
+    );
+    assert_eq!(
+        read_issue(session, &identifier).state,
+        "Active",
+        "the started type resolves to its first state in board order"
+    );
+
+    // A board order that puts In Review first makes it the started
+    // type's first state: the type follows the project's own order,
+    // the way Linear uses the team's default state for the type.
+    h.database
+        .connection()
+        .execute(
+            "UPDATE issue_workflow_states SET position = 6 WHERE name = 'Active'",
+            [],
+        )
+        .unwrap();
+    h.database
+        .connection()
+        .execute(
+            "UPDATE issue_workflow_states SET position = 5 WHERE name = 'In Review'",
+            [],
+        )
+        .unwrap();
+    let moved = read_issue(session, &identifier);
+    save_issue(
+        session,
+        moved.version,
+        "state-type-reorder",
+        json!({ "identifier": identifier, "state": "Done" }),
+    );
+    let done = read_issue(session, &identifier);
+    save_issue(
+        session,
+        done.version,
+        "state-type-started-again",
+        json!({ "identifier": identifier, "state": "STARTED" }),
+    );
+    assert_eq!(
+        read_issue(session, &identifier).state,
+        "In Review",
+        "a reordered board changes the type's first state, and the type matches ignoring case"
+    );
+}

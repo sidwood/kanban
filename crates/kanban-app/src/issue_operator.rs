@@ -716,6 +716,22 @@ fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, 
     Ok(ticket_id as u64)
 }
 
+/// The project's stored spelling of one label name, matched the way
+/// the listings match — ignoring case — or `None` when no label of
+/// the project carries the name in any case.
+fn canonical_label_name(
+    ctx: &IssueContext,
+    project_id: i64,
+    name: &str,
+) -> Result<Option<String>, ApiError> {
+    Ok(ctx
+        .issues
+        .list_project_labels(project_id)?
+        .into_iter()
+        .map(|label| label.name)
+        .find(|held| equals_ignoring_case(held, name)))
+}
+
 fn apply_label_changes(
     ctx: &IssueContext,
     project_id: i64,
@@ -723,14 +739,28 @@ fn apply_label_changes(
     request: &IssueSaveRequest,
 ) -> Result<(), ApiError> {
     if let Some(add) = request.add_labels.as_ref() {
-        ctx.issues.validate_label_adds(project_id, add)?;
+        let mut canonical = Vec::with_capacity(add.len());
         for label in add {
-            ctx.issues.add_label(project_id, ticket_id, label)?;
+            canonical.push(
+                canonical_label_name(ctx, project_id, label)?.ok_or_else(|| {
+                    ApiError::invalid_request_field(
+                        "add_labels",
+                        &format!("unknown label `{label}`"),
+                    )
+                })?,
+            );
+        }
+        ctx.issues.validate_label_adds(project_id, &canonical)?;
+        for label in canonical {
+            ctx.issues.add_label(project_id, ticket_id, &label)?;
         }
     }
     if let Some(remove) = request.remove_labels.as_ref() {
         for label in remove {
-            ctx.issues.remove_label(project_id, ticket_id, label)?;
+            let canonical = canonical_label_name(ctx, project_id, label)?.ok_or_else(|| {
+                ApiError::not_found_field("remove_labels", &format!("unknown label `{label}`"))
+            })?;
+            ctx.issues.remove_label(project_id, ticket_id, &canonical)?;
         }
     }
     Ok(())

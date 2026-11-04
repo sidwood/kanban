@@ -136,7 +136,7 @@ fn l1_null_clears_distinguish_absent_from_null() {
     );
     save_issue(
         &session,
-        2,
+        issue_version(&session, &host.identifier),
         "l1-clear",
         json!({ "identifier": host.identifier, "due_date": null }),
     );

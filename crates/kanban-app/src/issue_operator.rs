@@ -509,11 +509,12 @@ fn create_issue(
         .ok_or_else(|| {
             ApiError::invalid_request_field("title", "title is required when creating")
         })?;
+    let linear_priority = request.priority.unwrap_or(0);
     let create = TicketCreateRequest {
         mutation: request.mutation.clone(),
         project_id,
         kind: TicketKind::Task,
-        priority: linear_to_wire_priority(request.priority.unwrap_or(3)),
+        priority: linear_to_wire_priority(linear_priority),
         spec_id: None,
         title: Some(title.to_owned()),
         actual_behaviour: None,
@@ -539,8 +540,10 @@ fn create_issue(
     if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id as i64, description)?;
     }
-    if let Some(priority) = request.priority {
-        ctx.issues.set_linear_priority(ticket_id as i64, priority)?;
+    if request.priority.is_some() {
+        ctx.issues.set_linear_priority(ticket_id as i64, linear_priority)?;
+    } else {
+        ctx.issues.set_initial_linear_priority(ticket_id as i64, 0)?;
     }
     if let Some(due) = request.due_date.as_ref() {
         ctx.issues.set_due_date(ticket_id as i64, due.as_deref())?;
@@ -619,7 +622,13 @@ fn update_issue(
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id, project_id, state, effects)?;
     }
-    if let Some(title) = request.title.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(title) = request.title.as_deref() {
+        if title.trim().is_empty() {
+            return Err(ApiError::invalid_request_field(
+                "title",
+                "title must not be blank",
+            ));
+        }
         ctx.issues.set_title(ticket_id, title)?;
     }
     apply_label_changes(ctx, project_id as i64, ticket_id, request)?;
@@ -650,6 +659,7 @@ fn apply_issue_extensions(
         ctx.issues.set_sub_issue_sort(ticket_id, sort)?;
     }
     if let Some(add) = request.add_blocks.as_ref() {
+        refuse_self_references(ctx, ticket_id, add, "add_blocks", "block")?;
         for target in add {
             ctx.issues.add_relation(ticket_id, target, "blocks")?;
         }
@@ -660,6 +670,7 @@ fn apply_issue_extensions(
         }
     }
     if let Some(add) = request.add_related.as_ref() {
+        refuse_self_references(ctx, ticket_id, add, "add_related", "relate to")?;
         for target in add {
             ctx.issues.add_relation(ticket_id, target, "related")?;
         }
@@ -700,6 +711,7 @@ fn apply_label_changes(
     request: &IssueSaveRequest,
 ) -> Result<(), ApiError> {
     if let Some(add) = request.add_labels.as_ref() {
+        ctx.issues.validate_label_adds(project_id, add)?;
         for label in add {
             ctx.issues.add_label(project_id, ticket_id, label)?;
         }
@@ -1001,6 +1013,26 @@ fn validate_label_colour(color: &str) -> Result<(), ApiError> {
     };
     if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(shape);
+    }
+    Ok(())
+}
+
+/// An issue cannot name itself in a relation it adds.
+fn refuse_self_references(
+    ctx: &IssueContext,
+    ticket_id: i64,
+    targets: &[String],
+    field: &'static str,
+    verb: &str,
+) -> Result<(), ApiError> {
+    for target in targets {
+        let referenced = resolve_parent_reference(ctx, target)?;
+        if referenced as i64 == ticket_id {
+            return Err(ApiError::invalid_request_field(
+                field,
+                &format!("an issue cannot {verb} itself"),
+            ));
+        }
     }
     Ok(())
 }

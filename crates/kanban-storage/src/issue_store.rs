@@ -171,6 +171,24 @@ impl SqliteIssueStore {
         Ok(())
     }
 
+    /// Record a new issue's default Linear priority. Part of creation,
+    /// not an edit: unlike [`SqliteIssueStore::set_linear_priority`]
+    /// this never bumps the version, because the caller sent no
+    /// priority to change.
+    pub fn set_initial_linear_priority(
+        &self,
+        ticket_id: i64,
+        priority: u8,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tickets SET linear_priority = ?2 WHERE id = ?1",
+            params![ticket_id, i64::from(priority)],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+
     pub fn set_due_date(&self, ticket_id: i64, due_date: Option<&str>) -> Result<(), ApiError> {
         let conn = self.lock();
         let stored = match due_date {
@@ -1259,6 +1277,21 @@ impl SqliteIssueStore {
         name: &str,
     ) -> Result<kanban_app::IssueLabelRow, ApiError> {
         let conn = self.lock();
+        let already_retired: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM issue_labels
+                 WHERE project_id = ?1 AND name = ?2 AND retired_at IS NOT NULL",
+                params![project_id, name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        if already_retired.is_some() {
+            return Err(ApiError::invalid_request_field(
+                "name",
+                &format!("label `{name}` is already retired"),
+            ));
+        }
         let changed = conn
             .execute(
                 "UPDATE issue_labels
@@ -1519,6 +1552,59 @@ impl SqliteIssueStore {
         }
     }
 
+    /// Refuse a label-add batch that cannot land: an unknown or
+    /// retired label, or two distinct labels from one single-select
+    /// group, in the order the caller listed them.
+    pub fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let mut held: Option<(String, String)> = None;
+        for name in names {
+            let row: Option<(Option<String>, i64, Option<String>)> = conn
+                .query_row(
+                    "SELECT g.name, COALESCE(g.single_select, 0), l.retired_at
+                     FROM issue_labels AS l
+                     LEFT JOIN issue_label_groups AS g ON g.id = l.group_id
+                     WHERE l.project_id = ?1 AND l.name = ?2",
+                    params![project_id, name],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(internal)?;
+            let Some((group, single_select, retired_at)) = row else {
+                return Err(ApiError::invalid_request_field(
+                    "add_labels",
+                    &format!("unknown label `{name}`"),
+                ));
+            };
+            if retired_at.is_some() {
+                return Err(ApiError::invalid_request_field(
+                    "add_labels",
+                    &format!("label `{name}` is retired"),
+                ));
+            }
+            if single_select == 1
+                && let Some(group_name) = group.as_deref()
+                && let Some((held_group, held_label)) = held.as_ref()
+                && held_group == group_name
+                && held_label != name
+            {
+                return Err(ApiError::invalid_request_field(
+                    "add_labels",
+                    &format!(
+                        "labels `{held_label}` and `{name}` are both from the \
+                         single-select group `{group_name}`; add one of them"
+                    ),
+                ));
+            }
+            if single_select == 1
+                && let Some(group_name) = group
+            {
+                held = Some((group_name, name.clone()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn create_milestone(
         &self,
         project_id: i64,
@@ -1669,6 +1755,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn set_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError> {
         SqliteIssueStore::set_linear_priority(self, ticket_id, priority)
+    }
+
+    fn set_initial_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError> {
+        SqliteIssueStore::set_initial_linear_priority(self, ticket_id, priority)
     }
 
     fn set_due_date(&self, ticket_id: i64, due_date: Option<&str>) -> Result<(), ApiError> {
@@ -1854,6 +1944,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError> {
         SqliteIssueStore::comment_target_exists(self, kind, id)
+    }
+
+    fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError> {
+        SqliteIssueStore::validate_label_adds(self, project_id, names)
     }
 
     fn create_milestone(

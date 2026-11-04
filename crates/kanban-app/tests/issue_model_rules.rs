@@ -895,3 +895,249 @@ fn an_issue_cannot_reference_itself_in_relations() {
         "no self relation row may be written"
     );
 }
+
+#[test]
+fn blank_title_updates_are_refused() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "blank-title-host",
+        json!({ "project_id": 1, "title": "Kept title" }),
+    );
+
+    for (index, title) in ["", "   "].into_iter().enumerate() {
+        let error = try_save(
+            session,
+            issue_version(session, &saved.identifier),
+            &format!("blank-title-{index}"),
+            json!({ "identifier": saved.identifier, "title": title }),
+        )
+        .expect_err("a blank title is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{title:?}");
+        assert_eq!(error.field.as_deref(), Some("title"), "{title:?}");
+    }
+
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(read.title, "Kept title", "the title is unchanged");
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "blank-title-replacement",
+        json!({ "identifier": saved.identifier, "title": "New title" }),
+    );
+    assert_eq!(read_issue(session, &saved.identifier).title, "New title");
+}
+
+#[test]
+fn one_label_per_single_select_group_in_one_call() {
+    let h = rules_harness();
+    let session = &h.session;
+    for (name, key) in [("simple", "tier-simple"), ("standard", "tier-standard")] {
+        session
+            .call(
+                "issue.create_label",
+                &json!({
+                    "mutation": mutation(0, key),
+                    "project_id": 1,
+                    "name": name,
+                    "color": "#336699",
+                    "group": "Model tier",
+                    "group_single_select": true,
+                }),
+            )
+            .expect("the tier label is created");
+    }
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "area-label"),
+                "project_id": 1,
+                "name": "web",
+                "color": "#336699",
+            }),
+        )
+        .expect("an ungrouped label is created");
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "stage-label"),
+                "project_id": 1,
+                "name": "brief",
+                "color": "#336699",
+                "group": "Stage",
+                "group_single_select": false,
+            }),
+        )
+        .expect("a multi-select group label is created");
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "stage-label-two"),
+                "project_id": 1,
+                "name": "pitch",
+                "color": "#336699",
+                "group": "Stage",
+                "group_single_select": false,
+            }),
+        )
+        .expect("the second multi-select group label is created");
+
+    let saved = save_issue(
+        session,
+        0,
+        "single-select-host",
+        json!({ "project_id": 1, "title": "One tier only" }),
+    );
+
+    let error = try_save(
+        session,
+        issue_version(session, &saved.identifier),
+        "single-select-conflict",
+        json!({
+            "identifier": saved.identifier,
+            "add_labels": ["simple", "standard"],
+        }),
+    )
+    .expect_err("two labels from one single-select group are refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("add_labels"));
+    assert!(
+        error.message.contains("simple") && error.message.contains("standard"),
+        "the message names both labels: {}",
+        error.message
+    );
+    assert!(
+        read_issue(session, &saved.identifier).labels.is_empty(),
+        "the refused call adds neither label"
+    );
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "single-select-first",
+        json!({ "identifier": saved.identifier, "add_labels": ["simple"] }),
+    );
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "single-select-replace",
+        json!({ "identifier": saved.identifier, "add_labels": ["standard"] }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(
+        read.labels,
+        vec!["standard".to_owned()],
+        "a later single-select add still replaces the held label"
+    );
+
+    save_issue(
+        session,
+        issue_version(session, &saved.identifier),
+        "multi-select-both",
+        json!({
+            "identifier": saved.identifier,
+            "add_labels": ["brief", "pitch", "web"],
+        }),
+    );
+    let read = read_issue(session, &saved.identifier);
+    assert_eq!(
+        read.labels,
+        vec![
+            "brief".to_owned(),
+            "pitch".to_owned(),
+            "standard".to_owned(),
+            "web".to_owned()
+        ],
+        "multi-select groups and ungrouped labels keep every label"
+    );
+}
+
+#[test]
+fn created_issues_without_a_priority_carry_no_priority() {
+    let h = rules_harness();
+    let session = &h.session;
+
+    let unset = save_issue(
+        session,
+        0,
+        "priority-unset",
+        json!({ "project_id": 1, "title": "No priority given" }),
+    );
+    assert_eq!(
+        read_issue(session, &unset.identifier).priority,
+        0,
+        "a new issue without a priority starts at No priority"
+    );
+
+    let explicit = save_issue(
+        session,
+        0,
+        "priority-explicit",
+        json!({ "project_id": 1, "title": "Explicit priority", "priority": 2 }),
+    );
+    assert_eq!(read_issue(session, &explicit.identifier).priority, 2);
+}
+
+#[test]
+fn retiring_an_already_retired_label_says_so() {
+    let h = rules_harness();
+    let session = &h.session;
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "retire-once-label"),
+                "project_id": 1,
+                "name": "old-label",
+                "color": "#336699",
+            }),
+        )
+        .expect("the label is created");
+
+    session
+        .call(
+            "issue.retire_label",
+            &json!({
+                "mutation": mutation(0, "retire-once"),
+                "project_id": 1,
+                "name": "old-label",
+            }),
+        )
+        .expect("the first retirement applies");
+
+    let again = session
+        .call(
+            "issue.retire_label",
+            &json!({
+                "mutation": mutation(0, "retire-twice"),
+                "project_id": 1,
+                "name": "old-label",
+            }),
+        )
+        .expect_err("retiring an already-retired label is refused");
+    assert_eq!(again.code, ErrorCode::InvalidRequest);
+    assert_eq!(again.field.as_deref(), Some("name"));
+    assert!(
+        again.message.contains("already retired"),
+        "the message says the label is already retired: {}",
+        again.message
+    );
+
+    let unknown = session
+        .call(
+            "issue.retire_label",
+            &json!({
+                "mutation": mutation(0, "retire-unknown"),
+                "project_id": 1,
+                "name": "ghost-label",
+            }),
+        )
+        .expect_err("an unknown label is still not found");
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+}

@@ -58,6 +58,9 @@ pub trait IssueStore: Send + Sync {
     fn set_description(&self, ticket_id: i64, description: &str) -> Result<(), ApiError>;
     fn patch_description(&self, ticket_id: i64, patch: &str) -> Result<String, ApiError>;
     fn set_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError>;
+    /// Record a new issue's default priority as part of creation,
+    /// without a version bump.
+    fn set_initial_linear_priority(&self, ticket_id: i64, priority: u8) -> Result<(), ApiError>;
     fn set_due_date(&self, ticket_id: i64, due_date: Option<&str>) -> Result<(), ApiError>;
     fn set_milestone(&self, ticket_id: i64, milestone_id: Option<i64>) -> Result<(), ApiError>;
     fn apply_free_state(
@@ -145,4 +148,8 @@ pub trait IssueStore: Send + Sync {
     /// Whether one non-ticket comment target names a stored entity
     /// of its kind.
     fn comment_target_exists(&self, kind: &str, id: &str) -> Result<bool, ApiError>;
+    /// Refuse a label-add batch that cannot land: an unknown or
+    /// retired label, or two distinct labels from one single-select
+    /// group.
+    fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError>;
 }

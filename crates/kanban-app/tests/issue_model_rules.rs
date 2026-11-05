@@ -5317,3 +5317,139 @@ fn closing_a_child_announces_each_auto_closed_ancestor() {
         sink.announced()
     );
 }
+#[test]
+fn marking_a_duplicate_stamps_and_announces_its_target() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let target = save_issue(
+        session,
+        0,
+        "duplicate-target",
+        json!({ "project_id": 1, "title": "Canonical" }),
+    );
+    let duplicate = save_issue(
+        session,
+        0,
+        "duplicate-copy",
+        json!({ "project_id": 1, "title": "Duplicate" }),
+    );
+    let before = read_issue(session, &target.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &duplicate.identifier).version,
+        "duplicate-mark",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier }),
+    );
+    let after = read_issue(session, &target.identifier);
+    assert_eq!(
+        after.duplicates.as_deref(),
+        Some(&[duplicate.identifier.clone()][..])
+    );
+    assert!(
+        after.version > before.version,
+        "the target's membership change advances its version"
+    );
+    assert_ne!(after.updated_at, before.updated_at);
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", target.ticket_id),
+        "the target is named: {:?}",
+        sink.announced()
+    );
+    let listed = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "updated_since": before.updated_at }),
+        )
+        .expect("updated_since lists");
+    let identifiers = listed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter_map(|issue| issue["identifier"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        identifiers.contains(&target.identifier.as_str()),
+        "updated_since sees the stamped target: {identifiers:?}"
+    );
+
+    let repeated = read_issue(session, &target.identifier);
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &duplicate.identifier).version,
+        "duplicate-repeat",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier }),
+    );
+    assert_eq!(
+        read_issue(session, &target.identifier).version,
+        repeated.version
+    );
+    assert_eq!(
+        read_issue(session, &target.identifier).updated_at,
+        repeated.updated_at
+    );
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.edited", target.ticket_id),
+        "repeating the same target is a no-op: {:?}",
+        sink.announced()
+    );
+
+    let other = save_issue(
+        session,
+        0,
+        "duplicate-other",
+        json!({ "project_id": 1, "title": "Other canonical" }),
+    );
+    let other_before = read_issue(session, &other.identifier);
+    let old_before = read_issue(session, &target.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &duplicate.identifier).version,
+        "duplicate-move",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": other.identifier }),
+    );
+    let old_after = read_issue(session, &target.identifier);
+    let other_after = read_issue(session, &other.identifier);
+    assert!(old_after.duplicates.is_none() || old_after.duplicates == Some(Vec::new()));
+    assert_eq!(
+        other_after.duplicates.as_deref(),
+        Some(&[duplicate.identifier.clone()][..])
+    );
+    assert!(old_after.version > old_before.version);
+    assert!(other_after.version > other_before.version);
+    assert_ne!(old_after.updated_at, old_before.updated_at);
+    assert_ne!(other_after.updated_at, other_before.updated_at);
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.edited",
+        target.ticket_id
+    ));
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.edited",
+        other.ticket_id
+    ));
+
+    let cleared_before = read_issue(session, &other.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &duplicate.identifier).version,
+        "duplicate-clear",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": null }),
+    );
+    let cleared = read_issue(session, &other.identifier);
+    assert!(cleared.duplicates.is_none() || cleared.duplicates == Some(Vec::new()));
+    assert!(cleared.version > cleared_before.version);
+    assert_ne!(cleared.updated_at, cleared_before.updated_at);
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.edited",
+        other.ticket_id
+    ));
+}

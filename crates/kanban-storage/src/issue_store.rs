@@ -1214,6 +1214,14 @@ impl SqliteIssueStore {
             )
             .map_err(internal)?;
         }
+        if current_target != target_id {
+            if let Some(previous) = current_target {
+                self.bump_version(previous)?;
+            }
+            if let Some(next) = target_id {
+                self.bump_version(next)?;
+            }
+        }
         Ok(())
     }
 
@@ -1377,6 +1385,7 @@ impl SqliteIssueStore {
         }
         drop(conn);
         affected.remove(&ticket_id);
+        affected.remove(&target_id);
         for id in affected {
             self.bump_version(id)?;
         }

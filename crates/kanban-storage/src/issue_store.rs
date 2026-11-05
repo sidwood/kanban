@@ -1409,16 +1409,7 @@ impl SqliteIssueStore {
         description: &str,
     ) -> Result<(), ApiError> {
         let self_key = self.load_issue_key(ticket_id)?.display();
-        let mut mentioned = Vec::new();
-        for token in description.split_whitespace() {
-            let trimmed = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-            if kanban_domain::IssueKey::parse(trimmed).is_some() {
-                mentioned.push(trimmed.to_owned());
-            }
-        }
-        mentioned.sort();
-        mentioned.dedup();
-        for identifier in mentioned {
+        for identifier in mentioned_issue_keys(description) {
             if identifier.eq_ignore_ascii_case(&self_key) {
                 continue;
             }
@@ -1819,6 +1810,60 @@ impl SqliteIssueStore {
             })
             .map_err(internal)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(internal)
+    }
+}
+
+fn mentioned_issue_keys(description: &str) -> Vec<String> {
+    let mut mentioned = Vec::new();
+    for token in description.split_whitespace() {
+        push_issue_key(
+            &mut mentioned,
+            token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'),
+        );
+        if let Some(rest) = token.split("kanban://issue/").nth(1) {
+            let key: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            push_issue_key(&mut mentioned, &key);
+        }
+    }
+    let mut index = 0;
+    while index < description.len() {
+        let Some(open) = description[index..].find('[') else {
+            break;
+        };
+        let start = index + open;
+        let Some(close_rel) = description[start..].find("](") else {
+            break;
+        };
+        let label_end = start + close_rel;
+        let target_start = label_end + 2;
+        let Some(end_rel) = description[target_start..].find(')') else {
+            index = target_start;
+            continue;
+        };
+        let target_end = target_start + end_rel;
+        push_issue_key(&mut mentioned, description[start + 1..label_end].trim());
+        let target = &description[target_start..target_end];
+        push_issue_key(&mut mentioned, target.trim());
+        if let Some(rest) = target.split("kanban://issue/").nth(1) {
+            let key: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            push_issue_key(&mut mentioned, &key);
+        }
+        index = target_end + 1;
+    }
+    mentioned.sort();
+    mentioned.dedup();
+    mentioned
+}
+
+fn push_issue_key(mentioned: &mut Vec<String>, raw: &str) {
+    if kanban_domain::IssueKey::parse(raw).is_some() {
+        mentioned.push(raw.to_owned());
     }
 }
 

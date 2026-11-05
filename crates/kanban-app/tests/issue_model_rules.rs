@@ -3107,6 +3107,72 @@ fn create_label_reports_the_stored_group_flag() {
 }
 
 #[test]
+fn unknown_references_name_their_request_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "field-naming-create",
+        json!({ "project_id": 1, "title": "Names its fields" }),
+    );
+    let identifier = saved.identifier.clone();
+    let version = || read_issue(session, &identifier).version;
+
+    let refusal = try_save(
+        session,
+        version(),
+        "field-naming-parent",
+        json!({ "identifier": identifier, "parent_id": "CORE-999" }),
+    )
+    .expect_err("an unknown parent is refused");
+    assert_eq!(
+        (refusal.code, refusal.field.as_deref()),
+        (ErrorCode::NotFound, Some("parent_id"))
+    );
+
+    let refusal = try_save(
+        session,
+        version(),
+        "field-naming-duplicate",
+        json!({ "identifier": identifier, "duplicate_of": "CORE-999" }),
+    )
+    .expect_err("an unknown duplicate target is refused");
+    assert_eq!(
+        (refusal.code, refusal.field.as_deref()),
+        (ErrorCode::NotFound, Some("duplicate_of"))
+    );
+
+    for (operation, payload) in [
+        (
+            "issue.retire_label",
+            json!({
+                "mutation": mutation(0, "field-naming-retire"),
+                "project_id": 999,
+                "name": "ghost",
+            }),
+        ),
+        (
+            "issue.update_project_settings",
+            json!({
+                "mutation": mutation(0, "field-naming-settings"),
+                "project_id": 999,
+                "auto_close_sub_issues": true,
+            }),
+        ),
+    ] {
+        let refusal = session
+            .call(operation, &payload)
+            .expect_err("an unknown project is refused");
+        assert_eq!(
+            (refusal.code, refusal.field.as_deref()),
+            (ErrorCode::NotFound, Some("project_id")),
+            "{operation} names the project field"
+        );
+    }
+}
+
+#[test]
 fn relation_lists_take_ticket_ids_and_name_their_field() {
     let h = rules_harness();
     let session = &h.session;

@@ -812,7 +812,7 @@ impl SqliteIssueStore {
                 .optional()
                 .map_err(internal)?;
             if exists.is_none() {
-                return Err(ApiError::not_found("parent issue"));
+                return Err(ApiError::not_found_field("parent_id", "parent issue"));
             }
             let child_project: i64 = conn
                 .query_row(
@@ -965,7 +965,7 @@ impl SqliteIssueStore {
             let Some((_, id)) = super::linear_issue::resolve_issue_key(&conn, identifier)
                 .map_err(internal_storage)?
             else {
-                return Err(ApiError::not_found(identifier));
+                return Err(ApiError::not_found_field("duplicate_of", identifier));
             };
             if id == ticket_id {
                 return Err(ApiError::invalid_request_field(

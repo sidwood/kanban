@@ -420,7 +420,7 @@ impl CommandHandler for RetireLabel {
         _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: IssueRetireLabelRequest = parse_payload(&command.payload)?;
-        resolve_project(self.0.projects.as_ref(), request.project_id)?;
+        resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
         let row = self
             .0
             .issues
@@ -454,6 +454,7 @@ impl CommandHandler for UpdateProjectSettings {
         _effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: IssueUpdateProjectSettingsRequest = parse_payload(&command.payload)?;
+        resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
         if let Some(enabled) = request.auto_close_sub_issues {
             self.0
                 .issues
@@ -769,7 +770,7 @@ fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, 
     let (_, ticket_id) = ctx
         .issues
         .resolve_identifier(reference)?
-        .ok_or_else(|| ApiError::not_found(reference))?;
+        .ok_or_else(|| ApiError::not_found_field("parent_id", reference))?;
     Ok(ticket_id as u64)
 }
 

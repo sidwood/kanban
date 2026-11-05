@@ -648,6 +648,8 @@ export type IssueMilestonesResponse = {
   milestones: IssueMilestoneRecord[];
 };
 export type IssueProjectRecord = {
+  auto_close_sub_issues: boolean;
+  close_sub_issues_with_parent: boolean;
   code: string;
   id: number;
   name: string;

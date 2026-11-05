@@ -305,6 +305,10 @@ pub struct IssueProjectRecord {
     pub id: u64,
     pub code: String,
     pub name: String,
+    /// Whether an open parent closes once every sub-issue is closed.
+    pub auto_close_sub_issues: bool,
+    /// Whether a parent's open sub-issues close when the parent closes.
+    pub close_sub_issues_with_parent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

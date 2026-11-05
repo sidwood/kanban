@@ -11,7 +11,8 @@ use kanban_app::{
     CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
 };
 use kanban_dto::{
-    ApiError, IssueGetQuery, IssueProjectSettingsResponse, IssueRecord, IssueSaveResponse,
+    ApiError, IssueGetQuery, IssueProjectRecord, IssueProjectSettingsResponse,
+    IssueProjectsResponse, IssueRecord, IssueSaveResponse,
 };
 use kanban_storage::{
     Database, SqliteCommentStore, SqliteDependencyStore, SqliteEvidenceStore, SqliteIssueStore,
@@ -505,4 +506,45 @@ fn a_legacy_parent_cancel_cancels_its_open_sub_issues() {
         "the sub-issue closes in the same write as the legacy move"
     );
     assert!(cancelled.canceled_at.is_some());
+}
+#[test]
+fn list_projects_reads_both_sub_issue_settings() {
+    let h = harness_with_stack();
+    let s = &h.session;
+    let projects = |s: &OperatorSession| -> Vec<IssueProjectRecord> {
+        serde_json::from_value::<IssueProjectsResponse>(
+            s.call("issue.list_projects", &json!({}))
+                .expect("issue.list_projects"),
+        )
+        .expect("projects shape")
+        .projects
+    };
+
+    let before = projects(s);
+    assert_eq!(
+        before,
+        vec![IssueProjectRecord {
+            id: CORE,
+            code: "CORE".to_owned(),
+            name: "Control plane".to_owned(),
+            auto_close_sub_issues: false,
+            close_sub_issues_with_parent: false,
+        }],
+        "both settings read off until a project enables them"
+    );
+
+    close_with_parent(s);
+    let after = projects(s);
+    assert!(!after[0].auto_close_sub_issues);
+    assert!(after[0].close_sub_issues_with_parent);
+
+    settings(
+        s,
+        "parent-auto-close",
+        json!({ "auto_close_sub_issues": true }),
+    )
+    .unwrap();
+    let both = projects(s);
+    assert!(both[0].auto_close_sub_issues);
+    assert!(both[0].close_sub_issues_with_parent);
 }

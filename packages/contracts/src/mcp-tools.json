@@ -41593,7 +41593,7 @@
     }
   },
   {
-    "description": "List registered projects (teams) for operator lookups.",
+    "description": "List registered projects (teams) for operator lookups, with each project's sub-issue settings (auto_close_sub_issues and close_sub_issues_with_parent).",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41608,6 +41608,14 @@
         "IssueProjectRecord": {
           "additionalProperties": false,
           "properties": {
+            "auto_close_sub_issues": {
+              "description": "Whether an open parent closes once every sub-issue is closed.",
+              "type": "boolean"
+            },
+            "close_sub_issues_with_parent": {
+              "description": "Whether a parent's open sub-issues close when the parent closes.",
+              "type": "boolean"
+            },
             "code": {
               "type": "string"
             },
@@ -41621,6 +41629,8 @@
             }
           },
           "required": [
+            "auto_close_sub_issues",
+            "close_sub_issues_with_parent",
             "code",
             "id",
             "name"

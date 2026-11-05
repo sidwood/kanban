@@ -1157,7 +1157,7 @@ define_exposed_catalogue! {
         request: "IssueProjectsQuery",
         response: "IssueProjectsResponse",
         mcp: "list_projects",
-        description: "List registered projects (teams) for operator lookups.",
+        description: "List registered projects (teams) for operator lookups, with each project's sub-issue settings (auto_close_sub_issues and close_sub_issues_with_parent).",
     },
     "issue.create_milestone" => {
         kind: Command,

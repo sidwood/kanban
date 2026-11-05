@@ -17,7 +17,7 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | `list_issue_statuses` | `issue.list_workflow_states` | Workflow states with Linear types for a project |
 | `list_issue_labels` | `issue.list_labels` | Labels and groups (including single-select groups), including retired labels |
 | `list_milestones` | `issue.list_milestones` | Milestones for a project with issue progress counts |
-| `list_projects` | `issue.list_projects` | Registered projects (teams) |
+| `list_projects` | `issue.list_projects` | Registered projects (teams): `id`, `code`, `name`, and both sub-issue settings, `auto_close_sub_issues` and `close_sub_issues_with_parent` |
 | `create_milestone` | `issue.create_milestone` | Create a milestone on a project |
 | `create_label` | `issue.create_label` | Create a label (and optional group) on a project |
 | `retire_label` | `issue.retire_label` | Retire (archive) a label on a project |

@@ -5,6 +5,14 @@
     "IssueProjectRecord": {
       "additionalProperties": false,
       "properties": {
+        "auto_close_sub_issues": {
+          "description": "Whether an open parent closes once every sub-issue is closed.",
+          "type": "boolean"
+        },
+        "close_sub_issues_with_parent": {
+          "description": "Whether a parent's open sub-issues close when the parent closes.",
+          "type": "boolean"
+        },
         "code": {
           "type": "string"
         },
@@ -18,6 +26,8 @@
         }
       },
       "required": [
+        "auto_close_sub_issues",
+        "close_sub_issues_with_parent",
         "code",
         "id",
         "name"

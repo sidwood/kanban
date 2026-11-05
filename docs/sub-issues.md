@@ -69,6 +69,9 @@ closes its **open** sub-issues:
 - With both settings on, every issue enters its closed state once: this rule
   only closes open sub-issues and parent auto-close only closes open parents.
 
+`list_projects` reads both settings back for every project, and
+`update_project_settings` returns both after any change.
+
 ## UI
 
 From the issue drawer, use **Add sub-issue** to create a child under the open

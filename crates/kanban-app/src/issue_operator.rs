@@ -308,12 +308,23 @@ impl QueryHandler for ListProjects {
             .projects
             .list()?
             .into_iter()
-            .map(|project| IssueProjectRecord {
-                id: project.id().value(),
-                code: project.code().as_str().to_owned(),
-                name: project.registration().name().to_owned(),
+            .map(|project| {
+                let id = project.id().value();
+                Ok(IssueProjectRecord {
+                    id,
+                    code: project.code().as_str().to_owned(),
+                    name: project.registration().name().to_owned(),
+                    auto_close_sub_issues: self
+                        .0
+                        .issues
+                        .auto_close_sub_issues_enabled(id as i64)?,
+                    close_sub_issues_with_parent: self
+                        .0
+                        .issues
+                        .close_sub_issues_with_parent_enabled(id as i64)?,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ApiError>>()?;
         serde_json::to_value(IssueProjectsResponse { projects })
             .map_err(|_| ApiError::internal("projects response invalid"))
     }

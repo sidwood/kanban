@@ -2097,6 +2097,7 @@ fn mentioned_issue_keys(description: &str) -> Vec<String> {
         }
         search = target_end + 1;
     }
+    push_issue_tag_mentions(&mut mentioned, description);
     mentioned.sort();
     mentioned.dedup();
     mentioned
@@ -2107,6 +2108,38 @@ fn push_issue_key(mentioned: &mut Vec<String>, raw: &str) {
         mentioned.push(raw.to_owned());
     }
 }
+
+fn push_issue_tag_mentions(mentioned: &mut Vec<String>, description: &str) {
+    let lower = description.to_ascii_lowercase();
+    let mut search = 0;
+    while let Some(rel) = lower[search..].find("<issue") {
+        let start = search + rel;
+        let Some(end_rel) = lower[start..].find("</issue>") else {
+            break;
+        };
+        let end = start + end_rel;
+        let tag = &description[start..end];
+        let body_at = tag.find('>').unwrap_or(tag.len());
+        let opening = &tag[..body_at];
+        let body = tag.get(body_at + 1..).unwrap_or("");
+        push_issue_key(mentioned, body.trim());
+        for attribute in ["id", "identifier"] {
+            if let Some(value) = attribute_value(opening, attribute) {
+                push_issue_key(mentioned, value.trim());
+            }
+        }
+        search = end + "</issue>".len();
+    }
+}
+
+fn attribute_value<'a>(opening: &'a str, name: &str) -> Option<&'a str> {
+    let lower = opening.to_ascii_lowercase();
+    let needle = format!("{name}=\"");
+    let start = lower.find(&needle)? + needle.len();
+    let rest = opening.get(start..)?;
+    rest.split('"').next()
+}
+
 
 fn map_workflow_state(record: WorkflowStateRecord) -> kanban_app::IssueWorkflowState {
     kanban_app::IssueWorkflowState {

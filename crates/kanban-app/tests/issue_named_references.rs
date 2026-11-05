@@ -320,3 +320,64 @@ fn description_edits_apply_together_or_not_at_all() {
     assert_eq!(unchanged["description"], json!("alpha BETA alpha tail"));
     assert_eq!(unchanged["version"], json!(before_version));
 }
+
+#[test]
+fn an_issue_tag_adds_one_related_link() {
+    let session = session();
+    let mentioned: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "tag-mentioned",
+        json!({ "project_id": 1, "title": "Mentioned" }),
+    ))
+    .expect("save shape");
+    let host: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "tag-host",
+        json!({
+            "project_id": 1,
+            "title": "Host",
+            "description": format!(
+                "See <issue id=\"{}\">{}</issue> later.",
+                mentioned.identifier, mentioned.identifier
+            )
+        }),
+    ))
+    .expect("save shape");
+    let read = session
+        .call("issue.get", &json!({ "identifier": host.identifier }))
+        .expect("issue.get");
+    let related = read["relations"]
+        .as_array()
+        .expect("relations")
+        .iter()
+        .filter(|row| row["kind"] == "related" && row["identifier"] == mentioned.identifier)
+        .count();
+    assert_eq!(related, 1, "the issue tag adds one related link: {read}");
+
+    let version = read["version"].as_u64().expect("version");
+    session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(version, "tag-again"),
+                "identifier": host.identifier,
+                "description": format!(
+                    "See <issue id=\"{}\">{}</issue> again.",
+                    mentioned.identifier, mentioned.identifier
+                )
+            }),
+        )
+        .expect("the repeat lands");
+    let again = session
+        .call("issue.get", &json!({ "identifier": host.identifier }))
+        .expect("issue.get");
+    let related_again = again["relations"]
+        .as_array()
+        .expect("relations")
+        .iter()
+        .filter(|row| row["kind"] == "related" && row["identifier"] == mentioned.identifier)
+        .count();
+    assert_eq!(related_again, 1, "a repeated mention does not add a second link");
+}

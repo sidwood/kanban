@@ -1308,6 +1308,24 @@ pub(crate) fn apply_canonical_comment_addresses_in_span(
             )?;
         }
     }
+    ensure_comment_target_key(span)
+}
+
+fn ensure_comment_target_key(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    let present: i64 = span.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table' AND name = 'comments' AND sql LIKE '%target_key%'",
+        [],
+        |row| row.get(0),
+    )?;
+    if present == 0 {
+        span.execute_batch(include_str!("../migrations/comment_target_key.sql"))?;
+    } else {
+        span.execute_batch(
+            "CREATE INDEX IF NOT EXISTS comments_by_canonical_target
+             ON comments (entity_kind, target_key, id)",
+        )?;
+    }
     Ok(())
 }
 

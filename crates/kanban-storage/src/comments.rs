@@ -32,6 +32,32 @@ impl SqliteCommentStore {
         self.conn.lock()
     }
 }
+const LIST_FOR_TARGET_SQL: &str = r#"SELECT c.id, c.version, c.created_at,
+       (SELECT text FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       (SELECT revision FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       (SELECT recorded_at FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       COALESCE(c.author, ''),
+       c.parent_comment_id,
+       c.resolved_at
+FROM comments AS c
+WHERE c.entity_kind = ?1 AND c.id > ?2 AND c.target_key = ?3
+UNION ALL
+SELECT c.id, c.version, c.created_at,
+       (SELECT text FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       (SELECT revision FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       (SELECT recorded_at FROM comment_revisions
+        WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
+       COALESCE(c.author, ''),
+       c.parent_comment_id,
+       c.resolved_at
+FROM comments AS c
+WHERE c.entity_kind = ?1 AND c.id > ?2 AND c.target_key = ?4 AND ?4 != '' AND ?4 != ?3
+ORDER BY id ASC"#;
 
 impl CommentStore for SqliteCommentStore {
     fn create(
@@ -254,66 +280,31 @@ impl CommentStore for SqliteCommentStore {
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         let conn = self.lock();
         let after = cursor.unwrap_or(0) as i64;
-        let ticket_id = (target.kind() == "ticket")
-            .then(|| target.id().parse::<i64>().ok())
-            .flatten();
-        let project_code = ticket_id
-            .and_then(|id| {
+        let issue_key = if target.kind() == "ticket" {
+            if let Ok(id) = target.id().parse::<i64>() {
                 conn.query_row(
-                    "SELECT p.code FROM tickets AS t
+                    "SELECT UPPER(p.code) || '-' || t.number
+                     FROM tickets AS t
                      JOIN projects AS p ON p.id = t.project_id
                      WHERE t.id = ?1",
                     [id],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()
-                .ok()
-                .flatten()
-            })
-            .unwrap_or_default();
-        let ticket_stream = i64::from(ticket_id.is_some());
+                .map_err(|error| ApiError::internal(&error.to_string()))?
+                .unwrap_or_default()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
         let mut statement = conn
-            .prepare(
-                "SELECT c.id, c.version, c.created_at,
-                        (SELECT text FROM comment_revisions
-                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        (SELECT revision FROM comment_revisions
-                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        (SELECT recorded_at FROM comment_revisions
-                         WHERE comment_id = c.id ORDER BY revision DESC LIMIT 1),
-                        COALESCE(c.author, ''),
-                        c.parent_comment_id,
-                        c.resolved_at
-                 FROM comments AS c
-                 WHERE c.entity_kind = ?1 AND c.id > ?3 AND (
-                     c.entity_id = ?2
-                     OR (
-                       ?4 = 1 AND (
-                         (
-                           (c.entity_id GLOB '+[0-9]*' OR c.entity_id GLOB '[0-9]*')
-                           AND CAST(c.entity_id AS INTEGER) = CAST(?2 AS INTEGER)
-                         )
-                         OR (
-                           ?5 != ''
-                           AND UPPER(substr(c.entity_id, 1, length(?5) + 1)) = UPPER(?5 || '-')
-                           AND substr(c.entity_id, length(?5) + 2) GLOB '[0-9]*'
-                           AND CAST(substr(c.entity_id, length(?5) + 2) AS INTEGER) = CAST(?2 AS INTEGER)
-                         )
-                       )
-                     )
-                 )
-                 ORDER BY c.id ASC",
-            )
+            .prepare(LIST_FOR_TARGET_SQL)
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let rows = statement
             .query_map(
-                rusqlite::params![
-                    target.kind(),
-                    target.id(),
-                    after,
-                    ticket_stream,
-                    project_code
-                ],
+                rusqlite::params![target.kind(), after, target.id(), issue_key],
                 |row| {
                     let id: i64 = row.get(0)?;
                     let version: i64 = row.get(1)?;

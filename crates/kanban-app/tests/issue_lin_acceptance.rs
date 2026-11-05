@@ -665,9 +665,9 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
         .execute(
             "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
              VALUES (901, '1', 'ticket', ?1, 1, 'legacy')",
-            [&host.ticket_id.to_string()],
+            [&host.identifier],
         )
-        .expect("the migrated-form row lands");
+        .expect("the legacy row lands");
     h.database
         .connection()
         .execute(
@@ -676,19 +676,24 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
             [],
         )
         .expect("the legacy revision lands");
+    let mixed_case = format!(
+        "{}{}",
+        host.identifier.chars().next().expect("the key opens"),
+        host.identifier[1..].to_lowercase(),
+    );
     h.database
         .connection()
         .execute(
             "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
              VALUES (902, '1', 'ticket', ?1, 1, 'legacy')",
-            [&host.ticket_id.to_string()],
+            [&mixed_case],
         )
-        .expect("the second migrated-form row lands");
+        .expect("the mixed-case legacy row lands");
     h.database
         .connection()
         .execute(
             "INSERT INTO comment_revisions (comment_id, revision, text)
-             VALUES (902, 1, 'Legacy mixed case')",
+                 VALUES (902, 1, 'Legacy mixed case')",
             [],
         )
         .expect("the mixed-case revision lands");
@@ -717,7 +722,7 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
     assert_eq!(
         bodies,
         vec![json!("Legacy by key"), json!("Legacy mixed case")],
-        "the rows the canonical address holds list for the issue"
+        "every pre-change letter-case spelling of the key still lists"
     );
     assert_eq!(by_key["comments"], by_id["comments"]);
 
@@ -791,12 +796,11 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
             )
             .expect("the legacy revision lands");
     };
-    let canonical = host.ticket_id.to_string();
-    seed(&canonical, "Legacy, zero padded");
-    seed(&canonical, "Legacy, signed");
-    seed(&canonical, "Legacy, padded key");
-    seed(&canonical, "Legacy, twice padded");
-    seed(&other.ticket_id.to_string(), "Legacy, other issue");
+    seed(&zero_padded, "Legacy, zero padded");
+    seed(&signed, "Legacy, signed");
+    seed(&padded_key, "Legacy, padded key");
+    seed(&twice_padded, "Legacy, twice padded");
+    seed(&other.identifier, "Legacy, other issue");
 
     let by_id = session
         .call(
@@ -821,7 +825,7 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
             json!("Legacy, padded key"),
             json!("Legacy, twice padded"),
         ],
-        "every row the issue's canonical address holds lists together"
+        "every reference spelling the issue lookups accept lists together"
     );
 
     for raw in [
@@ -829,7 +833,6 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
         zero_padded.clone(),
         signed.clone(),
         padded_key.clone(),
-        twice_padded.clone(),
         host.identifier.to_lowercase(),
     ] {
         let listed = session
@@ -863,6 +866,100 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
         other_bodies,
         vec![json!("Legacy, other issue")],
         "another issue keeps its own rows"
+    );
+}
+
+#[test]
+fn a_key_form_comment_follows_the_issue_number() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let registration = ProjectRegistration::new(
+        "TWO",
+        "Second",
+        "/repo/TWO",
+        "/seed/TWO",
+        "main",
+        "TWO.seed",
+        None,
+        None,
+    )
+    .expect("the second project validates");
+    projects
+        .create(&registration, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the second project lands");
+    let session = OperatorSession::new(Arc::new(h.core));
+    let _first = save_issue(
+        &session,
+        0,
+        "first-project-issue",
+        json!({ "project_id": 1, "title": "First project" }),
+    );
+    let host = save_issue(
+        &session,
+        0,
+        "second-project-first",
+        json!({ "project_id": 2, "title": "Second project first" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "second-project-second",
+        json!({ "project_id": 2, "title": "Second project second" }),
+    );
+    assert_ne!(
+        host.ticket_id.to_string(),
+        host.identifier.rsplit_once('-').unwrap().1,
+        "this issue's number and ticket id differ"
+    );
+    let conn = h.database.connection();
+    for (id, issue, body) in [
+        (931_i64, &host, "belongs to the first issue"),
+        (932_i64, &other, "belongs to the second issue"),
+    ] {
+        conn.execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (?1, '2', 'ticket', ?2, 1, 'legacy')",
+            rusqlite::params![id, issue.identifier.as_str()],
+        )
+        .expect("the key-form row lands");
+        conn.execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text) VALUES (?1, 1, ?2)",
+            rusqlite::params![id, body],
+        )
+        .expect("the key-form revision lands");
+    }
+    drop(conn);
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.identifier },
+                "limit": 10,
+            }),
+        )
+        .expect("the list serves");
+    let bodies: Vec<_> = listed["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![json!("belongs to the first issue")],
+        "a key suffix is the issue number, not the global ticket id"
     );
 }
 

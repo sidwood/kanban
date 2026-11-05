@@ -1231,3 +1231,50 @@ class SubIssueClosureTests(unittest.TestCase):
                 f"a {child} child leaves the parent version, timestamps and history unchanged"
             )
             self.assertEqual(results[description], checks.FAIL)
+
+
+class FixtureNameTests(unittest.TestCase):
+    def test_new_query_and_closure_fixtures_describe_their_behaviour(self):
+        source = Path("scripts/acceptance/scenarios.py").read_text()
+        required = (
+            '"marigold beacon"',
+            '"plain heading"',
+            '"control heading"',
+            '"Closed-child progress"',
+            '"Cancelled child"',
+            '"Superseded child"',
+            '"Duplicate child"',
+            '"Mixed closed children"',
+            '"Mixed cancelled child"',
+            '"Mixed superseded child"',
+            '"Mixed duplicate child"',
+            "f\"{state['name']} parent\"",
+            "f\"Child of {state['name']}\"",
+        )
+        forbidden = (
+            '"T2 marigold beacon"',
+            '"T2 plain heading"',
+            '"T2 control heading"',
+            '"T11 Closed-child progress"',
+            '"T11 Cancelled child"',
+            '"T11 Superseded child"',
+            '"T11 Duplicate child"',
+            '"T11 Mixed closed children"',
+            '"T11 Mixed cancelled child"',
+            '"T11 Mixed superseded child"',
+            '"T11 Mixed duplicate child"',
+            "f\"T11 {state['name']} parent\"",
+            "f\"T11 Child of {state['name']}\"",
+        )
+        inherited = (
+            '"T2 aurora frontend task"',
+            '"T11 Parent"',
+            '"T11 Auto-close parent"',
+            'f"T4 Born {state}"',
+        )
+        for title in required:
+            self.assertIn(title, source)
+        for title in forbidden:
+            self.assertNotIn(title, source)
+        for title in inherited:
+            self.assertIn(title, source)

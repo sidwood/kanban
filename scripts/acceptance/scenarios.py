@@ -355,11 +355,11 @@ def seed_read_corpus(ctx):
     ctx.save_must(r1, priority=1)
     ctx.create("T2 other team issue", "LTB")
     ctx.save_must(ctx.create("T2 zephyr duplicate", "LIN"), duplicate_of=r2)
-    title_only = ctx.create("T2 marigold beacon", "LIN",
+    title_only = ctx.create("marigold beacon", "LIN",
                             description="A note that does not repeat the title token.")
-    description_only = ctx.create("T2 plain heading", "LIN",
+    description_only = ctx.create("plain heading", "LIN",
                                   description="The body alone holds periwinkle.")
-    ctx.create("T2 control heading", "LIN", description="A control body with neither token.")
+    ctx.create("control heading", "LIN", description="A control body with neither token.")
     ctx.query_examples = {"title": (title_only, "marigold"), "description": (description_only, "periwinkle")}
 
 
@@ -1403,10 +1403,10 @@ def test_sub_issues(ctx):
                record.get("completed_at"), record.get("canceled_at")),
               f"version {before_close['version']} -> {record['version']}, "
               f"updated_at {before_close['updated_at']} -> {record['updated_at']}")
-    progress = ctx.create("T11 Closed-child progress", "LIN", state="Active")
-    ctx.create("T11 Cancelled child", parent_id=progress, state="Cancelled")
-    ctx.create("T11 Superseded child", parent_id=progress, state="Superseded")
-    ctx.create("T11 Duplicate child", parent_id=progress, state="Duplicate")
+    progress = ctx.create("Closed-child progress", "LIN", state="Active")
+    ctx.create("Cancelled child", parent_id=progress, state="Cancelled")
+    ctx.create("Superseded child", parent_id=progress, state="Superseded")
+    ctx.create("Duplicate child", parent_id=progress, state="Duplicate")
     rec.equal("progress counts cancelled, superseded and duplicate children as closed",
               ctx.get(progress).get("sub_issues"), {"done": 3, "total": 3})
 
@@ -1443,10 +1443,10 @@ def test_sub_issues(ctx):
         again = ctx.get(closing)
         rec.equal("an already closed parent is not closed again", len(again["state_history"]),
                   len(after["state_history"]))
-        mixed = ctx.create("T11 Mixed closed children", "LIN", state="Active")
-        cancelled_child = ctx.create("T11 Mixed cancelled child", parent_id=mixed, state="Active")
-        superseded_child = ctx.create("T11 Mixed superseded child", parent_id=mixed, state="Active")
-        duplicate_child = ctx.create("T11 Mixed duplicate child", parent_id=mixed, state="Active")
+        mixed = ctx.create("Mixed closed children", "LIN", state="Active")
+        cancelled_child = ctx.create("Mixed cancelled child", parent_id=mixed, state="Active")
+        superseded_child = ctx.create("Mixed superseded child", parent_id=mixed, state="Active")
+        duplicate_child = ctx.create("Mixed duplicate child", parent_id=mixed, state="Active")
         before_partial = ctx.get(mixed)
         ctx.save_must(cancelled_child, state="Cancelled")
         after_cancelled = ctx.get(mixed)
@@ -1475,8 +1475,8 @@ def test_sub_issues(ctx):
         for state in ctx.must("list_issue_statuses", {"project_id": ctx.project_id})["states"]:
             if state["state_type"] not in CLOSED_TYPES:
                 continue
-            terminal = ctx.create(f"T11 {state['name']} parent", "LIN", state=state["name"])
-            child = ctx.create(f"T11 Child of {state['name']}", parent_id=terminal, state="Active")
+            terminal = ctx.create(f"{state['name']} parent", "LIN", state=state["name"])
+            child = ctx.create(f"Child of {state['name']}", parent_id=terminal, state="Active")
             before = ctx.get(terminal)
             ctx.save_must(child, state="Done")
             after_parent = ctx.get(terminal)

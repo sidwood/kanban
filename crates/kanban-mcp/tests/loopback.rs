@@ -634,6 +634,52 @@ fn wait_for_live_event(
     }
     panic!("no {want} for ticket {ticket_id}; saw {seen:?}");
 }
+fn collect_ticket_edits(
+    reader: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+    ids: &[u64],
+) -> Vec<Value> {
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut remaining: Vec<u64> = ids.to_vec();
+    let mut found = Vec::new();
+    let mut line = String::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !remaining.is_empty() && std::time::Instant::now() < deadline {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let Ok(frame) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if frame["kind"] != "event" || frame["event"]["event_type"] != "ticket.edited" {
+                    continue;
+                }
+                let Some(id) = frame["event"]["payload"]["id"].as_u64() else {
+                    continue;
+                };
+                if let Some(position) = remaining.iter().position(|wanted| *wanted == id) {
+                    remaining.swap_remove(position);
+                    found.push(frame["event"].clone());
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break;
+            }
+            Err(error) => panic!("the event stream stopped: {error}"),
+        }
+    }
+    assert!(
+        remaining.is_empty(),
+        "missing ticket.edited for {remaining:?}; saw {found:?}"
+    );
+    found
+}
 
 fn subscribe_live_events(
     service: &kanban_service::CoreProcess,
@@ -807,8 +853,22 @@ async fn operator_route_applies_an_omitted_mutation_and_publishes_the_edit() {
         neighbour["version"].as_u64().unwrap() > other_before.as_u64().unwrap(),
         "the other end of the block is versioned"
     );
-    let relation_event = wait_for_live_event(&mut events, "ticket.edited", ticket_id);
-    assert_eq!(relation_event["payload"]["id"], json!(ticket_id));
+    let other_id = other["ticket_id"]
+        .as_u64()
+        .expect("the neighbour has an id");
+    let edits = collect_ticket_edits(&mut events, &[ticket_id, other_id]);
+    assert!(
+        edits
+            .iter()
+            .any(|event| event["payload"]["id"] == json!(other_id)),
+        "the waiting issue is named on the live socket: {edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|event| event["payload"]["id"] == json!(ticket_id)),
+        "the writer is still named: {edits:?}"
+    );
 
     client.cancel().await.unwrap();
     service.shutdown();

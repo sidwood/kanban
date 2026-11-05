@@ -591,13 +591,15 @@ fn create_issue(
                 .set_milestone(ticket_id as i64, Some(milestone_id))?;
         }
     }
+    let watched = watch_affected(ctx, ticket_id as i64, request)?;
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues
             .set_assignee(ticket_id as i64, assignee.as_deref())?;
     }
-    finish_save_response(ctx, ticket_id as u64)
+    announce_changed_issues(ctx, effects, &watched, ticket_id)?;
+    finish_save_response(ctx, ticket_id)
 }
 
 fn update_issue(
@@ -637,6 +639,7 @@ fn update_issue(
             "archived is terminal; the Project accepts no further changes",
         ));
     }
+    let watched = watch_affected(ctx, ticket_id, request)?;
     if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id, description)?;
     } else if let Some(patch) = request.description_patch.as_deref() {
@@ -681,6 +684,7 @@ fn update_issue(
         &project_code,
         request,
     );
+    announce_changed_issues(ctx, effects, &watched, ticket_id as u64)?;
     finish_save_response(ctx, ticket_id as u64)
 }
 
@@ -728,6 +732,127 @@ fn announce_saved_issue(
             &record_of(after, code),
         );
     }
+}
+struct IssueSnapshot {
+    id: u64,
+    version: u64,
+    state: kanban_domain::TicketState,
+}
+
+fn snapshot_issue(ctx: &IssueContext, id: u64) -> Result<Option<IssueSnapshot>, ApiError> {
+    Ok(ctx
+        .tickets
+        .find(TicketId::new(id))?
+        .map(|ticket| IssueSnapshot {
+            id,
+            version: ticket.version(),
+            state: ticket.state(),
+        }))
+}
+
+fn watch_reference(ctx: &IssueContext, raw: &str) -> Result<Option<IssueSnapshot>, ApiError> {
+    match resolve_parent_reference(ctx, raw) {
+        Ok(id) => snapshot_issue(ctx, id),
+        Err(error) if error.code == kanban_dto::ErrorCode::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn watch_affected(
+    ctx: &IssueContext,
+    ticket_id: i64,
+    request: &IssueSaveRequest,
+) -> Result<Vec<IssueSnapshot>, ApiError> {
+    let mut watched = Vec::new();
+    if let Some(parent) = ctx.issues.issue_fields(ticket_id)?.parent_ticket_id
+        && let Some(snap) = snapshot_issue(ctx, parent as u64)?
+    {
+        watched.push(snap);
+    }
+    if request
+        .duplicate_of
+        .as_ref()
+        .is_some_and(|value| value.is_some())
+    {
+        for relation in ctx.issues.list_relations(ticket_id)? {
+            if let Some(snap) = watch_reference(ctx, &relation.identifier)? {
+                watched.push(snap);
+            }
+        }
+    }
+    for list in [
+        request.add_blocks.as_deref(),
+        request.remove_blocks.as_deref(),
+        request.add_related.as_deref(),
+        request.remove_related.as_deref(),
+        request.add_blocked_by.as_deref(),
+        request.remove_blocked_by.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for target in list {
+            if let Some(snap) = watch_reference(ctx, target)? {
+                watched.push(snap);
+            }
+        }
+    }
+    if let Some(parent) = request
+        .parent_id
+        .as_ref()
+        .and_then(|value| value.as_deref())
+        && let Some(snap) = watch_reference(ctx, parent)?
+    {
+        watched.push(snap);
+    }
+    if let Some(target) = request
+        .duplicate_of
+        .as_ref()
+        .and_then(|value| value.as_deref())
+        && let Some(snap) = watch_reference(ctx, target)?
+    {
+        watched.push(snap);
+    }
+    Ok(watched)
+}
+
+fn announce_changed_issues(
+    ctx: &IssueContext,
+    effects: &dyn CommandEffects,
+    watched: &[IssueSnapshot],
+    skip: u64,
+) -> Result<(), ApiError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for before in watched {
+        if before.id == skip || !seen.insert(before.id) {
+            continue;
+        }
+        let Some(after) = ctx.tickets.find(TicketId::new(before.id))? else {
+            continue;
+        };
+        if after.version() == before.version && after.state() == before.state {
+            continue;
+        }
+        let project = ctx
+            .projects
+            .find(after.project())?
+            .ok_or_else(|| ApiError::internal("the project for a changed issue is missing"))?;
+        if after.state() != before.state {
+            emit_catalogued(
+                effects,
+                LiveEventName::TicketStateChanged,
+                &record_of(&after, project.code()),
+            );
+        }
+        if after.version() != before.version && after.state() == before.state {
+            emit_catalogued(
+                effects,
+                LiveEventName::TicketEdited,
+                &record_of(&after, project.code()),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn resolve_listed_project(

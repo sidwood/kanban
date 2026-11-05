@@ -4570,3 +4570,129 @@ fn a_missing_reference_names_the_supplied_field() {
         );
     }
 }
+
+#[test]
+fn a_block_announces_the_waiting_issue() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let blocker = save_issue(
+        session,
+        0,
+        "announce-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    );
+    let waiting = save_issue(
+        session,
+        0,
+        "announce-waiting",
+        json!({ "project_id": 1, "title": "Waiting" }),
+    );
+    sink.forget();
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": blocker.identifier, "add_blocks": [waiting.identifier] }),
+        )
+        .expect("the block lands");
+    assert!(
+        sink.announced().iter().any(|(name, payload)| {
+            name == "ticket.edited" && payload["id"] == json!(waiting.ticket_id)
+        }),
+        "the waiting issue is named by an edit event: {:?}",
+        sink.announced()
+    );
+    sink.forget();
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": blocker.identifier, "title": read_issue(session, &blocker.identifier).title }),
+        )
+        .expect("the repeated title is a no-op");
+    assert!(
+        sink.announced().is_empty(),
+        "a no-op save does not announce either endpoint: {:?}",
+        sink.announced()
+    );
+}
+
+#[test]
+fn a_duplicate_merge_announces_a_relinked_neighbour() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let duplicate = save_issue(
+        session,
+        0,
+        "relink-duplicate",
+        json!({ "project_id": 1, "title": "Duplicate" }),
+    );
+    let target = save_issue(
+        session,
+        0,
+        "relink-target",
+        json!({ "project_id": 1, "title": "Target" }),
+    );
+    let neighbour = save_issue(
+        session,
+        0,
+        "relink-neighbour",
+        json!({ "project_id": 1, "title": "Neighbour" }),
+    );
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": duplicate.identifier, "add_related": [neighbour.identifier] }),
+        )
+        .expect("the neighbour link lands");
+    sink.forget();
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier }),
+        )
+        .expect("the merge lands");
+    assert!(
+        sink.announced().iter().any(|(name, payload)| {
+            name == "ticket.edited" && payload["id"] == json!(neighbour.ticket_id)
+        }),
+        "the relinked neighbour is named: {:?}",
+        sink.announced()
+    );
+}
+
+#[test]
+fn an_auto_closed_parent_is_announced() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({ "project_id": 1, "auto_close_sub_issues": true }),
+        )
+        .expect("auto-close is enabled");
+    let parent = save_issue(
+        session,
+        0,
+        "autoclose-parent",
+        json!({ "project_id": 1, "title": "Parent" }),
+    );
+    sink.forget();
+    session
+        .call(
+            "issue.save",
+            &json!({
+                "project_id": 1,
+                "title": "Closed child",
+                "parent_id": parent.identifier,
+                "state": "Done",
+            }),
+        )
+        .expect("the closed child lands");
+    assert_eq!(read_issue(session, &parent.identifier).state, "Done");
+    assert!(
+        sink.announced().iter().any(|(name, payload)| {
+            name == "ticket.state.changed" && payload["id"] == json!(parent.ticket_id)
+        }),
+        "the auto-closed parent is named: {:?}",
+        sink.announced()
+    );
+}

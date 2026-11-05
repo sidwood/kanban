@@ -54,9 +54,6 @@ pub enum AdmissionRefusal {
         /// The terminal state the Ticket holds.
         state: TicketState,
     },
-    /// A Bug executes only once its qualification is complete
-    /// (DR-TK-09).
-    UnqualifiedBug,
     /// An Implementation executes only through the approved Ticket
     /// graph that pinned it (DR-PS-17, DR-DE-06).
     GraphUnapproved,
@@ -93,10 +90,6 @@ impl fmt::Display for AdmissionRefusal {
             Self::TerminalTicket { .. } => write!(
                 f,
                 "cancelled and superseded are terminal; the Ticket accepts no further changes"
-            ),
-            Self::UnqualifiedBug => write!(
-                f,
-                "the Bug is unqualified; a Bug executes only once its qualification is complete"
             ),
             Self::GraphUnapproved => write!(
                 f,

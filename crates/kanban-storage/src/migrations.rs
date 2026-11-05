@@ -359,6 +359,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "loose issue dates",
         sql: include_str!("../migrations/0061_loose_issue_dates.sql"),
     },
+    Migration {
+        version: 62,
+        name: "canonical comment addresses",
+        sql: include_str!("../migrations/0062_canonical_comment_addresses.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -552,6 +557,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
         )?;
     } else if migration.version == 61 {
         crate::linear_issue_migration::apply_loose_issue_date_normalisation(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 62 {
+        crate::linear_issue_migration::apply_canonical_comment_addresses_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -2068,6 +2081,10 @@ mod tests {
                 PendingMigration {
                     version: 61,
                     name: "loose issue dates",
+                },
+                PendingMigration {
+                    version: 62,
+                    name: "canonical comment addresses",
                 },
             ]]
         );

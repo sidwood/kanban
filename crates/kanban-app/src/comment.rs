@@ -130,13 +130,11 @@ pub trait CommentStore: Send + Sync {
     ) -> Result<(CommentRecord, Vec<kanban_dto::CommentRevisionRecord>), ApiError>;
 
     /// List comments on one target, oldest first, with cursor paging.
-    /// `joins_stream` decides whether a stored row's address names
-    /// the same entity as `target`, so rows written under a legacy
-    /// address spelling keep listing beside canonical rows.
+    /// Rows carry the target's canonical address, so the stream
+    /// filters by kind and id in storage.
     fn list_for_target(
         &self,
         target: &CommentTarget,
-        joins_stream: &dyn Fn(&str) -> Result<bool, ApiError>,
         limit: u32,
         cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError>;
@@ -361,21 +359,7 @@ impl QueryHandler for ListCommentsQuery {
             .map_err(|_| {
                 ApiError::invalid_request_field("cursor", "cursor must be a comment id")
             })?;
-        // Ticket streams admit every stored spelling the issue
-        // lookups resolve to the same issue; every other kind keeps
-        // the exact id it always had.
-        let canonical = target.id().to_owned();
-        let addresses_issue = target.kind() == TimelineEntityKind::Ticket.as_str();
-        let joins_stream = move |stored: &str| {
-            if addresses_issue {
-                joins_issue_stream(self.targets.as_ref(), stored, &canonical)
-            } else {
-                Ok(stored == canonical)
-            }
-        };
-        let (comments, next_cursor) =
-            self.store
-                .list_for_target(&target, &joins_stream, limit, cursor)?;
+        let (comments, next_cursor) = self.store.list_for_target(&target, limit, cursor)?;
         let response = CommentListResponse {
             comments,
             next_cursor,
@@ -464,26 +448,6 @@ fn resolve_target(
     let canonical = ticket_id.to_string();
     CommentTarget::new(target.kind(), &canonical)
         .map_err(|error| ApiError::invalid_request_field("target", &error.to_string()))
-}
-
-/// Whether a stored ticket address names the same issue as the
-/// canonical id. Rows written before targets resolved carry
-/// whichever spelling their caller passed, so membership follows the
-/// issue lookups themselves: every reference form they accept — the
-/// numeric id however padded or signed, the issue key in any letter
-/// case or padding — is one stream, while an address that resolves
-/// elsewhere, or to nothing at all, names another stream.
-fn joins_issue_stream(
-    targets: &dyn CommentIssueTargets,
-    stored: &str,
-    canonical: &str,
-) -> Result<bool, ApiError> {
-    if stored.eq_ignore_ascii_case(canonical) {
-        return Ok(true);
-    }
-    Ok(targets
-        .resolve_issue_reference(stored)?
-        .is_some_and(|(_, ticket_id)| ticket_id.to_string() == canonical))
 }
 
 /// Replies join the stream they answer and nest one level, the way
@@ -664,7 +628,6 @@ mod comments {
         fn list_for_target(
             &self,
             target: &CommentTarget,
-            joins_stream: &dyn Fn(&str) -> Result<bool, kanban_dto::ApiError>,
             limit: u32,
             cursor: Option<u64>,
         ) -> Result<(Vec<CommentListItem>, Option<String>), kanban_dto::ApiError> {
@@ -676,8 +639,8 @@ mod comments {
                     break;
                 }
                 if comment.target().kind() != target.kind()
+                    || comment.target().id() != target.id()
                     || comment.id().value() <= after
-                    || !joins_stream(comment.target().id())?
                 {
                     continue;
                 }

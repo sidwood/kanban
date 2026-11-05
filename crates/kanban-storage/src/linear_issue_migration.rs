@@ -1156,6 +1156,56 @@ pub(crate) fn apply_linear_issue_relaxation_in_span(span: &WriteSpan<'_>) -> rus
 /// none value first, so it can never swallow a real far-future
 /// deadline again. Milestone target dates never carried the marker,
 /// so theirs are only padded.
+pub(crate) fn apply_canonical_comment_addresses_in_span(
+    span: &WriteSpan<'_>,
+) -> rusqlite::Result<()> {
+    span.execute_batch(
+        "CREATE INDEX IF NOT EXISTS comments_by_target
+         ON comments (entity_kind, entity_id, id)",
+    )?;
+    let mut statement =
+        span.prepare("SELECT id, entity_id FROM comments WHERE entity_kind = 'ticket'")?;
+    let rows: Vec<(i64, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (row_id, stored) in rows {
+        if let Some(canonical) = canonical_ticket_address(span, &stored)?
+            && canonical != stored
+        {
+            span.execute(
+                "UPDATE comments SET entity_id = ?2 WHERE id = ?1",
+                params![row_id, canonical],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn canonical_ticket_address(conn: &Connection, stored: &str) -> rusqlite::Result<Option<String>> {
+    if let Ok(id) = stored.parse::<i64>() {
+        let found: Option<i64> = conn
+            .query_row("SELECT id FROM tickets WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        return Ok(found.map(|ticket| ticket.to_string()));
+    }
+    let Some(key) = kanban_domain::IssueKey::parse(stored) else {
+        return Ok(None);
+    };
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT t.id FROM tickets AS t
+             JOIN projects AS p ON p.id = t.project_id
+             WHERE UPPER(p.code) = UPPER(?1) AND t.number = ?2",
+            params![key.project_code().as_str(), key.number().value() as i64],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(found.map(|ticket| ticket.to_string()))
+}
+
 pub(crate) fn apply_loose_issue_date_normalisation(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
     span.execute_batch("UPDATE tickets SET due_date = '' WHERE due_date = '2099-12-31';")?;
     for table_and_column in [("tickets", "due_date"), ("issue_milestones", "target_date")] {
@@ -1556,7 +1606,7 @@ mod tests {
                  WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
-                 DELETE FROM schema_migrations WHERE version IN (60, 61);",
+                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62);",
             )
             .unwrap();
         (dir, database)

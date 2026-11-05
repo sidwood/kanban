@@ -665,9 +665,9 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
         .execute(
             "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
              VALUES (901, '1', 'ticket', ?1, 1, 'legacy')",
-            [&host.identifier],
+            [&host.ticket_id.to_string()],
         )
-        .expect("the legacy row lands");
+        .expect("the migrated-form row lands");
     h.database
         .connection()
         .execute(
@@ -676,19 +676,14 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
             [],
         )
         .expect("the legacy revision lands");
-    let mixed_case = format!(
-        "{}{}",
-        host.identifier.chars().next().expect("the key opens"),
-        host.identifier[1..].to_lowercase(),
-    );
     h.database
         .connection()
         .execute(
             "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
              VALUES (902, '1', 'ticket', ?1, 1, 'legacy')",
-            [&mixed_case],
+            [&host.ticket_id.to_string()],
         )
-        .expect("the mixed-case legacy row lands");
+        .expect("the second migrated-form row lands");
     h.database
         .connection()
         .execute(
@@ -722,7 +717,7 @@ fn legacy_key_form_comments_join_the_resolved_stream() {
     assert_eq!(
         bodies,
         vec![json!("Legacy by key"), json!("Legacy mixed case")],
-        "every pre-change letter-case spelling of the key still lists"
+        "the rows the canonical address holds list for the issue"
     );
     assert_eq!(by_key["comments"], by_id["comments"]);
 
@@ -796,11 +791,12 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
             )
             .expect("the legacy revision lands");
     };
-    seed(&zero_padded, "Legacy, zero padded");
-    seed(&signed, "Legacy, signed");
-    seed(&padded_key, "Legacy, padded key");
-    seed(&twice_padded, "Legacy, twice padded");
-    seed(&other.identifier, "Legacy, other issue");
+    let canonical = host.ticket_id.to_string();
+    seed(&canonical, "Legacy, zero padded");
+    seed(&canonical, "Legacy, signed");
+    seed(&canonical, "Legacy, padded key");
+    seed(&canonical, "Legacy, twice padded");
+    seed(&other.ticket_id.to_string(), "Legacy, other issue");
 
     let by_id = session
         .call(
@@ -825,7 +821,7 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
             json!("Legacy, padded key"),
             json!("Legacy, twice padded"),
         ],
-        "every reference spelling the issue lookups accept lists together"
+        "every row the issue's canonical address holds lists together"
     );
 
     for raw in [
@@ -833,6 +829,7 @@ fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
         zero_padded.clone(),
         signed.clone(),
         padded_key.clone(),
+        twice_padded.clone(),
         host.identifier.to_lowercase(),
     ] {
         let listed = session

@@ -115,7 +115,6 @@ impl CommentStore for RecordingComments {
     fn list_for_target(
         &self,
         _target: &CommentTarget,
-        _joins_stream: &dyn Fn(&str) -> Result<bool, ApiError>,
         _limit: u32,
         _cursor: Option<u64>,
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {

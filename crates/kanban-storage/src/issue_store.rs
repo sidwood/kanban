@@ -1006,6 +1006,19 @@ impl SqliteIssueStore {
     fn add_related_edge(&self, from: i64, to: i64) -> Result<(), ApiError> {
         let (low, high) = if from < to { (from, to) } else { (to, from) };
         let conn = self.lock();
+        let existing: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM issue_relations
+                 WHERE kind = 'related'
+                   AND ((from_ticket_id = ?1 AND to_ticket_id = ?2)
+                     OR (from_ticket_id = ?2 AND to_ticket_id = ?1))",
+                params![from, to],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        if existing > 0 {
+            return Ok(());
+        }
         let changed = conn
             .execute(
                 "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
@@ -1925,7 +1938,9 @@ impl SqliteIssueStore {
                 })
             })
             .map_err(internal)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(internal)
+        let mut rows = rows.collect::<Result<Vec<_>, _>>().map_err(internal)?;
+        rows.dedup();
+        Ok(rows)
     }
 }
 

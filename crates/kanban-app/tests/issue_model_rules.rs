@@ -4396,3 +4396,51 @@ fn merging_a_duplicate_does_not_close_a_dependency_cycle() {
         )
         .expect("a duplicate merge must leave later unrelated blocks possible");
 }
+
+#[test]
+fn a_retained_reverse_related_row_lists_once() {
+    let h = rules_harness();
+    let session = &h.session;
+    let low = save_issue(
+        session,
+        0,
+        "related-low",
+        json!({ "project_id": 1, "title": "Low" }),
+    );
+    let high = save_issue(
+        session,
+        0,
+        "related-high",
+        json!({ "project_id": 1, "title": "High" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+             VALUES (?1, ?2, 'related')",
+            [high.ticket_id as i64, low.ticket_id as i64],
+        )
+        .expect("the reverse row lands");
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": low.identifier, "add_related": [high.identifier] }),
+        )
+        .expect("adding the existing relation succeeds");
+    let record = read_issue(session, &low.identifier);
+    assert_eq!(
+        record.relations.len(),
+        1,
+        "both orientations are one relation"
+    );
+    assert_eq!(record.relations[0].identifier, high.identifier);
+    let other = read_issue(session, &high.identifier);
+    assert_eq!(other.relations.len(), 1);
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": high.identifier, "remove_related": [low.identifier] }),
+        )
+        .expect("either endpoint can remove the retained row");
+    assert!(read_issue(session, &low.identifier).relations.is_empty());
+}

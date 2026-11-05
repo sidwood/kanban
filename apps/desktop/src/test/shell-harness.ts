@@ -640,11 +640,13 @@ export function harness(options: HarnessOptions = {}): Harness {
       const stateName = body.state as string
       const number = Number(identifier.split('-').pop())
       const code = identifier.slice(0, identifier.lastIndexOf('-'))
+      const project = code === edgeProject.code ? edgeProject : coreProject
       const found =
+        tickets.find((entry) => entry.project_id === project.id && entry.number === number) ??
         tickets.find((entry) => entry.number === number) ??
         tickets.find((entry) => entry.id === (body.ticket_id as number | undefined))
       if (found && expected !== found.version) return stale(found.version)
-      const project_id = found?.project_id ?? (code === 'EDGE' ? 2 : 1)
+      const project_id = found?.project_id ?? project.id
       const legacy =
         stateName === 'Active'
           ? 'active'

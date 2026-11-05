@@ -7,6 +7,11 @@ const save = (optimisticVersion: number, extra: Record<string, unknown> = {}) =>
   ...extra,
 })
 
+const sharingNumber = () => [
+  ticket({ id: 7, project_id: 1, number: 12, version: 3 }),
+  ticket({ id: 8, project_id: 2, number: 12, version: 7 }),
+]
+
 describe('the shell double issue save', () => {
   it('refuses a save at a version the issue has moved past', async () => {
     const shell = harness({ tickets: [ticket({ id: 7, number: 12, version: 5 })] })
@@ -30,6 +35,35 @@ describe('the shell double issue save', () => {
       url: 'kanban://issue/CORE-12',
     })
     expect(shell.tickets[0]).toMatchObject({ state: 'active', version: 6 })
+  })
+
+  it('refuses a stale save to an issue whose number another project shares', async () => {
+    const shell = harness({ tickets: sharingNumber() })
+
+    await expect(
+      shell.transport.command('issue.save', save(3, { identifier: 'EDGE-12', description: 'Stale words' })),
+    ).rejects.toEqual({
+      code: 'stale_version',
+      message: 'optimistic version 3 is stale; the aggregate is at version 7',
+      current_version: 7,
+    })
+    expect(shell.tickets).toEqual(sharingNumber())
+  })
+
+  it('admits a save to an issue whose number another project shares', async () => {
+    const shell = harness({ tickets: sharingNumber() })
+
+    await expect(
+      shell.transport.command('issue.save', save(7, { identifier: 'EDGE-12', state: 'Active' })),
+    ).resolves.toEqual({
+      identifier: 'EDGE-12',
+      ticket_id: 8,
+      url: 'kanban://issue/EDGE-12',
+    })
+    expect(shell.tickets).toEqual([
+      ticket({ id: 7, project_id: 1, number: 12, version: 3 }),
+      ticket({ id: 8, project_id: 2, number: 12, state: 'active', version: 8 }),
+    ])
   })
 
   it('refuses a creation that names a version other than zero', async () => {

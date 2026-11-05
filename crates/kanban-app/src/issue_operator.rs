@@ -712,7 +712,7 @@ fn resolve_create_project(
     }
 }
 
-fn project_group_labels<'a>(labels: &'a [crate::issue::IssueLabelRow]) -> Vec<&'a str> {
+fn project_group_labels(labels: &[crate::issue::IssueLabelRow]) -> Vec<&str> {
     labels
         .iter()
         .filter(|row| {
@@ -796,7 +796,7 @@ fn apply_project_label(
     };
     let canonical = resolve_project_label(ctx, project_id, name)?;
     ctx.issues
-        .validate_label_adds(project_id, &[canonical.clone()])?;
+        .validate_label_adds(project_id, std::slice::from_ref(&canonical))?;
     ctx.issues.add_label(project_id, ticket_id, &canonical)
 }
 

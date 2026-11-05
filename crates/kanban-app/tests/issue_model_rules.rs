@@ -3991,7 +3991,6 @@ fn a_cycle_closing_block_is_refused_by_its_field() {
     );
 }
 
-
 #[test]
 fn a_duplicate_merge_keeps_edges_the_target_already_has() {
     let h = rules_harness();
@@ -4075,7 +4074,6 @@ fn a_duplicate_merge_keeps_edges_the_target_already_has() {
     );
 }
 
-
 #[test]
 fn a_parent_with_an_executing_run_stays_open_when_its_children_close() {
     let h = rules_harness();
@@ -4116,7 +4114,6 @@ fn a_parent_with_an_executing_run_stays_open_when_its_children_close() {
     );
 }
 
-
 fn plant_executing_run(database: &Database, ticket_id: i64) {
     let conn = database.connection();
     conn.execute(
@@ -4144,7 +4141,6 @@ fn plant_executing_run(database: &Database, ticket_id: i64) {
     )
     .expect("the executing run lands");
 }
-
 
 #[derive(Default)]
 struct RecordingSink {
@@ -4199,7 +4195,6 @@ fn rules_harness_with_events() -> (RulesHarness, Arc<RecordingSink>) {
         sink,
     )
 }
-
 
 #[test]
 fn an_issue_save_announces_the_same_live_events_as_a_legacy_edit() {
@@ -4257,3 +4252,95 @@ fn an_issue_save_announces_the_same_live_events_as_a_legacy_edit() {
     );
 }
 
+#[test]
+fn an_operator_write_without_a_mutation_still_applies() {
+    let h = rules_harness();
+    let session = &h.session;
+    let created = session
+        .call(
+            "issue.save",
+            &json!({ "project_id": 1, "title": "Last write wins" }),
+        )
+        .expect("an omitted mutation still creates");
+    let identifier = created["identifier"]
+        .as_str()
+        .expect("the created issue has a key")
+        .to_owned();
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": identifier, "title": "A later agent write" }),
+        )
+        .expect("an omitted mutation still updates");
+    assert_eq!(
+        read_issue(session, &identifier).title,
+        "A later agent write"
+    );
+    let current = read_issue(session, &identifier).version;
+    let stale = session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(current.saturating_sub(1), "stale-sent-version"),
+                "identifier": identifier,
+                "title": "Stale writer",
+            }),
+        )
+        .expect_err("a sent stale version is still checked");
+    assert_eq!(stale.code, ErrorCode::StaleVersion);
+}
+
+#[test]
+fn an_omitted_mutation_does_not_reuse_a_recorded_counter_key() {
+    let h = rules_harness();
+    let session = &h.session;
+    let conn = h.database.connection();
+    for index in 1..=8 {
+        conn.execute(
+            "INSERT INTO idempotency_outcomes (idempotency_key, fingerprint, response)
+             VALUES (?1, 'spent-counter', '{\"identifier\":\"REPLAY\"}')",
+            [format!("operator-{index}")],
+        )
+        .expect("a previously recorded counter key is spent");
+    }
+    drop(conn);
+    let created = session
+        .call(
+            "issue.save",
+            &json!({ "project_id": 1, "title": "Restart safe write" }),
+        )
+        .expect("a new process does not replay a spent counter key");
+    assert_ne!(created["identifier"], json!("REPLAY"));
+    let identifier = created["identifier"].as_str().unwrap().to_owned();
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": identifier, "title": "Second restart safe write" }),
+        )
+        .expect("a later omitted write still applies");
+    assert_eq!(
+        read_issue(session, &identifier).title,
+        "Second restart safe write"
+    );
+    let keys: Vec<String> = h
+        .database
+        .connection()
+        .prepare(
+            "SELECT idempotency_key FROM idempotency_outcomes
+             WHERE idempotency_key LIKE 'operator-%' AND fingerprint != 'spent-counter'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        keys.len() >= 2,
+        "each omitted write spends its own key: {keys:?}"
+    );
+    assert!(
+        keys.iter()
+            .all(|key| !key.starts_with("operator-") || key.len() > "operator-8".len()),
+        "synthesized keys are not the restarting counter: {keys:?}"
+    );
+}

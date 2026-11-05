@@ -458,7 +458,7 @@ fn render_mcp_tools(
     let tools = exposed_operations()
         .iter()
         .map(|operation| {
-            let input_schema = schema_index
+            let mut input_schema = schema_index
                 .get(operation.request_schema)
                 .map(|schema| serde_json::to_value(schema).expect("schema serialises"))
                 .expect("request schema exists");
@@ -466,10 +466,34 @@ fn render_mcp_tools(
                 .get(operation.response_schema)
                 .map(|schema| serde_json::to_value(schema).expect("schema serialises"))
                 .expect("response schema exists");
+            let mut description = operation.description.to_owned();
+            if operation.kind == OperationKind::Command
+                && crate::issue_operator::OPERATOR_MCP_OPERATIONS.contains(&operation.name)
+            {
+                if let Some(required) = input_schema
+                    .get_mut("required")
+                    .and_then(|value| value.as_array_mut())
+                {
+                    required.retain(|field| field.as_str() != Some("mutation"));
+                }
+                if input_schema
+                    .get("required")
+                    .and_then(|value| value.as_array())
+                    .is_some_and(|fields| fields.is_empty())
+                {
+                    input_schema
+                        .as_object_mut()
+                        .expect("a schema object")
+                        .remove("required");
+                }
+                description.push_str(
+                    " On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+                );
+            }
 
             serde_json::json!({
                 "name": operation.mcp_tool_name,
-                "description": operation.description,
+                "description": description,
                 "inputSchema": input_schema,
                 "outputSchema": output_schema,
             })

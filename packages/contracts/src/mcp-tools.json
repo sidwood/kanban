@@ -29088,7 +29088,7 @@
     }
   },
   {
-    "description": "Create a Comment with its first revision on a timeline-visible entity.",
+    "description": "Create a Comment with its first revision on a timeline-visible entity. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -29188,7 +29188,6 @@
       },
       "required": [
         "author",
-        "mutation",
         "project_id",
         "target",
         "text"
@@ -29284,7 +29283,7 @@
     }
   },
   {
-    "description": "Edit a Comment by appending a new immutable revision.",
+    "description": "Edit a Comment by appending a new immutable revision. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -29327,7 +29326,6 @@
       },
       "required": [
         "comment_id",
-        "mutation",
         "text"
       ],
       "title": "CommentEditRequest",
@@ -29734,7 +29732,7 @@
     }
   },
   {
-    "description": "Resolve or clear resolution on a comment thread.",
+    "description": "Resolve or clear resolution on a comment thread. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -29775,7 +29773,6 @@
       },
       "required": [
         "comment_id",
-        "mutation",
         "resolved"
       ],
       "title": "CommentResolveRequest",
@@ -40542,7 +40539,7 @@
     }
   },
   {
-    "description": "Create or update one Linear-shaped issue and return its key and deep link.",
+    "description": "Create or update one Linear-shaped issue and return its key and deep link. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -40733,9 +40730,6 @@
           ]
         }
       },
-      "required": [
-        "mutation"
-      ],
       "title": "IssueSaveRequest",
       "type": "object"
     },
@@ -41647,7 +41641,7 @@
     }
   },
   {
-    "description": "Create a milestone on one project.",
+    "description": "Create a milestone on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41692,7 +41686,6 @@
         }
       },
       "required": [
-        "mutation",
         "name",
         "project_id"
       ],
@@ -41740,7 +41733,7 @@
     }
   },
   {
-    "description": "Create a label (and optional group) on one project.",
+    "description": "Create a label (and optional group) on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41793,7 +41786,6 @@
       },
       "required": [
         "color",
-        "mutation",
         "name",
         "project_id"
       ],
@@ -41835,7 +41827,7 @@
     }
   },
   {
-    "description": "Retire (archive) a label on one project.",
+    "description": "Retire (archive) a label on one project. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41874,7 +41866,6 @@
         }
       },
       "required": [
-        "mutation",
         "name",
         "project_id"
       ],
@@ -41916,7 +41907,7 @@
     }
   },
   {
-    "description": "Update per-project Linear settings such as auto-close sub-issues.",
+    "description": "Update per-project Linear settings such as auto-close sub-issues. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41958,7 +41949,6 @@
         }
       },
       "required": [
-        "mutation",
         "project_id"
       ],
       "title": "IssueUpdateProjectSettingsRequest",

@@ -2636,6 +2636,90 @@ mod tests {
     }
 
     #[test]
+    fn a_satisfied_criterion_lands_as_a_checked_item() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 52).unwrap();
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            seed_legacy_task(&conn, 1, "active", None, "2026-11-03T21:38:37.985Z");
+            conn.execute(
+                "UPDATE tickets SET completion = ?1 WHERE id = 1",
+                [r#"["Ship the build","Archive the notes"]"#],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO criterion_bindings (
+                     ticket_id, criterion_index, kind, evidence_id, tip, review, satisfied, void
+                 ) VALUES (1, 1, 'task', 0, 'notes archived', 'validated', 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("a schema 52 database upgrades");
+        let description = task_descriptions(&database)
+            .into_iter()
+            .find(|row| row.0 == 1)
+            .expect("the task is present")
+            .2;
+        assert!(
+            description.contains("- [ ] Ship the build"),
+            "an unmet criterion stays open: {description}"
+        );
+        assert!(
+            description.contains("- [x] Archive the notes"),
+            "a satisfied criterion is checked: {description}"
+        );
+
+        let stripped = description
+            .lines()
+            .filter(|line| !line.starts_with("- ["))
+            .collect::<Vec<_>>()
+            .join("\n");
+        {
+            let conn = database.connection();
+            conn.execute(
+                "UPDATE tickets SET description = ?1 WHERE id = 1",
+                [stripped],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM schema_migrations WHERE version = 64", [])
+                .unwrap();
+        }
+        database.migrate(&AllowAllMigrations).expect(
+            "the repair migration restores a checked item on a database already at the previous schema",
+        );
+        let repaired = task_descriptions(&database)
+            .into_iter()
+            .find(|row| row.0 == 1)
+            .expect("the task is present")
+            .2;
+        assert!(
+            repaired.contains("- [x] Archive the notes"),
+            "the repair checks the satisfied criterion: {repaired}"
+        );
+        assert!(
+            repaired.contains("- [ ] Ship the build"),
+            "the repair leaves the unmet criterion open: {repaired}"
+        );
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("a second repair leaves the checklist alone");
+        assert_eq!(
+            task_descriptions(&database)
+                .into_iter()
+                .find(|row| row.0 == 1)
+                .expect("the task is present")
+                .2,
+            repaired
+        );
+    }
+
+    #[test]
     fn a_checklist_already_followed_by_prose_is_left_unchanged() {
         let description = "## Title\n\nRotate local backups\n\n- [ ] Rotate local backups done\n\nLater note stays.\n";
         let checklist = "- [ ] Rotate local backups done";

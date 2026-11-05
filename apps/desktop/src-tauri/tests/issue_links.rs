@@ -19,6 +19,12 @@ use tauri::test::MockRuntime;
 const CONFIG: &str = include_str!("../tauri.conf.json");
 const LOCKFILE: &str = include_str!("../Cargo.lock");
 
+/// The production entry's source. `main` and `run` start a real
+/// window and core, so their wiring is read here rather than run.
+const MAIN_SOURCE: &str = include_str!("../src/main.rs");
+const SHELL_SOURCE: &str = include_str!("../src/lib.rs");
+const ISSUE_LINK_SOURCE: &str = include_str!("../src/issue_link.rs");
+
 /// The event the deep-link plugin announces every incoming link on,
 /// raw, to anything that listens: a WebView holding the ordinary
 /// event-listening permission included.
@@ -305,4 +311,72 @@ fn a_macos_open_url_event_announces_the_key_it_names() {
     ]);
 
     assert_eq!(shell.announced(), vec![opened("CORE-12"), opened("EDGE-3")]);
+}
+
+/// The function `signature` opens in `source`, short of its closing
+/// brace and without its comment lines, with whitespace kept only as
+/// one space between two words, so neither formatting nor a
+/// commented-out call changes what it is read as.
+fn code_of(source: &str, signature: &str) -> String {
+    let start = source
+        .find(signature)
+        .unwrap_or_else(|| panic!("`{signature}` is defined"));
+    let function = &source[start..];
+    let end = function
+        .find("\n}\n")
+        .unwrap_or_else(|| panic!("`{signature}` closes"));
+    let word = |character: char| character.is_alphanumeric() || character == '_';
+    let mut code = String::new();
+    for token in function[..end]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::split_whitespace)
+    {
+        if code.ends_with(word) && token.starts_with(word) {
+            code.push(' ');
+        }
+        code.push_str(token);
+    }
+    code
+}
+
+/// The tests above drive the shell `shell_builder` builds. This holds
+/// the production entry to that same shell: `main` hands `run` the
+/// link a launch carried, `run` builds through `shell_builder` with
+/// that link and with the single-instance plugin handing a relaunch's
+/// arguments to the shell, and the issue-link plugin takes the run
+/// events macOS's open-URL links arrive as, which Tauri's mock
+/// runtime cannot raise.
+#[test]
+fn the_production_entry_delivers_links_through_the_shell_these_tests_drive() {
+    let main = code_of(MAIN_SOURCE, "fn main()");
+    assert!(
+        main.contains(
+            "let arguments:Vec<_>=std::env::args_os().skip(1).collect();\
+             match launch::read(&arguments){Launch::Shell{link}=>{kanban_desktop_lib::run(link)"
+        ),
+        "main hands run the link a launch carried: {main}"
+    );
+
+    let run = code_of(SHELL_SOURCE, "pub fn run(");
+    let built = "pub fn run(launch_link:Option<String>)->tauri::Result<()>{\
+                 shell_builder(tauri::Builder::default()\
+                 .plugin(tauri_plugin_single_instance::init(issue_link::relaunched)),\
+                 launch_link,)";
+    assert!(
+        run.strip_prefix(built)
+            .is_some_and(|rest| rest.starts_with('.')),
+        "run builds on the shell shell_builder builds, holding its launch link \
+         and handing a relaunch's arguments to the shell: {run}"
+    );
+    assert!(
+        run.ends_with(".run(tauri::generate_context!())"),
+        "run runs the shell it built: {run}"
+    );
+
+    let plugin = code_of(ISSUE_LINK_SOURCE, "pub fn plugin<");
+    assert!(
+        plugin.contains(".on_event(on_run_event)"),
+        "the issue-link plugin takes macOS's open-URL run events: {plugin}"
+    );
 }

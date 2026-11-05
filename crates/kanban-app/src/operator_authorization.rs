@@ -30,6 +30,11 @@ impl OperatorSession {
         }
     }
 
+    /// The configured identity used to default comment authors.
+    pub fn operator_name(&self) -> Option<&str> {
+        self.operator_name.as_deref()
+    }
+
     pub fn operations(&self) -> Result<Vec<String>, ApiError> {
         Ok(OPERATOR_MCP_OPERATIONS
             .iter()

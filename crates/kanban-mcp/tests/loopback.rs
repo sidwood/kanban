@@ -23,7 +23,17 @@ struct Fixture {
 }
 impl Fixture {
     fn new(enabled: bool) -> Self {
+        Self::configured(enabled, None)
+    }
+    fn configured(enabled: bool, operator_name: Option<&str>) -> Self {
         let h = common::harness();
+        if let Some(name) = operator_name {
+            std::fs::write(
+                h._dir.path().join("config.json"),
+                json!({"operator_name":name}).to_string(),
+            )
+            .unwrap();
+        }
         let ticket = common::insert_ready_ticket(&h.database_path, 1, "normal");
         common::assign_lane(&h.database_path, ticket);
         let request = h
@@ -1506,7 +1516,7 @@ fn validate_schemas(cases: Value) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn operator_comment_schemas_allow_the_default_author_only_for_operators() {
-    let f = Fixture::new(true);
+    let f = Fixture::configured(true, Some("Ada"));
     let operator = operator_client(f.service(), &f.secret).await;
     let operator_tools = operator.list_all_tools().await.unwrap();
     let run = f.client().await;
@@ -1530,14 +1540,25 @@ async fn operator_comment_schemas_allow_the_default_author_only_for_operators() 
     let mut authored = body;
     authored["author"] = json!("Ada");
     cases.push(json!({"name":"run with author","schema":run_schema,"body":authored,"valid":true}));
+    let without_name = Fixture::new(true);
+    let unnamed = operator_client(without_name.service(), &without_name.secret).await;
+    let unnamed_tools = unnamed.list_all_tools().await.unwrap();
+    let schema = &unnamed_tools
+        .iter()
+        .find(|tool| tool.name == "comment_create")
+        .unwrap()
+        .input_schema;
+    cases.push(json!({"name":"operator without name or author","schema":schema,"body":{"issue":"CORE-2","body":"Raw body"},"valid":false}));
+    cases.push(json!({"name":"operator without name and with author","schema":schema,"body":{"issue":"CORE-2","body":"Raw body","author":"Ada"},"valid":true}));
     validate_schemas(json!(cases));
     operator.cancel().await.unwrap();
     run.cancel().await.unwrap();
+    unnamed.cancel().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_aliases_validate_against_live_and_generated_schemas() {
-    let f = Fixture::new(true);
+    let f = Fixture::configured(true, Some("Ada"));
     let client = operator_client(f.service(), &f.secret).await;
     let live = serde_json::to_value(client.list_all_tools().await.unwrap()).unwrap();
     let root =

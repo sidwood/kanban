@@ -89,8 +89,10 @@ impl Adapter {
                 })
             })
             .collect();
-        if matches!(self.backend.as_ref(), Backend::Operator(_)) {
-            if let Some(comment) = tools.iter_mut().find(|tool| tool.name == "comment_create") {
+        if let Backend::Operator(session) = self.backend.as_ref() {
+            if session.operator_name().is_some()
+                && let Some(comment) = tools.iter_mut().find(|tool| tool.name == "comment_create")
+            {
                 let schema = Arc::make_mut(&mut comment.input_schema);
                 if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
                     required.retain(|field| field != "author");

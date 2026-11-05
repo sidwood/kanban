@@ -9,7 +9,10 @@ GENERATED ALWAYS AS (
     CASE
         WHEN entity_kind = 'ticket'
          AND (
-             entity_id GLOB '+[0-9]*'
+             (
+                 entity_id GLOB '+[0-9]*'
+                 AND substr(entity_id, 2) NOT GLOB '*[^0-9]*'
+             )
              OR (
                  entity_id GLOB '[0-9]*'
                  AND entity_id NOT GLOB '*[^0-9]*'

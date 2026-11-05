@@ -1328,13 +1328,22 @@ pub(crate) fn apply_canonical_comment_addresses_in_span(
 }
 
 fn ensure_comment_target_key(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
-    let present: i64 = span.query_row(
-        "SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'table' AND name = 'comments' AND sql LIKE '%target_key%'",
+    let sql: String = span.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'comments'",
         [],
         |row| row.get(0),
     )?;
-    if present == 0 {
+    let present = sql.contains("target_key");
+    // A leading '+' collapses only when every character after it is a
+    // digit. An earlier expression matched '+12junk' and cast it to 12.
+    let strict = sql.contains("substr(entity_id, 2)") && sql.contains("NOT GLOB '*[^0-9]*'");
+    if !present || !strict {
+        if present {
+            span.execute_batch(
+                "DROP INDEX IF EXISTS comments_by_canonical_target;
+                 ALTER TABLE comments DROP COLUMN target_key;",
+            )?;
+        }
         span.execute_batch(include_str!("../migrations/comment_target_key.sql"))?;
     } else {
         span.execute_batch(

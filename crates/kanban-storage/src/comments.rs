@@ -984,4 +984,119 @@ mod revision_store {
             "resolution adds no body revision"
         );
     }
+
+    fn plant_signed_ticket_addresses(conn: &rusqlite::Connection) {
+        for (id, stored, body) in [
+            (1_i64, "+12junk", "junk address"),
+            (2_i64, "+12", "signed id"),
+        ] {
+            conn.execute(
+                "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+                 VALUES (?1, '1', 'ticket', ?2, 1, 'tester')",
+                rusqlite::params![id, stored],
+            )
+            .unwrap_or_else(|error| panic!("the comment {stored} lands: {error}"));
+            conn.execute(
+                "INSERT INTO comment_revisions (comment_id, revision, text) VALUES (?1, 1, ?2)",
+                rusqlite::params![id, body],
+            )
+            .unwrap_or_else(|error| panic!("the revision for {stored} lands: {error}"));
+        }
+    }
+
+    fn bodies_listed_under_ticket_12(store: &SqliteCommentStore) -> Vec<String> {
+        let target = CommentTarget::new("ticket", "12").expect("the target validates");
+        let (rows, _) = store
+            .list_for_target(&target, 10, None)
+            .expect("ticket 12 lists");
+        rows.into_iter().map(|row| row.body).collect()
+    }
+
+    fn assert_signed_junk_stays_off_ticket_12(store: &SqliteCommentStore, sql: &str) {
+        let listed = bodies_listed_under_ticket_12(store);
+        assert!(
+            !listed.iter().any(|body| body == "junk address"),
+            "a comment stored against '+12junk' must not list under ticket 12: {listed:?}"
+        );
+        assert!(
+            listed.iter().any(|body| body == "signed id"),
+            "'+12' must still list under ticket 12: {listed:?}"
+        );
+        assert!(
+            sql.contains("substr(entity_id, 2)") && sql.contains("NOT GLOB '*[^0-9]*'"),
+            "the generated address must accept '+' only when the rest is digits: {sql}"
+        );
+    }
+
+    #[test]
+    fn a_signed_junk_address_does_not_list_under_that_ticket() {
+        let (_dir, database, store) = store();
+        plant_signed_ticket_addresses(&database.connection());
+        let sql: String = database
+            .connection()
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'comments'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the table sql reads");
+        assert_signed_junk_stays_off_ticket_12(&store, &sql);
+    }
+
+    #[test]
+    fn an_upgraded_database_keeps_a_signed_junk_address_off_that_ticket() {
+        let (dir, mut database) = scratch_database();
+        crate::migrations::apply_through(&database.connection(), 61)
+            .expect("the earlier migrations apply");
+        plant_signed_ticket_addresses(&database.connection());
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        let store = SqliteCommentStore::new(&database);
+        let sql: String = database
+            .connection()
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'comments'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the table sql reads");
+        assert_signed_junk_stays_off_ticket_12(&store, &sql);
+        let _ = dir;
+    }
+
+    #[test]
+    fn an_upgrade_replaces_a_loose_signed_address_expression() {
+        let (dir, mut database) = scratch_database();
+        crate::migrations::apply_through(&database.connection(), 61)
+            .expect("the earlier migrations apply");
+        database
+            .connection()
+            .execute_batch(
+                "ALTER TABLE comments ADD COLUMN target_key TEXT
+                 GENERATED ALWAYS AS (
+                     CASE
+                         WHEN entity_kind = 'ticket' AND entity_id GLOB '+[0-9]*'
+                             THEN CAST(CAST(entity_id AS INTEGER) AS TEXT)
+                         ELSE entity_id
+                     END
+                 ) VIRTUAL;",
+            )
+            .expect("the loose expression plants");
+        plant_signed_ticket_addresses(&database.connection());
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("the migrations apply");
+        let store = SqliteCommentStore::new(&database);
+        let sql: String = database
+            .connection()
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'comments'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the table sql reads");
+        assert_signed_junk_stays_off_ticket_12(&store, &sql);
+        let _ = dir;
+    }
 }

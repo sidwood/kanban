@@ -2775,4 +2775,345 @@ mod tests {
         }
         assert_eq!(names("issue_labels")[..3], ["web", "WEB", "DB"]);
     }
+
+    /// A schema-52 database upgrades through the current schema without
+    /// rewriting the rows it already held, and without writing the file
+    /// named by `KANBAN_OLD_FIXTURE`.
+    ///
+    /// The test copies that sqlite file, migrates only the copy, and
+    /// checks the source bytes, mode, and directory listing are unchanged.
+    /// Ignored unless requested with `--ignored`.
+    #[test]
+    #[ignore = "set KANBAN_OLD_FIXTURE to the schema 52 sqlite; migrates a copy only"]
+    fn copied_schema_52_fixture_upgrades_without_rewriting_rows() {
+        let source = std::path::PathBuf::from(
+            std::env::var("KANBAN_OLD_FIXTURE")
+                .expect("KANBAN_OLD_FIXTURE names the schema 52 sqlite"),
+        );
+        let source_bytes = std::fs::read(&source).expect("the fixture file is readable");
+        let source_meta = std::fs::metadata(&source).expect("the fixture metadata is readable");
+        let source_modified = source_meta
+            .modified()
+            .expect("the fixture modification time is readable");
+        let source_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            source_meta.permissions().mode()
+        };
+        let source_dir = source
+            .parent()
+            .expect("the fixture path names a file in a directory");
+        let listing_before = directory_listing(source_dir);
+        eprintln!("FIXTURE_SOURCE={}", source.display());
+
+        let copy_dir = tempfile::tempdir().expect("a writable copy directory");
+        let copy_path = copy_dir.path().join("kanban.sqlite");
+        std::fs::write(&copy_path, &source_bytes).expect("the copy is written");
+
+        let database = crate::db::Database::open(&copy_path).expect("the copy opens");
+        let conn = database.connection();
+        let version_before: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("the source schema version is readable");
+        assert_eq!(version_before, 52, "the fixture must still be schema 52");
+        let tickets_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tickets", [], |row| row.get(0))
+            .unwrap();
+        let comments_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM comments", [], |row| row.get(0))
+            .unwrap();
+        let dependencies_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ticket_dependencies", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let titles_before = text_pairs(
+            &conn,
+            "SELECT COALESCE(title, ''), COALESCE(slice, '') FROM tickets ORDER BY number",
+        );
+        let revisions_before = text_pairs(
+            &conn,
+            "SELECT printf('%d.%d', comment_id, revision), text
+             FROM comment_revisions ORDER BY comment_id, revision",
+        );
+        let timeline_before = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), detail FROM timeline_events
+             WHERE kind = 'comment' ORDER BY id",
+        );
+        let edges_before = text_pairs(
+            &conn,
+            "SELECT printf('%d', from_ticket), printf('%d', to_ticket)
+             FROM ticket_dependencies ORDER BY id",
+        );
+        drop(conn);
+
+        // The same apply step `Database::migrate` runs, paused before the
+        // name-case triggers so that file can be shown not to rewrite rows.
+        let mut names_before_triggers = None;
+        let mut applied = Vec::new();
+        {
+            let conn = database.connection();
+            for migration in MIGRATIONS
+                .iter()
+                .filter(|migration| migration.version > version_before)
+            {
+                if migration.version == 66 {
+                    names_before_triggers = Some((
+                        text_pairs(
+                            &conn,
+                            "SELECT printf('%d', id), name FROM issue_labels ORDER BY id",
+                        ),
+                        text_pairs(
+                            &conn,
+                            "SELECT printf('%d', id), name FROM issue_milestones ORDER BY id",
+                        ),
+                    ));
+                }
+                super::apply_one(&conn, migration)
+                    .expect("schema 52 upgrades through the current schema");
+                applied.push(migration.version);
+            }
+        }
+        let names_before_triggers =
+            names_before_triggers.expect("the name-case migration is in the pending list");
+        assert_eq!(applied.first().copied(), Some(53));
+        assert_eq!(
+            applied.last().copied(),
+            Some(crate::migrations::LATEST_SCHEMA_VERSION)
+        );
+        assert!(
+            applied.contains(&65) && applied.contains(&66),
+            "close-children and name-case migrations both apply: {applied:?}"
+        );
+        let public_path = copy_dir.path().join("kanban-runner.sqlite");
+        std::fs::write(&public_path, &source_bytes).expect("the runner copy is written");
+        let mut via_runner =
+            crate::db::Database::open(&public_path).expect("the runner copy opens");
+        let report = via_runner
+            .migrate(&AllowAllMigrations)
+            .expect("Database::migrate upgrades a schema 52 copy");
+        assert_eq!(
+            report.applied, applied,
+            "the public runner applies the same migrations as the paused apply"
+        );
+        drop(via_runner);
+
+        let conn = database.connection();
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, crate::migrations::LATEST_SCHEMA_VERSION);
+        let tickets: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tickets", [], |row| row.get(0))
+            .unwrap();
+        let comments: i64 = conn
+            .query_row("SELECT COUNT(*) FROM comments", [], |row| row.get(0))
+            .unwrap();
+        let dependencies: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ticket_dependencies", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            (tickets, comments, dependencies),
+            (tickets_before, comments_before, dependencies_before)
+        );
+        assert_eq!((tickets, comments, dependencies), (11, 5, 4));
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT COALESCE(title, ''), COALESCE(slice, '') FROM tickets ORDER BY number",
+            ),
+            titles_before
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d.%d', comment_id, revision), text
+                 FROM comment_revisions ORDER BY comment_id, revision",
+            ),
+            revisions_before
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d', id), detail FROM timeline_events
+                 WHERE kind = 'comment' ORDER BY id",
+            ),
+            timeline_before,
+            "timeline authors stay in the events that recorded them"
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d', from_ticket), printf('%d', to_ticket)
+                 FROM ticket_dependencies ORDER BY id",
+            ),
+            edges_before
+        );
+        let keys: Vec<String> = conn
+            .prepare(
+                "SELECT p.code || '-' || t.number
+                 FROM tickets AS t
+                 JOIN projects AS p ON p.id = t.project_id
+                 ORDER BY t.number",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            keys,
+            (1..=11)
+                .map(|number| format!("OLD-{number}"))
+                .collect::<Vec<_>>()
+        );
+        let setting: (i64, i64) = conn
+            .query_row(
+                "SELECT auto_close_sub_issues, close_sub_issues_with_parent
+                 FROM projects WHERE code = 'OLD'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(setting, (0, 0));
+        let triggers: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'trigger' AND name LIKE '%name_case%'
+                 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            triggers,
+            [
+                "issue_labels_name_case_insert",
+                "issue_labels_name_case_update",
+                "issue_milestones_name_case_insert",
+                "issue_milestones_name_case_update",
+            ]
+        );
+        let labels_after = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), name FROM issue_labels ORDER BY id",
+        );
+        let milestones_after = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), name FROM issue_milestones ORDER BY id",
+        );
+        assert_eq!(
+            (labels_after, milestones_after),
+            names_before_triggers,
+            "name-case triggers must not rewrite or invent rows"
+        );
+        let authors: Vec<(i64, String)> = conn
+            .prepare("SELECT id, author FROM comments ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let expected_authors: Vec<(i64, String)> = conn
+            .prepare(
+                "SELECT id, COALESCE(
+                     (SELECT json_extract(detail, '$.author')
+                      FROM timeline_events
+                      WHERE kind = 'comment'
+                        AND json_extract(detail, '$.comment_id') = comments.id
+                      ORDER BY recorded_at DESC
+                      LIMIT 1),
+                     ''
+                 )
+                 FROM comments
+                 ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            authors, expected_authors,
+            "a timeline author is kept; a missing one stays empty in storage"
+        );
+        assert!(
+            authors.iter().all(|(_, author)| author != "Unknown author"),
+            "the placeholder is a read, not a stored author: {authors:?}"
+        );
+        eprintln!("FIXTURE_AUTHORS={authors:?}");
+        drop(conn);
+        drop(database);
+
+        let source_after = std::fs::read(&source).expect("the fixture file is still readable");
+        let meta_after =
+            std::fs::metadata(&source).expect("the fixture metadata is still readable");
+        let mode_after = {
+            use std::os::unix::fs::PermissionsExt;
+            meta_after.permissions().mode()
+        };
+        assert_eq!(source_after, source_bytes, "the fixture file bytes changed");
+        assert_eq!(
+            meta_after.modified().expect("mtime"),
+            source_modified,
+            "the fixture modification time changed"
+        );
+        assert_eq!(mode_after, source_mode, "the fixture mode changed");
+        assert_eq!(
+            directory_listing(source_dir),
+            listing_before,
+            "the fixture directory gained, lost, or rewrote a file"
+        );
+    }
+
+    fn text_pairs(conn: &rusqlite::Connection, sql: &str) -> Vec<(String, String)> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn directory_listing(root: &std::path::Path) -> Vec<(String, u32, u64, std::time::SystemTime)> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut rows = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let mut entries = std::fs::read_dir(&dir)
+                .expect("the fixture directory is readable")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("the fixture directory lists");
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let meta = entry.metadata().expect("fixture entry metadata");
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .expect("an entry stays under the fixture directory")
+                    .to_string_lossy()
+                    .into_owned();
+                rows.push((
+                    relative,
+                    meta.permissions().mode(),
+                    meta.len(),
+                    meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                ));
+                if meta.is_dir() {
+                    pending.push(entry.path());
+                }
+            }
+        }
+        rows.sort();
+        rows
+    }
 }

@@ -753,6 +753,7 @@ fn serve_owned_with_mcp(
     let core = Arc::new(core);
     let http_core = core.clone();
     let operator_core = core.clone();
+    let operator_name = configured_operator_name(data_dir);
     let http = LoopbackHttp::start_with_handlers(
         http,
         secret.clone(),
@@ -764,7 +765,12 @@ fn serve_owned_with_mcp(
                 )
                 .map(kanban_mcp::Adapter::from_session)
             },
-            move || Ok(kanban_mcp::Adapter::from_operator(operator_core.clone())),
+            move || {
+                Ok(kanban_mcp::Adapter::from_operator_named(
+                    operator_core.clone(),
+                    operator_name.clone(),
+                ))
+            },
         ),
     )
     .map_err(|_| {
@@ -875,6 +881,14 @@ pub enum ServiceError {
         /// The structured application refusal.
         cause: kanban_dto::ApiError,
     },
+}
+
+fn configured_operator_name(data_dir: &Path) -> Option<String> {
+    let configuration = crate::redaction::read_managed_config(data_dir)
+        .ok()
+        .flatten()?;
+    let name = configuration.get("operator_name")?.as_str()?.trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 #[cfg(target_os = "macos")]

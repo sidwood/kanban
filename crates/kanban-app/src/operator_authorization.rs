@@ -9,11 +9,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct OperatorSession {
     core: Arc<Core>,
+    operator_name: Option<String>,
 }
 
 impl OperatorSession {
     pub fn new(core: Arc<Core>) -> Self {
-        Self { core }
+        Self {
+            core,
+            operator_name: None,
+        }
+    }
+
+    /// The operator name configured for this installation. `assignee`
+    /// `me` resolves to it. Without a name, `me` is stored as sent.
+    pub fn with_operator_name(core: Arc<Core>, name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            core,
+            operator_name: (!name.trim().is_empty()).then_some(name),
+        }
     }
 
     pub fn operations(&self) -> Result<Vec<String>, ApiError> {
@@ -27,6 +41,8 @@ impl OperatorSession {
         if !OPERATOR_MCP_OPERATIONS.contains(&name) {
             return Err(denied());
         }
+        let rewritten = self.rewrite_assignee_me(payload);
+        let payload = rewritten.as_ref().unwrap_or(payload);
         let kind = exposed_operations()
             .iter()
             .find(|entry| entry.name == name)
@@ -36,6 +52,17 @@ impl OperatorSession {
             OperationKind::Query => self.core.query(name, payload),
             OperationKind::Command => command_with_optional_mutation(&self.core, name, payload),
         }
+    }
+
+    fn rewrite_assignee_me(&self, payload: &Value) -> Option<Value> {
+        let name = self.operator_name.as_deref()?;
+        let assignee = payload.get("assignee")?.as_str()?;
+        if !assignee.eq_ignore_ascii_case("me") {
+            return None;
+        }
+        let mut resolved = payload.clone();
+        resolved["assignee"] = json!(name);
+        Some(resolved)
     }
 }
 

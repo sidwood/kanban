@@ -53,8 +53,16 @@ impl Adapter {
         }
     }
     pub fn from_operator(core: Arc<Core>) -> Self {
+        Self::from_operator_named(core, None)
+    }
+
+    pub fn from_operator_named(core: Arc<Core>, operator_name: Option<String>) -> Self {
+        let session = match operator_name {
+            Some(name) => kanban_app::OperatorSession::with_operator_name(core, name),
+            None => kanban_app::OperatorSession::new(core),
+        };
         Self {
-            backend: Arc::new(Backend::Operator(kanban_app::OperatorSession::new(core))),
+            backend: Arc::new(Backend::Operator(session)),
         }
     }
     pub fn from_channel(channel: std::os::unix::net::UnixStream) -> Self {

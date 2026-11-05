@@ -141,3 +141,25 @@ fn save_issue_accepts_a_team_code_project_label_and_milestone_name() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn assignee_me_stores_the_configured_operator_name() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::with_operator_name(Arc::new(h.core), "Ada");
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "assignee-me",
+        json!({ "project_id": 1, "title": "Mine", "assignee": "me" }),
+    ))
+    .expect("save shape");
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": saved.identifier }))
+            .expect("issue.get"),
+    )
+    .expect("issue record");
+    assert_eq!(read.assignee.as_deref(), Some("Ada"));
+}

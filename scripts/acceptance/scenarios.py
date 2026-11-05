@@ -742,18 +742,6 @@ def test_update(ctx):
 
 # Test 4: State moves ---------------------------------------------------------
 
-MOVES = [
-    ("Ready", "unstarted"),
-    ("Active", "started"),
-    ("In Review", "started"),
-    ("Done", "completed"),
-    ("Active", "started"),
-    ("Cancelled", "canceled"),
-    ("Draft", "backlog"),
-    ("Done", "completed"),
-]
-
-
 def stamp_problems(record):
     """How the stamps on one record differ from Linear's rules after a move.
 
@@ -776,34 +764,41 @@ def stamp_problems(record):
 
 
 def test_state_moves(ctx):
+    """Every workflow state can move to every other, with history and stamps."""
     rec = ctx.rec
-    key = ctx.create("T4 State walk", "LIN", state="Draft")
-    record = ctx.get(key)
-    current = "Draft"
-    for state, kind in MOVES:
-        before = record
-        ctx.save_must(key, state=state)
-        record = ctx.get(key)
-        moved = (record["state"], record["state_type"]) == (state, kind)
-        rec.check(f"{current} -> {state}: the move lands", moved, f"{record['state']}/{record['state_type']}")
-        problems = history_appended(before, record, state, kind)
-        if parse_timestamp(record["updated_at"]) <= parse_timestamp(before["updated_at"]):
-            problems.append("updated_at did not advance")
-        rec.check(f"{current} -> {state}: one history row is appended", not problems,
-                  "; ".join(problems) or f"{len(record['state_history'])} rows")
-        problems = stamp_problems(record)
-        rec.check(f"{current} -> {state}: stamps follow the {kind} type", not problems,
-                  "; ".join(problems) or stamp_summary(record))
-        current = state
-    before = record
-    ctx.save_must(key, state="Done")
-    after = ctx.get(key)
+    states = ctx.must("list_issue_statuses", {"project_id": ctx.project_id})["states"]
+    for source in states:
+        for destination in states:
+            if source["name"] == destination["name"]:
+                continue
+            key = ctx.create(f"Move {source['name']} to {destination['name']}", "LIN",
+                             state=source["name"])
+            before = ctx.get(key)
+            ctx.save_must(key, state=destination["name"])
+            after = ctx.get(key)
+            landed = (after["state"], after["state_type"]) == (destination["name"], destination["state_type"])
+            rec.check(f"{source['name']} -> {destination['name']}: the move lands", landed,
+                      f"{after['state']}/{after['state_type']}")
+            problems = history_appended(before, after, destination["name"], destination["state_type"])
+            if parse_timestamp(after["updated_at"]) <= parse_timestamp(before["updated_at"]):
+                problems.append("updated_at did not advance")
+            rec.check(f"{source['name']} -> {destination['name']}: one history row is appended",
+                      not problems, "; ".join(problems) or f"{len(after['state_history'])} rows")
+            problems = stamp_problems(after)
+            rec.check(
+                f"{source['name']} -> {destination['name']}: stamps follow the {destination['state_type']} type",
+                not problems, "; ".join(problems) or stamp_summary(after),
+            )
+
+    stayed = ctx.create("Stay where it is", "LIN", state="Done")
+    before = ctx.get(stayed)
+    ctx.save_must(stayed, state="Done")
+    after = ctx.get(stayed)
     rec.check("moving to the current state writes nothing",
-              after["state_history"] == before["state_history"] and after["version"] == before["version"],
+              after["state_history"] == before["state_history"] and after["version"] == before["version"]
+              and after["updated_at"] == before["updated_at"],
               f"{len(after['state_history'])} rows, version {after['version']}")
-    problems = history_problems(after)
-    rec.check("the whole walk reads as one contiguous history", not problems,
-              "; ".join(problems) or f"{len(after['state_history'])} rows")
+
 
     for state, stamp in (("Active", "started_at"), ("Done", "completed_at"), ("Cancelled", "canceled_at")):
         created = ctx.get(ctx.create(f"T4 Born {state}", "LIN", state=state))

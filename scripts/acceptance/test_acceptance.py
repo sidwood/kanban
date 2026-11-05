@@ -843,5 +843,90 @@ class TextQueryTests(unittest.TestCase):
         )
 
 
+class StateMoveTests(unittest.TestCase):
+    workflow = (
+        ("Draft", "backlog"), ("Parked", "backlog"), ("Blocked", "backlog"),
+        ("Scheduled", "unstarted"), ("Ready", "unstarted"), ("Active", "started"),
+        ("In Review", "started"), ("Approved", "started"), ("Landing", "started"),
+        ("Done", "completed"), ("Cancelled", "canceled"), ("Superseded", "canceled"),
+        ("Duplicate", "duplicate"),
+    )
+
+    def context(self):
+        kinds = dict(self.workflow)
+
+        class MemoryMcp:
+            def __init__(self):
+                self.issues = {}
+                self.next_id = 1
+                self.moves = []
+
+            def call(self, name, arguments):
+                if name == "list_issue_statuses":
+                    return harness.ToolResult(True, {"states": [
+                        {"name": name, "state_type": kind} for name, kind in kinds.items()
+                    ]})
+                if name == "save_issue":
+                    return harness.ToolResult(True, self.save(arguments))
+                if name == "get_issue":
+                    return harness.ToolResult(True, self.issues[arguments["identifier"]])
+                return harness.ToolResult(True, {})
+
+            def save(self, arguments):
+                if arguments.get("identifier"):
+                    issue = self.issues[arguments["identifier"]]
+                    if "state" in arguments and arguments["state"] != issue["state"]:
+                        self.moves.append((issue["state"], arguments["state"]))
+                        kind = kinds[arguments["state"]]
+                        issue["state_history"].append({
+                            "state": arguments["state"], "state_type": kind,
+                            "started_at": "2026-11-05T00:00:02.000Z",
+                        })
+                        issue["state"] = arguments["state"]
+                        issue["state_type"] = kind
+                        issue["updated_at"] = "2026-11-05T00:00:02.000Z"
+                        issue["version"] += 1
+                    return {"identifier": arguments["identifier"]}
+                number = self.next_id
+                self.next_id += 1
+                key = f"LIN-{number}"
+                state = arguments.get("state", "Draft")
+                kind = kinds.get(state, "backlog")
+                self.issues[key] = {
+                    "identifier": key, "title": arguments.get("title", ""),
+                    "state": state, "state_type": kind, "version": 1,
+                    "created_at": "2026-11-05T00:00:01.000Z",
+                    "updated_at": "2026-11-05T00:00:01.000Z",
+                    "state_history": [{
+                        "state": state, "state_type": kind,
+                        "started_at": "2026-11-05T00:00:01.000Z",
+                    }],
+                }
+                return {"identifier": key}
+
+        mcp = MemoryMcp()
+        recorder = checks.Recorder(emit=lambda line: None)
+        ctx = context.Context(mcp, None, recorder, "run", read_only=False, pause=0)
+        ctx.projects = {"LIN": 1}
+        ctx.project_code = "LIN"
+        ctx.mcp = mcp
+        return ctx
+
+    def test_every_workflow_state_moves_to_every_other(self):
+        ctx = self.context()
+        ctx.rec.begin(4, "State moves")
+        scenarios.test_state_moves(ctx)
+        names = [name for name, _kind in self.workflow]
+        expected = {(source, dest) for source in names for dest in names if source != dest}
+        self.assertTrue(expected <= set(ctx.mcp.moves))
+        descriptions = [result[2] for result in ctx.rec.tests[-1].results]
+        for source, dest in expected:
+            related = [line for line in descriptions if line.startswith(f"{source} -> {dest}:")]
+            self.assertTrue(any("lands" in line for line in related), source + " -> " + dest)
+            self.assertTrue(any("history" in line for line in related))
+            self.assertTrue(any("stamp" in line for line in related))
+
+
+
 if __name__ == "__main__":
     unittest.main()

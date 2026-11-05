@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
-use crate::issue::{IssueStore, IssueWorkflowState};
+use crate::issue::{IssuePageQuery, IssueStore};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
@@ -963,7 +963,7 @@ fn list_issues(
     } else {
         request.limit.clamp(1, 100)
     };
-    let updated_since = request
+    let window = request
         .updated_since
         .as_deref()
         .map(start_of_window)
@@ -980,102 +980,51 @@ fn list_issues(
             .map(|project| project.id().value())
             .collect(),
     };
-
-    let mut matches = Vec::new();
-    for project_id in project_ids {
-        for ticket in ctx.tickets.list(ProjectId::new(project_id))? {
-            let ticket_id = ticket.id().value();
-            if let Some(state) = request.state.as_deref() {
-                let workflow = ctx.issues.workflow_state_for_ticket(ticket_id as i64)?;
-                let matches_state = |value: &IssueWorkflowState| {
-                    equals_ignoring_case(&value.name, state)
-                        || equals_ignoring_case(value.state_type.wire_name(), state)
-                };
-                if workflow.as_ref().is_none_or(|value| !matches_state(value)) {
-                    continue;
-                }
-            }
-            if let Some(label) = request.label.as_deref() {
-                let labels = ctx.issues.list_labels(ticket_id as i64)?;
-                if !labels.iter().any(|held| equals_ignoring_case(held, label)) {
-                    continue;
-                }
-            }
-            if let Some(parent_ref) = request.parent_id.as_deref() {
-                let expected_parent = resolve_parent_filter(ctx, parent_ref)?;
-                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
-                if fields.parent_ticket_id != Some(expected_parent) {
-                    continue;
-                }
-            }
-            if let Some(milestone_id) = request.milestone_id {
-                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
-                if fields.milestone_id != Some(milestone_id as i64) {
-                    continue;
-                }
-            }
-            if let Some(expected_assignee) = request.assignee.as_deref() {
-                let fields = ctx.issues.issue_fields(ticket_id as i64)?;
-                if fields.assignee != expected_assignee {
-                    continue;
-                }
-            }
-            let record =
-                load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;
-            if let Some(since) = updated_since.as_ref()
-                && !since.holds(record.updated_at.as_str())
-            {
-                continue;
-            }
-            if let Some(query) = request.query.as_deref() {
-                let needle = query.to_lowercase();
-                let haystack = format!(
-                    "{} {} {}",
-                    record.identifier, record.title, record.description
-                )
-                .to_lowercase();
-                if !haystack.contains(&needle) {
-                    continue;
-                }
-            }
-            matches.push(record);
-        }
-    }
-    matches.sort_by(|left, right| {
-        right
-            .updated_at
-            .cmp(&left.updated_at)
-            .then_with(|| right.ticket_id.cmp(&left.ticket_id))
-    });
-    let start = if let Some(raw) = request.cursor.as_deref() {
-        let cursor_ticket = raw.parse::<u64>().map_err(|_| {
-            ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
-        })?;
-        matches
-            .iter()
-            .position(|record| record.ticket_id == cursor_ticket)
-            .map(|index| index + 1)
-            .ok_or_else(|| {
-                ApiError::invalid_request_field("cursor", "cursor does not match any listed issue")
-            })?
-    } else {
-        0
-    };
-    let page: Vec<IssueRecord> = matches.into_iter().skip(start).collect();
-    let next_cursor = if page.len() > limit as usize {
-        Some(
-            page[(limit as usize).saturating_sub(1)]
-                .ticket_id
-                .to_string(),
-        )
-    } else {
-        None
-    };
-    let issues = page.into_iter().take(limit as usize).collect();
+    let parent_ticket_id = request
+        .parent_id
+        .as_deref()
+        .map(|parent| resolve_parent_filter(ctx, parent))
+        .transpose()?;
+    let cursor = request
+        .cursor
+        .as_deref()
+        .map(|raw| {
+            raw.parse::<u64>().map_err(|_| {
+                ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
+            })
+        })
+        .transpose()?;
+    let page = ctx.issues.page_issue_ids(&IssuePageQuery {
+        project_ids: &project_ids,
+        state: request.state.as_deref(),
+        label: request.label.as_deref(),
+        parent_ticket_id,
+        milestone_id: request.milestone_id.map(|value| value as i64),
+        assignee: request.assignee.as_deref(),
+        updated_since_floor: window.as_ref().map(|bound| bound.floor.as_str()),
+        updated_since_holds_at_floor: window.as_ref().is_some_and(|bound| bound.holds_at_floor),
+        query: request.query.as_deref(),
+        cursor,
+        limit,
+    })?;
+    let issues = page
+        .ticket_ids
+        .iter()
+        .map(|ticket_id| load_issue_record_by_id(ctx, *ticket_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let next_cursor = page
+        .more
+        .then(|| issues.last().map(|record| record.ticket_id.to_string()))
+        .flatten();
     Ok(IssueListResponse {
         issues,
         next_cursor,
     })
+}
+
+fn load_issue_record_by_id(ctx: &IssueContext, ticket_id: u64) -> Result<IssueRecord, ApiError> {
+    let identifier = ctx.issues.load_issue_key(ticket_id as i64)?.display();
+    load_issue_record(ctx, &identifier)
 }
 
 fn start_of_window(raw: &str) -> Result<WindowBound, ApiError> {
@@ -1113,18 +1062,10 @@ struct WindowBound {
 impl WindowBound {
     fn at(instant: time::OffsetDateTime) -> Self {
         let nanoseconds = instant.time().nanosecond();
-        let holds_at_floor = nanoseconds % 1_000_000 == 0;
+        let holds_at_floor = nanoseconds.is_multiple_of(1_000_000);
         Self {
             floor: window_stamp(instant),
             holds_at_floor,
-        }
-    }
-
-    fn holds(&self, stored: &str) -> bool {
-        match stored.cmp(self.floor.as_str()) {
-            std::cmp::Ordering::Greater => true,
-            std::cmp::Ordering::Equal => self.holds_at_floor,
-            std::cmp::Ordering::Less => false,
         }
     }
 }

@@ -3107,6 +3107,121 @@ fn create_label_reports_the_stored_group_flag() {
 }
 
 #[test]
+fn a_list_cursor_survives_its_anchor_leaving_the_filter() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = save_issue(
+        session,
+        0,
+        "cursor-drift-first",
+        json!({ "project_id": 1, "title": "First", "state": "Active" }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "cursor-drift-second",
+        json!({ "project_id": 1, "title": "Second", "state": "Active" }),
+    );
+    let page_one = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "state": "Active", "limit": 1 }),
+        )
+        .expect("the first page serves");
+    let cursor = page_one["next_cursor"]
+        .as_str()
+        .expect("a page of two carries a cursor")
+        .to_owned();
+    let anchor_id: u64 = if page_one["issues"][0]["ticket_id"] == json!(first.ticket_id) {
+        first.ticket_id
+    } else {
+        second.ticket_id
+    };
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET workflow_state_id = (
+                 SELECT id FROM issue_workflow_states
+                 WHERE project_id = 1 AND name = 'Draft'
+             )
+             WHERE id = ?1",
+            [anchor_id as i64],
+        )
+        .unwrap();
+
+    let page_two = session
+        .call(
+            "issue.list",
+            &json!({
+                "project_id": 1,
+                "state": "Active",
+                "limit": 1,
+                "cursor": cursor,
+            }),
+        )
+        .expect("a drifted anchor keeps the cursor valid");
+    let listed: Vec<u64> = page_two["issues"]
+        .as_array()
+        .expect("an issues array")
+        .iter()
+        .map(|record| record["ticket_id"].as_u64().unwrap())
+        .collect();
+    let remaining = if anchor_id == first.ticket_id {
+        second.ticket_id
+    } else {
+        first.ticket_id
+    };
+    assert_eq!(
+        listed,
+        vec![remaining],
+        "the page continues past the anchor"
+    );
+}
+
+#[test]
+fn issue_filters_fold_non_ascii_matches() {
+    let h = rules_harness();
+    let session = &h.session;
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "fold-label-create"),
+                "project_id": 1,
+                "name": "Träume",
+                "color": "#333333",
+            }),
+        )
+        .expect("the label lands");
+    save_issue(
+        session,
+        0,
+        "fold-label-issue",
+        json!({
+            "project_id": 1,
+            "title": "Überholspur träumt",
+            "add_labels": ["Träume"],
+        }),
+    );
+
+    let by_label = session
+        .call("issue.list", &json!({ "project_id": 1, "label": "träume" }))
+        .expect("the label filter serves")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .len();
+    assert_eq!(by_label, 1, "a folded label name matches its issue");
+
+    let by_query = session
+        .call("issue.list", &json!({ "project_id": 1, "query": "TRÄUMT" }))
+        .expect("the query filter serves")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .len();
+    assert_eq!(by_query, 1, "a folded query matches the title");
+}
+
+#[test]
 fn unknown_references_name_their_request_field() {
     let h = rules_harness();
     let session = &h.session;

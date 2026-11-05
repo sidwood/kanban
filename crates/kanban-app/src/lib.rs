@@ -106,7 +106,8 @@ pub use herdr::{
 };
 pub use initiative::InitiativeStore;
 pub use issue::{
-    IssueLabelRow, IssueMilestoneRow, IssueStore, IssueTicketFields, IssueWorkflowState,
+    IssueLabelRow, IssueMilestoneRow, IssuePage, IssuePageQuery, IssueStore, IssueTicketFields,
+    IssueWorkflowState,
 };
 pub use landing::{GitLanding, LandingStore};
 pub use lane::LaneStore;

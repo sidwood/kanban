@@ -158,4 +158,36 @@ pub trait IssueStore: Send + Sync {
     /// Advance one issue's update stamp without an edit, the way a
     /// comment or reply keeps the issue current for incremental sync.
     fn touch_updated_at(&self, ticket_id: i64) -> Result<(), ApiError>;
+    /// One page of issue ids matching `query`, newest update first,
+    /// paged before any record is built. `None` cursor starts at the
+    /// newest; a cursor resumes strictly after the row it names even
+    /// when that row no longer matches.
+    fn page_issue_ids(&self, query: &IssuePageQuery<'_>) -> Result<IssuePage, ApiError>;
+}
+
+/// The filters an issue listing applies, already resolved to the
+/// identities SQL can compare.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct IssuePageQuery<'a> {
+    pub project_ids: &'a [u64],
+    pub state: Option<&'a str>,
+    pub label: Option<&'a str>,
+    pub parent_ticket_id: Option<i64>,
+    pub milestone_id: Option<i64>,
+    pub assignee: Option<&'a str>,
+    /// The window's floor in the update stamps' own form, and
+    /// whether a stamp equal to the floor still holds.
+    pub updated_since_floor: Option<&'a str>,
+    pub updated_since_holds_at_floor: bool,
+    pub query: Option<&'a str>,
+    /// The ticket id a cursor names; paging resumes after its row.
+    pub cursor: Option<u64>,
+    pub limit: u32,
+}
+
+/// One page of issue ids and whether more matched rows follow.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IssuePage {
+    pub ticket_ids: Vec<u64>,
+    pub more: bool,
 }

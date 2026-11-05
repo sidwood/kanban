@@ -31,7 +31,9 @@
     "SQLite",
     "STRASSE",
     "Straße",
+    "TRÄUMT",
     "Tauri",
+    "Träume",
     "TypeScript",
     "Unlayered",
     "Unstarted",
@@ -149,6 +151,7 @@
     "timezones",
     "tolower",
     "toplevel",
+    "träumt",
     "unextractable",
     "unheld",
     "unixepoch",
@@ -177,6 +180,7 @@
     "writable",
     "xhigh",
     "Årea",
+    "Überholspur",
     "ΟΔΟΣ",
     "οδος"
   ]

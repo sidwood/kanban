@@ -1926,6 +1926,13 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         SqliteIssueStore::touch_updated_at(self, ticket_id)
     }
 
+    fn page_issue_ids(
+        &self,
+        query: &kanban_app::IssuePageQuery<'_>,
+    ) -> Result<kanban_app::IssuePage, ApiError> {
+        page_issue_ids(&self.lock(), query)
+    }
+
     fn create_milestone(
         &self,
         project_id: i64,
@@ -2195,6 +2202,127 @@ fn resolve_relation_target(
         return Ok(found);
     }
     Ok(super::linear_issue::resolve_issue_key(conn, identifier)?.map(|(_, id)| id))
+}
+
+fn page_issue_ids(
+    conn: &rusqlite::Connection,
+    query: &kanban_app::IssuePageQuery<'_>,
+) -> Result<kanban_app::IssuePage, ApiError> {
+    let mut sql = String::from(
+        "SELECT t.id FROM tickets AS t
+         JOIN projects AS p ON p.id = t.project_id
+         LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+         LEFT JOIN issue_workflow_states AS ls
+                ON ls.project_id = t.project_id AND ls.legacy_state = t.state
+         WHERE t.project_id IN (",
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    for (index, project_id) in query.project_ids.iter().enumerate() {
+        if index > 0 {
+            sql.push(',');
+        }
+        sql.push_str(&format!("?{}", params.len() + 1));
+        params.push(Box::new(*project_id as i64));
+    }
+    sql.push(')');
+    if let Some(state) = query.state {
+        let n = params.len() + 1;
+        sql.push_str(&format!(
+            " AND (fold_eq(COALESCE(s.name, ls.name), ?{n})
+                OR fold_eq(COALESCE(s.type, ls.type), ?{n}))"
+        ));
+        params.push(Box::new(state.to_owned()));
+    }
+    if let Some(label) = query.label {
+        let n = params.len() + 1;
+        sql.push_str(&format!(
+            " AND EXISTS (
+                   SELECT 1 FROM issue_ticket_labels AS tl
+                   JOIN issue_labels AS l ON l.id = tl.label_id
+                   WHERE tl.ticket_id = t.id AND fold_eq(l.name, ?{n})
+               )"
+        ));
+        params.push(Box::new(label.to_owned()));
+    }
+    if let Some(parent) = query.parent_ticket_id {
+        sql.push_str(&format!(" AND t.parent_ticket_id = ?{}", params.len() + 1));
+        params.push(Box::new(parent));
+    }
+    if let Some(milestone) = query.milestone_id {
+        sql.push_str(&format!(" AND t.milestone_id = ?{}", params.len() + 1));
+        params.push(Box::new(milestone));
+    }
+    if let Some(assignee) = query.assignee {
+        sql.push_str(&format!(
+            " AND COALESCE(t.assignee, '') = ?{}",
+            params.len() + 1
+        ));
+        params.push(Box::new(assignee.to_owned()));
+    }
+    if let Some(floor) = query.updated_since_floor {
+        let n = params.len() + 1;
+        let m = params.len() + 2;
+        sql.push_str(&format!(
+            " AND (t.updated_at > ?{n} OR (t.updated_at = ?{n} AND ?{m}))"
+        ));
+        params.push(Box::new(floor.to_owned()));
+        params.push(Box::new(i64::from(query.updated_since_holds_at_floor)));
+    }
+    if let Some(needle) = query.query {
+        let n = params.len() + 1;
+        sql.push_str(&format!(
+            " AND issue_query_matches(
+                   p.code || '-' || t.number,
+                   COALESCE(CASE WHEN t.kind = 'implementation' THEN t.slice ELSE t.title END, ''),
+                   COALESCE(t.description, ''),
+                   ?{n}
+               )"
+        ));
+        params.push(Box::new(needle.to_owned()));
+    }
+    if let Some(cursor) = query.cursor {
+        let anchor: Option<String> = conn
+            .query_row(
+                "SELECT updated_at FROM tickets WHERE id = ?1",
+                [cursor as i64],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        let Some(anchor_updated_at) = anchor else {
+            return Err(ApiError::invalid_request_field(
+                "cursor",
+                "cursor does not match any listed issue",
+            ));
+        };
+        let n = params.len() + 1;
+        let m = params.len() + 2;
+        sql.push_str(&format!(
+            " AND (t.updated_at < ?{n} OR (t.updated_at = ?{n} AND t.id < ?{m}))"
+        ));
+        params.push(Box::new(anchor_updated_at));
+        params.push(Box::new(cursor as i64));
+    }
+    sql.push_str(" ORDER BY t.updated_at DESC, t.id DESC LIMIT ?");
+    params.push(Box::new(query.limit as i64 + 1));
+    let mut statement = conn.prepare(&sql).map_err(internal)?;
+    let rows = statement
+        .query_map(
+            rusqlite::params_from_iter(params.iter().map(|value| value.as_ref())),
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(internal)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(internal)?;
+    let more = rows.len() > query.limit as usize;
+    Ok(kanban_app::IssuePage {
+        ticket_ids: rows
+            .into_iter()
+            .take(query.limit as usize)
+            .map(|id| id as u64)
+            .collect(),
+        more,
+    })
 }
 
 pub fn resolve_state_by_name(

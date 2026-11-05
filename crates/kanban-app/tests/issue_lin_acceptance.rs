@@ -1915,7 +1915,7 @@ fn archived_projects_refuse_issue_updates_as_creation() {
         None,
     )
     .expect("the closing registration validates");
-    let mut project = projects
+    let project = projects
         .create(&closing, &|id| {
             TimelineEnvelope::project(
                 id.value(),

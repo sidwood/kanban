@@ -548,3 +548,69 @@ fn list_projects_reads_both_sub_issue_settings() {
     assert!(both[0].auto_close_sub_issues);
     assert!(both[0].close_sub_issues_with_parent);
 }
+fn plant_executing_run(database_path: &std::path::Path, ticket_id: i64) {
+    let conn = rusqlite::Connection::open(database_path).unwrap();
+    conn.execute(
+        "INSERT INTO dispatch_requests (
+             project_id, ticket_id, status, priority, ready, harness, model, usage_pool,
+             created_at, version
+         ) VALUES (1, ?1, 'claimed', 'normal', 1, 'claude', 'opus', 'default', 0, 1)",
+        [ticket_id],
+    )
+    .expect("the dispatch request lands");
+    let request_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO runs (
+             project_id, ticket_id, dispatch_request_id, status,
+             requested_name, requested_harness, requested_model, requested_effort,
+             requested_usage_pool, effective_name, effective_harness, effective_model,
+             effective_effort, effective_usage_pool, fallback, created_at, version
+         ) VALUES (
+             1, ?1, ?2, 'executing',
+             'standard', 'claude', 'opus', 'high',
+             'default', 'standard', 'claude', 'opus',
+             'high', 'default', 0, 0, 1
+         )",
+        [ticket_id, request_id],
+    )
+    .expect("the executing run lands");
+}
+
+#[test]
+fn an_executing_child_stays_open_when_its_parent_closes() {
+    let h = harness_with_stack();
+    let s = &h.session;
+    close_with_parent(s);
+    let parent = save(
+        s,
+        "parent",
+        json!({ "project_id": CORE, "title": "Parent" }),
+    );
+    let busy = child_of(s, &parent, "busy", "Active");
+    let quiet = child_of(s, &parent, "quiet", "Active");
+    let grandchild = child_of(s, &busy, "grandchild", "Active");
+    plant_executing_run(&h.database_path, busy.ticket_id as i64);
+    let before = read(s, &busy.identifier);
+
+    move_to(s, &parent.identifier, "parent-done", "Done");
+
+    let after = read(s, &busy.identifier);
+    assert_eq!(
+        after.state, "Active",
+        "a child with its own executing run stays open"
+    );
+    assert_eq!(
+        after.version, before.version,
+        "a refused close leaves the child unmoved"
+    );
+    assert!(
+        cascade_events(&h, busy.ticket_id).is_empty(),
+        "a refused close records no close, the same as any refused move"
+    );
+    assert_eq!(read(s, &quiet.identifier).state, "Done");
+    assert_eq!(
+        read(s, &grandchild.identifier).state,
+        "Active",
+        "descent stops at the child that stayed open"
+    );
+}

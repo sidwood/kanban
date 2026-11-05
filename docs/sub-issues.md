@@ -66,6 +66,9 @@ closes its **open** sub-issues:
 - It runs whichever way the parent closes: `save_issue` state moves,
   `duplicate_of`, parent auto-close, and legacy ticket moves such as cancel.
 - Reopening the parent leaves its sub-issues closed.
+- A sub-issue with one of its own runs still executing stays open. The
+  refusal writes nothing, the same as any refused move, and that child's
+  own sub-issues are not closed by this cascade.
 - With both settings on, every issue enters its closed state once: this rule
   only closes open sub-issues and parent auto-close only closes open parents.
 

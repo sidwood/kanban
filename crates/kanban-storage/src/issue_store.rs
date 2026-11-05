@@ -2565,6 +2565,19 @@ pub(crate) fn close_open_sub_issues_with_parent(
         if !open {
             continue;
         }
+        // The same rule parent auto-close follows: a live run keeps the
+        // issue open. Leaving it unmoved records the refusal the way any
+        // refused move does — no version bump and no timeline row.
+        let executing: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM runs WHERE ticket_id = ?1 AND status = 'executing'",
+                [child_id],
+                |row| row.get(0),
+            )
+            .map_err(internal)?;
+        if executing > 0 {
+            continue;
+        }
         let target = first_workflow_state_of_type(conn, child_project, closure)
             .map_err(internal_storage)?
             .ok_or_else(|| {

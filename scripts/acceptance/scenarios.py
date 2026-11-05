@@ -67,7 +67,11 @@ def register_project(ctx, code, name, repository):
     except Exception as error:  # a stale version names the one to use
         current = getattr(error, "error", {}).get("current_version")
         if current is None:
-            raise StepError(f"project.register {code} was refused: {error}")
+            shown = error if ctx.rec is None else ctx.rec.refusal_text(error)
+            text = f"project.register {code} was refused: {shown}"
+            if ctx.rec is not None:
+                text = ctx.rec.redact_text(text)
+            raise StepError(text)
         payload["mutation"] = {"optimistic_version": current,
                                "idempotency_key": ctx.idempotency_key("register")}
         return ctx.socket.command("project.register", payload)

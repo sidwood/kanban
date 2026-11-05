@@ -526,6 +526,263 @@ class BearerTests(unittest.TestCase):
         self.assertEqual(result.payload["message"], message)
         self.assertEqual(result.field, "title")
 
+    def test_a_legacy_refusal_hides_a_rendered_secret_before_formatting(self):
+        """A socket refusal must remove a rendered secret before the error is formatted."""
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        self.assertEqual(len(secret), 32)
+        prefix = "abcdefgh"
+        redact = harness.Redactor()
+        redact.add(secret)
+        renderings = (
+            ("decoded", secret.decode()),
+            ("string-repr", repr(secret.decode())),
+            ("bytes-repr", repr(secret)),
+        )
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Legacy refusal")
+
+        class Socket:
+            def __init__(self):
+                self.seen = None
+                self.error = None
+                self.result = {"id": 7, "title": "kept"}
+
+            def command(self, operation, payload):
+                self.seen = (operation, payload)
+                if self.error is not None:
+                    raise harness.CoreError(self.error)
+                return self.result
+
+        socket_client = Socket()
+        ctx = context.Context(None, socket_client, recorder, "redaction", False, pause=0)
+        self.assertIs(ctx.legacy("ticket.edit", {"ticket_id": 7}), socket_client.result)
+        self.assertEqual(socket_client.seen, ("ticket.edit", {"ticket_id": 7}))
+        plain = {
+            "code": "invalid_request",
+            "message": "it's a plain refusal",
+            "field": "title",
+        }
+        socket_client.error = plain
+        with self.assertRaises(context.StepError) as raised:
+            ctx.legacy("ticket.edit", {})
+        self.assertEqual(
+            str(raised.exception),
+            "ticket.edit was refused: "
+            "{'code': 'invalid_request', 'message': \"it's a plain refusal\", 'field': 'title'}",
+        )
+        self.assertIs(socket_client.error, plain)
+
+        for name, rendering in renderings:
+            for padding in (0, 200, 240, 250):
+                message = "x" * padding + rendering
+                body = {"code": "internal", "message": message}
+                lines = []
+                recorder = checks.Recorder(emit=lines.append, redact=redact)
+                recorder.begin(1, "Legacy refusal")
+                socket_client = Socket()
+                socket_client.error = body
+                ctx = context.Context(None, socket_client, recorder, "redaction", False, pause=0)
+                with self.assertRaises(context.StepError) as raised:
+                    ctx.legacy("ticket.edit", {})
+                self.assertIs(body["message"], message)
+                self.assertEqual(body["code"], "internal")
+                recorder.abort(raised.exception)
+                output = "\n".join(lines + recorder.summary_lines())
+                detail = (name, padding)
+                self.assertNotIn(prefix, str(raised.exception), detail)
+                self.assertIn("[redacted]", str(raised.exception), detail)
+                self.assertNotIn(prefix, output, detail)
+                if padding < 240:
+                    self.assertIn("[redacted]", output, detail)
+
+    def test_a_nested_message_hides_a_rendered_secret_before_formatting(self):
+        """A dict or list message must lose a rendered secret before it is escaped."""
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        self.assertEqual(len(secret), 32)
+        prefix = "abcdefgh"
+        redact = harness.Redactor()
+        redact.add(secret)
+        plain_message = {"note": "it's plain", "n": 1, "items": ["kept", None]}
+        plain = harness.ToolResult(
+            False, {"code": "internal", "field": "title", "message": plain_message}
+        )
+        self.assertEqual(plain.describe(redact), plain.describe())
+        self.assertEqual(plain.describe(), "internal field=title " + repr(plain_message))
+        self.assertIs(plain.payload["message"], plain_message)
+        self.assertEqual(
+            harness.ToolResult(False, {"code": "internal", "message": ""}).describe(redact),
+            "internal",
+        )
+        self.assertEqual(
+            harness.ToolResult(False, {"code": "internal", "message": 0}).describe(redact),
+            "internal",
+        )
+        listed = ["it's plain", 2]
+        listed_result = harness.ToolResult(False, {"code": "internal", "message": listed})
+        self.assertEqual(listed_result.describe(redact), "internal " + repr(listed))
+        self.assertIs(listed_result.payload["message"], listed)
+
+        renderings = (
+            ("decoded", secret.decode()),
+            ("string-repr", repr(secret.decode())),
+            ("bytes-repr", repr(secret)),
+        )
+        for name, rendering in renderings:
+            shapes = (
+                ("dict", {"note": rendering}),
+                ("list", [rendering]),
+                ("nested", {"items": [rendering, {"inner": rendering}]}),
+            )
+            for shape, message in shapes:
+                result = harness.ToolResult(False, {"code": "internal", "message": message})
+                self.assertIs(result.payload["message"], message)
+                self.assertIn(prefix, result.describe(), (name, shape))
+                described = result.describe(redact)
+                detail = (name, shape)
+                self.assertNotIn(prefix, described, detail)
+                self.assertIn("[redacted]", described, detail)
+                self.assertIs(result.payload["message"], message)
+                lines = []
+                recorder = checks.Recorder(emit=lines.append, redact=redact)
+                recorder.begin(1, "Tool refusal")
+
+                class Refusing:
+                    def __init__(self):
+                        self.result = result
+
+                    def call(self, tool, arguments):
+                        return self.result
+
+                ctx = context.Context(Refusing(), None, recorder, "redaction", False)
+                with self.assertRaises(context.StepError) as raised:
+                    ctx.must("save_issue", {})
+                self.assertNotIn(prefix, str(raised.exception), detail)
+                self.assertIn("[redacted]", str(raised.exception), detail)
+                recorder.abort(raised.exception)
+                output = "\n".join(lines + recorder.summary_lines())
+                self.assertNotIn(prefix, output, detail)
+                self.assertIn("[redacted]", output, detail)
+
+                class Socket:
+                    def command(self, operation, payload):
+                        raise harness.CoreError({"code": "internal", "message": message})
+
+                lines = []
+                recorder = checks.Recorder(emit=lines.append, redact=redact)
+                recorder.begin(1, "Legacy refusal")
+                ctx = context.Context(None, Socket(), recorder, "redaction", False, pause=0)
+                with self.assertRaises(context.StepError) as raised:
+                    ctx.legacy("ticket.edit", {})
+                recorder.abort(raised.exception)
+                output = "\n".join(lines + recorder.summary_lines())
+                self.assertNotIn(prefix, str(raised.exception), detail)
+                self.assertIn("[redacted]", str(raised.exception), detail)
+                self.assertNotIn(prefix, output, detail)
+
+        byte_message = {"note": secret}
+        byte_result = harness.ToolResult(False, {"code": "internal", "message": byte_message})
+        self.assertIs(byte_result.payload["message"], byte_message)
+        self.assertNotIn(prefix, byte_result.describe(redact))
+        self.assertIn(prefix, byte_result.describe())
+        field_message = repr(secret.decode())
+        field_result = harness.ToolResult(
+            False, {"code": {"note": field_message}, "field": [field_message], "message": "kept"}
+        )
+        self.assertIs(field_result.payload["field"], field_result.error["field"])
+        self.assertNotIn(prefix, field_result.describe(redact))
+        self.assertEqual(field_result.payload["message"], "kept")
+
+    def test_a_register_refusal_hides_a_rendered_secret_before_formatting(self):
+        """project.register must remove a rendered secret before it formats the refusal."""
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        prefix = "abcdefgh"
+        redact = harness.Redactor()
+        redact.add(secret)
+        messages = (
+            repr(secret.decode()),
+            {"note": repr(secret.decode())},
+            [repr(secret)],
+        )
+        for message in messages:
+            lines = []
+            recorder = checks.Recorder(emit=lines.append, redact=redact)
+            recorder.begin(0, "Setup")
+
+            class Socket:
+                def command(self, operation, payload):
+                    raise harness.CoreError({"code": "internal", "message": message})
+
+            ctx = context.Context(None, Socket(), recorder, "redaction", False, pause=0)
+            with self.assertRaises(context.StepError) as raised:
+                scenarios.register_project(ctx, "LIN", "Linear parity", "repository")
+            self.assertNotIn(prefix, str(raised.exception))
+            self.assertIn("[redacted]", str(raised.exception))
+            recorder.abort(raised.exception)
+            output = "\n".join(lines + recorder.summary_lines())
+            self.assertNotIn(prefix, output)
+            self.assertIn("[redacted]", output)
+
+    def test_a_stop_refusal_hides_a_rendered_secret_before_formatting(self):
+        """service.stop must remove a rendered secret before it formats the refusal."""
+        import socket
+        import threading
+
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        prefix = "abcdefgh"
+        redact = harness.Redactor()
+        redact.add(secret)
+
+        def reason_for(message):
+            with tempfile.TemporaryDirectory(prefix="ka-stop-", dir="/tmp") as root:
+                data_dir = Path(root) / "Kanban"
+                data_dir.mkdir()
+                path = data_dir / "core.sock"
+                replies = [
+                    {
+                        "kind": "response",
+                        "payload": {"version": 1, "instance_id": "instance", "warning_id": "warning"},
+                    },
+                    {"kind": "error", "error": {"code": "internal", "message": message}},
+                ]
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                server.bind(str(path))
+                server.listen(2)
+                server.settimeout(5)
+
+                def serve():
+                    try:
+                        for reply in replies:
+                            connection, _address = server.accept()
+                            with connection:
+                                buffer = b""
+                                while b"\n" not in buffer:
+                                    chunk = connection.recv(65536)
+                                    if not chunk:
+                                        break
+                                    buffer += chunk
+                                connection.sendall((json.dumps(reply) + "\n").encode())
+                    except OSError:
+                        return
+
+                thread = threading.Thread(target=serve)
+                thread.start()
+                try:
+                    core = harness.CoreProcess(
+                        Path(root) / "unused", data_dir, 9, Path(root) / "core.log"
+                    )
+                    return core.stop(redact=redact)
+                finally:
+                    server.close()
+                    thread.join(timeout=5)
+
+        plain = reason_for("it's a plain refusal")
+        self.assertEqual(plain, "service.stop failed: it's a plain refusal")
+        leaked = reason_for({"note": repr(secret.decode())})
+        self.assertNotIn(prefix, leaked)
+        self.assertIn("[redacted]", leaked)
+        self.assertNotIn(prefix, redact(f"core stopped: {leaked}"))
+
     def test_a_plain_tool_error_keeps_its_refusal_text(self):
         message = "it's a plain refusal"
         lines = []
@@ -998,7 +1255,7 @@ class ReadOnlyStoreTests(unittest.TestCase):
                 self.log_path.write_text("core log")
                 (self.data_dir / "kanban.sqlite").write_bytes(b"mutated-by-core")
 
-            def stop(self):
+            def stop(self, redact=None):
                 return None
 
             def reap(self):

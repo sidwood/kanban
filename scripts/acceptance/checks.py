@@ -12,6 +12,9 @@ Outcomes:
   mode, or data the attached database does not hold).
 """
 
+from .harness import redact_structure
+from .harness import refusal_text as core_refusal_text
+
 PASS = "PASS"
 FAIL = "FAIL"
 XFAIL = "XFAIL"
@@ -22,21 +25,7 @@ OUTCOMES = (PASS, FAIL, XFAIL, XPASS, SKIP)
 
 def redact_nested(value, redact):
     """Replace complete secrets in strings before a value is rendered."""
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, dict):
-        return {
-            redact_nested(key, redact): redact_nested(item, redact)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [redact_nested(item, redact) for item in value]
-    if isinstance(value, tuple):
-        return tuple(redact_nested(item, redact) for item in value)
-    if isinstance(value, (set, frozenset)):
-        cleaned = (redact_nested(item, redact) for item in value)
-        return frozenset(cleaned) if isinstance(value, frozenset) else set(cleaned)
-    return value
+    return redact_structure(value, redact)
 
 
 def short(value, limit=160):
@@ -161,6 +150,18 @@ class Recorder:
     def describe_result(self, result):
         """Render a tool result after removing secrets from its text."""
         return result.describe(self._redact)
+
+    def redact_text(self, text):
+        """Remove known secrets from text that is about to be shown."""
+        return self._redact(text)
+
+    def redact_value(self, value):
+        """Remove known secrets from nested strings before formatting."""
+        return redact_structure(value, self._redact)
+
+    def refusal_text(self, error):
+        """Core refusal text with secrets removed before it is formatted."""
+        return core_refusal_text(error, self._redact)
 
     def abort(self, error):
         """A test stopped early; whatever it had not checked is a FAIL."""

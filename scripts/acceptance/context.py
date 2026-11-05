@@ -211,7 +211,11 @@ class Context:
         try:
             return self.socket.command(operation, payload)
         except CoreError as error:
-            raise StepError(f"{operation} was refused: {error.error}")
+            shown = error.error if self.rec is None else self.rec.redact_value(error.error)
+            text = f"{operation} was refused: {shown}"
+            if self.rec is not None:
+                text = self.rec.redact_text(text)
+            raise StepError(text)
 
     # Shared checks ---------------------------------------------------------
 

@@ -195,6 +195,52 @@ class Redactor:
         return text
 
 
+def redact_structure(value, redact):
+    """Remove known secrets from strings before a value is formatted.
+
+    A container is copied only when a nested string changes, so a value
+    with no secret keeps its identity and its rendering. Objects this
+    display does not walk are left unchanged.
+    """
+    if redact is None:
+        return value
+    cleaned = _redact_walk(value, redact)
+    try:
+        unchanged = cleaned == value
+    except TypeError:
+        unchanged = False
+    return value if unchanged else cleaned
+
+
+def _redact_walk(value, redact):
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {
+            _redact_walk(key, redact): _redact_walk(item, redact)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_walk(item, redact) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_walk(item, redact) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_redact_walk(item, redact) for item in value)
+    if isinstance(value, set):
+        return {_redact_walk(item, redact) for item in value}
+    return value
+
+
+def refusal_text(error, redact=None):
+    """The text a core refusal already shows, with secrets removed first."""
+    if isinstance(error, CoreError):
+        message = error.error.get("message", "core error")
+        if redact is not None:
+            message = redact_structure(message, redact)
+        return message
+    return error
+
+
 def secret_renderings(secret):
     """Forms of an installation secret that must never appear.
 
@@ -309,25 +355,27 @@ class ToolResult:
     def describe(self, redact=None):
         """One line for a tool outcome.
 
-        When `redact` is given, known secrets are removed from text
-        fields before the message is escaped. The stored payload is
-        left unchanged.
+        When `redact` is given, known secrets are removed from nested
+        text before it is escaped. The stored payload is left unchanged.
         """
         if self.ok:
             return "accepted"
         error = self.error or {}
 
         def clean(value):
-            if redact is None or not isinstance(value, str):
+            if redact is None:
                 return value
-            return redact(value)
+            return redact_structure(value, redact)
 
         parts = [str(clean(error.get("code")))]
         if error.get("field"):
             parts.append(f"field={clean(error['field'])}")
         if error.get("message"):
             parts.append(repr(clean(error["message"])))
-        return " ".join(parts)
+        rendered = " ".join(parts)
+        if redact is None:
+            return rendered
+        return redact(rendered)
 
 
 def tool_result_from_rpc(message):
@@ -657,8 +705,12 @@ class CoreProcess:
                     pass
             process.wait(timeout=wait_seconds)
 
-    def stop(self, wait_seconds=30):
-        """Ask the core to stop through `service.stop`, then reap it."""
+    def stop(self, wait_seconds=30, redact=None):
+        """Ask the core to stop through `service.stop`, then reap it.
+
+        When `redact` is given, secrets are removed from a refusal
+        before that refusal is formatted.
+        """
         reason = None
         try:
             client = SocketClient(self.socket_path, timeout=10)
@@ -673,7 +725,10 @@ class CoreProcess:
                 "confirmed": True,
             })
         except (OSError, HarnessError, CoreError, KeyError) as error:
-            reason = f"service.stop failed: {error}"
+            shown = refusal_text(error, redact)
+            reason = f"service.stop failed: {shown}"
+            if redact is not None:
+                reason = redact(reason)
         if self.process is None:
             return reason
         try:

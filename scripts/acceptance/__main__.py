@@ -240,7 +240,7 @@ def main(argv=None):
     finally:
         if core is not None and core.process is not None:
             if started:
-                problem = core.stop()
+                problem = core.stop(redact=redact)
                 emit(f"core stopped{': ' + problem if problem else ''}")
             else:
                 core.reap()

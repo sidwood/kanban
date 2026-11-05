@@ -352,6 +352,39 @@ describe('the drawer footer actions', () => {
     expect([...move.options].map((option) => option.value)).not.toContain('Ready')
   })
 
+  it("offers exactly the Project's own workflow states, read from the core", async () => {
+    // A workflow unlike the defaults, so a fallback cannot pass.
+    const states = [
+      { name: 'Draft', state_type: 'backlog' },
+      { name: 'Ready', state_type: 'unstarted' },
+      { name: 'In Progress', state_type: 'started' },
+      { name: 'Shipped', state_type: 'completed' },
+    ]
+    const state = harness({
+      tickets: [
+        ticket({ id: 7, number: 12, state: 'ready' }),
+        ticket({ id: 9, number: 14, state: 'draft' }),
+      ],
+      override: (name) =>
+        name === 'issue.list_workflow_states' ? Promise.resolve({ states }) : undefined,
+    })
+    const moves = (): string[] =>
+      [...(document.querySelector('[data-testid="drawer-move"]') as HTMLSelectElement).options]
+        .map((option) => option.value)
+        .filter((value) => value !== '')
+
+    const wrapper = await openDrawer(state, 7)
+    expect(moves()).toEqual(['Draft', 'In Progress', 'Shipped'])
+
+    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    await flushPromises()
+    expect(moves()).toEqual(['Ready', 'In Progress', 'Shipped'])
+
+    const reads = state.query.mock.calls.filter(([name]) => name === 'issue.list_workflow_states')
+    expect(reads.length).toBeGreaterThan(0)
+    expect(reads.map(([, request]) => request)).toEqual(reads.map(() => ({ project_id: 1 })))
+  })
+
   it('moves through issue.save with a workflow state name', async () => {
     const state = harness({ tickets: [ticket({ id: 7, state: 'ready' })] })
     await openDrawer(state, 7)

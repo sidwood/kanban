@@ -594,6 +594,96 @@ async fn operator_route_serves_one_comment_stream_per_issue() {
     service.shutdown();
 }
 
+/// Comments carried over from the ticket model recorded no author. The
+/// operator route lists them under a placeholder rather than a blank
+/// name, and leaves the stored row as it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_route_lists_an_unrecorded_author_as_unknown() {
+    let h = common::harness();
+    let secret = Arc::new(InstallationSecret::from_key(&[43; 32]));
+    let service = kanban_service::serve_with_http(
+        h._dir.path(),
+        kanban_service::ServiceRuntime {
+            mcp_executable: env!("CARGO_BIN_EXE_kanban-mcp").into(),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let client = operator_client(&service, &secret).await;
+
+    let issue = client
+        .call_tool(call(
+            "save_issue",
+            json!({"mutation":common::mutation(0,"unsigned-issue"), "project_id":1, "title":"Unsigned host"}),
+        ))
+        .await
+        .unwrap();
+    let issue = issue.structured_content.unwrap();
+    let key = issue["identifier"].as_str().unwrap().to_owned();
+    let ticket_id = issue["ticket_id"].as_u64().unwrap();
+
+    let conn = rusqlite::Connection::open(&h.database_path).unwrap();
+    conn.execute(
+        "INSERT INTO comments (project_id, entity_kind, entity_id, version, author)
+         VALUES (1, 'ticket', ?1, 1, '')",
+        [ticket_id.to_string()],
+    )
+    .unwrap();
+    let unsigned = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO comment_revisions (comment_id, revision, text) VALUES (?1, 1, 'Imported')",
+        [unsigned],
+    )
+    .unwrap();
+    drop(conn);
+    client
+        .call_tool(call(
+            "comment_create",
+            json!({"mutation":common::mutation(0,"unsigned-signed"), "project_id":1,
+                   "target":{"kind":"ticket","id":key}, "text":"Signed", "author":"lin"}),
+        ))
+        .await
+        .unwrap();
+
+    let listed = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target":{"kind":"ticket","id":key}, "limit":10}),
+        ))
+        .await
+        .unwrap();
+    let authors: Vec<_> = listed.structured_content.unwrap()["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| (row["body"].clone(), row["author"].clone()))
+        .collect();
+    assert_eq!(
+        authors,
+        vec![
+            (json!("Imported"), json!("Unknown author")),
+            (json!("Signed"), json!("lin")),
+        ]
+    );
+
+    let conn = rusqlite::Connection::open(&h.database_path).unwrap();
+    let stored: String = conn
+        .query_row(
+            "SELECT author FROM comments WHERE id = ?1",
+            [unsigned],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, "", "listing never rewrites the stored author");
+
+    client.cancel().await.unwrap();
+    service.shutdown();
+}
+
 fn wait_for_live_event(
     reader: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
     want: &str,

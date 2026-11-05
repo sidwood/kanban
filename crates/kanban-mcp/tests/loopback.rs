@@ -1307,7 +1307,10 @@ async fn operator_route_accepts_linear_shaped_calls() {
         .as_str()
         .unwrap_or("")
         .to_owned();
-    assert!(message.contains("Draft") && message.contains("Todo"), "{message}");
+    assert!(
+        message.contains("Draft") && message.contains("Todo"),
+        "{message}"
+    );
 
     client.cancel().await.unwrap();
     service.shutdown();

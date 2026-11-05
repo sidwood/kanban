@@ -12,8 +12,8 @@ use kanban_app::{
 use kanban_domain::ProjectRegistration;
 use kanban_dto::{ApiError, ErrorCode, TimelineEntityKind, TimelineEntityRef, TimelineEventKind};
 use kanban_storage::{
-    Database, SqliteCommentStore, SqliteEvidenceStore, SqliteIssueStore, SqlitePlanStore,
-    SqliteProjectStore, SqliteSpecStore, SqliteTicketStore,
+    AllowAllMigrations, Database, SqliteCommentStore, SqliteEvidenceStore, SqliteIssueStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteSpecStore, SqliteTicketStore, migrations,
 };
 use serde_json::{Value, json};
 
@@ -307,16 +307,31 @@ fn new_issue(session: &OperatorSession, key: &str, title: &str) -> String {
         .to_owned()
 }
 
-/// A label row written straight to storage, the way a database built
-/// before the case rule may already hold one.
-fn insert_legacy_label(database: &Database, name: &str) {
+/// A session over a database the previous build wrote, holding the
+/// labels `web` and `WEB` side by side in project 1, then upgraded to
+/// the current schema. The current schema refuses such a pair, so only
+/// an upgrade can produce one.
+fn upgraded_pair_session() -> NameCaseHarness {
+    let dir = tempfile::TempDir::new().expect("scratch dir");
+    let mut database =
+        Database::open(&dir.path().join("kanban.sqlite")).expect("the database opens");
+    migrations::apply_through(&database.connection(), 65).expect("schema 65 applies");
+    common::seed_project_profile(&database);
     database
         .connection()
-        .execute(
-            "INSERT INTO issue_labels (project_id, name, color) VALUES (1, ?1, '#336699')",
-            [name],
+        .execute_batch(
+            "INSERT INTO issue_labels (project_id, name, color)
+             VALUES (1, 'web', '#336699'), (1, 'WEB', '#336699');",
         )
-        .expect("the legacy label row lands");
+        .expect("the previous build's pair lands");
+    database
+        .migrate(&AllowAllMigrations)
+        .expect("the upgrade applies over the pair");
+    NameCaseHarness {
+        session: operator_over(&database, dir.path()),
+        database,
+        _dir: dir,
+    }
 }
 
 fn retire_label(session: &OperatorSession, key: &str, name: &str) -> Result<Value, ApiError> {
@@ -444,10 +459,8 @@ fn an_unknown_label_is_still_unknown_in_any_case() {
 
 #[test]
 fn a_stored_case_variant_pair_stays_assignable_by_exact_spelling() {
-    let h = session();
+    let h = upgraded_pair_session();
     let session = &h.session;
-    insert_legacy_label(&h.database, "web");
-    insert_legacy_label(&h.database, "WEB");
     let issue = new_issue(session, "pair-host", "Pair holder");
 
     save_issue(
@@ -472,10 +485,8 @@ fn a_stored_case_variant_pair_stays_assignable_by_exact_spelling() {
 
 #[test]
 fn a_stored_case_variant_pair_refuses_to_guess_and_changes_nothing() {
-    let h = session();
+    let h = upgraded_pair_session();
     let session = &h.session;
-    insert_legacy_label(&h.database, "web");
-    insert_legacy_label(&h.database, "WEB");
     let issue = new_issue(session, "guess-host", "Guess holder");
     save_issue(
         session,
@@ -542,10 +553,8 @@ fn a_stored_case_variant_pair_refuses_to_guess_and_changes_nothing() {
 
 #[test]
 fn the_label_filter_matches_every_stored_case_variant() {
-    let h = session();
+    let h = upgraded_pair_session();
     let session = &h.session;
-    insert_legacy_label(&h.database, "web");
-    insert_legacy_label(&h.database, "WEB");
     let lower = new_issue(session, "filter-lower", "Lower holder");
     let upper = new_issue(session, "filter-upper", "Upper holder");
     save_issue(
@@ -659,4 +668,184 @@ fn a_stored_case_variant_group_pair_refuses_to_guess() {
     let exact = create_grouped_label(session, "area-exact", "web", "AREA")
         .expect("an exact spelling names its own group");
     assert_eq!(exact["group"], json!("AREA"));
+}
+
+/// An operator session over `database` as it stands, whatever its
+/// schema version.
+fn operator_over(database: &Database, dir: &std::path::Path) -> OperatorSession {
+    let idempotency = Arc::new(kanban_storage::SqliteIdempotencyStore::new(
+        database,
+        kanban_storage::RetentionPolicy::keep_most_recent(
+            std::num::NonZeroU32::new(100).expect("non-zero"),
+        ),
+    ));
+    let mut core = Core::new(
+        kanban_app::catalog::exposed_operations(),
+        idempotency,
+        Arc::new(kanban_app::events::NoopEventSink),
+    );
+    register_issue_stack(&mut core, database, &dir.join("attachments"));
+    OperatorSession::new(Arc::new(core))
+}
+
+fn milestones(session: &OperatorSession) -> Vec<(String, u64, u64)> {
+    let listed = session
+        .call("issue.list_milestones", &json!({ "project_id": 1 }))
+        .expect("milestones list");
+    listed["milestones"]
+        .as_array()
+        .expect("milestones array")
+        .iter()
+        .map(|row| {
+            (
+                row["name"].as_str().unwrap().to_owned(),
+                row["id"].as_u64().unwrap(),
+                row["issues_total"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn milestone_id(session: &OperatorSession, name: &str) -> u64 {
+    milestones(session)
+        .into_iter()
+        .find(|(stored, _, _)| stored == name)
+        .map(|(_, id, _)| id)
+        .expect("the milestone is listed")
+}
+
+/// A database the previous build wrote may already hold label and
+/// milestone names that differ only in letter case. Upgrading keeps
+/// every such row readable and assignable by its exact spelling, and
+/// only judges what is written afterwards.
+#[test]
+fn an_upgraded_database_keeps_its_case_variant_pairs_usable() {
+    let dir = tempfile::TempDir::new().expect("scratch dir");
+    let mut database =
+        Database::open(&dir.path().join("kanban.sqlite")).expect("the database opens");
+    migrations::apply_through(&database.connection(), 65).expect("schema 65 applies");
+    common::seed_project_profile(&database);
+    database
+        .connection()
+        .execute_batch(
+            "INSERT INTO issue_labels (project_id, name, color)
+             VALUES (1, 'web', '#336699'), (1, 'WEB', '#336699');
+             INSERT INTO issue_milestones (project_id, name, sort_order)
+             VALUES (1, 'M1 Foundations', 0), (1, 'm1 foundations', 1);",
+        )
+        .expect("the previous build's pairs land");
+    let (lower, upper) = {
+        let before = operator_over(&database, dir.path());
+        let lower = save_issue(
+            &before,
+            "old-lower",
+            json!({
+                "project_id": 1,
+                "title": "Lower spellings",
+                "add_labels": ["web"],
+                "milestone_id": milestone_id(&before, "M1 Foundations"),
+            }),
+        )
+        .expect("the old build files the lower spellings")["identifier"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let upper = save_issue(
+            &before,
+            "old-upper",
+            json!({
+                "project_id": 1,
+                "title": "Upper spellings",
+                "add_labels": ["WEB"],
+                "milestone_id": milestone_id(&before, "m1 foundations"),
+            }),
+        )
+        .expect("the old build files the other spellings")["identifier"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        (lower, upper)
+    };
+
+    let report = database
+        .migrate(&AllowAllMigrations)
+        .expect("the upgrade applies over the stored pairs");
+    assert_eq!(report.applied, vec![66]);
+    let session = &operator_over(&database, dir.path());
+
+    // Still readable: nothing was renamed, merged, or dropped.
+    let names: Vec<String> = labels(session, 1)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(names.contains(&"web".to_owned()) && names.contains(&"WEB".to_owned()));
+    let m1 = milestone_id(session, "M1 Foundations");
+    let m1_lower = milestone_id(session, "m1 foundations");
+    assert_eq!(
+        milestones(session),
+        vec![
+            ("M1 Foundations".to_owned(), m1, 1),
+            ("m1 foundations".to_owned(), m1_lower, 1),
+        ]
+    );
+    assert_eq!(issue_labels(session, &lower), vec!["web".to_owned()]);
+    assert_eq!(issue_labels(session, &upper), vec!["WEB".to_owned()]);
+    assert_eq!(read_issue(session, &lower)["milestone_id"], json!(m1));
+    assert_eq!(read_issue(session, &upper)["milestone_id"], json!(m1_lower));
+
+    // Still assignable: each exact spelling names its own row, and a
+    // milestone is assigned by its id, which never depended on case.
+    let fresh = save_issue(
+        session,
+        "new-both",
+        json!({
+            "project_id": 1,
+            "title": "Both spellings",
+            "add_labels": ["web", "WEB"],
+            "milestone_id": m1_lower,
+        }),
+    )
+    .expect("each exact spelling is assignable after the upgrade")["identifier"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        issue_labels(session, &fresh),
+        vec!["WEB".to_owned(), "web".to_owned()]
+    );
+
+    // A spelling that matches both is refused rather than guessed.
+    let guess = save_issue(
+        session,
+        "new-guess",
+        json!({ "identifier": lower, "add_labels": ["Web"] }),
+    )
+    .expect_err("a spelling matching both stored labels is refused");
+    assert_eq!(guess.code, ErrorCode::InvalidRequest);
+    assert_eq!(guess.field.as_deref(), Some("add_labels"));
+
+    // The filter reads, so it finds every holder of either spelling.
+    let listed = session
+        .call("issue.list", &json!({ "project_id": 1, "label": "web" }))
+        .expect("issue.list");
+    assert_eq!(listed["issues"].as_array().unwrap().len(), 3);
+
+    // No third spelling can join either pair.
+    let label = create_label(session, "new-variant", 1, "Web", None)
+        .expect_err("a third spelling is refused");
+    assert_eq!(label.code, ErrorCode::InvalidRequest);
+    let milestone = create_milestone(session, "new-milestone-variant", 1, "M1 FOUNDATIONS")
+        .expect_err("a third spelling is refused");
+    assert_eq!(milestone.code, ErrorCode::InvalidRequest);
+
+    // Retiring one spelling steers new work onto the other.
+    retire_label(session, "retire-upper", "WEB").expect("an exact spelling retires");
+    assert_eq!(issue_labels(session, &upper), vec!["WEB".to_owned()]);
+    let retired = save_issue(
+        session,
+        "new-retired",
+        json!({ "identifier": lower, "add_labels": ["WEB"] }),
+    )
+    .expect_err("the retired spelling takes no new issues");
+    assert!(retired.message.contains("retired"), "{}", retired.message);
 }

@@ -21,6 +21,7 @@
     "IFMT",
     "IFREG",
     "MSRV",
+    "NOCASE",
     "NONBLOCK",
     "NOREPLACE",
     "NOSYSTEM",

@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use kanban_app::TimelineEnvelope;
+use kanban_app::issue_names::{NamedKind, refuse_taken_name};
 use kanban_domain::{IssueKey, IssueStateTimestamps, TicketState, WorkflowStateType};
 use kanban_dto::{
     ApiError, IssueRelationRecord, TimelineEntityKind, TimelineEntityRef, TimelineEventKind,
@@ -1916,17 +1917,7 @@ impl SqliteIssueStore {
              VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM issue_milestones WHERE project_id = ?1), ?3)",
             params![project_id, name, target_date],
         )
-        .map_err(|error| {
-            if let rusqlite::Error::SqliteFailure(code, _) = &error
-                && code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-            {
-                return ApiError::conflict_field(
-                    "name",
-                    &format!("milestone `{name}` already exists"),
-                );
-            }
-            internal(error)
-        })?;
+        .map_err(|error| taken_name_refusal(&conn, NamedKind::Milestone, project_id, name, error))?;
         let id = conn.last_insert_rowid() as u64;
         Ok(kanban_app::IssueMilestoneRow {
             id,
@@ -1969,14 +1960,7 @@ impl SqliteIssueStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![project_id, name, color, group_id],
         )
-        .map_err(|error| {
-            if let rusqlite::Error::SqliteFailure(code, _) = &error
-                && code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-            {
-                return ApiError::conflict_field("name", &format!("label `{name}` already exists"));
-            }
-            internal(error)
-        })?;
+        .map_err(|error| taken_name_refusal(&conn, NamedKind::Label, project_id, name, error))?;
         let stored_single_select = if let Some(group_id) = group_id {
             conn.query_row(
                 "SELECT COALESCE(single_select, 0) FROM issue_label_groups WHERE id = ?1",
@@ -2881,6 +2865,50 @@ pub fn resolve_state_by_name(
         .ok_or_else(|| ApiError::invalid_request_field("state", &format!("unknown state `{name}`")))
 }
 
+/// Answer a label or milestone insert the database refused as a taken
+/// name with the application's own judgement of that name, so the
+/// constraint and the rule it backs refuse alike: an exact repeat
+/// conflicts and a case variant (refused by migration 0066's triggers)
+/// is an invalid name quoting the stored spelling.
+fn taken_name_refusal(
+    conn: &rusqlite::Connection,
+    kind: NamedKind,
+    project_id: i64,
+    name: &str,
+    error: rusqlite::Error,
+) -> ApiError {
+    let taken = matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                || code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+    );
+    if !taken {
+        return internal(error);
+    }
+    let table = match kind {
+        NamedKind::Milestone => "issue_milestones",
+        NamedKind::Label | NamedKind::LabelGroup => "issue_labels",
+    };
+    let stored: Result<Vec<String>, rusqlite::Error> = conn
+        .prepare(&format!(
+            "SELECT name FROM {table} WHERE project_id = ?1 ORDER BY id"
+        ))
+        .and_then(|mut statement| {
+            statement
+                .query_map([project_id], |row| row.get(0))?
+                .collect()
+        });
+    let stored = match stored {
+        Ok(stored) => stored,
+        Err(lookup) => return internal(lookup),
+    };
+    match refuse_taken_name(kind, stored.iter().map(String::as_str), name) {
+        Err(refusal) => refusal,
+        Ok(()) => internal(error),
+    }
+}
+
 fn internal(error: rusqlite::Error) -> ApiError {
     ApiError::internal(&error.to_string())
 }
@@ -2891,4 +2919,83 @@ fn internal_storage(error: StorageError) -> ApiError {
 
 fn not_found_ticket(_: rusqlite::Error) -> ApiError {
     ApiError::not_found("issue")
+}
+
+#[cfg(test)]
+mod name_case_backstop {
+    use kanban_dto::ErrorCode;
+
+    use super::SqliteIssueStore;
+    use crate::db::Database;
+    use crate::migrations::AllowAllMigrations;
+    use crate::test_support::scratch_database;
+
+    /// A migrated store whose project already holds the label `web` and
+    /// the milestone `M1 Foundations`.
+    fn store() -> (tempfile::TempDir, Database, SqliteIssueStore) {
+        let (dir, mut database) = scratch_database();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("migrations apply");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO projects
+                     (code, name, repository, seed_workspace, default_branch,
+                      herdr_session, herdr_workspace, archived, version)
+                 VALUES ('CORE', 'Control plane', '/repo', '/seed', 'main',
+                         'kanban-main', 'kanban.seed', 0, 1);
+                 INSERT INTO issue_labels (project_id, name) VALUES (1, 'web');
+                 INSERT INTO issue_milestones (project_id, name)
+                 VALUES (1, 'M1 Foundations');",
+            )
+            .expect("the project and its names land");
+        let store = SqliteIssueStore::new(&database);
+        (dir, database, store)
+    }
+
+    // The application judges names before it writes; these calls skip
+    // that judgement, so only the database stands in the way. It must
+    // answer with the application's own refusal.
+
+    #[test]
+    fn the_store_refuses_a_label_case_variant_the_way_the_rule_does() {
+        let (_dir, _database, store) = store();
+        let error = store
+            .create_label(1, "WEB", "#336699", None, false)
+            .expect_err("the database refuses the case variant");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.field.as_deref(), Some("name"));
+        assert_eq!(
+            error.message,
+            "label `WEB` differs only in letter case from the existing label `web`; \
+             label names are unique ignoring case"
+        );
+
+        let repeat = store
+            .create_label(1, "web", "#336699", None, false)
+            .expect_err("an exact repeat still conflicts");
+        assert_eq!(repeat.code, ErrorCode::Conflict);
+        assert_eq!(repeat.message, "label `web` already exists");
+    }
+
+    #[test]
+    fn the_store_refuses_a_milestone_case_variant_the_way_the_rule_does() {
+        let (_dir, _database, store) = store();
+        let error = store
+            .create_milestone(1, "m1 foundations", None)
+            .expect_err("the database refuses the case variant");
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.field.as_deref(), Some("name"));
+        assert!(
+            error.message.contains("`M1 Foundations`"),
+            "{}",
+            error.message
+        );
+
+        let repeat = store
+            .create_milestone(1, "M1 Foundations", None)
+            .expect_err("an exact repeat still conflicts");
+        assert_eq!(repeat.code, ErrorCode::Conflict);
+    }
 }

@@ -379,6 +379,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "project close sub-issues setting",
         sql: include_str!("../migrations/0065_project_close_sub_issues_setting.sql"),
     },
+    Migration {
+        version: 66,
+        name: "label milestone name case",
+        sql: include_str!("../migrations/0066_label_milestone_name_case.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -2128,6 +2133,10 @@ mod tests {
                     version: 65,
                     name: "project close sub-issues setting",
                 },
+                PendingMigration {
+                    version: 66,
+                    name: "label milestone name case",
+                },
             ]]
         );
     }
@@ -2643,5 +2652,121 @@ mod tests {
         database.migrate(&hook).expect("the second run succeeds");
 
         assert!(hook.calls.into_inner().is_empty());
+    }
+
+    /// Whether a refused write came from a schema trigger rather than a
+    /// built-in constraint.
+    fn refused_by_trigger(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+        )
+    }
+
+    fn refused_as_duplicate(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        )
+    }
+
+    /// A database may reach migration 0066 already holding label and
+    /// milestone names that differ only in letter case. The migration
+    /// keeps every such row and judges only later writes.
+    #[test]
+    fn migration_0066_keeps_case_variant_pairs_and_refuses_new_ones() {
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), 65).expect("schema 65 applies");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO projects
+                     (id, code, name, repository, seed_workspace, default_branch,
+                      herdr_session, herdr_workspace, archived, version)
+                 VALUES (1, 'CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban-main',
+                         'kanban.seed', 0, 1),
+                        (2, 'EDGE', 'Edge tooling', '/repositories/edge',
+                         '/workspaces/edge.seed', 'main', 'edge-main',
+                         'edge.seed', 0, 1);
+                 INSERT INTO issue_labels (id, project_id, name)
+                 VALUES (1, 1, 'web'), (2, 1, 'WEB'), (3, 1, 'db');
+                 INSERT INTO issue_milestones (id, project_id, name)
+                 VALUES (1, 1, 'M1 Foundations'), (2, 1, 'm1 foundations'),
+                        (3, 1, 'Hardening');",
+            )
+            .expect("the case-variant pairs land before the rule");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the rule applies over existing case-variant pairs");
+        assert_eq!(report.applied, vec![66]);
+
+        let conn = database.connection();
+        let names = |table: &str| -> Vec<String> {
+            conn.prepare(&format!("SELECT name FROM {table} ORDER BY id"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(names("issue_labels"), ["web", "WEB", "db"]);
+        assert_eq!(
+            names("issue_milestones"),
+            ["M1 Foundations", "m1 foundations", "Hardening"]
+        );
+
+        for (table, variant, exact, renamed, own_case) in [
+            ("issue_labels", "Web", "web", 3, "DB"),
+            (
+                "issue_milestones",
+                "M1 FOUNDATIONS",
+                "M1 Foundations",
+                3,
+                "HARDENING",
+            ),
+        ] {
+            let insert = format!("INSERT INTO {table} (project_id, name) VALUES (?1, ?2)");
+            let error = conn
+                .execute(&insert, rusqlite::params![1, variant])
+                .expect_err("a new case variant is refused");
+            assert!(refused_by_trigger(&error), "{table}: {error}");
+
+            let repeat = conn
+                .execute(&insert, rusqlite::params![1, exact])
+                .expect_err("an exact repeat is refused");
+            assert!(
+                refused_as_duplicate(&repeat),
+                "{table}: an exact repeat still meets the unique constraint: {repeat}"
+            );
+            assert_eq!(
+                conn.execute(
+                    &format!("INSERT OR IGNORE INTO {table} (project_id, name) VALUES (?1, ?2)"),
+                    rusqlite::params![1, exact],
+                )
+                .expect("seeding an existing name stays a quiet no-op"),
+                0
+            );
+
+            conn.execute(&insert, rusqlite::params![2, variant])
+                .expect("another project is another scope");
+
+            let rename = format!("UPDATE {table} SET name = ?2 WHERE id = ?1");
+            let error = conn
+                .execute(&rename, rusqlite::params![renamed, variant])
+                .expect_err("a rename into a case variant is refused");
+            assert!(refused_by_trigger(&error), "{table}: {error}");
+            conn.execute(&rename, rusqlite::params![renamed, own_case])
+                .expect("a rename that changes only its own case is free");
+            conn.execute(
+                &format!("UPDATE {table} SET name = name WHERE id IN (1, 2)"),
+                [],
+            )
+            .expect("a stored pair stays writable while its names stand still");
+        }
+        assert_eq!(names("issue_labels")[..3], ["web", "WEB", "DB"]);
     }
 }

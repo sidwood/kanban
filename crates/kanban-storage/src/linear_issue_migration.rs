@@ -1797,7 +1797,7 @@ mod tests {
                  WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
-                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62, 63, 64, 65);",
+                 DELETE FROM schema_migrations WHERE version >= 60;",
             )
             .unwrap();
         (dir, database)

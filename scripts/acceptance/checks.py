@@ -158,6 +158,10 @@ class Recorder:
     def skip(self, description, reason):
         self._record(SKIP, description, reason)
 
+    def describe_result(self, result):
+        """Render a tool result after removing secrets from its text."""
+        return result.describe(self._redact)
+
     def abort(self, error):
         """A test stopped early; whatever it had not checked is a FAIL."""
         self._record(FAIL, "test stopped early", short(self._shown(str(error)), 300))

@@ -690,18 +690,18 @@ def test_update(ctx):
     result = ctx.save(scratch, add_labels=["FRONTEND"])
     labels = ctx.get(scratch)["labels"]
     rec.check("add_labels matches a label name ignoring case (FRONTEND -> frontend)",
-              result.ok and labels == ["frontend"], result.describe() if not result.ok else str(labels))
+              result.ok and labels == ["frontend"], rec.describe_result(result) if not result.ok else str(labels))
     scratch = ctx.create("T3 Lowercase state name", "LIN")
     result = ctx.save(scratch, state="done")
     state = ctx.get(scratch)["state"]
     rec.check("state matches a state name ignoring case (done -> Done)",
-              result.ok and state == "Done", result.describe() if not result.ok else state)
+              result.ok and state == "Done", rec.describe_result(result) if not result.ok else state)
     scratch = ctx.create("T3 State by type", "LIN")
     result = ctx.save(scratch, state="completed")
     record = ctx.get(scratch)
     rec.check("state accepts a state type (completed -> a completed state)",
               result.ok and record["state_type"] == "completed",
-              result.describe() if not result.ok else record["state"])
+              rec.describe_result(result) if not result.ok else record["state"])
 
     scratch = ctx.create("T3 No-op labels", "LIN", add_labels=["frontend"])
     before = ctx.get(scratch)
@@ -857,7 +857,7 @@ def test_relations(ctx):
     after_a, after_d = ctx.get(a), ctx.get(d)
     rec.check("remove_related from the other end: gone from both ends (related is undirected)",
               result.ok and not has_relation(after_a, "related", d) and not has_relation(after_d, "related", a),
-              result.describe() if not result.ok else
+              rec.describe_result(result) if not result.ok else
               f"{a} still lists {sorted(relation_set(after_a, 'related'))}, "
               f"{d} still lists {sorted(relation_set(after_d, 'related'))}")
 
@@ -950,7 +950,7 @@ def test_duplicate_merge(ctx):
     rec.check("a merge where both issues block the same issue keeps one edge",
               result.ok and ctx.get(shared_dup)["state"] == "Duplicate" and edges == 1
               and not has_relation(ctx.get(shared), "blocked-by", shared_dup),
-              result.describe() if not result.ok else f"{edges} blocks edge to {shared}")
+              rec.describe_result(result) if not result.ok else f"{edges} blocks edge to {shared}")
 
 
 # Test 7: Split ---------------------------------------------------------------
@@ -1230,7 +1230,7 @@ def test_errors(ctx):
     ctx.refused("an unknown team code is not found", ctx.call("get_issue", {"identifier": "ZZZ-1"}), "not_found")
     result = ctx.call("get_issue", {"identifier": "not a key"})
     rec.check("a malformed key gives a clear error", not result.ok and result.code in ("not_found", "invalid_request"),
-              result.describe())
+              rec.describe_result(result))
     ctx.refused("a malformed updated_since is refused, naming the field",
                 ctx.call("list_issues", {"project_id": ctx.project_id, "updated_since": "yesterday"}),
                 "invalid_request", "updated_since")
@@ -1286,7 +1286,7 @@ def test_errors(ctx):
     result = ctx.save(key, version=before["version"] + 7, title="T10 Stale")
     rec.check("a stale version is refused with the current version",
               not result.ok and result.code == "stale_version"
-              and (result.error or {}).get("current_version") == before["version"], result.describe())
+              and (result.error or {}).get("current_version") == before["version"], rec.describe_result(result))
     ctx.unchanged("...and changes nothing", key, before)
     result = ctx.save(key, title="   ")
     ctx.refused("a blank title is refused, naming the field", result, "invalid_request", "title")
@@ -1315,7 +1315,7 @@ def test_errors(ctx):
     result = ctx.save(key, remove_labels=["no-such-label"])
     rec.check("removing an unknown label is not found, naming remove_labels",
               not result.ok and result.code == "not_found" and result.field == "remove_labels",
-              result.describe())
+              rec.describe_result(result))
     after = ctx.get(key)
     rec.check("...and changes nothing", not changed_fields(before, after),
               "changed: " + ", ".join(changed_fields(before, after)) if changed_fields(before, after) else "unchanged")

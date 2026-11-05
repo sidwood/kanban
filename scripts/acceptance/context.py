@@ -133,7 +133,7 @@ class Context:
     def must(self, tool, arguments, what=None):
         result = self.call(tool, arguments)
         if not result.ok:
-            raise StepError(f"{what or tool} was refused: {result.describe()}")
+            raise StepError(f"{what or tool} was refused: {self.rec.describe_result(result)}")
         return result.payload
 
     def get(self, key):
@@ -163,7 +163,9 @@ class Context:
     def save_must(self, key, **fields):
         result = self.save(key, **fields)
         if not result.ok:
-            raise StepError(f"save_issue {key} {sorted(fields)} was refused: {result.describe()}")
+            raise StepError(
+                f"save_issue {key} {sorted(fields)} was refused: {self.rec.describe_result(result)}"
+            )
         return result.payload
 
     def list_page(self, **arguments):
@@ -219,7 +221,8 @@ class Context:
             return self.rec.check(description, False, "expected a refusal, the call succeeded")
         wanted = f"{code}" + (f" field={field}" if field else "")
         ok = result.code == code and (field is None or result.field == field)
-        reason = result.describe() if ok else f"wanted {wanted}; got {result.describe()}"
+        shown = self.rec.describe_result(result)
+        reason = shown if ok else f"wanted {wanted}; got {shown}"
         return self.rec.check(description, ok, reason)
 
     def unchanged(self, description, key, before):

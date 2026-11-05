@@ -409,6 +409,170 @@ class BearerTests(unittest.TestCase):
         self.assertNotIn("0123456789", redact(forced))
         self.assertNotIn("0123456789", redact(repr({text})))
 
+    def test_an_already_rendered_secret_is_hidden_before_a_tool_error_is_escaped(self):
+        """A refusal must remove a rendered secret before the message is escaped."""
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        self.assertEqual(len(secret), 32)
+        prefix = "abcdefgh"
+        redact = harness.Redactor()
+        redact.add(secret)
+        renderings = (
+            ("string-repr", repr(secret.decode())),
+            ("bytes-repr", repr(secret)),
+            ("decoded", secret.decode()),
+        )
+        for name, rendering in renderings:
+            for padding in (0, 240, 250):
+                message = "x" * padding + rendering
+                self.assertNotIn(prefix, redact(message), (name, padding))
+                lines = []
+                recorder = checks.Recorder(emit=lines.append, redact=redact)
+                recorder.begin(1, "Tool refusal")
+
+                class Refusing:
+                    def __init__(self, text):
+                        self.text = text
+                        self.result = None
+
+                    def call(self, tool, arguments):
+                        self.result = harness.ToolResult(
+                            False, {"code": "internal", "message": self.text}
+                        )
+                        return self.result
+
+                client = Refusing(message)
+                ctx = context.Context(client, None, recorder, "redaction", False)
+                with self.assertRaises(context.StepError) as raised:
+                    ctx.must("save_issue", {})
+                self.assertEqual(client.result.payload["message"], message)
+                self.assertEqual(client.result.code, "internal")
+                self.assertIsNone(client.result.field)
+                self.assertIs(client.result.error, client.result.payload)
+                self.assertIn(repr(message), client.result.describe())
+                recorder.abort(raised.exception)
+                output = "\n".join(lines + recorder.summary_lines())
+                detail = (name, padding)
+                self.assertNotIn(prefix, str(raised.exception), detail)
+                self.assertIn("[redacted]", str(raised.exception), detail)
+                self.assertNotIn(prefix, output, detail)
+                self.assertIn("[redacted]", output, detail)
+
+    def test_a_refused_save_hides_a_rendered_secret_before_escaping(self):
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        prefix = "abcdefgh"
+        message = "x" * 240 + repr(secret.decode())
+        redact = harness.Redactor()
+        redact.add(secret)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Tool refusal")
+
+        class Client:
+            def __init__(self):
+                self.result = None
+
+            def call(self, tool, arguments):
+                if tool == "get_issue":
+                    return harness.ToolResult(True, {"identifier": "LIN-1", "version": 3})
+                self.result = harness.ToolResult(
+                    False, {"code": "internal", "field": "title", "message": message}
+                )
+                return self.result
+
+        client = Client()
+        ctx = context.Context(client, None, recorder, "redaction", False)
+        with self.assertRaises(context.StepError) as raised:
+            ctx.save_must("LIN-1", title="kept")
+        self.assertEqual(client.result.payload["message"], message)
+        self.assertEqual((client.result.code, client.result.field), ("internal", "title"))
+        recorder.abort(raised.exception)
+        output = "\n".join(lines + recorder.summary_lines())
+        self.assertNotIn(prefix, str(raised.exception))
+        self.assertNotIn(prefix, output)
+        self.assertIn("[redacted]", str(raised.exception))
+
+    def test_a_recorded_refusal_hides_a_rendered_secret_before_escaping(self):
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        prefix = "abcdefgh"
+        message = "x" * 250 + repr(secret)
+        redact = harness.Redactor()
+        redact.add(secret)
+        lines = []
+
+        class Remembering(checks.Recorder):
+            def __init__(self):
+                super().__init__(emit=lines.append, redact=redact)
+                self.reasons = []
+
+            def check(self, description, ok, reason=""):
+                self.reasons.append(reason)
+                return super().check(description, ok, reason)
+
+        recorder = Remembering()
+        recorder.begin(1, "Errors")
+        result = harness.ToolResult(
+            False, {"code": "internal", "field": "title", "message": message}
+        )
+        ctx = context.Context(None, None, recorder, "redaction", False)
+        self.assertEqual(result.payload["message"], message)
+        ctx.refused("a rendered secret stays out of the reason", result, "not_found", "title")
+        ctx.refused("a matched refusal still hides the message", result, "internal", "title")
+        output = "\n".join(lines + recorder.summary_lines())
+        self.assertGreaterEqual(len(recorder.reasons), 2)
+        for reason in recorder.reasons:
+            self.assertNotIn(prefix, reason)
+            self.assertIn("[redacted]", reason)
+        self.assertNotIn(prefix, output)
+        self.assertEqual(result.payload["message"], message)
+        self.assertEqual(result.field, "title")
+
+    def test_a_plain_tool_error_keeps_its_refusal_text(self):
+        message = "it's a plain refusal"
+        lines = []
+        recorder = checks.Recorder(emit=lines.append)
+        recorder.begin(1, "Tool refusal")
+
+        class Refusing:
+            def __init__(self):
+                self.result = None
+
+            def call(self, tool, arguments):
+                self.result = harness.ToolResult(
+                    False, {"code": "invalid_request", "field": "title", "message": message}
+                )
+                return self.result
+
+        client = Refusing()
+        ctx = context.Context(client, None, recorder, "redaction", False)
+        with self.assertRaises(context.StepError) as raised:
+            ctx.must("save_issue", {})
+        expected = "invalid_request field=title " + repr(message)
+        self.assertEqual(str(raised.exception), f"save_issue was refused: {expected}")
+        self.assertEqual(client.result.describe(), expected)
+        self.assertEqual(client.result.payload["message"], message)
+        self.assertTrue(recorder.equal("raw message", message, message))
+        self.assertFalse(recorder.equal("redaction token", message, "[redacted]"))
+        result = harness.ToolResult(False, {"code": "internal", "message": ""})
+        self.assertEqual(result.describe(), "internal")
+        self.assertEqual(harness.ToolResult(True, {"identifier": "LIN-1"}).describe(), "accepted")
+
+    def test_a_matching_refusal_keeps_the_expected_signature_text(self):
+        result = harness.ToolResult(
+            False, {"code": "invalid_request", "field": "state", "message": "unknown state"}
+        )
+        lines = []
+        recorder = checks.Recorder(emit=lines.append)
+        recorder.begin(1, "Errors")
+        ctx = context.Context(None, None, recorder, "run", False)
+        ctx.refused("unknown state", result, "invalid_request", "state")
+        self.assertTrue(lines[-1].startswith("PASS "))
+        self.assertIn("invalid_request field=state 'unknown state'", lines[-1])
+        self.assertEqual(result.payload["message"], "unknown state")
+
+    def test_scenario_and_context_render_tool_errors_through_the_recorder(self):
+        for module in (scenarios, context):
+            source = Path(module.__file__).read_text()
+            self.assertNotIn(".describe()", source, module.__name__)
 class CoreProcessTests(unittest.TestCase):
     def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):
         import sys

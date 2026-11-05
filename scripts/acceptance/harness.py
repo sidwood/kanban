@@ -306,15 +306,27 @@ class ToolResult:
     def field(self):
         return (self.error or {}).get("field")
 
-    def describe(self):
+    def describe(self, redact=None):
+        """One line for a tool outcome.
+
+        When `redact` is given, known secrets are removed from text
+        fields before the message is escaped. The stored payload is
+        left unchanged.
+        """
         if self.ok:
             return "accepted"
         error = self.error or {}
-        parts = [str(error.get("code"))]
+
+        def clean(value):
+            if redact is None or not isinstance(value, str):
+                return value
+            return redact(value)
+
+        parts = [str(clean(error.get("code")))]
         if error.get("field"):
-            parts.append(f"field={error['field']}")
+            parts.append(f"field={clean(error['field'])}")
         if error.get("message"):
-            parts.append(repr(error["message"]))
+            parts.append(repr(clean(error["message"])))
         return " ".join(parts)
 
 

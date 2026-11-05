@@ -809,3 +809,149 @@ fn linear_aliases_create_labels_milestones_and_issue_links() {
     );
 }
 
+#[test]
+fn operator_tool_schemas_describe_every_field_and_the_kanban_states() {
+    let tools = std::fs::read_to_string(format!(
+        "{}/../../packages/contracts/src/mcp-tools.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("published tools");
+    let tools: Value = serde_json::from_str(&tools).expect("tools json");
+    let tools = tools.as_array().expect("tools");
+    let operator = [
+        "get_issue",
+        "list_issues",
+        "list_issue_labels",
+        "list_milestones",
+        "list_projects",
+        "list_issue_statuses",
+        "save_issue",
+        "create_milestone",
+        "create_label",
+        "retire_label",
+        "update_project_settings",
+        "comment_create",
+        "comment_edit",
+        "list_comments",
+        "comment_revisions",
+        "resolve_comment",
+    ];
+    let mut missing = Vec::new();
+    for name in operator {
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is published"));
+        for side in ["inputSchema", "outputSchema"] {
+            let schema = &tool[side];
+            missing_descriptions(schema, schema, &format!("{name}/{side}"), &mut missing);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "operator fields lack descriptions: {missing:?}"
+    );
+    let described = tools
+        .iter()
+        .find(|tool| tool["name"] == "save_issue")
+        .expect("save_issue")["inputSchema"]["properties"]["state"]["description"]
+        .as_str()
+        .unwrap_or("");
+    for name in [
+        "Draft",
+        "Parked",
+        "Blocked",
+        "Scheduled",
+        "Ready",
+        "Active",
+        "In Review",
+        "Approved",
+        "Landing",
+        "Done",
+        "Cancelled",
+        "Superseded",
+        "Duplicate",
+    ] {
+        assert!(described.contains(name), "state lists {name}: {described}");
+    }
+}
+
+fn missing_descriptions(schema: &Value, root: &Value, path: &str, missing: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    walk_schema(schema, root, path, &mut seen, missing);
+}
+
+fn walk_schema(
+    schema: &Value,
+    root: &Value,
+    path: &str,
+    seen: &mut std::collections::HashSet<String>,
+    missing: &mut Vec<String>,
+) {
+    let Some(schema) = schema.as_object() else {
+        return;
+    };
+    if let Some(reference) = schema.get("$ref").and_then(|value| value.as_str()) {
+        let key = format!("{path}->{reference}");
+        if seen.insert(key)
+            && let Some(target) = resolve_ref(root, reference)
+        {
+            walk_schema(target, root, &format!("{path}{reference}"), seen, missing);
+        }
+    }
+    if let Some(properties) = schema.get("properties").and_then(|value| value.as_object()) {
+        for (name, field) in properties {
+            let field_path = format!("{path}.{name}");
+            let described = field
+                .get("description")
+                .and_then(|value| value.as_str())
+                .is_some_and(|text| !text.trim().is_empty());
+            if !described {
+                missing.push(field_path.clone());
+            }
+            walk_schema(field, root, &field_path, seen, missing);
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        if let Some(items) = items.as_array() {
+            for (index, item) in items.iter().enumerate() {
+                walk_schema(item, root, &format!("{path}[]{index}"), seen, missing);
+            }
+        } else {
+            walk_schema(items, root, &format!("{path}[]"), seen, missing);
+        }
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(options) = schema.get(key).and_then(|value| value.as_array()) {
+            for (index, option) in options.iter().enumerate() {
+                walk_schema(option, root, &format!("{path}/{key}{index}"), seen, missing);
+            }
+        }
+    }
+    if let Some(definitions) = schema
+        .get("definitions")
+        .and_then(|value| value.as_object())
+    {
+        for (name, definition) in definitions {
+            walk_schema(definition, root, &format!("{path}#/{name}"), seen, missing);
+        }
+    }
+    if let Some(additional) = schema.get("additionalProperties") {
+        walk_schema(
+            additional,
+            root,
+            &format!("{path}.additionalProperties"),
+            seen,
+            missing,
+        );
+    }
+}
+
+fn resolve_ref<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
+    let pointer = reference.strip_prefix("#/")?;
+    let mut node = root;
+    for part in pointer.split('/') {
+        node = node.get(part)?;
+    }
+    Some(node)
+}

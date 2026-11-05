@@ -2828,6 +2828,123 @@ fn updated_since_accepts_a_plain_calendar_date() {
 }
 
 #[test]
+fn updated_since_compares_instants_across_equivalent_forms() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "since-instants-create",
+        json!({ "project_id": 1, "title": "Instant windowed issue" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET updated_at = '2026-11-04T22:10:30.539Z' WHERE id = ?1",
+            [saved.ticket_id as i64],
+        )
+        .unwrap();
+
+    let listed = |since: &str| -> usize {
+        session
+            .call(
+                "issue.list",
+                &json!({ "project_id": 1, "updated_since": since }),
+            )
+            .expect("the listing serves")["issues"]
+            .as_array()
+            .expect("an issues array")
+            .len()
+    };
+    assert_eq!(
+        listed("2026-11-04T23:10:30.539+02:00"),
+        1,
+        "an offset form naming an hour earlier opens the window"
+    );
+    assert_eq!(
+        listed("2026-11-04T22:10:30Z"),
+        1,
+        "a whole-second form names the same instant"
+    );
+    assert_eq!(
+        listed("2026-11-04T22:10:30.540Z"),
+        0,
+        "a later instant excludes the issue"
+    );
+    assert_eq!(
+        listed("2026-11-04T00:10:30.539+00:00"),
+        1,
+        "an explicit zero offset compares as the same instant"
+    );
+}
+
+#[test]
+fn updated_since_accepts_iso_8601_durations_relative_to_now() {
+    let h = rules_harness();
+    let session = &h.session;
+    let fresh = save_issue(
+        session,
+        0,
+        "since-duration-fresh",
+        json!({ "project_id": 1, "title": "Freshly updated issue" }),
+    );
+    save_issue(
+        session,
+        0,
+        "since-duration-old",
+        json!({ "project_id": 1, "title": "Long untouched issue" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET updated_at = '2020-01-01T00:00:00.000Z'
+             WHERE id <> ?1",
+            [fresh.ticket_id as i64],
+        )
+        .unwrap();
+
+    let identifiers = |since: &str| -> Vec<String> {
+        session
+            .call(
+                "issue.list",
+                &json!({ "project_id": 1, "updated_since": since }),
+            )
+            .expect("the listing serves")["issues"]
+            .as_array()
+            .expect("an issues array")
+            .iter()
+            .map(|record| record["identifier"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        identifiers("-P1D"),
+        vec![fresh.identifier.clone()],
+        "a negative duration opens a window reaching back from now"
+    );
+    assert!(
+        identifiers("-PT1H").contains(&fresh.identifier),
+        "an hour-long window still holds the just-updated issue"
+    );
+    assert!(
+        identifiers("P1D").is_empty(),
+        "a positive duration opens a window in the future, which nothing updated reaches"
+    );
+    for refused in ["P1X", "-P", "PT"] {
+        let error = session
+            .call(
+                "issue.list",
+                &json!({ "project_id": 1, "updated_since": refused }),
+            )
+            .expect_err("a malformed duration is refused");
+        assert_eq!(
+            (error.code, error.field.as_deref()),
+            (ErrorCode::InvalidRequest, Some("updated_since")),
+            "{refused} is refused with the field named"
+        );
+    }
+}
+
+#[test]
 fn relation_lists_take_ticket_ids_and_name_their_field() {
     let h = rules_harness();
     let session = &h.session;

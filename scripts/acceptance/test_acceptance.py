@@ -336,6 +336,79 @@ class BearerTests(unittest.TestCase):
     def test_a_unicode_secret_containing_a_backslash_is_removed_before_repr(self):
         self.assert_decoded_secret_is_hidden(("abcdefghijklmno\\" + "é" * 8).encode())
 
+    def assert_escaped_renderings_hide(self, secret, prefix):
+        """An already escaped rendering must not keep a secret prefix."""
+        self.assertEqual(len(secret), 32)
+        self.assertGreaterEqual(len(prefix), 8)
+        text = secret.decode("utf-8")
+        self.assertTrue(text.startswith(prefix))
+        other = b"Z" * 32
+        self.assertNotEqual(secret, other)
+        redact = harness.Redactor()
+        redact.add(secret)
+        redact.add(other)
+        message = "x" * 240 + text
+        described = harness.ToolResult(
+            False, {"code": "internal", "message": message}
+        ).describe()
+        renderings = {
+            "set": repr({"x" * 140 + text}),
+            "frozenset": repr(frozenset({"x" * 130 + text})),
+            "nested": repr({"value": {"x" * 120 + text}}),
+            "list": repr(["x" * 140 + text]),
+            "tuple": repr(("x" * 140 + text,)),
+            "dict": repr({"value": "x" * 140 + text}),
+            "tool_error": described,
+        }
+        self.assertTrue(described.startswith("internal "))
+        self.assertIn(repr(message), described)
+        for name, rendering in renderings.items():
+            self.assertIn(prefix, rendering, name)
+            self.assertNotIn(prefix, redact(rendering), name)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        matched = recorder.equal("raw secret", secret, secret)
+        differed = recorder.equal("raw secret differs", secret, other)
+        recorder.equal("set", {"x" * 140 + text}, {"x" * 140 + text})
+        recorder.equal(
+            "frozenset", frozenset({"x" * 130 + text}), frozenset({"x" * 130 + text})
+        )
+        recorder.equal(
+            "nested set", {"value": {"x" * 120 + text}}, {"value": "other"}
+        )
+        recorder.equal("list", ["x" * 140 + text], ["x" * 140 + text])
+        recorder.abort("save_issue refused: " + described)
+        output = "\n".join(lines + recorder.summary_lines())
+        self.assertTrue(matched)
+        self.assertFalse(differed)
+        self.assertNotIn(prefix, output)
+        self.assertIn("[redacted]", output)
+        self.assertNotIn(other.decode("ascii"), output)
+        self.assertNotIn(harness.derive_bearer(secret), output)
+
+    def test_an_escaped_installation_secret_is_hidden_in_set_and_tool_errors(self):
+        secret = ("abcdefghijklmno\\" + "é" * 8).encode()
+        self.assertEqual(secret.decode("utf-8")[15], "\\")
+        self.assert_escaped_renderings_hide(secret, "abcdefghijklmno")
+
+    def test_repr_escapes_of_an_installation_secret_are_hidden(self):
+        newline = b"0123456789\n" + ("é" * 10).encode() + b"Z"
+        self.assert_escaped_renderings_hide(newline, "0123456789")
+        quoted = b"0123456789'" + ("é" * 10).encode() + b"Z"
+        self.assert_escaped_renderings_hide(quoted, "0123456789")
+        separator = b"0123456789" + "\u2028".encode() * 7 + b"Z"
+        self.assert_escaped_renderings_hide(separator, "0123456789")
+        text = quoted.decode("utf-8")
+        redact = harness.Redactor()
+        redact.add(quoted)
+        forced = repr('note " ' + text)
+        self.assertIn("\\'", forced)
+        self.assertIn("é", forced)
+        self.assertIn('"', repr({text}))
+        self.assertNotIn("0123456789", redact(forced))
+        self.assertNotIn("0123456789", redact(repr({text})))
+
 class CoreProcessTests(unittest.TestCase):
     def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):
         import sys

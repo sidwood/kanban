@@ -33,6 +33,9 @@ def redact_nested(value, redact):
         return [redact_nested(item, redact) for item in value]
     if isinstance(value, tuple):
         return tuple(redact_nested(item, redact) for item in value)
+    if isinstance(value, (set, frozenset)):
+        cleaned = (redact_nested(item, redact) for item in value)
+        return frozenset(cleaned) if isinstance(value, frozenset) else set(cleaned)
     return value
 
 

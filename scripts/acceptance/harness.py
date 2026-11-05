@@ -168,9 +168,9 @@ def bearer_candidates(data_dir, environ=None, platform=None, keychain=None, reda
 class Redactor:
     """Strip known secrets from any text before it leaves the process.
 
-    Complete values are removed, including decoded text that contains a
-    newline and the Python bytes rendering of an installation secret, so
-    a later shortening cannot leave a fragment.
+    Complete values are removed, including decoded text, its Python
+    string escapes, and the bytes rendering of an installation secret,
+    so a later shortening cannot leave a fragment.
     """
 
     def __init__(self):
@@ -198,10 +198,10 @@ class Redactor:
 def secret_renderings(secret):
     """Forms of an installation secret that must never appear.
 
-    Encodings, the decoded text, and every Python bytes rendering,
-    including a secret spliced into a longer value. Decoded text is
-    registered even when it contains a newline, so shortening cannot
-    leave a fragment of it.
+    Encodings, the decoded text, and every Python string or bytes
+    rendering, including a secret spliced into a longer value or
+    already escaped. Decoded text is registered even when it contains
+    a newline, so shortening cannot leave a fragment of it.
     """
     standard = base64.b64encode(secret).decode("ascii")
     url = base64.urlsafe_b64encode(secret).decode("ascii")
@@ -215,7 +215,25 @@ def secret_renderings(secret):
         text = ""
     if text:
         renderings.append(text)
+        renderings.extend(text_repr_bodies(text))
     return [rendering for rendering in renderings if len(rendering) >= 8]
+
+
+def text_repr_bodies(text):
+    """Escaped interiors Python may splice into a larger string rendering.
+
+    The quote Python picks depends on the surrounding text, so both
+    choices are removed. Other characters are escaped the same way.
+    """
+    bodies = []
+    single = repr(text + '"')
+    if single.startswith("'") and single.endswith("'"):
+        bodies.append(single[1:-2])
+    if '"' not in text:
+        double = repr(text + "'")
+        if double.startswith('"') and double.endswith('"'):
+            bodies.append(double[1:-2])
+    return bodies
 
 
 def bytes_repr_bodies(secret):

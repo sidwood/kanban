@@ -27,6 +27,31 @@ impl fmt::Display for CommentId {
     }
 }
 
+/// The author a reader sees for a comment whose author was never
+/// recorded. The ticket model kept no comment author, so a comment
+/// carried over from it stores an empty one. The placeholder names no
+/// one, and it is applied on read and never written back, so the empty
+/// original stays in storage exactly as the migration left it.
+pub const UNKNOWN_COMMENT_AUTHOR: &str = "Unknown author";
+
+/// The author to show for a stored one: the stored author as written,
+/// or [`UNKNOWN_COMMENT_AUTHOR`] when none was recorded.
+pub fn displayed_comment_author(stored: &str) -> &str {
+    if stored.trim().is_empty() {
+        UNKNOWN_COMMENT_AUTHOR
+    } else {
+        stored
+    }
+}
+
+/// Whether a caller-supplied author would pass for
+/// [`UNKNOWN_COMMENT_AUTHOR`]. The placeholder is reserved so that a
+/// reader who sees it knows no author was recorded, rather than that
+/// someone chose the name.
+pub fn is_reserved_comment_author(author: &str) -> bool {
+    author.trim().eq_ignore_ascii_case(UNKNOWN_COMMENT_AUTHOR)
+}
+
 /// Why comment text was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextError {
@@ -56,6 +81,14 @@ impl CommentText {
             return Err(TextError::Blank);
         }
         Ok(Self(trimmed.to_owned()))
+    }
+
+    /// Store operator comment bodies without trimming trailing whitespace.
+    pub fn new_stored(raw: &str) -> Result<Self, TextError> {
+        if raw.trim().is_empty() {
+            return Err(TextError::Blank);
+        }
+        Ok(Self(raw.to_owned()))
     }
 
     /// The trimmed text.
@@ -233,7 +266,10 @@ impl Comment {
 
 #[cfg(test)]
 mod tests {
-    use super::{Comment, CommentId, CommentTarget, CommentText, TextError};
+    use super::{
+        Comment, CommentId, CommentTarget, CommentText, TextError, UNKNOWN_COMMENT_AUTHOR,
+        displayed_comment_author, is_reserved_comment_author,
+    };
 
     fn target() -> CommentTarget {
         CommentTarget::new("ticket", "kan-t11").expect("the target validates")
@@ -282,5 +318,28 @@ mod tests {
     fn unknown_entity_kinds_are_refused() {
         let error = CommentTarget::new("ghost", "kan-t11").expect_err("unknown kinds are refused");
         assert_eq!(error.to_string(), "the target entity kind is unknown");
+    }
+
+    #[test]
+    fn a_recorded_author_reads_as_recorded() {
+        assert_eq!(displayed_comment_author("lin"), "lin");
+        assert_eq!(displayed_comment_author(" Sid "), " Sid ");
+    }
+
+    #[test]
+    fn an_unrecorded_author_reads_as_the_placeholder() {
+        assert_eq!(UNKNOWN_COMMENT_AUTHOR, "Unknown author");
+        assert_eq!(displayed_comment_author(""), UNKNOWN_COMMENT_AUTHOR);
+        assert_eq!(displayed_comment_author("   "), UNKNOWN_COMMENT_AUTHOR);
+    }
+
+    #[test]
+    fn only_the_placeholder_itself_is_reserved() {
+        for reserved in ["Unknown author", "unknown AUTHOR", "  Unknown author  "] {
+            assert!(is_reserved_comment_author(reserved), "{reserved:?}");
+        }
+        for free in ["Unknown", "Unknown authors", "lin", ""] {
+            assert!(!is_reserved_comment_author(free), "{free:?}");
+        }
     }
 }

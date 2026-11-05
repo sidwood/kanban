@@ -7,6 +7,9 @@ import { filterNavigation, mergePaletteItems } from './palette-navigation'
 import { useSearchStore } from './search'
 import type { ShellTransport } from '../core/transport'
 
+const SEARCH_DEBOUNCE_MS = 200
+let searchDebounce: ReturnType<typeof setTimeout> | undefined
+
 export const usePaletteStore = defineStore('palette', {
   state: () => ({
     open: false,
@@ -40,7 +43,16 @@ export const usePaletteStore = defineStore('palette', {
       const search = useSearchStore()
       search.setQuery(value)
       this.selection = 0
-      await search.refresh(transport)
+      clearTimeout(searchDebounce)
+      if (value.trim() === '') {
+        await search.refresh(transport)
+        return
+      }
+      await new Promise<void>((resolve) => {
+        searchDebounce = setTimeout(() => {
+          void search.refresh(transport).then(() => resolve())
+        }, SEARCH_DEBOUNCE_MS)
+      })
     },
     selectedItem(): PaletteItem | null {
       return this.items[this.selection] ?? null

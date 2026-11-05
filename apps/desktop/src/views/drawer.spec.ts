@@ -1,5 +1,4 @@
-// KAN-T30-AC2: the detail drawer shows full ticket detail, historical
-// attempts, and the embedded timeline from KAN-T9.
+// KAN-T30-AC2: the detail drawer shows Linear issue detail (U2).
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -7,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   ProfileSnapshotRecord,
   RunRecord,
+  RunRecoveryListResponse,
   TicketRecord,
-  TimelineQueryResponse,
 } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
@@ -16,23 +15,14 @@ import { harness, ticket } from '../test/shell-harness'
 import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
 
-// The Implementation every drawer opens on, unless a test names a
-// Task instead.
 const implementation = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
   ticket({
     id: 8,
     number: 13,
     kind: 'implementation',
     state: 'active',
-    spec_id: 4,
-    title: null,
+    title: 'Serve the lifecycle command surface',
     slice: 'Serve the lifecycle command surface',
-    criteria: [{ outcome: 'The commands are served.', stories: ['CORE-S4-US2'] }],
-    subtype: null,
-    mode: null,
-    completion: [],
-    profile: 'glm-implementer',
-    version: 5,
     ...overrides,
   })
 
@@ -59,36 +49,15 @@ const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   ...overrides,
 })
 
-// The board over the shared harness, with the detail and timeline
-// answers a test steers by hand: the drawer reads its record through
-// ticket.get, never from the projection's summary.
-function shell(options: {
-  tickets?: TicketRecord[]
-  runs?: RunRecord[]
-  ticketGet?: TicketRecord
-  timeline?: TimelineQueryResponse
-} = {}) {
-  const override: HarnessOptions['override'] = (name) => {
-    if (name === 'ticket.get' && options.ticketGet) return Promise.resolve(options.ticketGet)
-    if (name === 'timeline.query' && options.timeline) return Promise.resolve(options.timeline)
-    return undefined
-  }
-  return harness({
-    tickets: options.tickets ?? [implementation()],
-    runs: options.runs ?? [],
-    override,
-  })
-}
-
 const mountedBoards: VueWrapper[] = []
 
-async function openDrawer(transport: ReturnType<typeof harness>['transport'], ticketId = 8) {
+async function openDrawer(shell: ReturnType<typeof harness>, ticketId: number) {
   await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
     global: {
       plugins: [createPinia(), router],
-      provide: { [kanbanTransportKey as symbol]: transport },
+      provide: { [kanbanTransportKey as symbol]: shell.transport },
     },
     attachTo: document.body,
   })
@@ -99,9 +68,42 @@ async function openDrawer(transport: ReturnType<typeof harness>['transport'], ti
   return wrapper
 }
 
+async function type(testid: string, value: string): Promise<void> {
+  const element = document.querySelector(`[data-testid="${testid}"]`)
+  if (!(element instanceof HTMLTextAreaElement)) throw new Error(`no field ${testid}`)
+  element.value = value
+  element.dispatchEvent(new Event('input'))
+  await flushPromises()
+}
+
+async function click(testid: string): Promise<void> {
+  const element = document.querySelector(`[data-testid="${testid}"]`)
+  if (!(element instanceof HTMLButtonElement)) throw new Error(`no ${testid}`)
+  expect(element.disabled, `${testid} is offered`).toBe(false)
+  element.click()
+  await flushPromises()
+}
+
+const stopped: RunRecoveryListResponse = {
+  run_id: 3,
+  version: 2,
+  can_resume: true,
+  can_retry: true,
+  pending_resume: false,
+  records: [],
+}
+
+const recoverable: HarnessOptions['override'] = (name) =>
+  name === 'run.recovery.list' ? Promise.resolve(stopped) : undefined
+
+const sentAs = (shell: ReturnType<typeof harness>, name: string): unknown[] =>
+  shell.command.mock.calls.filter(([sent]) => sent === name).map(([, request]) => request)
+
+const runReads = (shell: ReturnType<typeof harness>): number =>
+  shell.query.mock.calls.filter(([name]) => name === 'run.list').length
+
 beforeEach(() => {
   localStorage.clear()
-  document.documentElement.classList.remove('dark')
 })
 
 afterEach(() => {
@@ -109,81 +111,82 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('ticket drawer', () => {
-  it('loads full ticket detail through ticket.get when it opens', async () => {
-    const detail = implementation({
-      criteria: [
-        { outcome: 'The commands are served.', stories: ['CORE-S4-US2'] },
-        { outcome: 'The core refuses misuse.', stories: ['CORE-S4-US3'] },
-      ],
-    })
-    const { transport, query } = shell({ ticketGet: detail })
-    await openDrawer(transport)
+describe('issue drawer', () => {
+  it('loads issue detail through ticket.get and issue.get when it opens', async () => {
+    const shell = harness({ tickets: [implementation()] })
+    await openDrawer(shell, 8)
 
-    expect(query).toHaveBeenCalledWith('ticket.get', { ticket_id: 8 })
-    expect(document.querySelector('[data-testid="drawer-criteria"]')?.textContent).toContain(
-      'The commands are served.',
-    )
-    expect(document.querySelector('[data-testid="drawer-criteria"]')?.textContent).toContain(
-      'The core refuses misuse.',
-    )
-  })
-
-  it('shows task completion criteria the list summary does not carry', async () => {
-    const task = ticket({
-      id: 7,
-      number: 12,
-      completion: ['The old exports are archived.', 'The audit trail remains.'],
-    })
-    const { transport, query } = shell({ tickets: [task], ticketGet: task })
-    await openDrawer(transport, 7)
-
-    expect(query).toHaveBeenCalledWith('ticket.get', { ticket_id: 7 })
-    const completion = document.querySelector('[data-testid="drawer-completion"]')
-    expect(completion?.textContent).toContain('The old exports are archived.')
-    expect(completion?.textContent).toContain('The audit trail remains.')
+    expect(shell.query).toHaveBeenCalledWith('ticket.get', { ticket_id: 8 })
+    expect(shell.query).toHaveBeenCalledWith('issue.get', { identifier: 'CORE-13' })
+    expect(document.querySelector('[data-testid="issue-detail-panel"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="drawer-criteria"]')).toBeFalsy()
   })
 
   it('lists every historical attempt for the open ticket', async () => {
     const attempts = [
       run({ id: 1, created_at: 10, effective: snapshot('first-run') }),
       run({ id: 2, created_at: 30, effective: snapshot('second-run'), fallback: false }),
+      run({ id: 6, ticket_id: 9, created_at: 40, effective: snapshot('other-ticket-run') }),
     ]
-    const { transport } = shell({ runs: attempts })
-    await openDrawer(transport)
+    const shell = harness({
+      tickets: [implementation(), implementation({ id: 9, number: 14 })],
+      runs: attempts,
+    })
+    await openDrawer(shell, 8)
 
     const history = document.querySelector('[data-testid="drawer-attempts"]')
     expect(history?.textContent).toContain('first-run')
     expect(history?.textContent).toContain('second-run')
+    expect(history?.textContent).not.toContain('other-ticket-run')
     expect(history?.querySelectorAll('[data-testid^="drawer-attempt-"]')).toHaveLength(2)
   })
 
-  it('embeds the timeline scoped to the open ticket', async () => {
-    const timeline: TimelineQueryResponse = {
-      events: [
-        {
-          id: 1,
-          scope: { project: 1 },
-          kind: 'transition',
-          entity: { kind: 'ticket', id: '8' },
-          recorded_at: '2026-09-04T12:00:01Z',
-          detail: { to: 'active' },
-        },
-      ],
-    }
-    const { transport, query } = shell({ timeline })
-    await openDrawer(transport)
+  it('asks the core to resume a stopped run from the drawer and reads the attempts again', async () => {
+    const shell = harness({ tickets: [implementation()], runs: [run()], override: recoverable })
+    await openDrawer(shell, 8)
+    const before = runReads(shell)
 
-    expect(query).toHaveBeenCalledWith(
-      'timeline.query',
-      expect.objectContaining({
-        scope: { project: 1 },
-        entity: { kind: 'ticket', id: '8' },
-      }),
-    )
-    expect(document.querySelector('[data-testid="drawer-timeline"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="timeline-event-1"]')?.textContent).toContain(
-      'transition',
+    await type('run-recovery-summary-3', 'The harness exited mid-run; resume where it stopped.')
+    await click('run-recovery-resume-3')
+
+    expect(sentAs(shell, 'run.recovery.resume')).toEqual([
+      {
+        mutation: { optimistic_version: 2, idempotency_key: expect.any(String) },
+        run_id: 3,
+        summary: 'The harness exited mid-run; resume where it stopped.',
+      },
+    ])
+    expect(runReads(shell)).toBeGreaterThan(before)
+  })
+
+  it('asks the core to retry a stopped run from the drawer and shows the new attempt', async () => {
+    const runs = [run()]
+    const shell = harness({ tickets: [implementation()], runs, override: recoverable })
+    const core = shell.command.getMockImplementation() as (
+      name: string,
+      request: unknown,
+    ) => Promise<unknown>
+    shell.command.mockImplementation((name: string, request: unknown) => {
+      if (name === 'run.recovery.retry') {
+        runs.push(run({ id: 7, created_at: 50, effective: snapshot('retried-run') }))
+      }
+      return core(name, request)
+    })
+    await openDrawer(shell, 8)
+    expect(document.querySelector('[data-testid="drawer-attempt-7"]')).toBeNull()
+
+    await type('run-recovery-summary-3', 'The run died holding the lane; start it again.')
+    await click('run-recovery-retry-3')
+
+    expect(sentAs(shell, 'run.recovery.retry')).toEqual([
+      {
+        mutation: { optimistic_version: 2, idempotency_key: expect.any(String) },
+        run_id: 3,
+        summary: 'The run died holding the lane; start it again.',
+      },
+    ])
+    expect(document.querySelector('[data-testid="drawer-attempt-7"]')?.textContent).toContain(
+      'retried-run',
     )
   })
 })

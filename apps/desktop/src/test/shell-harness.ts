@@ -12,6 +12,7 @@ import type {
   EvidenceRecord,
   FindingRecord,
   HealthResponse,
+  IssueRecord,
   KanbanLiveEvent,
   LaneRecord,
   ReviewExecutionRecord,
@@ -26,6 +27,7 @@ import type {
   TicketRecord,
   WorkspaceRecord,
 } from '@kanban/contracts'
+import { legacyStateToWorkflowName } from '../stores/issue-workflow'
 import type { ShellTransport } from '../core/transport'
 import { ReviewCore } from './review-core'
 
@@ -86,6 +88,7 @@ const GROUP_OF: Record<TicketRecord['state'], BoardGlobalCard['group'] | null> =
   done: 'done',
   cancelled: null,
   superseded: null,
+  duplicate: null,
 }
 
 // The canonical lifecycle, as the core's own table fixes it: what a
@@ -103,6 +106,7 @@ const LEGAL_TARGETS: Record<TicketRecord['state'], TicketRecord['state'][]> = {
   done: [],
   cancelled: [],
   superseded: [],
+  duplicate: [],
 }
 
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
@@ -119,6 +123,7 @@ const READINESS_RANK: Record<TicketRecord['state'], number> = {
   done: 9,
   cancelled: -1,
   superseded: -1,
+  duplicate: -1,
 }
 
 /** The projection the core would return: grouped by the fixed
@@ -284,6 +289,40 @@ function admits(filter: BoardFilter, entry: TicketRecord, extras: Partial<BoardG
   return true
 }
 
+/** The issue record the fake core answers for one Ticket, its
+ * priority carried over from the legacy column. */
+export function issueOf(found: TicketRecord, identifier: string): IssueRecord {
+  return {
+    identifier,
+    ticket_id: found.id,
+    project_id: found.project_id,
+    title: found.title ?? found.slice ?? 'Untitled',
+    description: found.slice ?? found.title ?? '',
+    priority: found.priority === 'urgent' ? 1 : found.priority === 'high' ? 2 : found.priority === 'low' ? 4 : 3,
+    state: legacyStateToWorkflowName(found.state),
+    state_type: 'backlog',
+    labels: [],
+    relations: [],
+    state_history: [
+      {
+        state: legacyStateToWorkflowName(found.state),
+        state_type: 'backlog',
+        started_at: '2026-01-01T00:00:00Z',
+        ended_at: null,
+      },
+    ],
+    due_date: found.due,
+    milestone_id: null,
+    parent: null,
+    children: [],
+    sub_issues: null,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    url: `kanban://issue/${identifier}`,
+    version: found.version,
+  }
+}
+
 export function harness(options: HarnessOptions = {}): Harness {
   const tickets: TicketRecord[] = [...(options.tickets ?? [])]
   const extras = options.extras ?? {}
@@ -421,6 +460,62 @@ export function harness(options: HarnessOptions = {}): Harness {
         return Promise.resolve({ tickets: [] })
       case 'ticket.review.config':
         return Promise.resolve({ config: null })
+      case 'issue.list_workflow_states':
+        return Promise.resolve({
+          states: [
+            { name: 'Draft', state_type: 'backlog' },
+            { name: 'Parked', state_type: 'backlog' },
+            { name: 'Blocked', state_type: 'backlog' },
+            { name: 'Scheduled', state_type: 'backlog' },
+            { name: 'Ready', state_type: 'backlog' },
+            { name: 'Active', state_type: 'started' },
+            { name: 'In Review', state_type: 'started' },
+            { name: 'Approved', state_type: 'started' },
+            { name: 'Landing', state_type: 'started' },
+            { name: 'Done', state_type: 'completed' },
+            { name: 'Cancelled', state_type: 'canceled' },
+            { name: 'Superseded', state_type: 'canceled' },
+            { name: 'Duplicate', state_type: 'canceled' },
+          ],
+        })
+      case 'issue.list_milestones':
+        return Promise.resolve({ milestones: [] })
+      case 'issue.list_labels':
+        return Promise.resolve({ labels: [] })
+      case 'issue.get': {
+        const { identifier } = request as { identifier: string }
+        const number = Number(identifier.split('-').pop())
+        const code = identifier.slice(0, identifier.lastIndexOf('-'))
+        const project = code === edgeProject.code ? edgeProject : coreProject
+        const found =
+          tickets.find((entry) => entry.project_id === project.id && entry.number === number) ??
+          tickets.find((entry) => entry.number === number)
+        if (!found) {
+          return Promise.reject({ code: 'not_found', message: identifier })
+        }
+        return Promise.resolve(issueOf(found, identifier))
+      }
+      case 'issue.list': {
+        const { project_id, cursor, limit } = request as {
+          project_id: number
+          cursor?: string | null
+          limit?: number
+        }
+        const code = project_id === edgeProject.id ? edgeProject.code : coreProject.code
+        const listed = tickets
+          .filter((entry) => entry.project_id === project_id)
+          .sort((left, right) => right.id - left.id)
+        const start = cursor ? listed.findIndex((entry) => String(entry.id) === cursor) + 1 : 0
+        const size = limit || 50
+        const page = listed.slice(start, start + size)
+        return Promise.resolve({
+          issues: page.map((entry) => issueOf(entry, `${code}-${entry.number}`)),
+          next_cursor:
+            start + size < listed.length ? String(page[page.length - 1]!.id) : null,
+        })
+      }
+      case 'comment.list':
+        return Promise.resolve({ comments: [] })
       case 'ticket.transitions': {
         const { ticket_id } = request as { ticket_id: number }
         const found = tickets.find((entry) => entry.id === ticket_id)
@@ -513,6 +608,68 @@ export function harness(options: HarnessOptions = {}): Harness {
     }
     if (name === 'review.human.submit') {
       return settle(() => reviews.humanSubmit(request as ReviewHumanSubmitRequest))
+    }
+    if (name === 'issue.save') {
+      const projectId = body.project_id as number | undefined
+      const title = body.title as string | undefined
+      const expected = (body.mutation as { optimistic_version: number }).optimistic_version
+      const stale = (current: number): Promise<never> =>
+        Promise.reject({
+          code: 'stale_version',
+          message: `optimistic version ${expected} is stale; the aggregate is at version ${current}`,
+          current_version: current,
+        })
+      if (!body.identifier && projectId != null && title) {
+        if (expected !== 0) return stale(0)
+        const code = projectId === edgeProject.id ? edgeProject.code : coreProject.code
+        const number = 90 + tickets.length
+        const created = ticket({
+          id: 500 + tickets.length,
+          number,
+          project_id: projectId,
+          title,
+          state: 'draft',
+        })
+        tickets.push(created)
+        const identifier = `${code}-${number}`
+        return Promise.resolve({
+          identifier,
+          ticket_id: created.id,
+          url: `kanban://issue/${identifier}`,
+        })
+      }
+      const identifier = body.identifier as string
+      const stateName = body.state as string
+      const number = Number(identifier.split('-').pop())
+      const code = identifier.slice(0, identifier.lastIndexOf('-'))
+      const project = code === edgeProject.code ? edgeProject : coreProject
+      const found =
+        tickets.find((entry) => entry.project_id === project.id && entry.number === number) ??
+        tickets.find((entry) => entry.number === number) ??
+        tickets.find((entry) => entry.id === (body.ticket_id as number | undefined))
+      if (found && expected !== found.version) return stale(found.version)
+      const project_id = found?.project_id ?? project.id
+      const legacy =
+        stateName === 'Active'
+          ? 'active'
+          : stateName === 'Done'
+            ? 'done'
+            : stateName === 'Draft'
+              ? 'draft'
+              : stateName === 'Ready'
+                ? 'ready'
+                : stateName === 'Parked'
+                  ? 'parked'
+                  : found?.state ?? 'ready'
+      const moved = found
+        ? { ...found, state: legacy as TicketRecord['state'], version: found.version + 1 }
+        : ticket({ number, project_id, state: legacy as TicketRecord['state'] })
+      if (found) {
+        tickets.splice(tickets.indexOf(found), 1, moved)
+      } else {
+        tickets.push(moved)
+      }
+      return Promise.resolve({ identifier, ticket_id: moved.id, url: `kanban://issue/${identifier}` })
     }
     if (name === 'ticket.transition') {
       const { ticket_id, to } = body as { ticket_id: number; to: TicketRecord['state'] }

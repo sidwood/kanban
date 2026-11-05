@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "TimelineEntityKind": {
+      "description": "Entity kinds that may appear on the activity timeline.",
+      "enum": [
+        "initiative",
+        "project",
+        "plan",
+        "spec",
+        "ticket",
+        "run",
+        "review",
+        "finding",
+        "evidence",
+        "comment",
+        "workspace",
+        "lane",
+        "profile",
+        "attention_item"
+      ],
+      "type": "string"
+    },
+    "TimelineEntityRef": {
+      "additionalProperties": false,
+      "description": "A timeline-visible entity reference.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/TimelineEntityKind"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Request payload for the `comment.list` query.",
+  "properties": {
+    "cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "default": 0,
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "target": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/TimelineEntityRef"
+        }
+      ],
+      "description": "The entity whose comments are listed."
+    }
+  },
+  "required": [
+    "target"
+  ],
+  "title": "CommentListQuery",
+  "type": "object"
+}

@@ -16,6 +16,7 @@ import type {
 } from '@kanban/contracts'
 import { asApiError } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
+import { legacyStateToWorkflowName } from './issue-workflow'
 
 // The fields one edit carries: exactly the field the kind owns.
 export interface TicketEditFields {
@@ -47,14 +48,38 @@ export const useLifecycleActionsStore = defineStore('lifecycle-actions', {
     // Drag the open Ticket to a legal target. Task Tickets answer the
     // drag; an Implementation or Bug drag comes back refused with the
     // agent-owned explanation.
-    async transition(transport: ShellTransport, to: TicketState): Promise<boolean> {
-      return this.act(transport, (client, ticketId, version) =>
-        client.commandTicketTransition({
-          mutation: { optimistic_version: version, idempotency_key: crypto.randomUUID() },
-          ticket_id: ticketId,
-          to,
-        }),
-      )
+    async moveToWorkflowState(
+      transport: ShellTransport,
+      projectCode: string,
+      stateName: string,
+    ): Promise<boolean> {
+      const ticket = this.ticket
+      if (ticket === null) {
+        this.error = 'open a Ticket before acting on it'
+        return false
+      }
+      try {
+        const client = new KanbanClient(transport)
+        await client.commandIssueSave({
+          mutation: { optimistic_version: ticket.version, idempotency_key: crypto.randomUUID() },
+          identifier: `${projectCode}-${ticket.number}`,
+          state: stateName,
+        })
+        this.ticket = await client.queryTicketGet({ ticket_id: ticket.id })
+        this.error = null
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return false
+      }
+      return true
+    },
+    /** @deprecated use moveToWorkflowState; maps legacy column states. */
+    async transition(
+      transport: ShellTransport,
+      to: TicketState,
+      projectCode = 'CORE',
+    ): Promise<boolean> {
+      return this.moveToWorkflowState(transport, projectCode, legacyStateToWorkflowName(to))
     },
     // Set aside work that has not started executing.
     async park(transport: ShellTransport): Promise<boolean> {

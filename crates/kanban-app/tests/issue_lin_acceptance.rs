@@ -1,0 +1,2838 @@
+//! Lin MCP acceptance (L1–L10) on fresh DB and migration fixture paths.
+
+use std::sync::Arc;
+
+use kanban_app::{
+    CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+    ProjectStore, TimelineEnvelope,
+};
+use kanban_domain::ProjectRegistration;
+use kanban_dto::{
+    ErrorCode, IssueRecord, IssueSaveResponse, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
+};
+use kanban_storage::SqliteCommentStore;
+use kanban_storage::{
+    AllowAllMigrations, Database, SqliteIssueStore, SqlitePlanStore, SqliteProjectStore,
+    SqliteSpecStore, SqliteTicketStore, migrations,
+};
+use serde_json::json;
+
+mod common;
+
+use common::{harness, mutation};
+
+fn save_payload(version: u64, key: &str, fields: serde_json::Value) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    object.insert("mutation".into(), mutation(version, key));
+    if let Some(extra) = fields.as_object() {
+        object.extend(extra.clone());
+    }
+    serde_json::Value::Object(object)
+}
+
+fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
+    let projects = Arc::new(SqliteProjectStore::new(database));
+    let tickets = Arc::new(SqliteTicketStore::new(database));
+    let specs = Arc::new(SqliteSpecStore::new(database));
+    let plans = Arc::new(SqlitePlanStore::new(database));
+    let issues: Arc<dyn IssueStore> = Arc::new(SqliteIssueStore::new(database));
+    let comments: Arc<dyn CommentStore> = Arc::new(SqliteCommentStore::new(database));
+    core.register_plans(plans.clone(), projects.clone(), specs.clone())
+        .expect("plans register");
+    core.register_specs(specs.clone(), projects.clone(), plans)
+        .expect("specs register");
+    std::fs::create_dir_all(attachments).expect("attachments dir");
+    core.register_tickets(
+        tickets.clone(),
+        projects.clone(),
+        specs.clone(),
+        Arc::new(kanban_storage::SqliteEvidenceStore::new(
+            database,
+            attachments.to_path_buf(),
+        )),
+    )
+    .expect("tickets register");
+    core.register_issue_operator(
+        tickets,
+        projects.clone(),
+        specs,
+        issues.clone(),
+        comments.clone(),
+    )
+    .expect("issue operator registers");
+    let comment_targets: Arc<dyn CommentIssueTargets> =
+        Arc::new(IssueStoreCommentTargets::new(issues));
+    core.register_comments(comments, projects, comment_targets)
+        .expect("comments register");
+}
+
+fn session() -> OperatorSession {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    OperatorSession::new(Arc::new(h.core))
+}
+
+fn migrated_session() -> (tempfile::TempDir, OperatorSession) {
+    let dir = tempfile::TempDir::new().expect("scratch dir");
+    let path = dir.path().join("kanban.sqlite");
+    let mut database = Database::open(&path).expect("database opens");
+    migrations::apply_through(&database.connection(), 52).expect("schema 52");
+    common::seed_project_profile(&database);
+    let ticket_id = common::insert_ready_ticket(&path, 1, "normal");
+    common::insert_blocker(&path, ticket_id);
+    database
+        .migrate(&AllowAllMigrations)
+        .expect("migrate to head");
+    let attachments = dir.path().join("attachments");
+    let idempotency = Arc::new(kanban_storage::SqliteIdempotencyStore::new(
+        &database,
+        kanban_storage::RetentionPolicy::keep_most_recent(
+            std::num::NonZeroU32::new(100).expect("non-zero"),
+        ),
+    ));
+    let mut core = kanban_app::dispatch::Core::new(
+        kanban_app::catalog::exposed_operations(),
+        idempotency,
+        Arc::new(kanban_app::events::NoopEventSink),
+    );
+    register_issue_stack(&mut core, &database, &attachments);
+    (dir, OperatorSession::new(Arc::new(core)))
+}
+
+fn save_issue(
+    session: &OperatorSession,
+    version: u64,
+    key: &str,
+    fields: serde_json::Value,
+) -> IssueSaveResponse {
+    serde_json::from_value(
+        session
+            .call("issue.save", &save_payload(version, key, fields))
+            .expect("issue.save"),
+    )
+    .expect("save shape")
+}
+
+fn issue_version(session: &OperatorSession, identifier: &str) -> u64 {
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    read.version
+}
+
+#[test]
+fn l1_null_clears_distinguish_absent_from_null() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "l1-host",
+        json!({ "project_id": 1, "title": "Host", "due_date": "2030-06-01" }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &host.identifier),
+        "l1-clear",
+        json!({ "identifier": host.identifier, "due_date": null }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": host.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(read.due_date.is_none());
+}
+
+#[test]
+fn l2_auto_close_default_off_until_project_setting_enabled() {
+    let session = session();
+    let parent = save_issue(
+        &session,
+        0,
+        "l2-parent",
+        json!({ "project_id": 1, "title": "Parent", "state": "Active" }),
+    );
+    let child = save_issue(
+        &session,
+        0,
+        "l2-child",
+        json!({
+            "project_id": 1,
+            "title": "Child",
+            "parent_id": parent.ticket_id,
+            "state": "Active",
+        }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &child.identifier),
+        "l2-child-done",
+        json!({ "identifier": child.identifier, "state": "Done" }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": parent.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read.state, "Active", "auto-close is off by default");
+}
+
+#[test]
+fn l3_get_issue_returns_lifecycle_timestamps() {
+    let session = session();
+    let saved = save_issue(
+        &session,
+        0,
+        "l3-ts",
+        json!({ "project_id": 1, "title": "Timestamps", "state": "Active" }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &saved.identifier),
+        "l3-done",
+        json!({ "identifier": saved.identifier, "state": "Done" }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": saved.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(read.started_at.is_some());
+    assert!(read.completed_at.is_some());
+    save_issue(
+        &session,
+        read.version,
+        "l3-reopen",
+        json!({ "identifier": saved.identifier, "state": "Active" }),
+    );
+    let reopened: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": saved.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reopened.completed_at.is_none());
+}
+
+#[test]
+fn l4_parent_key_and_sub_issue_counts() {
+    let session = session();
+    let parent = save_issue(
+        &session,
+        0,
+        "l4-parent",
+        json!({ "project_id": 1, "title": "Parent" }),
+    );
+    save_issue(
+        &session,
+        0,
+        "l4-child",
+        json!({
+            "project_id": 1,
+            "title": "Child",
+            "parent_id": parent.identifier,
+            "state": "Done",
+        }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": parent.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    let progress = read.sub_issues.expect("sub-issue progress");
+    assert_eq!(progress.total, 1);
+    assert_eq!(progress.done, 1);
+}
+
+#[test]
+fn l5_blocked_by_and_description_mention_related() {
+    let session = session();
+    let blocker = save_issue(
+        &session,
+        0,
+        "l5-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    );
+    let host = save_issue(
+        &session,
+        0,
+        "l5-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &host.identifier),
+        "l5-block",
+        json!({
+            "identifier": host.identifier,
+            "add_blocked_by": [blocker.identifier],
+        }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &host.identifier),
+        "l5-mention",
+        json!({
+            "identifier": host.identifier,
+            "description": format!("See {} for context.", blocker.identifier),
+        }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": host.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        read.relations
+            .iter()
+            .any(|r| r.kind == "blocked-by" && r.identifier == blocker.identifier)
+    );
+    assert!(
+        read.relations
+            .iter()
+            .any(|r| r.kind == "related" && r.identifier == blocker.identifier)
+    );
+}
+
+#[test]
+fn l6_comment_body_thread_and_resolve() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "l6-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let body = "Report line\n";
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "l6-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": body,
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = created["id"].as_u64().unwrap();
+    let root_version = created["version"].as_u64().unwrap();
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "l6-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .unwrap();
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let comments = listed["comments"].as_array().unwrap();
+    assert_eq!(comments[0]["body"], body);
+    assert_eq!(comments[1]["parent_comment_id"], root_id);
+    session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(root_version, "l6-resolve"),
+                "comment_id": root_id,
+                "resolved": true,
+            }),
+        )
+        .unwrap();
+    let resolved = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert!(resolved["comments"][0]["resolved_at"].is_string());
+}
+
+#[test]
+fn l7_migrated_database_preserves_blocker_prose_on_issue_get() {
+    let (_dir, session) = migrated_session();
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": "CORE-1" }))
+            .expect("issue.get on migrated row"),
+    )
+    .expect("issue shape");
+    assert!(
+        read.description
+            .contains("waiting on an unregistered vendor"),
+        "legacy ticket_blockers prose should appear on the migrated issue"
+    );
+}
+
+#[test]
+fn l8_errors_are_specific_not_opaque() {
+    let session = session();
+    let error = session
+        .call("issue.get", &json!({ "identifier": "NOPE-999" }))
+        .expect_err("unknown issue");
+    assert_eq!(error.code, ErrorCode::NotFound);
+
+    let host = save_issue(
+        &session,
+        0,
+        "l8-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let bad = session
+        .call(
+            "issue.save",
+            &save_payload(
+                issue_version(&session, &host.identifier),
+                "l8-priority",
+                json!({ "identifier": host.identifier, "priority": 9 }),
+            ),
+        )
+        .expect_err("bad priority");
+    assert_eq!(bad.code, ErrorCode::InvalidRequest);
+
+    let case = session
+        .call(
+            "issue.get",
+            &json!({ "identifier": host.identifier.to_lowercase() }),
+        )
+        .expect("case insensitive key");
+    assert_eq!(case["identifier"], host.identifier);
+}
+
+#[test]
+fn l9_list_filters_and_lookups() {
+    let session = session();
+    let listed = session
+        .call("issue.list_projects", &json!({}))
+        .expect("list projects");
+    assert!(!listed["projects"].as_array().unwrap().is_empty());
+
+    let labels = session
+        .call("issue.list_labels", &json!({ "project_id": 1 }))
+        .unwrap();
+    assert!(labels["labels"].is_array());
+
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "l9-label"),
+                "project_id": 1,
+                "name": "LinAccept",
+                "color": "#336699",
+                "group": "Type",
+                "group_single_select": true,
+            }),
+        )
+        .unwrap();
+
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "l9-milestone"),
+                "project_id": 1,
+                "name": "Lin M1",
+                "target_date": "2026-12-31",
+            }),
+        )
+        .unwrap();
+
+    let milestones = session
+        .call("issue.list_milestones", &json!({ "project_id": 1 }))
+        .unwrap();
+    let row = milestones["milestones"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "Lin M1")
+        .expect("milestone listed");
+    assert!(row["issues_total"].is_number());
+}
+
+#[test]
+fn l10_description_patch_in_place_and_mcp_doc_matches_catalog() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "l10-host",
+        json!({
+            "project_id": 1,
+            "title": "Patch",
+            "description": "alpha beta gamma",
+        }),
+    );
+    save_issue(
+        &session,
+        issue_version(&session, &host.identifier),
+        "l10-patch",
+        json!({
+            "identifier": host.identifier,
+            "description_patch": json!({ "find": "beta", "replace": "BETA" }).to_string(),
+        }),
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": host.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read.description, "alpha BETA gamma");
+
+    let doc = std::fs::read_to_string(format!(
+        "{}/../../docs/mcp-operator.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("doc");
+    for (core, mcp) in [
+        ("issue.save", "save_issue"),
+        ("issue.get", "get_issue"),
+        ("issue.list", "list_issues"),
+        ("issue.list_workflow_states", "list_issue_statuses"),
+        ("issue.list_labels", "list_issue_labels"),
+        ("issue.list_milestones", "list_milestones"),
+        ("comment.create", "comment_create"),
+        ("comment.edit", "comment_edit"),
+        ("comment.revisions", "comment_revisions"),
+        ("comment.list", "list_comments"),
+    ] {
+        assert!(
+            doc.contains(mcp),
+            "mcp-operator.md must name MCP tool `{mcp}` for `{core}`"
+        );
+    }
+}
+#[test]
+fn comments_address_one_issue_by_key_or_id() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "stream-host",
+        json!({ "project_id": 1, "title": "Stream host" }),
+    );
+
+    let by_key = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "stream-by-key"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.identifier },
+                "text": "Posted by key",
+                "author": "lin",
+            }),
+        )
+        .expect("the key-form create applies");
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "stream-by-id"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Posted by id",
+                "author": "lin",
+            }),
+        )
+        .expect("the id-form create applies");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .expect("listing by id serves");
+    let by_key_list = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.identifier },
+                "limit": 10,
+            }),
+        )
+        .expect("listing by key serves");
+
+    let bodies: Vec<&str> = by_id["comments"]
+        .as_array()
+        .expect("an array of comments")
+        .iter()
+        .map(|comment| comment["body"].as_str().expect("body text"))
+        .collect();
+    assert_eq!(
+        bodies,
+        vec!["Posted by key", "Posted by id"],
+        "both address forms read and write one stream"
+    );
+    assert_eq!(
+        by_key_list["comments"], by_id["comments"],
+        "the key and the id list the same stream"
+    );
+    assert_eq!(
+        by_key["target"]["id"],
+        json!(host.ticket_id.to_string()),
+        "a created comment stores the issue id, not the key it was addressed by"
+    );
+}
+
+#[test]
+fn comment_targets_must_name_an_existing_issue() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "unknown-target-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+
+    for raw in ["CORE-999", "999"] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, format!("unknown-{raw}")),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": raw },
+                    "text": "Ghost",
+                    "author": "lin",
+                }),
+            )
+            .expect_err("an unknown target is refused");
+        assert_eq!(error.code, ErrorCode::NotFound, "target {raw}");
+    }
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused writes stored nothing"
+    );
+}
+
+#[test]
+fn legacy_key_form_comments_join_the_resolved_stream() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let host = save_issue(
+        &session,
+        0,
+        "legacy-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (901, '1', 'ticket', ?1, 1, 'legacy')",
+            [&host.identifier],
+        )
+        .expect("the legacy row lands");
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text)
+             VALUES (901, 1, 'Legacy by key')",
+            [],
+        )
+        .expect("the legacy revision lands");
+    let mixed_case = format!(
+        "{}{}",
+        host.identifier.chars().next().expect("the key opens"),
+        host.identifier[1..].to_lowercase(),
+    );
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (902, '1', 'ticket', ?1, 1, 'legacy')",
+            [&mixed_case],
+        )
+        .expect("the mixed-case legacy row lands");
+    h.database
+        .connection()
+        .execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text)
+                 VALUES (902, 1, 'Legacy mixed case')",
+            [],
+        )
+        .expect("the mixed-case revision lands");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let by_key = session
+        .call(
+            "comment.list",
+            &json!({ "target": { "kind": "ticket", "id": host.identifier }, "limit": 10 }),
+        )
+        .unwrap();
+    let bodies: Vec<_> = by_id["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![json!("Legacy by key"), json!("Legacy mixed case")],
+        "every pre-change letter-case spelling of the key still lists"
+    );
+    assert_eq!(by_key["comments"], by_id["comments"]);
+
+    let reply = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "legacy-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply to the legacy root",
+                "author": "lin",
+                "parent_comment_id": 901,
+            }),
+        )
+        .expect("a legacy key-form root still accepts replies");
+    assert_eq!(
+        reply["target"]["id"],
+        json!(host.ticket_id.to_string()),
+        "the reply stores the canonical issue id"
+    );
+}
+
+#[test]
+fn legacy_numeric_and_padded_spellings_join_the_resolved_stream() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::new(Arc::new(h.core));
+    let host = save_issue(
+        &session,
+        0,
+        "legacy-numeric-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "legacy-numeric-other",
+        json!({ "project_id": 1, "title": "Other" }),
+    );
+    let code = host
+        .identifier
+        .rsplit_once('-')
+        .expect("the identifier carries a code")
+        .0
+        .to_owned();
+    let padded_key = format!("{code}-0{}", host.ticket_id);
+    let zero_padded = format!("0{}", host.ticket_id);
+    let signed = format!("+{}", host.ticket_id);
+    let twice_padded = format!("00{}", host.ticket_id);
+
+    let mut next_id = 910u64;
+    let mut seed = |stored: &str, body: &str| {
+        let id = i64::try_from(next_id).expect("the id fits");
+        next_id += 1;
+        h.database
+            .connection()
+            .execute(
+                "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+                 VALUES (?1, '1', 'ticket', ?2, 1, 'legacy')",
+                rusqlite::params![id, stored],
+            )
+            .expect("the legacy row lands");
+        h.database
+            .connection()
+            .execute(
+                "INSERT INTO comment_revisions (comment_id, revision, text)
+                 VALUES (?1, 1, ?2)",
+                rusqlite::params![id, body],
+            )
+            .expect("the legacy revision lands");
+    };
+    seed(&zero_padded, "Legacy, zero padded");
+    seed(&signed, "Legacy, signed");
+    seed(&padded_key, "Legacy, padded key");
+    seed(&twice_padded, "Legacy, twice padded");
+    seed(&other.identifier, "Legacy, other issue");
+
+    let by_id = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let bodies: Vec<_> = by_id["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![
+            json!("Legacy, zero padded"),
+            json!("Legacy, signed"),
+            json!("Legacy, padded key"),
+            json!("Legacy, twice padded"),
+        ],
+        "every reference spelling the issue lookups accept lists together"
+    );
+
+    for raw in [
+        host.identifier.clone(),
+        zero_padded.clone(),
+        signed.clone(),
+        padded_key.clone(),
+        host.identifier.to_lowercase(),
+    ] {
+        let listed = session
+            .call(
+                "comment.list",
+                &json!({ "target": { "kind": "ticket", "id": raw }, "limit": 10 }),
+            )
+            .expect("the list serves");
+        assert_eq!(
+            listed["comments"], by_id["comments"],
+            "listing by {raw} reads the same stream"
+        );
+    }
+
+    let other_list = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    let other_bodies: Vec<_> = other_list["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        other_bodies,
+        vec![json!("Legacy, other issue")],
+        "another issue keeps its own rows"
+    );
+}
+
+#[test]
+fn a_key_form_comment_follows_the_issue_number() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let registration = ProjectRegistration::new(
+        "TWO",
+        "Second",
+        "/repo/TWO",
+        "/seed/TWO",
+        "main",
+        "TWO.seed",
+        None,
+        None,
+    )
+    .expect("the second project validates");
+    projects
+        .create(&registration, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the second project lands");
+    let session = OperatorSession::new(Arc::new(h.core));
+    let _first = save_issue(
+        &session,
+        0,
+        "first-project-issue",
+        json!({ "project_id": 1, "title": "First project" }),
+    );
+    let host = save_issue(
+        &session,
+        0,
+        "second-project-first",
+        json!({ "project_id": 2, "title": "Second project first" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "second-project-second",
+        json!({ "project_id": 2, "title": "Second project second" }),
+    );
+    assert_ne!(
+        host.ticket_id.to_string(),
+        host.identifier.rsplit_once('-').unwrap().1,
+        "this issue's number and ticket id differ"
+    );
+    let conn = h.database.connection();
+    for (id, issue, body) in [
+        (931_i64, &host, "belongs to the first issue"),
+        (932_i64, &other, "belongs to the second issue"),
+    ] {
+        conn.execute(
+            "INSERT INTO comments (id, project_id, entity_kind, entity_id, version, author)
+             VALUES (?1, '2', 'ticket', ?2, 1, 'legacy')",
+            rusqlite::params![id, issue.identifier.as_str()],
+        )
+        .expect("the key-form row lands");
+        conn.execute(
+            "INSERT INTO comment_revisions (comment_id, revision, text) VALUES (?1, 1, ?2)",
+            rusqlite::params![id, body],
+        )
+        .expect("the key-form revision lands");
+    }
+    drop(conn);
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.identifier },
+                "limit": 10,
+            }),
+        )
+        .expect("the list serves");
+    let bodies: Vec<_> = listed["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|comment| comment["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![json!("belongs to the first issue")],
+        "a key suffix is the issue number, not the global ticket id"
+    );
+}
+
+#[test]
+fn reply_parent_must_belong_to_the_same_issue() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "reply-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let other = save_issue(
+        &session,
+        0,
+        "reply-other",
+        json!({ "project_id": 1, "title": "Other" }),
+    );
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "reply-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = root["id"].as_u64().unwrap();
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "reply-cross"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "text": "Cross-issue reply",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .expect_err("a parent from another issue is refused");
+
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("parent_comment_id"));
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": other.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused reply stored nothing"
+    );
+}
+
+#[test]
+fn replies_nest_one_level() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "nesting-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let root_id = root["id"].as_u64().unwrap();
+    let reply = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .unwrap();
+    let reply_id = reply["id"].as_u64().unwrap();
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "nesting-reply-reply"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Reply to the reply",
+                "author": "lin",
+                "parent_comment_id": reply_id,
+            }),
+        )
+        .expect_err("a reply to a reply is refused");
+
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("parent_comment_id"));
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        2,
+        "the refused second-level reply stored nothing"
+    );
+}
+
+#[test]
+fn comment_author_is_required_and_kept() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "author-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+
+    for (label, author) in [
+        ("absent", None),
+        ("empty", Some("")),
+        ("blank", Some("   ")),
+    ] {
+        let mut payload = json!({
+            "mutation": mutation(0, format!("author-{label}")),
+            "project_id": 1,
+            "target": target,
+            "text": "Note",
+        });
+        if let Some(author) = author {
+            payload["author"] = json!(author);
+        }
+        let error = session
+            .call("comment.create", &payload)
+            .expect_err("a blank author is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} author");
+        assert_eq!(error.field.as_deref(), Some("author"), "{label} author");
+    }
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "author-set"),
+                "project_id": 1,
+                "target": target,
+                "text": "Note",
+                "author": "lin",
+            }),
+        )
+        .expect("a named author is accepted");
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["author"], json!("lin"));
+}
+
+#[test]
+fn resolve_and_unresolve_bump_the_comment_version() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "resolve-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "resolve-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "Root",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["version"], json!(1));
+
+    let resolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "resolve-on"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect("the resolve applies");
+    assert_eq!(
+        resolved,
+        json!({ "comment_id": comment_id, "resolved": true, "version": 2 })
+    );
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(2));
+    assert!(listed["comments"][0]["resolved_at"].is_string());
+
+    let stale = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "resolve-stale"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect_err("a stale optimistic version is refused");
+    assert_eq!(stale.code, ErrorCode::StaleVersion);
+    assert_eq!(stale.current_version, Some(2));
+
+    let unresolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(2, "resolve-off"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve applies");
+    assert_eq!(
+        unresolved,
+        json!({ "comment_id": comment_id, "resolved": false, "version": 3 })
+    );
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(3));
+    assert!(listed["comments"][0]["resolved_at"].is_null());
+}
+#[test]
+fn resolution_changes_keep_the_body_unedited() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "unedited-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "unedited-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "Report\n",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["version"], json!(1));
+
+    let listed = |session: &OperatorSession| {
+        session
+            .call("comment.list", &json!({ "target": target, "limit": 10 }))
+            .unwrap()
+    };
+    let revision_rows = |session: &OperatorSession| {
+        session
+            .call("comment.revisions", &json!({ "comment_id": comment_id }))
+            .unwrap()["revisions"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+
+    let fresh = listed(&session);
+    assert!(
+        fresh["comments"][0]["edited_at"].is_null(),
+        "the original revision is not an edit"
+    );
+    assert_eq!(revision_rows(&session).len(), 1);
+
+    for (version, resolved) in [(1u64, true), (2, false), (3, true)] {
+        let response = session
+            .call(
+                "comment.resolve",
+                &json!({
+                    "mutation": mutation(version, format!("unedited-{version}")),
+                    "comment_id": comment_id,
+                    "resolved": resolved,
+                }),
+            )
+            .expect("the resolution change applies");
+        assert_eq!(response["version"], json!(version + 1));
+        let row = listed(&session);
+        assert_eq!(row["comments"][0]["version"], json!(version + 1));
+        assert!(
+            row["comments"][0]["edited_at"].is_null(),
+            "a resolution change is not a body edit"
+        );
+        assert_eq!(
+            revision_rows(&session).len(),
+            1,
+            "no body revision may appear without an edit"
+        );
+    }
+
+    let edited = session
+        .call(
+            "comment.edit",
+            &json!({
+                "mutation": mutation(4, "unedited-edit"),
+                "comment_id": comment_id,
+                "text": "Report v2\n",
+            }),
+        )
+        .expect("the edit applies");
+    assert_eq!(edited["version"], json!(5));
+
+    let row = listed(&session);
+    let revisions = revision_rows(&session);
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(
+        row["comments"][0]["edited_at"],
+        revisions[revisions.len() - 1]["recorded_at"],
+        "an actual edit reports the latest revision's stamp"
+    );
+
+    session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(5, "unresolve-after-edit"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve after the edit applies");
+    let after = listed(&session);
+    assert_eq!(
+        after["comments"][0]["edited_at"], row["comments"][0]["edited_at"],
+        "resolution leaves the edit stamp alone"
+    );
+    assert_eq!(after["comments"][0]["version"], json!(6));
+    assert_eq!(revision_rows(&session).len(), 2);
+}
+
+#[test]
+fn comment_revisions_keep_the_stored_body_verbatim() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "verbatim-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let body = "Report\n";
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "verbatim-root"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.identifier },
+                "text": body,
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+
+    let revisions = session
+        .call("comment.revisions", &json!({ "comment_id": comment_id }))
+        .unwrap();
+    assert_eq!(
+        revisions["comment"]["text"],
+        json!(body),
+        "the current text keeps its trailing newline"
+    );
+    assert_eq!(
+        revisions["revisions"][0]["text"],
+        json!(body),
+        "every revision row keeps its trailing newline"
+    );
+}
+
+#[test]
+fn non_ticket_targets_match_ids_exactly() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "exact-id-host",
+        json!({ "project_id": 1, "title": "Exact ids" }),
+    );
+    for key in ["exact-id-first", "exact-id-second"] {
+        session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, key),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                    "text": "On the issue",
+                    "author": "lin",
+                }),
+            )
+            .expect("the comment lands on the issue");
+    }
+
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "exact-id-root"),
+                "project_id": 1,
+                "target": { "kind": "comment", "id": "1" },
+                "text": "On the comment",
+                "author": "lin",
+            }),
+        )
+        .expect("a stored comment is a valid target");
+    let root_id = root["id"].as_u64().unwrap();
+    assert_eq!(root["target"]["id"], json!("1"), "the raw id is kept");
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "comment", "id": "3" },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "an id no stored entity answers to is its own stream"
+    );
+
+    let cross = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "exact-id-cross"),
+                "project_id": 1,
+                "target": { "kind": "comment", "id": "2" },
+                "text": "Wrong stream",
+                "author": "lin",
+                "parent_comment_id": root_id,
+            }),
+        )
+        .expect_err("a parent on another id is refused");
+    assert_eq!(cross.code, ErrorCode::InvalidRequest);
+    assert_eq!(cross.field.as_deref(), Some("parent_comment_id"));
+}
+
+#[test]
+fn resolve_edit_and_unresolve_chain_versions_and_revisions() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "chain-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+    let created = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "chain-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "First",
+                "author": "lin",
+            }),
+        )
+        .unwrap();
+    let comment_id = created["id"].as_u64().unwrap();
+
+    let resolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(1, "chain-on"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect("the resolve applies");
+    assert_eq!(resolved["version"], json!(2));
+
+    let edited = session
+        .call(
+            "comment.edit",
+            &json!({
+                "mutation": mutation(2, "chain-edit"),
+                "comment_id": comment_id,
+                "text": "Second",
+            }),
+        )
+        .expect("the edit applies at the resolve-bumped version");
+    assert_eq!(edited["version"], json!(3));
+
+    let unresolved = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(3, "chain-off"),
+                "comment_id": comment_id,
+                "resolved": false,
+            }),
+        )
+        .expect("the unresolve applies at the edit-bumped version");
+    assert_eq!(unresolved["version"], json!(4));
+
+    let revisions = session
+        .call("comment.revisions", &json!({ "comment_id": comment_id }))
+        .unwrap();
+    assert_eq!(
+        revisions["revisions"].as_array().unwrap().len(),
+        2,
+        "only the edit appended a revision"
+    );
+    assert_eq!(revisions["comment"]["text"], json!("Second"));
+    assert_eq!(revisions["comment"]["version"], json!(4));
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .unwrap();
+    assert_eq!(listed["comments"][0]["version"], json!(4));
+    assert!(listed["comments"][0]["resolved_at"].is_null());
+
+    let stale = session
+        .call(
+            "comment.resolve",
+            &json!({
+                "mutation": mutation(2, "chain-stale"),
+                "comment_id": comment_id,
+                "resolved": true,
+            }),
+        )
+        .expect_err("a stale optimistic version is refused");
+    assert_eq!(stale.code, ErrorCode::StaleVersion);
+    assert_eq!(stale.current_version, Some(4));
+}
+
+/// A session over a database with a second registered project, so filters
+/// and ownership can be proved across team boundaries.
+fn session_with_second_project() -> (tempfile::TempDir, OperatorSession) {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let edge = ProjectRegistration::new(
+        "EDGE",
+        "Edge tooling",
+        "/repositories/edge",
+        "/workspaces/edge.seed",
+        "main",
+        "edge.seed",
+        Some("edge-main"),
+        None,
+    )
+    .expect("the edge registration validates");
+    projects
+        .create(&edge, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the edge project lands");
+    let dir = h._dir;
+    let core = Arc::new(h.core);
+    (dir, OperatorSession::new(core))
+}
+
+/// A session whose second project is archived, so writes against it
+/// meet the terminal-archive rule while project 1 stays writable.
+fn session_with_archived_project() -> (tempfile::TempDir, OperatorSession) {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let projects = SqliteProjectStore::new(&h.database);
+    let closed = ProjectRegistration::new(
+        "ARCH",
+        "Closed tooling",
+        "/repositories/closed",
+        "/workspaces/closed.seed",
+        "main",
+        "closed.seed",
+        Some("closed-main"),
+        None,
+    )
+    .expect("the closed registration validates");
+    let mut archived = projects
+        .create(&closed, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the closed project lands");
+    archived.archive().expect("the project archives");
+    projects
+        .save(
+            &archived,
+            TimelineEnvelope::project(
+                archived.id().value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: archived.id().value().to_string(),
+                }),
+                json!({ "action": "archived" }),
+            ),
+        )
+        .expect("the archive lands");
+    let dir = h._dir;
+    (dir, OperatorSession::new(Arc::new(h.core)))
+}
+
+#[test]
+fn list_issues_matches_state_types_and_case_insensitive_names() {
+    let (_dir, session) = session_with_second_project();
+
+    let backlog = save_issue(
+        &session,
+        0,
+        "filter-backlog",
+        json!({ "project_id": 1, "title": "Sits in the backlog" }),
+    );
+    let started = save_issue(
+        &session,
+        0,
+        "filter-started",
+        json!({
+            "project_id": 1,
+            "title": "Work in flight",
+            "state": "Active",
+            "add_labels": ["bug"],
+        }),
+    );
+    let completed = save_issue(
+        &session,
+        0,
+        "filter-completed",
+        json!({ "project_id": 1, "title": "Already finished", "state": "Done" }),
+    );
+    let unstarted = save_issue(
+        &session,
+        0,
+        "filter-unstarted",
+        json!({ "project_id": 1, "title": "Waiting to begin", "state": "Scheduled" }),
+    );
+    let canceled = save_issue(
+        &session,
+        0,
+        "filter-canceled",
+        json!({ "project_id": 1, "title": "Called off", "state": "Cancelled" }),
+    );
+
+    let identifiers = |payload: serde_json::Value| -> Vec<String> {
+        session
+            .call("issue.list", &payload)
+            .expect("the listing serves")["issues"]
+            .as_array()
+            .expect("an issues array")
+            .iter()
+            .map(|issue| {
+                issue["identifier"]
+                    .as_str()
+                    .expect("an identifier")
+                    .to_owned()
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "started" })),
+        vec![started.identifier.clone()],
+        "a workflow state type lists its issues"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "completed" })),
+        vec![completed.identifier.clone()],
+        "the completed type lists the Done issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "backlog" })),
+        vec![backlog.identifier.clone()],
+        "the backlog type lists the Draft issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "unstarted" })),
+        vec![unstarted.identifier.clone()],
+        "the unstarted type lists the Scheduled issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "canceled" })),
+        vec![canceled.identifier.clone()],
+        "the canceled type lists the Cancelled issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "duplicate" })),
+        Vec::<String>::new(),
+        "a type no issue holds lists nothing"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "active" })),
+        vec![started.identifier.clone()],
+        "a lowercase state name lists its issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "ACTIVE" })),
+        vec![started.identifier.clone()],
+        "an uppercase state name lists its issue"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "BUG" })),
+        vec![started.identifier.clone()],
+        "a label name matches case-insensitively"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "updated_since": "2000-01-01T00:00:00Z" })),
+        vec![
+            canceled.identifier.clone(),
+            unstarted.identifier.clone(),
+            completed.identifier.clone(),
+            started.identifier.clone(),
+            backlog.identifier.clone(),
+        ],
+        "a valid updated_since keeps filtering by recency"
+    );
+
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-unicode-label"),
+                "project_id": 1,
+                "name": "Årea",
+                "color": "#336699",
+            }),
+        )
+        .expect("the label with a non-ASCII name is created");
+    let unicode = save_issue(
+        &session,
+        0,
+        "filter-unicode",
+        json!({
+            "project_id": 1,
+            "title": "Non-ASCII label",
+            "add_labels": ["Årea"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "årea" })),
+        vec![unicode.identifier.clone()],
+        "a non-ASCII label name matches its lowercase form"
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "ÅREA" })),
+        vec![unicode.identifier.clone()],
+        "a non-ASCII label name matches its uppercase form"
+    );
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-folded-label"),
+                "project_id": 1,
+                "name": "Straße",
+                "color": "#336699",
+            }),
+        )
+        .expect("the sharp s label is created");
+    let twin = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-folded-twin-label"),
+                "project_id": 1,
+                "name": "strasse",
+                "color": "#336699",
+            }),
+        )
+        .expect_err("a label differing only by case folding is the same name");
+    assert_eq!(twin.code, ErrorCode::InvalidRequest);
+    assert_eq!(twin.field.as_deref(), Some("name"));
+    let folded = save_issue(
+        &session,
+        0,
+        "filter-folded",
+        json!({
+            "project_id": 1,
+            "title": "Folded label",
+            "add_labels": ["Straße"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "STRASSE" })),
+        vec![folded.identifier.clone()],
+        "a label name matches the unfolded spelling of its sharp s"
+    );
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "filter-sigma-label"),
+                "project_id": 1,
+                "name": "ΟΔΟΣ",
+                "color": "#336699",
+            }),
+        )
+        .expect("the sigma label is created");
+    let sigma = save_issue(
+        &session,
+        0,
+        "filter-sigma",
+        json!({
+            "project_id": 1,
+            "title": "Sigma label",
+            "add_labels": ["ΟΔΟΣ"],
+        }),
+    );
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "label": "οδος" })),
+        vec![sigma.identifier.clone()],
+        "a label name matches the final-sigma spelling of its sigma"
+    );
+    let folded_read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": folded.identifier }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(folded_read.labels, vec!["Straße".to_owned()]);
+    assert_eq!(
+        identifiers(json!({ "project_id": 1, "state": "ACTIVE" })),
+        vec![started.identifier.clone()],
+        "state names keep matching across case"
+    );
+    let error = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "updated_since": "garbage" }),
+        )
+        .expect_err("an unparseable updated_since is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("updated_since"));
+}
+
+#[test]
+fn comment_create_requires_the_project_to_own_the_issue() {
+    let (_dir, session) = session_with_second_project();
+    let edge_issue = save_issue(
+        &session,
+        0,
+        "ownership-edge-issue",
+        json!({ "project_id": 2, "title": "Edge work" }),
+    );
+
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ownership-wrong-project"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "text": "Wrong project",
+                "author": "lin",
+            }),
+        )
+        .expect_err("a project that does not own the issue is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("project_id"));
+
+    let listed = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "limit": 10,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        listed["comments"].as_array().unwrap().len(),
+        0,
+        "the refused write stored nothing"
+    );
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ownership-own-project"),
+                "project_id": 2,
+                "target": { "kind": "ticket", "id": edge_issue.ticket_id.to_string() },
+                "text": "Owning project",
+                "author": "lin",
+            }),
+        )
+        .expect("the owning project may comment");
+}
+
+#[test]
+fn comment_create_refuses_non_ticket_targets_that_do_not_exist() {
+    let session = session();
+    let error = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ghost-spec-target"),
+                "project_id": 1,
+                "target": { "kind": "spec", "id": "77" },
+                "text": "On nothing",
+                "author": "lin",
+            }),
+        )
+        .expect_err("a non-ticket target that does not exist is refused");
+    assert_eq!(error.code, ErrorCode::NotFound);
+    assert!(error.message.contains("spec 77"), "{}", error.message);
+
+    let missing_project = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "ghost-project-target"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "42" },
+                "text": "On nothing",
+                "author": "lin",
+            }),
+        )
+        .expect_err("an unknown project target is refused");
+    assert_eq!(missing_project.code, ErrorCode::NotFound);
+
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "real-project-target"),
+                "project_id": 1,
+                "target": { "kind": "project", "id": "1" },
+                "text": "On the project",
+                "author": "lin",
+            }),
+        )
+        .expect("a stored project is a valid target");
+}
+#[test]
+fn issue_creation_in_an_archived_project_names_the_project() {
+    let (_dir, session) = session_with_archived_project();
+
+    let error = session
+        .call(
+            "issue.save",
+            &save_payload(
+                0,
+                "archived-project-create",
+                json!({ "project_id": 2, "title": "Must refuse archived" }),
+            ),
+        )
+        .expect_err("an archived project accepts no new issues");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("project_id"));
+    assert!(
+        error.message.contains("archived is terminal"),
+        "the refusal keeps its wording: {}",
+        error.message
+    );
+
+    let archived_issues = session
+        .call("issue.list", &json!({ "project_id": 2 }))
+        .expect("the archived project still lists")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .len();
+    assert_eq!(archived_issues, 0, "the refused create stored nothing");
+
+    let live = save_issue(
+        &session,
+        0,
+        "archived-beside-live-create",
+        json!({ "project_id": 1, "title": "Still open for business" }),
+    );
+    assert_eq!(live.identifier, "CORE-1");
+}
+
+#[test]
+fn archived_projects_refuse_issue_updates_as_creation() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
+    let session = OperatorSession::new(core.clone());
+    let projects = SqliteProjectStore::new(&h.database);
+    let closing = ProjectRegistration::new(
+        "CLS",
+        "Closing tooling",
+        "/repositories/closing",
+        "/workspaces/closing.seed",
+        "main",
+        "closing.seed",
+        Some("closing-main"),
+        None,
+    )
+    .expect("the closing registration validates");
+    let project = projects
+        .create(&closing, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the closing project lands");
+    let project_id = project.id().value();
+    let saved = save_issue(
+        &session,
+        0,
+        "archived-update-create",
+        json!({ "project_id": project_id, "title": "Frozen in place" }),
+    );
+    let mut project = projects
+        .find(project.id())
+        .expect("the project reloads")
+        .expect("the project exists");
+    project.archive().expect("the project archives");
+    projects
+        .save(
+            &project,
+            TimelineEnvelope::project(
+                project_id,
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: project_id.to_string(),
+                }),
+                json!({ "action": "archived" }),
+            ),
+        )
+        .expect("the archive lands");
+
+    let refusal = session
+        .call(
+            "issue.save",
+            &save_payload(
+                issue_version(&session, &saved.identifier),
+                "archived-update-edit",
+                json!({ "identifier": saved.identifier, "title": "Rewritten" }),
+            ),
+        )
+        .expect_err("an archived project accepts no edits");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+    assert!(
+        refusal.message.contains("archived is terminal"),
+        "the refusal keeps its wording: {}",
+        refusal.message
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": saved.identifier }))
+            .expect("the issue still reads"),
+    )
+    .expect("issue shape");
+    assert_eq!(
+        read.title, "Frozen in place",
+        "the refused edit stored nothing"
+    );
+}
+
+#[test]
+fn blank_comment_text_names_the_text_field_on_create_and_edit() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "blank-text-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let target = json!({ "kind": "ticket", "id": host.ticket_id.to_string() });
+
+    for (label, text) in [("empty", ""), ("whitespace", " \t ")] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, format!("blank-text-create-{label}")),
+                    "project_id": 1,
+                    "target": target,
+                    "text": text,
+                    "author": "lin",
+                }),
+            )
+            .expect_err("blank comment text is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} text");
+        assert_eq!(error.field.as_deref(), Some("text"), "{label} text");
+        assert!(
+            error.message.contains("cannot be blank"),
+            "the refusal keeps its wording: {}",
+            error.message
+        );
+    }
+
+    let stored = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "blank-text-create-stored"),
+                "project_id": 1,
+                "target": target,
+                "text": "line\r\n\t  ",
+                "author": "lin",
+            }),
+        )
+        .expect("surrounding whitespace still stores verbatim");
+    let comment_id = stored["id"].as_u64().expect("a comment id");
+
+    for (label, text) in [("empty", ""), ("whitespace", " \t ")] {
+        let error = session
+            .call(
+                "comment.edit",
+                &json!({
+                    "mutation": mutation(1, format!("blank-text-edit-{label}")),
+                    "comment_id": comment_id,
+                    "text": text,
+                }),
+            )
+            .expect_err("blank edited text is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} edit");
+        assert_eq!(error.field.as_deref(), Some("text"), "{label} edit");
+    }
+
+    let listed = session
+        .call("comment.list", &json!({ "target": target, "limit": 10 }))
+        .expect("the stream lists");
+    assert_eq!(
+        listed["comments"][0]["body"], "line\r\n\t  ",
+        "the refused edits changed nothing"
+    );
+    assert_eq!(
+        listed["comments"][0]["version"], 1,
+        "the refused edits bumped nothing"
+    );
+}
+
+#[test]
+fn a_blank_comment_target_names_the_target_field() {
+    let session = session();
+
+    for (label, id) in [("empty", ""), ("whitespace", "  ")] {
+        let error = session
+            .call(
+                "comment.create",
+                &json!({
+                    "mutation": mutation(0, format!("blank-target-{label}")),
+                    "project_id": 1,
+                    "target": { "kind": "ticket", "id": id },
+                    "text": "On nothing",
+                    "author": "lin",
+                }),
+            )
+            .expect_err("a blank comment target is refused");
+        assert_eq!(error.code, ErrorCode::InvalidRequest, "{label} target");
+        assert_eq!(error.field.as_deref(), Some("target"), "{label} target");
+    }
+}
+
+#[test]
+fn a_non_numeric_comment_cursor_names_the_cursor_field() {
+    let session = session();
+    let host = save_issue(
+        &session,
+        0,
+        "cursor-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+
+    let error = session
+        .call(
+            "comment.list",
+            &json!({
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "cursor": "bad",
+            }),
+        )
+        .expect_err("a non-numeric cursor is refused");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(error.field.as_deref(), Some("cursor"));
+    assert!(
+        error.message.contains("cursor"),
+        "the refusal keeps its wording: {}",
+        error.message
+    );
+}
+
+#[test]
+fn milestone_and_label_creation_name_the_offending_field() {
+    let session = session();
+
+    let milestone_project = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-project"),
+                "project_id": 99,
+                "name": "Nowhere",
+            }),
+        )
+        .expect_err("an unknown project is not found");
+    assert_eq!(milestone_project.code, ErrorCode::NotFound);
+    assert_eq!(
+        milestone_project.field.as_deref(),
+        Some("project_id"),
+        "{}",
+        milestone_project.message
+    );
+
+    let label_project = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-project"),
+                "project_id": 99,
+                "name": "nowhere",
+                "color": "#336699",
+            }),
+        )
+        .expect_err("an unknown project is not found");
+    assert_eq!(label_project.code, ErrorCode::NotFound);
+    assert_eq!(label_project.field.as_deref(), Some("project_id"));
+
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-first"),
+                "project_id": 1,
+                "name": "Shared milestone",
+            }),
+        )
+        .expect("the first milestone lands");
+    let milestone_duplicate = session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-milestone-duplicate"),
+                "project_id": 1,
+                "name": "Shared milestone",
+            }),
+        )
+        .expect_err("a duplicate milestone name conflicts");
+    assert_eq!(milestone_duplicate.code, ErrorCode::Conflict);
+    assert_eq!(milestone_duplicate.field.as_deref(), Some("name"));
+
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-first"),
+                "project_id": 1,
+                "name": "shared-label",
+                "color": "#336699",
+            }),
+        )
+        .expect("the first label lands");
+    let label_duplicate = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-duplicate"),
+                "project_id": 1,
+                "name": "shared-label",
+                "color": "#336699",
+            }),
+        )
+        .expect_err("a duplicate label name conflicts");
+    assert_eq!(label_duplicate.code, ErrorCode::Conflict);
+    assert_eq!(label_duplicate.field.as_deref(), Some("name"));
+
+    for (tool, key, name) in [
+        ("issue.create_milestone", "field-milestone-blank", "   "),
+        ("issue.create_label", "field-label-blank", "  "),
+    ] {
+        let mut payload = json!({
+            "mutation": mutation(0, key),
+            "project_id": 1,
+            "name": name,
+        });
+        if tool == "issue.create_label" {
+            payload["color"] = json!("#336699");
+        }
+        let blank = session
+            .call(tool, &payload)
+            .expect_err("a blank name is refused");
+        assert_eq!(blank.code, ErrorCode::InvalidRequest);
+        assert_eq!(blank.field.as_deref(), Some("name"), "{tool}");
+    }
+
+    let color = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-label-color"),
+                "project_id": 1,
+                "name": "coloured",
+                "color": "red-ish",
+            }),
+        )
+        .expect_err("a colour outside #RRGGBB is refused");
+    assert_eq!(color.code, ErrorCode::InvalidRequest);
+    assert_eq!(color.field.as_deref(), Some("color"));
+
+    for accepted in ["#336699", "#EF4444", "#10b981"] {
+        session
+            .call(
+                "issue.create_label",
+                &json!({
+                    "mutation": mutation(0, format!("field-label-color-{accepted}")),
+                    "project_id": 1,
+                    "name": format!("shade-{accepted}"),
+                    "color": accepted,
+                }),
+            )
+            .expect("a #RRGGBB colour is accepted");
+    }
+}
+
+#[test]
+fn issue_save_errors_carry_the_offending_field() {
+    let (_dir, session) = session_with_second_project();
+    let host = save_issue(
+        &session,
+        0,
+        "field-host",
+        json!({ "project_id": 1, "title": "Field checks" }),
+    );
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-own-milestone"),
+                "project_id": 1,
+                "name": "Home milestone",
+            }),
+        )
+        .expect("the home milestone lands");
+    session
+        .call(
+            "issue.create_milestone",
+            &json!({
+                "mutation": mutation(0, "field-edge-milestone"),
+                "project_id": 2,
+                "name": "Away milestone",
+            }),
+        )
+        .expect("the away milestone lands");
+    session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "field-retire-label"),
+                "project_id": 1,
+                "name": "legacy",
+                "color": "#336699",
+            }),
+        )
+        .expect("the legacy label lands");
+    session
+        .call(
+            "issue.retire_label",
+            &json!({
+                "mutation": mutation(0, "field-retire-once"),
+                "project_id": 1,
+                "name": "legacy",
+            }),
+        )
+        .expect("the legacy label retires");
+    let child = save_issue(
+        &session,
+        0,
+        "field-child",
+        json!({
+            "project_id": 1,
+            "title": "Child issue",
+            "parent_id": host.ticket_id.to_string(),
+        }),
+    );
+
+    let version = issue_version(&session, &host.identifier);
+    for (key, fields, expected_field, expected_code) in [
+        (
+            "field-unknown-milestone",
+            json!({ "identifier": host.identifier, "milestone_id": 99 }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-foreign-milestone",
+            json!({ "identifier": host.identifier, "milestone_id": 2 }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-unknown-label",
+            json!({ "identifier": host.identifier, "add_labels": ["ghost"] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-retired-label",
+            json!({ "identifier": host.identifier, "add_labels": ["legacy"] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-unknown-state",
+            json!({ "identifier": host.identifier, "state": "Swimming" }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-priority-range",
+            json!({ "identifier": host.identifier, "priority": 9 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-cycle-parent",
+            json!({ "identifier": host.identifier, "parent_id": child.ticket_id.to_string() }),
+            "parent_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-self-duplicate",
+            json!({ "identifier": host.identifier, "duplicate_of": host.identifier }),
+            "duplicate_of",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-patch-shape",
+            json!({ "identifier": host.identifier, "description_patch": "just text" }),
+            "description_patch",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-priority-negative",
+            json!({ "identifier": host.identifier, "priority": -1 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-priority-overflow",
+            json!({ "identifier": host.identifier, "priority": 256 }),
+            "priority",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-state-type",
+            json!({ "identifier": host.identifier, "state": 1 }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-milestone-text",
+            json!({ "identifier": host.identifier, "milestone_id": "bad" }),
+            "milestone_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-labels-scalar",
+            json!({ "identifier": host.identifier, "add_labels": 1 }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-labels-entry",
+            json!({ "identifier": host.identifier, "add_labels": ["bug", 5] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-parent-object",
+            json!({ "identifier": host.identifier, "parent_id": {} }),
+            "parent_id",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-duplicate-object",
+            json!({ "identifier": host.identifier, "duplicate_of": {} }),
+            "duplicate_of",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-patch-object",
+            json!({ "identifier": host.identifier, "description_patch": {} }),
+            "description_patch",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-identical-text-pair",
+            json!({ "identifier": host.identifier, "state": {}, "title": {} }),
+            "state",
+            ErrorCode::InvalidRequest,
+        ),
+        (
+            "field-decode-identical-list-pair",
+            json!({ "identifier": host.identifier, "add_labels": [{}], "remove_labels": [{}] }),
+            "add_labels",
+            ErrorCode::InvalidRequest,
+        ),
+    ] {
+        let error = session
+            .call("issue.save", &save_payload(version, key, fields))
+            .expect_err("the invalid field is refused");
+        assert_eq!(error.code, expected_code, "{key}: {}", error.message);
+        assert_eq!(error.field.as_deref(), Some(expected_field), "{key}");
+    }
+
+    let cursor = session
+        .call("issue.list", &json!({ "project_id": 1, "cursor": "abc" }))
+        .expect_err("a non-numeric cursor is refused");
+    assert_eq!(cursor.code, ErrorCode::InvalidRequest);
+    assert_eq!(cursor.field.as_deref(), Some("cursor"));
+    let scalar = session
+        .call("issue.get", &json!(5))
+        .expect_err("a payload that is not an object is refused");
+    assert_eq!(scalar.code, ErrorCode::InvalidRequest);
+    assert_eq!(scalar.field.as_deref(), Some("payload"));
+
+    let bare = session
+        .call(
+            "issue.save",
+            &json!({ "project_id": 1, "title": "No mutation context" }),
+        )
+        .expect("an omitted operator mutation still applies");
+    let bare_key = bare["identifier"]
+        .as_str()
+        .expect("the created issue has a key");
+    let stored = session
+        .call("issue.get", &json!({ "identifier": bare_key }))
+        .expect("the created issue reads back");
+    assert_eq!(stored["title"], json!("No mutation context"));
+
+    let identified = session
+        .call("issue.get", &json!({ "identifier": 9 }))
+        .expect_err("a non-string identifier is refused");
+    assert_eq!(identified.code, ErrorCode::InvalidRequest);
+    assert_eq!(identified.field.as_deref(), Some("identifier"));
+
+    let comment = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "field-decode-comment-author"),
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": host.ticket_id.to_string() },
+                "text": "Decode check",
+                "author": 9,
+            }),
+        )
+        .expect_err("a non-string author is refused");
+    assert_eq!(comment.code, ErrorCode::InvalidRequest);
+    assert_eq!(comment.field.as_deref(), Some("author"));
+}
+
+#[test]
+fn save_issue_schema_documents_the_description_patch_object() {
+    let contracts = format!(
+        "{}/../../packages/contracts/src",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{contracts}/schemas/IssueSaveRequest.json"))
+            .expect("the schema file is committed"),
+    )
+    .expect("the schema is JSON");
+    let patch = &schema["properties"]["description_patch"];
+    let description = patch["description"]
+        .as_str()
+        .expect("description_patch carries a description");
+    assert!(
+        description.contains("find") && description.contains("replace"),
+        "the description names the patch fields: {description}"
+    );
+
+    let catalogue: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{contracts}/mcp-tools.json"))
+            .expect("the tool catalogue is committed"),
+    )
+    .expect("the catalogue is JSON");
+    let save = catalogue
+        .as_array()
+        .expect("a tool list")
+        .iter()
+        .find(|tool| tool["name"] == "save_issue")
+        .expect("save_issue is catalogued");
+    let published = &save["inputSchema"]["properties"]["description_patch"];
+    assert_eq!(
+        published["type"],
+        json!(["string", "null"]),
+        "the wire type stays a string or null"
+    );
+    assert!(
+        published["description"]
+            .as_str()
+            .expect("the published schema describes the patch")
+            .contains("find"),
+        "the published schema names the patch fields"
+    );
+}
+
+/// The second-project session with a Spec seated in project 1, so a
+/// non-ticket target with a real owner exists to be misaddressed.
+fn session_with_second_project_and_spec()
+-> (tempfile::TempDir, kanban_storage::Database, OperatorSession) {
+    let (dir, session) = session_with_second_project();
+    let database = kanban_storage::Database::open(&dir.path().join("kanban.sqlite"))
+        .expect("the harness database reopens");
+    {
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO specs (id, project_id, number, execution, plan_id, version)
+             VALUES (1, 1, 1, 'planned', NULL, 1)",
+            [],
+        )
+        .expect("the fixture Spec lands");
+        conn.execute(
+            "INSERT INTO spec_versions (
+                 spec_id, number, state, name, short_description, problem_statement,
+                 solution, user_stories, implementation_decisions, testing_decisions,
+                 out_of_scope, further_notes
+             ) VALUES (1, 1, 'approved', 'Login PRD', 'Short scope', 'Build login',
+                       'As a user', 'Use OAuth', 'Integration tests', 'Nothing',
+                       'Nothing more', 'None')",
+            [],
+        )
+        .expect("the fixture Spec version lands");
+    }
+    (dir, database, session)
+}
+
+#[test]
+fn comment_targets_outside_the_issue_model_belong_to_their_project() {
+    let (dir, _database, session) = session_with_second_project_and_spec();
+    let _ = dir;
+
+    // The seeded Spec belongs to project 1; a comment on it under
+    // project 2 is refused, exactly as an issue target already is.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "spec-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "spec", "id": "1" },
+                "text": "A comment on another project's spec",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign non-ticket target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    // The project target itself is its own owner: project 2 carries
+    // comments on project 2, and only on project 2.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "project-ownership-refused",
+                },
+                "project_id": 1,
+                "target": { "kind": "project", "id": "2" },
+                "text": "A comment addressed to another project",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign project target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "project-ownership-kept",
+                },
+                "project_id": 2,
+                "target": { "kind": "project", "id": "2" },
+                "text": "A comment on its own project",
+                "author": "operator",
+            }),
+        )
+        .expect("a comment on the owning project lands");
+    assert_eq!(own["project_id"], json!(2));
+}
+
+#[test]
+fn listing_comments_refuses_a_missing_non_ticket_target() {
+    let (dir, _database, session) = session_with_second_project_and_spec();
+    let _ = dir;
+    let refusal = session
+        .call(
+            "comment.list",
+            &json!({ "target": { "kind": "spec", "id": "77" } }),
+        )
+        .expect_err("a missing non-ticket target is refused");
+    assert_eq!(refusal.code, ErrorCode::NotFound);
+}
+
+/// The second-project session with a Workspace and an attention item
+/// seated in project 1: non-ticket targets whose identifiers are not
+/// plain integers, or whose kind was left out of the ownership audit.
+fn session_with_second_project_workspace_and_attention()
+-> (tempfile::TempDir, kanban_storage::Database, OperatorSession) {
+    let (dir, database, session) = session_with_second_project_and_spec();
+    {
+        let conn = database.connection();
+        conn.execute(
+            "INSERT INTO workspaces (id, project_id, path, is_seed, retired, health, version)
+             VALUES (100, 1, '/workspaces/owned', 0, 0, 'missing', 1)",
+            [],
+        )
+        .expect("the fixture Workspace lands");
+        conn.execute(
+            "INSERT INTO attention_items (
+                 id, project_id, kind, subject_kind, subject_id, summary, detail,
+                 fingerprint, version, active, first_seen_at, last_seen_at
+             ) VALUES (
+                 'blocker:1', 1, 'blocker', 'ticket', '1', 'Needs review', '{}',
+                 'abc', 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+             )",
+            [],
+        )
+        .expect("the fixture attention item lands");
+    }
+    (dir, database, session)
+}
+
+#[test]
+fn workspace_and_attention_comment_targets_belong_to_their_project() {
+    let (dir, _database, session) = session_with_second_project_workspace_and_attention();
+    let _ = dir;
+
+    // The Workspace belongs to project 1, so a comment on it under
+    // project 2 is refused the way every other owned target is.
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "workspace-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "workspace", "id": "100" },
+                "text": "A comment on another project's workspace",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign workspace target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "workspace-ownership-kept",
+                },
+                "project_id": 1,
+                "target": { "kind": "workspace", "id": "100" },
+                "text": "A comment on the owning project's workspace",
+                "author": "operator",
+            }),
+        )
+        .expect("a comment on the owning workspace lands");
+    assert_eq!(own["project_id"], json!(1));
+
+    // The attention item's identifier is the text `blocker:1`, not an
+    // integer: ownership follows the row, and its own project may
+    // comment on it while another project may not.
+    let own = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "attention-ownership-kept",
+                },
+                "project_id": 1,
+                "target": { "kind": "attention_item", "id": "blocker:1" },
+                "text": "A comment on the owning project's attention item",
+                "author": "operator",
+            }),
+        )
+        .expect("the owning project comments on its attention item");
+    assert_eq!(own["project_id"], json!(1));
+
+    let refusal = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": {
+                    "optimistic_version": 0,
+                    "idempotency_key": "attention-ownership-refused",
+                },
+                "project_id": 2,
+                "target": { "kind": "attention_item", "id": "blocker:1" },
+                "text": "A comment on another project's attention item",
+                "author": "operator",
+            }),
+        )
+        .expect_err("a foreign attention target is refused");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+}

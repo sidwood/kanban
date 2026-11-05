@@ -1,0 +1,320 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "DescriptionEdit": {
+      "additionalProperties": false,
+      "description": "One description edit in a save. Anchors must match exactly once.",
+      "properties": {
+        "anchor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "find": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "`replace`, `insert_before`, `insert_after`, `prepend`, `append`, or `replace_range`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Create or update one issue (`save_issue`).",
+  "properties": {
+    "add_blocked_by": {
+      "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "add_blocks": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "add_labels": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "add_related": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "assignee": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blockedBy": {
+      "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "creator": {
+      "description": "Who created the issue. The operator session fills this from the configured operator name when it is omitted on create.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description_edits": {
+      "items": {
+        "$ref": "#/definitions/DescriptionEdit"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "description_patch": {
+      "description": "A JSON-encoded object with string `find` and `replace` fields, like `{\"find\":\"old text\",\"replace\":\"new text\"}`; the first occurrence of `find` in the description is replaced.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dueDate": {
+      "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "due_date": {
+      "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "duplicate_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Existing issue key (`CODE-123`) when updating. Also accepted as `id`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "identifier": {
+      "description": "Existing issue key (`CODE-123`) when updating. Also accepted as `id`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "milestone": {
+      "description": "Milestone name within the team.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "milestone_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "parentId": {
+      "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "parent_id": {
+      "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "priority": {
+      "format": "uint8",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "project": {
+      "description": "Label name in the single-select Project group. This is not the Kanban project.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project_id": {
+      "description": "Target project when creating. Required without `identifier` unless `parent_id` names a parent, whose project it then defaults to; a sub-issue may name a project other than its parent's.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "remove_blocked_by": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "remove_blocks": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "remove_labels": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "remove_related": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "sort_order": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "state": {
+      "description": "Kanban workflow state. Valid names: Draft, Parked, Blocked, Scheduled, Ready, Active, In Review, Approved, Landing, Done, Cancelled, Superseded, and Duplicate. Linear names such as Todo are refused.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "team": {
+      "description": "Kanban project code, the Linear team. For example `CORE`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mutation"
+  ],
+  "title": "IssueSaveRequest",
+  "type": "object"
+}

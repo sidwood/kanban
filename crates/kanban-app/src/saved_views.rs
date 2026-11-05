@@ -531,6 +531,7 @@ fn domain_state(state: TicketState) -> DomainState {
         TicketState::Done => DomainState::Done,
         TicketState::Cancelled => DomainState::Cancelled,
         TicketState::Superseded => DomainState::Superseded,
+        TicketState::Duplicate => DomainState::Duplicate,
     }
 }
 
@@ -548,6 +549,7 @@ fn state_of(state: DomainState) -> TicketState {
         DomainState::Done => TicketState::Done,
         DomainState::Cancelled => TicketState::Cancelled,
         DomainState::Superseded => TicketState::Superseded,
+        DomainState::Duplicate => TicketState::Duplicate,
     }
 }
 

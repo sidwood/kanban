@@ -19,6 +19,30 @@ Requires Rust, Node.js, pnpm, `just`, and `pre-commit` on `PATH`.
 - `just build` — debug builds of the core and the desktop app.
 - `just dev` — run the core and the desktop app.
 
+## Linear issue operator MCP
+
+Installation-authenticated operator tools (`save_issue`, `get_issue`, comments,
+relations, and sub-issues) are documented in [`docs/mcp-operator.md`](docs/mcp-operator.md).
+Acceptance scenarios are listed in
+[`docs/mcp-acceptance-tests.md`](docs/mcp-acceptance-tests.md). Sub-issue usage
+is in [`docs/sub-issues.md`](docs/sub-issues.md).
+
+## Issue links
+
+Every issue the operator MCP returns carries a `kanban://issue/KEY` link,
+such as `kanban://issue/CORE-12`. The desktop app claims the `kanban`
+scheme: opening a link brings the running app forward, or starts it, then
+switches the board to the issue's Project and opens the issue's drawer. A
+key the core cannot find shows as the board's error. Any other link, a
+lowercase key or one with a query among them, is ignored.
+
+On macOS the scheme is declared in the bundle's `Info.plist`, so links
+reach only the packaged app (`just package`), not `just dev`. macOS hands
+the app each link already parsed as a URL, so there a link that parsing
+tidies, such as `kanban://issue/x/../CORE-12`, opens the issue it tidies
+to, while Linux judges a link exactly as written. Linux registration is
+described in [`docs/linux.md`](docs/linux.md#issue-links).
+
 ## Local MCP clients
 
 Build the service and adapter together with `just build` or `just dev`.

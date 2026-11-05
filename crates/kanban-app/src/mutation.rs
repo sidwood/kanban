@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use kanban_dto::{ApiError, MutationContext};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use serde_path_to_error::Segment;
 
 use crate::events::EventSink;
 
@@ -32,6 +33,34 @@ fn translate_error(error: serde_json::Error) -> ApiError {
         },
         None => ApiError::invalid_request(&message),
     }
+}
+
+pub fn parse_issue_payload<Request: DeserializeOwned>(
+    payload: &Value,
+) -> Result<Request, ApiError> {
+    serde_path_to_error::deserialize(payload.clone()).map_err(path_decode_error)
+}
+
+fn path_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -> ApiError {
+    let decoded_field = match error.path().iter().next() {
+        Some(Segment::Map { key }) => Some(key.clone()),
+        _ => None,
+    };
+    let decoded = translate_error(error.into_inner());
+    if decoded.field.is_some() {
+        return decoded;
+    }
+    let field = decoded_field
+        .or_else(|| missing_field_name(&decoded.message))
+        .unwrap_or_else(|| "payload".to_owned());
+    ApiError::invalid_request_field(&field, &decoded.message)
+}
+
+fn missing_field_name(message: &str) -> Option<String> {
+    message
+        .strip_prefix("missing field `")
+        .and_then(|rest| rest.split('`').next())
+        .map(str::to_owned)
 }
 
 /// The prefix opening every operation-aware fingerprint. A recorded

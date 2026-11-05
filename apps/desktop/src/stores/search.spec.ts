@@ -30,7 +30,7 @@ describe('search store', () => {
           {
             kind: 'ticket',
             id: 1,
-            identifier: 'CORE-T1',
+            identifier: 'CORE-1',
             label: 'Archive the register',
             project_id: 1,
           },

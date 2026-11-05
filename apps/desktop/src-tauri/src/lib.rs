@@ -17,56 +17,62 @@ use kanban_dto::{
     CapacityDefaultsGetResponse, CapacityDefaultsUpdateRequest, CapacityGlobalDefaults,
     CapacityProjectCaps, CapacitySettingsGetQuery, CapacitySettingsGetResponse,
     CapacitySettingsUpdateRequest, CloneCreateRequest, CloneCreatedRecord, CloneRemoveRequest,
-    CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse, CriterionBindingListQuery,
-    CriterionBindingListResponse, CriterionBindingRecord, CriterionCompleteRequest,
-    CriterionEvidenceAttachRequest, CriterionEvidenceReviewRequest, CriterionInvalidateRequest,
-    CriterionSatisfyRequest, DeferralListQuery, DeferralListResponse, DeferralRecord,
-    DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
-    DiagnosticsExportResponse, DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery,
-    DispatchQueueResponse, DispatchRequestCreateRequest, DispatchRequestRecord,
-    EvidenceAttachRequest, EvidenceListQuery, EvidenceListResponse, EvidenceRecord,
-    ExportDriftQuery, ExportDriftResponse, ExportRenderRequest, ExportRenderResponse, HealthQuery,
-    HealthResponse, HerdrDefaultsGetQuery, HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest,
-    HerdrGlobalDefaults, HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
+    CloneRemovedRecord, CommentCreateRequest, CommentEditRequest, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentRevisionsQuery,
+    CommentRevisionsResponse, CriterionBindingListQuery, CriterionBindingListResponse,
+    CriterionBindingRecord, CriterionCompleteRequest, CriterionEvidenceAttachRequest,
+    CriterionEvidenceReviewRequest, CriterionInvalidateRequest, CriterionSatisfyRequest,
+    DeferralListQuery, DeferralListResponse, DeferralRecord, DeferralRecordRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, DiagnosticsExportResponse,
+    DispatchClaimRequest, DispatchClaimResponse, DispatchQueueQuery, DispatchQueueResponse,
+    DispatchRequestCreateRequest, DispatchRequestRecord, EvidenceAttachRequest, EvidenceListQuery,
+    EvidenceListResponse, EvidenceRecord, ExportDriftQuery, ExportDriftResponse,
+    ExportRenderRequest, ExportRenderResponse, HealthQuery, HealthResponse, HerdrDefaultsGetQuery,
+    HerdrDefaultsGetResponse, HerdrDefaultsUpdateRequest, HerdrGlobalDefaults,
+    HerdrProjectSettings, HerdrSettingsGetQuery, HerdrSettingsGetResponse,
     HerdrSettingsUpdateRequest, InitiativeArchiveRequest, InitiativeCreateRequest,
     InitiativeListQuery, InitiativeListResponse, InitiativeRecord, InitiativeRenameRequest,
-    LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,
-    LandingRecord, LandingSeedRequest, LaneCreateRequest, LaneListQuery, LaneListResponse,
-    LaneRecord, LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
-    LaneWorkspaceReleaseRequest, NotificationDeliveriesQuery, NotificationDeliveriesResponse,
-    NotificationDeliveryRecord, NotificationPermissionQuery, NotificationPermissionRecord,
-    NotificationPermissionRequest, NotificationPermissionResponse, NotificationRetryRequest,
-    NotificationSettingsQuery, NotificationSettingsRecord, NotificationSettingsUpdateRequest,
-    PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest,
-    PlanCreateRequest, PlanDiagnosticsQuery, PlanDiagnosticsResponse, PlanEdgeAddRequest,
-    PlanEdgeRemoveRequest, PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse,
-    PlanRecord, PlanReplanRequest, PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest,
-    ProfileDefineRequest, ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord,
-    ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery,
-    ProjectListResponse, ProjectRecord, ProjectRegisterRequest, ProjectSchedulePolicyQuery,
-    ProjectSchedulePolicyRecord, ProjectSchedulePolicySetRequest, ProjectUpdateRequest,
-    RulingListQuery, RulingListResponse, RulingRecord, RulingRecordRequest, RulingSupersedeRequest,
-    RunAcknowledgeRequest, RunListQuery, RunListResponse, RunRecord, SavedViewRecord,
-    ScheduleAttentionListQuery, ScheduleAttentionListResponse, ScheduleGetQuery,
-    ScheduleGetResponse, SchedulePreviewQuery, SchedulePreviewResponse, SearchGlobalQuery,
-    SearchGlobalResponse, ShellPreferencesQuery, ShellPreferencesRecord,
-    ShellPreferencesUpdateRequest, SpecContentUpdateRequest, SpecCoverageCheckQuery,
-    SpecCoverageCheckResponse, SpecCoverageMatrixQuery, SpecCoverageMatrixResponse,
-    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecGetResponse,
-    SpecIntegrationApproveRequest, SpecIntegrationClaimRequest, SpecIntegrationRecord,
-    SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord, SpecVersionApproveRequest,
-    SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest, TicketAssignRequest,
-    TicketBlockerAddRequest, TicketBlockerRemoveRequest, TicketBugFactsRequest,
-    TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest, TicketDependenciesQuery,
-    TicketDependenciesResponse, TicketDependencyAddRequest, TicketDependencyRemoveRequest,
-    TicketEditRequest, TicketEmergencyOverrideRequest, TicketGetQuery, TicketGraphApproveRequest,
-    TicketGraphListQuery, TicketGraphListResponse, TicketGraphProposeRequest, TicketGraphRecord,
-    TicketListQuery, TicketListResponse, TicketParkRequest, TicketPrioritiseRequest,
-    TicketReadinessQuery, TicketReadinessResponse, TicketReassignRequest, TicketRecord,
-    TicketReviewConfigQuery, TicketReviewConfigRecord, TicketReviewConfigResponse,
-    TicketReviewConfigureRequest, TicketReviewRequest, TicketScheduleRequest,
-    TicketSpecMoveRequest, TicketTransitionRequest, TicketTransitionsQuery,
+    IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery, IssueLabelRecord,
+    IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse, IssueMilestoneRecord,
+    IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectSettingsResponse,
+    IssueProjectsQuery, IssueProjectsResponse, IssueRecord, IssueRetireLabelRequest,
+    IssueSaveRequest, IssueSaveResponse, IssueUpdateProjectSettingsRequest,
+    IssueWorkflowStatesQuery, IssueWorkflowStatesResponse, LandingBugRequest, LandingLaneRequest,
+    LandingReconcileRecord, LandingReconcileRequest, LandingRecord, LandingSeedRequest,
+    LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
+    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
+    NotificationDeliveriesQuery, NotificationDeliveriesResponse, NotificationDeliveryRecord,
+    NotificationPermissionQuery, NotificationPermissionRecord, NotificationPermissionRequest,
+    NotificationPermissionResponse, NotificationRetryRequest, NotificationSettingsQuery,
+    NotificationSettingsRecord, NotificationSettingsUpdateRequest, PlanActivateRequest,
+    PlanArchiveRequest, PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest,
+    PlanDiagnosticsQuery, PlanDiagnosticsResponse, PlanEdgeAddRequest, PlanEdgeRemoveRequest,
+    PlanGetQuery, PlanGetResponse, PlanListQuery, PlanListResponse, PlanRecord, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
+    ProfileGetQuery, ProfileListQuery, ProfileListResponse, ProfileRecord, ProfileRetireRequest,
+    ProfileUpdateRequest, ProjectArchiveRequest, ProjectListQuery, ProjectListResponse,
+    ProjectRecord, ProjectRegisterRequest, ProjectSchedulePolicyQuery, ProjectSchedulePolicyRecord,
+    ProjectSchedulePolicySetRequest, ProjectUpdateRequest, RulingListQuery, RulingListResponse,
+    RulingRecord, RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
+    RunListResponse, RunRecord, SavedViewRecord, ScheduleAttentionListQuery,
+    ScheduleAttentionListResponse, ScheduleGetQuery, ScheduleGetResponse, SchedulePreviewQuery,
+    SchedulePreviewResponse, SearchGlobalQuery, SearchGlobalResponse, ShellPreferencesQuery,
+    ShellPreferencesRecord, ShellPreferencesUpdateRequest, SpecContentUpdateRequest,
+    SpecCoverageCheckQuery, SpecCoverageCheckResponse, SpecCoverageMatrixQuery,
+    SpecCoverageMatrixResponse, SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery,
+    SpecGetResponse, SpecIntegrationApproveRequest, SpecIntegrationClaimRequest,
+    SpecIntegrationRecord, SpecListQuery, SpecListResponse, SpecPlanJoinRequest, SpecRecord,
+    SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionRecord, SpecVersionSupersedeRequest,
+    TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
+    TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
+    TicketDependenciesQuery, TicketDependenciesResponse, TicketDependencyAddRequest,
+    TicketDependencyRemoveRequest, TicketEditRequest, TicketEmergencyOverrideRequest,
+    TicketGetQuery, TicketGraphApproveRequest, TicketGraphListQuery, TicketGraphListResponse,
+    TicketGraphProposeRequest, TicketGraphRecord, TicketListQuery, TicketListResponse,
+    TicketParkRequest, TicketPrioritiseRequest, TicketReadinessQuery, TicketReadinessResponse,
+    TicketReassignRequest, TicketRecord, TicketReviewConfigQuery, TicketReviewConfigRecord,
+    TicketReviewConfigResponse, TicketReviewConfigureRequest, TicketReviewRequest,
+    TicketScheduleRequest, TicketSpecMoveRequest, TicketTransitionRequest, TicketTransitionsQuery,
     TicketTransitionsResponse, TicketUnparkRequest, TimelineQuery, TimelineQueryResponse,
     ViewCreateRequest, ViewListQuery, ViewListResponse, ViewRemoveRequest, ViewRemovedRecord,
     ViewRenameRequest, ViewUpdateRequest, WorkspaceListQuery, WorkspaceListResponse,
@@ -77,6 +83,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub mod commands;
 pub mod core_link;
+pub mod issue_link;
+pub mod launch;
 pub mod package_smoke;
 mod shell_handlers;
 
@@ -1443,6 +1451,32 @@ async fn comment_revisions(
 }
 
 #[tauri::command]
+async fn list_comments(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CommentListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentListQuery>(request)?;
+    run_blocking(shell, "comment list", |shell| {
+        forward_query(shell, "comment.list", "comment list", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn resolve_comment(
+    shell: State<'_, Arc<Shell>>,
+    request: serde_json::Value,
+) -> Result<CommentResolveRequest, ApiError> {
+    let shell = shell.inner().clone();
+    let request = decode_invoke_args::<CommentResolveRequest>(request)?;
+    run_blocking(shell, "comment resolve", |shell| {
+        forward_command(shell, "comment.resolve", "resolved comment", request)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn ruling_record(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2373,6 +2407,148 @@ async fn search_global(
 }
 
 #[tauri::command]
+async fn save_issue(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueSaveRequest,
+) -> Result<IssueSaveResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "save issue", |shell| {
+        forward_command(shell, "issue.save", "save issue", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_issue(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueGetQuery,
+) -> Result<IssueRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "get issue", |shell| {
+        forward_query(shell, "issue.get", "get issue", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issues(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueListQuery,
+) -> Result<IssueListResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issues", |shell| {
+        forward_query(shell, "issue.list", "list issues", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issue_statuses(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueWorkflowStatesQuery,
+) -> Result<IssueWorkflowStatesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issue statuses", |shell| {
+        forward_query(
+            shell,
+            "issue.list_workflow_states",
+            "list issue statuses",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_issue_labels(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueLabelsQuery,
+) -> Result<IssueLabelsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list issue labels", |shell| {
+        forward_query(shell, "issue.list_labels", "list issue labels", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_milestones(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueMilestonesQuery,
+) -> Result<IssueMilestonesResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list milestones", |shell| {
+        forward_query(shell, "issue.list_milestones", "list milestones", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_projects(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueProjectsQuery,
+) -> Result<IssueProjectsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "list projects", |shell| {
+        forward_query(shell, "issue.list_projects", "list projects", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_milestone(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueCreateMilestoneRequest,
+) -> Result<IssueMilestoneRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "create milestone", |shell| {
+        forward_command(shell, "issue.create_milestone", "create milestone", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_label(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueCreateLabelRequest,
+) -> Result<IssueLabelRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "create label", |shell| {
+        forward_command(shell, "issue.create_label", "create label", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn retire_label(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueRetireLabelRequest,
+) -> Result<IssueLabelRecord, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "retire label", |shell| {
+        forward_command(shell, "issue.retire_label", "retire label", request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_project_settings(
+    shell: State<'_, Arc<Shell>>,
+    request: IssueUpdateProjectSettingsRequest,
+) -> Result<IssueProjectSettingsResponse, ApiError> {
+    let shell = shell.inner().clone();
+    run_blocking(shell, "update project settings", |shell| {
+        forward_command(
+            shell,
+            "issue.update_project_settings",
+            "update project settings",
+            request,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn service_stop_warning(
     shell: State<'_, Arc<Shell>>,
     request: serde_json::Value,
@@ -2437,6 +2613,13 @@ async fn service_login_launch_set(
         )
     })
     .await
+}
+
+/// The WebView listens for issue links now: the shell announces the
+/// one it held for it, if any (see [`issue_link`]).
+#[tauri::command]
+fn issue_link_listen<R: tauri::Runtime>(app: AppHandle<R>) {
+    issue_link::listen(&app);
 }
 
 shell_handlers::shell_handler_catalogue! {
@@ -2536,6 +2719,8 @@ shell_handlers::shell_handler_catalogue! {
     comment_create,
     comment_edit,
     comment_revisions,
+    list_comments,
+    resolve_comment,
     ruling_record,
     ruling_supersede,
     ruling_list,
@@ -2604,27 +2789,63 @@ shell_handlers::shell_handler_catalogue! {
     shell_preferences,
     shell_preferences_update,
     search_global,
+    save_issue,
+    get_issue,
+    list_issues,
+    list_issue_statuses,
+    list_issue_labels,
+    list_milestones,
+    list_projects,
+    create_milestone,
+    create_label,
+    retire_label,
+    update_project_settings;
+    shell: issue_link_listen,
+}
+
+/// The shell as `run` builds it, short of what only a real process
+/// may do: the issue-link plugin, which takes every link the operating
+/// system hands the shell and announces only the key it names, and
+/// every typed command. Generic over the runtime, so the tests drive
+/// this same wiring on Tauri's mock runtime.
+pub fn shell_builder<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+    launch_link: Option<String>,
+) -> tauri::Builder<R> {
+    builder
+        .plugin(issue_link::plugin(launch_link))
+        .invoke_handler(catalogue_invoke_handler())
 }
 
 /// Build the window, start the core on demand, and supervise the
-/// connection for as long as this shell process lives.
-pub fn run() -> tauri::Result<()> {
-    tauri::Builder::default()
-        .setup(|app| {
-            let socket_path = managed_socket_path()?;
-            let shell = Arc::new(Shell::default());
-            app.manage(shell.clone());
-            let supervisor = app.handle().clone();
-            let spawn = std::thread::Builder::new()
-                .name("kanban-shell-supervisor".to_owned())
-                .spawn(move || supervise(socket_path, shell, supervisor));
-            match spawn {
-                Ok(_) => Ok(()),
-                Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
-            }
-        })
-        .invoke_handler(catalogue_invoke_handler())
-        .run(tauri::generate_context!())
+/// connection for as long as this shell process lives, holding the
+/// link a link launch carried (see [`launch`]). One shell runs at a
+/// time: a second launch hands its arguments, an issue link above
+/// all, to the running one and exits.
+pub fn run(launch_link: Option<String>) -> tauri::Result<()> {
+    shell_builder(
+        // First, so a second launch is handed over before anything
+        // else of it starts. The plugin's own deep-link forwarding
+        // stays off: the shell judges the arguments itself.
+        tauri::Builder::default()
+            .plugin(tauri_plugin_single_instance::init(issue_link::relaunched)),
+        launch_link,
+    )
+    .setup(|app| {
+        issue_link::register_scheme(app.handle());
+        let socket_path = managed_socket_path()?;
+        let shell = Arc::new(Shell::default());
+        app.manage(shell.clone());
+        let supervisor = app.handle().clone();
+        let spawn = std::thread::Builder::new()
+            .name("kanban-shell-supervisor".to_owned())
+            .spawn(move || supervise(socket_path, shell, supervisor));
+        match spawn {
+            Ok(_) => Ok(()),
+            Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
+        }
+    })
+    .run(tauri::generate_context!())
 }
 
 /// Keep the shell's view of the core honest: start it if it is not

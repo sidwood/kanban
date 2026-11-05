@@ -372,7 +372,7 @@ fn assert_refused(outcome: Result<Value, kanban_dto::ApiError>, message: &str) {
 }
 
 #[test]
-fn dispatch_admission_refuses_an_unqualified_draft_bug_and_changes_nothing() {
+fn dispatch_admission_refuses_a_draft_bug_and_changes_nothing() {
     let h = admitting();
     let bug = quick_capture(&h.core, "unqualified");
     assign_profile(&h.core, &bug, "unqualified");
@@ -382,7 +382,7 @@ fn dispatch_admission_refuses_an_unqualified_draft_bug_and_changes_nothing() {
 
     assert_refused(
         claim(&h.core, request, 1, "unqualified"),
-        "the Bug is unqualified; a Bug executes only once its qualification is complete",
+        "a draft Ticket is not executable; an implementer run admits a ready or active Ticket",
     );
     assert_eq!(authoritative(&h.database_path), before);
     assert_eq!(
@@ -398,7 +398,7 @@ fn dispatch_admission_refuses_an_unqualified_draft_bug_and_changes_nothing() {
     let (_database, core) = reopen(&h);
     assert_refused(
         claim(&core, request, 1, "unqualified-reloaded"),
-        "the Bug is unqualified; a Bug executes only once its qualification is complete",
+        "a draft Ticket is not executable; an implementer run admits a ready or active Ticket",
     );
     assert_eq!(authoritative(&h.database_path), before);
 }

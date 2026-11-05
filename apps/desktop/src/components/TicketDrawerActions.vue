@@ -16,18 +16,18 @@ import { useTicketDialogStore } from '../stores/ticket-dialog'
 import AppButton from './AppButton.vue'
 import InlineAlert from './InlineAlert.vue'
 
-const { ticket, legalTargets, stateLabels } = defineProps<{
+const { ticket, legalTargets, projectCode, locked } = defineProps<{
   ticket: TicketRecord
-  /** Where a human drag may take this Ticket now, as the core
-   * judges it: empty for the agent-owned kinds. */
-  legalTargets: readonly TicketState[]
-  stateLabels: Record<TicketState, string>
+  /** Workflow states this issue may move to now. */
+  legalTargets: readonly string[]
+  projectCode: string
+  locked: boolean
 }>()
 
 const emit = defineEmits<{
   acted: [record: TicketRecord]
   /** A human verdict landed: the audit the core appended is new. */
-  reviewed: []
+  reviewed: [ticketId: number]
 }>()
 
 const transport = inject(kanbanTransportKey)
@@ -53,16 +53,30 @@ const recoveryTo = ref<TicketState | ''>('')
 const recoveryWho = ref('')
 const recoveryWhy = ref('')
 
-// Only a Task answers a human drag; an Implementation or Bug moves
-// under its agents (DR-LC-07, DR-LC-08).
-const agentOwned = computed(() => ticket.kind !== 'task')
-
+// Issues move through the project workflow; park and unpark remain
+// named human commands beside free state moves.
 // The human slot the core is waiting on in the stage it is resolving
 // now; a slot in a later stage is not open to a verdict and the core
 // refuses one.
 const waitingSlot = computed(() => detail.waitingHumanSlots[0] ?? null)
 
 const SEVERITIES: FindingSeverity[] = ['p0', 'p1', 'p2', 'p3']
+
+const TICKET_STATE_LABELS: Record<TicketState, string> = {
+  draft: 'Draft',
+  parked: 'Parked',
+  blocked: 'Blocked',
+  scheduled: 'Scheduled',
+  ready: 'Ready',
+  active: 'Active',
+  in_review: 'In Review',
+  approved: 'Approved',
+  landing: 'Landing',
+  done: 'Done',
+  cancelled: 'Cancelled',
+  superseded: 'Superseded',
+  duplicate: 'Duplicate',
+}
 
 // A rejection that resolves the stage must carry at least one
 // blocking in-scope P0 to P2 finding, and every narrative field of
@@ -108,14 +122,15 @@ const recoveryGap = computed(() => {
 // actually reach is the core's judgement, and a refusal is reported
 // (DR-LC-10).
 const recoveryTargets = computed(() =>
-  (Object.keys(stateLabels) as TicketState[]).filter((state) => state !== ticket.state),
+  (Object.keys(TICKET_STATE_LABELS) as TicketState[]).filter((state) => state !== ticket.state),
 )
 
 // Every action guards on the record the drawer is showing.
 watch(
   () => ticket,
-  (record) => {
+  (record, previous) => {
     lifecycle.adopt(record)
+    if (record.id === previous?.id && record.state === previous.state) return
     actionError.value = null
     clearReview()
     recoveryOpen.value = false
@@ -142,22 +157,23 @@ function edit(): void {
 }
 
 async function park(): Promise<void> {
-  if (transport) await run(() => lifecycle.park(transport))
+  if (transport && !locked) await run(() => lifecycle.park(transport))
 }
 
 async function unpark(): Promise<void> {
-  if (transport) await run(() => lifecycle.unpark(transport))
+  if (transport && !locked) await run(() => lifecycle.unpark(transport))
 }
 
 async function move(event: Event): Promise<void> {
-  const target = (event.target as HTMLSelectElement).value as TicketState | ''
-  if (!transport || target === '') return
-  await run(() => lifecycle.transition(transport, target))
+  const target = (event.target as HTMLSelectElement).value
+  if (!transport || locked || target === '') return
+  await run(() => lifecycle.moveToWorkflowState(transport, projectCode, target))
 }
 
 async function submitReview(): Promise<void> {
   const slot = waitingSlot.value
   if (!transport || !slot || reviewGap.value !== null) return
+  const ticketId = ticket.id
   actionError.value = null
   const findings: ReviewFindingRecord[] =
     reviewApprove.value || findingSeverity.value === ''
@@ -186,11 +202,11 @@ async function submitReview(): Promise<void> {
   clearReview()
   // The verdict appended an audit row against the Ticket; the
   // timeline reads again rather than standing on its earlier answer.
-  emit('reviewed')
+  emit('reviewed', ticketId)
 }
 
 async function confirmRecovery(): Promise<void> {
-  if (!transport || recoveryGap.value !== null || recoveryTo.value === '') return
+  if (!transport || locked || recoveryGap.value !== null || recoveryTo.value === '') return
   const landed = await run(() =>
     lifecycle.override(transport, recoveryTo.value as TicketState, recoveryWho.value, recoveryWhy.value),
   )
@@ -222,23 +238,17 @@ const FIELD_CLASS =
     </InlineAlert>
 
     <div class="flex flex-wrap items-center justify-end gap-2">
-      <p
-        v-if="agentOwned"
-        data-testid="drawer-agent-owned"
-        class="mr-auto text-xs text-ink-subtle"
-      >
-        This kind's lifecycle is agent-owned; a human moves it only through these commands.
-      </p>
       <label
-        v-else
+        v-if="legalTargets.length > 0"
         class="mr-auto flex items-center gap-2 text-xs text-ink-muted"
       >
         Move to
         <select
           data-testid="drawer-move"
-          aria-label="Move this Task"
+          aria-label="Move this issue"
           :class="FIELD_CLASS"
           :value="''"
+          :disabled="locked"
           @change="move"
         >
           <option value="">
@@ -249,7 +259,7 @@ const FIELD_CLASS =
             :key="target"
             :value="target"
           >
-            {{ stateLabels[target] }}
+            {{ target }}
           </option>
         </select>
       </label>
@@ -265,6 +275,7 @@ const FIELD_CLASS =
         v-if="ticket.state === 'parked'"
         size="sm"
         data-testid="drawer-unpark"
+        :disabled="locked"
         @click="unpark"
       >
         Unpark
@@ -273,6 +284,7 @@ const FIELD_CLASS =
         v-else
         size="sm"
         data-testid="drawer-park"
+        :disabled="locked"
         @click="park"
       >
         Park
@@ -464,7 +476,7 @@ const FIELD_CLASS =
             :key="target"
             :value="target"
           >
-            {{ stateLabels[target] }}
+            {{ TICKET_STATE_LABELS[target] }}
           </option>
         </select>
       </label>
@@ -502,7 +514,7 @@ const FIELD_CLASS =
           size="sm"
           type="submit"
           data-testid="recovery-submit"
-          :disabled="recoveryGap !== null"
+          :disabled="recoveryGap !== null || locked"
         >
           Confirm recovery
         </AppButton>

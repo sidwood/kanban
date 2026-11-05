@@ -21,9 +21,10 @@ use kanban_domain::{
     ExternalReference, ImplementationTicket, OccurrenceSnapshot, Priority, Project, ProjectId,
     Severity, SpecId, SpecNumber, TaskMode, TaskSubtype, TaskTicket, TaskTiming, Ticket,
     TicketBody, TicketId, TicketNumber, TicketState, UserStoryRef, VerificationStep,
+    WorkflowStateType,
 };
 use kanban_dto::ApiError;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -112,15 +113,16 @@ impl TicketStore for SqliteTicketStore {
         if changed != 1 {
             return Err(ticket_write_refused(&span, original.id(), preceding));
         }
+        sync_issue_state_after_legacy_move(&span, original)?;
         let stored = StoredTicket::of(priority, body);
         span.execute(
             "INSERT INTO tickets
                  (project_id, number, kind, priority, state, spec_id, title, slice,
                   criteria, actual_behaviour, reporter_evidence, bug_qualification,
                   bug_facts, subtype, mode, completion, scheduled_for, due,
-                  predecessor_id, version)
+                  due_date, predecessor_id, version)
              VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18, 1)",
+                     ?14, ?15, ?16, ?17, '', ?18, 1)",
             params![
                 project.id().value() as i64,
                 number.value() as i64,
@@ -148,6 +150,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
+        seed_issue_projection(&span, id, &priority, TicketState::Draft)?;
         let (created, superseded) = envelopes(id);
         append_timeline(&span, &created)?;
         append_timeline(&span, &superseded)?;
@@ -201,9 +204,9 @@ impl TicketStore for SqliteTicketStore {
             "INSERT INTO tickets
                  (project_id, number, kind, priority, state, spec_id, title, slice,
                   criteria, actual_behaviour, reporter_evidence, bug_qualification,
-                  bug_facts, subtype, mode, completion, scheduled_for, due, version)
+                  bug_facts, subtype, mode, completion, scheduled_for, due, due_date, version)
              VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, 1)",
+                     ?14, ?15, ?16, ?17, '', 1)",
             params![
                 project.id().value() as i64,
                 number.value() as i64,
@@ -230,6 +233,7 @@ impl TicketStore for SqliteTicketStore {
                 .try_into()
                 .map_err(|_| ApiError::internal("the Ticket identity overflowed"))?,
         );
+        seed_issue_projection(&span, id, &priority, TicketState::Draft)?;
         append_timeline(&span, &envelope(id))?;
         span.commit().map_err(internal)?;
         Ok(Ticket::new(
@@ -281,6 +285,14 @@ impl TicketStore for SqliteTicketStore {
         }
         Ok(tickets)
     }
+
+    fn begin_secondary_effects(&self) {
+        crate::issue_store::begin_secondary_effect_recording();
+    }
+
+    fn take_secondary_effects(&self) -> Vec<kanban_app::SecondaryEffect> {
+        crate::issue_store::take_secondary_effect_recording()
+    }
 }
 
 /// Move the Ticket row under the version the aggregate moved from,
@@ -291,13 +303,33 @@ impl TicketStore for SqliteTicketStore {
 pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiError> {
     let stored = StoredTicket::of(ticket.priority(), ticket.body());
     let preceding_version = ticket.version() - 1;
-    let changed = span
-        .execute(
+    // A legacy write that changes the priority moves the Linear
+    // priority with it, the same way the migration maps stored rows;
+    // one that keeps the priority leaves whatever the issue model
+    // last held, so an operator's own priority edit survives an
+    // unrelated legacy save. An explicit legacy assignment — the
+    // aggregate moved through `prioritise` — carries the Linear
+    // priority with it even onto the bucket the row already holds,
+    // because No priority (0) and a real normal (3) share the legacy
+    // normal bucket while meaning different priorities.
+    let prior_priority: Option<String> = span
+        .query_row(
+            "SELECT priority FROM tickets WHERE id = ?1 AND version = ?2",
+            params![ticket.id().value() as i64, preceding_version as i64],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(internal)?;
+    let priority_carried_unchanged = !ticket.priority_reassigned()
+        && prior_priority.as_deref() == Some(ticket.priority().wire_name());
+    let changed = if priority_carried_unchanged {
+        span.execute(
             "UPDATE tickets
              SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
                  criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
                  bug_qualification = ?10, bug_facts = ?11, profile = ?12,
-                 pinned_version = ?13, version = ?14
+                 pinned_version = ?13, version = ?14,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND version = ?15",
             params![
                 ticket.id().value() as i64,
@@ -317,9 +349,234 @@ pub(crate) fn move_row(span: &WriteSpan<'_>, ticket: &Ticket) -> Result<(), ApiE
                 preceding_version as i64,
             ],
         )
-        .map_err(internal)?;
+        .map_err(internal)?
+    } else {
+        span.execute(
+            "UPDATE tickets
+             SET priority = ?2, state = ?3, spec_id = ?4, title = ?5, slice = ?6,
+                 criteria = ?7, actual_behaviour = ?8, reporter_evidence = ?9,
+                 bug_qualification = ?10, bug_facts = ?11, profile = ?12,
+                 pinned_version = ?13, version = ?14,
+                 linear_priority = ?16,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND version = ?15",
+            params![
+                ticket.id().value() as i64,
+                stored.priority,
+                ticket.state().wire_name(),
+                stored.spec_id,
+                stored.title,
+                stored.slice,
+                stored.criteria,
+                stored.actual_behaviour,
+                stored.reporter_evidence,
+                stored.bug_qualification,
+                stored.bug_facts,
+                ticket.profile().map(|name| name.as_str()),
+                ticket.pinned_version().map(|version| version as i64),
+                ticket.version() as i64,
+                preceding_version as i64,
+                i64::from(kanban_domain::LinearPriority::of_legacy(ticket.priority()).value()),
+            ],
+        )
+        .map_err(internal)?
+    };
     if changed != 1 {
         return Err(ticket_write_refused(span, ticket.id(), preceding_version));
+    }
+    sync_issue_state_after_legacy_move(span, ticket)
+}
+
+/// Move the waiting Ticket's aggregate version forward by one under
+/// its optimistic guard and stamp the row's update time, inside the
+/// caller's write span — the shared ticket-write boundary a legacy
+/// write that changes no stored column (an edge or a blocker) moves
+/// through, so the issue model's update stamp moves with the version
+/// the legacy aggregate already moved. The application layer checked
+/// the version before applying, so a refusal here means a concurrent
+/// writer moved it first, and nothing this span wrote may land.
+pub(crate) fn bump_version_and_stamp_update(
+    span: &WriteSpan<'_>,
+    waiting: &Ticket,
+) -> Result<(), ApiError> {
+    let expected = waiting.version();
+    let changed = span
+        .execute(
+            "UPDATE tickets
+             SET version = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND version = ?3",
+            params![
+                waiting.id().value() as i64,
+                expected as i64 + 1,
+                expected as i64,
+            ],
+        )
+        .map_err(internal)?;
+    if changed != 1 {
+        return Err(ticket_write_refused(span, waiting.id(), expected));
+    }
+    Ok(())
+}
+
+/// Seed the Linear issue projection a new Ticket row carries: the
+/// initial workflow state with its open history row at the creation
+/// stamp, the lifecycle stamps that state's entry rules call for,
+/// and the Linear priority the legacy priority maps to. The ticket
+/// lands in `initial`'s workflow state — the store's first state for
+/// an ordinary creation, the state it was minted into for a minted
+/// occurrence — so the seed opens that state's row.
+pub(crate) fn seed_issue_projection(
+    conn: &rusqlite::Connection,
+    ticket_id: TicketId,
+    priority: &Priority,
+    initial: TicketState,
+) -> Result<(), ApiError> {
+    let ticket_id = ticket_id.value() as i64;
+    let (project_id, created_at): (i64, String) = conn
+        .query_row(
+            "SELECT project_id, created_at FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(internal)?;
+    let state =
+        super::linear_issue::workflow_state_by_legacy(conn, project_id, initial.wire_name())
+            .map_err(|error| ApiError::internal(&error.to_string()))?
+            .ok_or_else(|| ApiError::internal("the workflow state for a new ticket is missing"))?;
+    let mut stamps = kanban_domain::IssueStateTimestamps::default();
+    stamps.stamp_entry(state.state_type, &created_at);
+    stamps.clear_terminal_on_reopen(state.state_type);
+    conn.execute(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+         VALUES (?1, ?2, ?3, NULL)",
+        params![ticket_id, state.id, &created_at],
+    )
+    .map_err(internal)?;
+    conn.execute(
+        "UPDATE tickets
+         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5,
+             linear_priority = ?6
+         WHERE id = ?1",
+        params![
+            ticket_id,
+            state.id,
+            stamps.started_at,
+            stamps.completed_at,
+            stamps.canceled_at,
+            i64::from(kanban_domain::LinearPriority::of_legacy(*priority).value()),
+        ],
+    )
+    .map_err(internal)?;
+    Ok(())
+}
+
+/// Keep the Linear issue projection in step with one legacy state
+/// move: the workflow state, its history rows, and the lifecycle
+/// stamps move with the Ticket row inside the same write, and the
+/// row's `updated_at` moves with the workflow change without an
+/// extra version increment. The legacy aggregate keeps owning the
+/// version; a save that rewrites the same state touches nothing.
+fn sync_issue_state_after_legacy_move(
+    span: &WriteSpan<'_>,
+    ticket: &Ticket,
+) -> Result<(), ApiError> {
+    let ticket_id = ticket.id().value() as i64;
+    let (project_id, prior_workflow): (i64, Option<i64>) = span
+        .query_row(
+            "SELECT project_id, workflow_state_id FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(internal)?;
+    let state =
+        super::linear_issue::workflow_state_by_legacy(span, project_id, ticket.state().wire_name())
+            .map_err(|error| ApiError::internal(&error.to_string()))?
+            .ok_or_else(|| {
+                ApiError::internal("the workflow state for a legacy state move is missing")
+            })?;
+    if prior_workflow == Some(state.id) {
+        return Ok(());
+    }
+    let now: String = span
+        .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| {
+            row.get(0)
+        })
+        .map_err(internal)?;
+    let mut stamps = kanban_domain::IssueStateTimestamps {
+        started_at: span
+            .query_row(
+                "SELECT started_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        completed_at: span
+            .query_row(
+                "SELECT completed_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+        canceled_at: span
+            .query_row(
+                "SELECT canceled_at FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten(),
+    };
+    stamps.stamp_entry(state.state_type, &now);
+    stamps.clear_terminal_on_reopen(state.state_type);
+    span.execute(
+        "UPDATE issue_state_history SET ended_at = ?2
+         WHERE ticket_id = ?1 AND ended_at IS NULL",
+        params![ticket_id, &now],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "INSERT INTO issue_state_history (ticket_id, workflow_state_id, started_at, ended_at)
+         VALUES (?1, ?2, ?3, NULL)",
+        params![ticket_id, state.id, &now],
+    )
+    .map_err(internal)?;
+    span.execute(
+        "UPDATE tickets
+         SET workflow_state_id = ?2, started_at = ?3, completed_at = ?4, canceled_at = ?5,
+             updated_at = ?6
+         WHERE id = ?1",
+        params![
+            ticket_id,
+            state.id,
+            stamps.started_at,
+            stamps.completed_at,
+            stamps.canceled_at,
+            &now,
+        ],
+    )
+    .map_err(internal)?;
+    if matches!(
+        state.state_type,
+        WorkflowStateType::Completed | WorkflowStateType::Canceled | WorkflowStateType::Duplicate
+    ) {
+        super::issue_store::close_open_sub_issues_with_parent(span, ticket_id, state.state_type)?;
+        let parent_id: Option<i64> = span
+            .query_row(
+                "SELECT parent_ticket_id FROM tickets WHERE id = ?1",
+                [ticket_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?
+            .flatten();
+        if let Some(parent_id) = parent_id {
+            super::issue_store::auto_close_parent_if_children_done(span, parent_id)?;
+        }
     }
     Ok(())
 }

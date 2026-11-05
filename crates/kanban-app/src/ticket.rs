@@ -87,6 +87,17 @@ pub trait TicketStore: Send + Sync {
     /// timeline envelope, all in one write, guarded by the version the
     /// aggregate moved from.
     fn save(&self, ticket: &Ticket, envelope: TimelineEnvelope) -> Result<(), ApiError>;
+    /// Record issues a following write changes besides this Ticket, so
+    /// the caller can announce that set after the write commits. A
+    /// store that does not close other issues records nothing.
+    fn begin_secondary_effects(&self) {}
+    /// The issues recorded since [`TicketStore::begin_secondary_effects`],
+    /// captured before each change, then clear the record. Discard the
+    /// result when the write did not commit: those snapshots must not
+    /// become live events.
+    fn take_secondary_effects(&self) -> Vec<crate::issue::SecondaryEffect> {
+        Vec::new()
+    }
     /// Every Ticket of one Project in id order, terminal lifecycle
     /// states included.
     fn list(&self, project: ProjectId) -> Result<Vec<Ticket>, ApiError>;
@@ -840,10 +851,11 @@ fn state_of(state: DomainState) -> TicketState {
         DomainState::Done => TicketState::Done,
         DomainState::Cancelled => TicketState::Cancelled,
         DomainState::Superseded => TicketState::Superseded,
+        DomainState::Duplicate => TicketState::Duplicate,
     }
 }
 
-/// The DTO record for one Ticket. Story links render with the
+/// The DTO record for one Ticket.
 /// Project's code, the full `CORE-S3-US6` form.
 pub(crate) fn record_of(ticket: &Ticket, code: &ProjectCode) -> TicketRecord {
     TicketRecord {

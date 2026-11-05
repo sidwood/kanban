@@ -144,10 +144,10 @@ describe('PlanningView coverage matrix', () => {
     const first = wrapper.find('[data-testid="coverage-row-CORE-S1-US1"]')
     expect(first.find('span.font-mono').text()).toBe('CORE-S1-US1')
     expect(first.find('[data-testid="coverage-claim-CORE-S1-US1-5"]').text()).toContain(
-      'CORE-T5 — Graphs record completely.',
+      'CORE-5 — Graphs record completely.',
     )
     expect(first.find('[data-testid="coverage-claim-CORE-S1-US1-6"]').text()).toContain(
-      'CORE-T6 — Claims accumulate across Tickets.',
+      'CORE-6 — Claims accumulate across Tickets.',
     )
 
     expect(

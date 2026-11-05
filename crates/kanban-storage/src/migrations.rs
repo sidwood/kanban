@@ -314,6 +314,81 @@ const MIGRATIONS: &[Migration] = &[
         name: "walkthrough bindings",
         sql: include_str!("../migrations/0052_walkthrough_bindings.sql"),
     },
+    Migration {
+        version: 53,
+        name: "linear issue model",
+        sql: include_str!("../migrations/0053_linear_issue_model.sql"),
+    },
+    Migration {
+        version: 54,
+        name: "linear issue relaxation",
+        sql: include_str!("../migrations/0054_linear_issue_relaxation.sql"),
+    },
+    Migration {
+        version: 55,
+        name: "duplicate ticket state",
+        sql: include_str!("../migrations/0055_duplicate_ticket_state.sql"),
+    },
+    Migration {
+        version: 56,
+        name: "comment author",
+        sql: include_str!("../migrations/0056_comment_author.sql"),
+    },
+    Migration {
+        version: 57,
+        name: "project auto close setting",
+        sql: include_str!("../migrations/0057_project_auto_close_setting.sql"),
+    },
+    Migration {
+        version: 58,
+        name: "comment thread",
+        sql: include_str!("../migrations/0058_comment_thread.sql"),
+    },
+    Migration {
+        version: 59,
+        name: "issue assignee",
+        sql: include_str!("../migrations/0059_issue_assignee.sql"),
+    },
+    Migration {
+        version: 60,
+        name: "linear issue fidelity",
+        sql: include_str!("../migrations/0060_linear_issue_fidelity.sql"),
+    },
+    Migration {
+        version: 61,
+        name: "loose issue dates",
+        sql: include_str!("../migrations/0061_loose_issue_dates.sql"),
+    },
+    Migration {
+        version: 62,
+        name: "canonical comment addresses",
+        sql: include_str!("../migrations/0062_canonical_comment_addresses.sql"),
+    },
+    Migration {
+        version: 63,
+        name: "block edges share dependencies",
+        sql: include_str!("../migrations/0063_block_edges_share_dependencies.sql"),
+    },
+    Migration {
+        version: 64,
+        name: "task checklist repair",
+        sql: include_str!("../migrations/0064_task_checklist_repair.sql"),
+    },
+    Migration {
+        version: 65,
+        name: "project close sub-issues setting",
+        sql: include_str!("../migrations/0065_project_close_sub_issues_setting.sql"),
+    },
+    Migration {
+        version: 66,
+        name: "label milestone name case",
+        sql: include_str!("../migrations/0066_label_milestone_name_case.sql"),
+    },
+    Migration {
+        version: 67,
+        name: "issue creator",
+        sql: include_str!("../migrations/0067_issue_creator.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -362,8 +437,8 @@ pub(crate) fn run(
 
 /// Applies every migration up to and including `version`, for tests
 /// that must fabricate the state an older schema left behind.
-#[cfg(test)]
-pub(crate) fn apply_through(conn: &Connection, version: i64) -> Result<(), StorageError> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn apply_through(conn: &Connection, version: i64) -> Result<(), StorageError> {
     ensure_bookkeeping(conn)?;
     for migration in MIGRATIONS.iter().filter(|entry| entry.version <= version) {
         apply_one(conn, migration)?;
@@ -441,12 +516,117 @@ fn apply_one(conn: &Connection, migration: &Migration) -> Result<(), StorageErro
 /// that gates the commit.
 fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), StorageError> {
     let span = WriteSpan::begin(conn)?;
-    span.execute_batch(migration.sql)
-        .map_err(|source| StorageError::Migration {
-            version: migration.version,
-            name: migration.name,
-            source,
-        })?;
+    if migration.version == 53 {
+        crate::linear_issue_migration::apply_linear_issue_model_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 54 {
+        crate::linear_issue_migration::apply_linear_issue_relaxation_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 55 {
+        crate::linear_issue_migration::apply_duplicate_ticket_state_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 56 {
+        crate::linear_issue_migration::apply_comment_author_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 57 {
+        crate::linear_issue_migration::apply_project_auto_close_setting_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 58 {
+        crate::linear_issue_migration::apply_comment_thread_columns_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 59 {
+        crate::linear_issue_migration::apply_issue_assignee_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 60 {
+        crate::linear_issue_migration::apply_linear_issue_fidelity_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 61 {
+        crate::linear_issue_migration::apply_loose_issue_date_normalisation(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 62 {
+        crate::linear_issue_migration::apply_canonical_comment_addresses_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 64 {
+        crate::linear_issue_migration::apply_task_checklist_repair_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 65 {
+        crate::linear_issue_migration::apply_project_close_sub_issues_setting_in_span(&span)
+            .map_err(|source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            })?;
+    } else if migration.version == 67 {
+        crate::linear_issue_migration::apply_issue_creator_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else {
+        span.execute_batch(migration.sql)
+            .map_err(|source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            })?;
+    }
     crate::audit::insert_event(
         &span,
         "migration.applied",
@@ -1914,6 +2094,66 @@ mod tests {
                     version: 52,
                     name: "walkthrough bindings"
                 },
+                PendingMigration {
+                    version: 53,
+                    name: "linear issue model",
+                },
+                PendingMigration {
+                    version: 54,
+                    name: "linear issue relaxation",
+                },
+                PendingMigration {
+                    version: 55,
+                    name: "duplicate ticket state",
+                },
+                PendingMigration {
+                    version: 56,
+                    name: "comment author",
+                },
+                PendingMigration {
+                    version: 57,
+                    name: "project auto close setting",
+                },
+                PendingMigration {
+                    version: 58,
+                    name: "comment thread",
+                },
+                PendingMigration {
+                    version: 59,
+                    name: "issue assignee",
+                },
+                PendingMigration {
+                    version: 60,
+                    name: "linear issue fidelity",
+                },
+                PendingMigration {
+                    version: 61,
+                    name: "loose issue dates",
+                },
+                PendingMigration {
+                    version: 62,
+                    name: "canonical comment addresses",
+                },
+                PendingMigration {
+                    version: 63,
+                    name: "block edges share dependencies",
+                },
+                PendingMigration {
+                    version: 64,
+                    name: "task checklist repair",
+                },
+                PendingMigration {
+                    version: 65,
+                    name: "project close sub-issues setting",
+                },
+                PendingMigration {
+                    version: 66,
+                    name: "label milestone name case",
+                },
+                PendingMigration {
+                    version: 67,
+                    name: "issue creator",
+                },
             ]]
         );
     }
@@ -2429,5 +2669,468 @@ mod tests {
         database.migrate(&hook).expect("the second run succeeds");
 
         assert!(hook.calls.into_inner().is_empty());
+    }
+
+    /// Whether a refused write came from a schema trigger rather than a
+    /// built-in constraint.
+    fn refused_by_trigger(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+        )
+    }
+
+    fn refused_as_duplicate(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        )
+    }
+
+    /// A database may already hold label and milestone names that differ
+    /// only in letter case when the name-case migration arrives. The
+    /// migration keeps every such row and judges only later writes.
+    #[test]
+    fn name_case_migration_keeps_case_variant_pairs_and_refuses_new_ones() {
+        // Found by name, so the test holds if the migration is renumbered.
+        let version = MIGRATIONS
+            .iter()
+            .find(|migration| migration.name == "label milestone name case")
+            .expect("the name case migration is registered")
+            .version;
+        let (_dir, mut database) = scratch_database();
+        apply_through(&database.connection(), version - 1).expect("the earlier schema applies");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO projects
+                     (id, code, name, repository, seed_workspace, default_branch,
+                      herdr_session, herdr_workspace, archived, version)
+                 VALUES (1, 'CORE', 'Control plane', '/repositories/kanban',
+                         '/workspaces/kanban.seed', 'main', 'kanban-main',
+                         'kanban.seed', 0, 1),
+                        (2, 'EDGE', 'Edge tooling', '/repositories/edge',
+                         '/workspaces/edge.seed', 'main', 'edge-main',
+                         'edge.seed', 0, 1);
+                 INSERT INTO issue_labels (id, project_id, name)
+                 VALUES (1, 1, 'web'), (2, 1, 'WEB'), (3, 1, 'db');
+                 INSERT INTO issue_milestones (id, project_id, name)
+                 VALUES (1, 1, 'M1 Foundations'), (2, 1, 'm1 foundations'),
+                        (3, 1, 'Hardening');",
+            )
+            .expect("the case-variant pairs land before the rule");
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("the rule applies over existing case-variant pairs");
+        assert!(report.applied.contains(&version), "{:?}", report.applied);
+
+        let conn = database.connection();
+        let names = |table: &str| -> Vec<String> {
+            conn.prepare(&format!("SELECT name FROM {table} ORDER BY id"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(names("issue_labels"), ["web", "WEB", "db"]);
+        assert_eq!(
+            names("issue_milestones"),
+            ["M1 Foundations", "m1 foundations", "Hardening"]
+        );
+
+        for (table, variant, exact, renamed, own_case) in [
+            ("issue_labels", "Web", "web", 3, "DB"),
+            (
+                "issue_milestones",
+                "M1 FOUNDATIONS",
+                "M1 Foundations",
+                3,
+                "HARDENING",
+            ),
+        ] {
+            let insert = format!("INSERT INTO {table} (project_id, name) VALUES (?1, ?2)");
+            let error = conn
+                .execute(&insert, rusqlite::params![1, variant])
+                .expect_err("a new case variant is refused");
+            assert!(refused_by_trigger(&error), "{table}: {error}");
+
+            let repeat = conn
+                .execute(&insert, rusqlite::params![1, exact])
+                .expect_err("an exact repeat is refused");
+            assert!(
+                refused_as_duplicate(&repeat),
+                "{table}: an exact repeat still meets the unique constraint: {repeat}"
+            );
+            assert_eq!(
+                conn.execute(
+                    &format!("INSERT OR IGNORE INTO {table} (project_id, name) VALUES (?1, ?2)"),
+                    rusqlite::params![1, exact],
+                )
+                .expect("seeding an existing name stays a quiet no-op"),
+                0
+            );
+
+            conn.execute(&insert, rusqlite::params![2, variant])
+                .expect("another project is another scope");
+
+            let rename = format!("UPDATE {table} SET name = ?2 WHERE id = ?1");
+            let error = conn
+                .execute(&rename, rusqlite::params![renamed, variant])
+                .expect_err("a rename into a case variant is refused");
+            assert!(refused_by_trigger(&error), "{table}: {error}");
+            conn.execute(&rename, rusqlite::params![renamed, own_case])
+                .expect("a rename that changes only its own case is free");
+            conn.execute(
+                &format!("UPDATE {table} SET name = name WHERE id IN (1, 2)"),
+                [],
+            )
+            .expect("a stored pair stays writable while its names stand still");
+        }
+        assert_eq!(names("issue_labels")[..3], ["web", "WEB", "DB"]);
+    }
+
+    /// A schema-52 database upgrades through the current schema without
+    /// rewriting the rows it already held, and without writing the file
+    /// named by `KANBAN_OLD_FIXTURE`.
+    ///
+    /// The test copies that sqlite file, migrates only the copy, and
+    /// checks the source bytes, mode, and directory listing are unchanged.
+    /// Ignored unless requested with `--ignored`.
+    #[test]
+    #[ignore = "set KANBAN_OLD_FIXTURE to the schema 52 sqlite; migrates a copy only"]
+    fn copied_schema_52_fixture_upgrades_without_rewriting_rows() {
+        let source = std::path::PathBuf::from(
+            std::env::var("KANBAN_OLD_FIXTURE")
+                .expect("KANBAN_OLD_FIXTURE names the schema 52 sqlite"),
+        );
+        let source_bytes = std::fs::read(&source).expect("the fixture file is readable");
+        let source_meta = std::fs::metadata(&source).expect("the fixture metadata is readable");
+        let source_modified = source_meta
+            .modified()
+            .expect("the fixture modification time is readable");
+        let source_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            source_meta.permissions().mode()
+        };
+        let source_dir = source
+            .parent()
+            .expect("the fixture path names a file in a directory");
+        let listing_before = directory_listing(source_dir);
+        eprintln!("FIXTURE_SOURCE={}", source.display());
+
+        let copy_dir = tempfile::tempdir().expect("a writable copy directory");
+        let copy_path = copy_dir.path().join("kanban.sqlite");
+        std::fs::write(&copy_path, &source_bytes).expect("the copy is written");
+
+        let database = crate::db::Database::open(&copy_path).expect("the copy opens");
+        let conn = database.connection();
+        let version_before: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("the source schema version is readable");
+        assert_eq!(version_before, 52, "the fixture must still be schema 52");
+        let tickets_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tickets", [], |row| row.get(0))
+            .unwrap();
+        let comments_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM comments", [], |row| row.get(0))
+            .unwrap();
+        let dependencies_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ticket_dependencies", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let titles_before = text_pairs(
+            &conn,
+            "SELECT COALESCE(title, ''), COALESCE(slice, '') FROM tickets ORDER BY number",
+        );
+        let revisions_before = text_pairs(
+            &conn,
+            "SELECT printf('%d.%d', comment_id, revision), text
+             FROM comment_revisions ORDER BY comment_id, revision",
+        );
+        let timeline_before = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), detail FROM timeline_events
+             WHERE kind = 'comment' ORDER BY id",
+        );
+        let edges_before = text_pairs(
+            &conn,
+            "SELECT printf('%d', from_ticket), printf('%d', to_ticket)
+             FROM ticket_dependencies ORDER BY id",
+        );
+        drop(conn);
+
+        // The same apply step `Database::migrate` runs, paused before the
+        // name-case triggers so that file can be shown not to rewrite rows.
+        let mut names_before_triggers = None;
+        let mut applied = Vec::new();
+        {
+            let conn = database.connection();
+            for migration in MIGRATIONS
+                .iter()
+                .filter(|migration| migration.version > version_before)
+            {
+                if migration.version == 66 {
+                    names_before_triggers = Some((
+                        text_pairs(
+                            &conn,
+                            "SELECT printf('%d', id), name FROM issue_labels ORDER BY id",
+                        ),
+                        text_pairs(
+                            &conn,
+                            "SELECT printf('%d', id), name FROM issue_milestones ORDER BY id",
+                        ),
+                    ));
+                }
+                super::apply_one(&conn, migration)
+                    .expect("schema 52 upgrades through the current schema");
+                applied.push(migration.version);
+            }
+        }
+        let names_before_triggers =
+            names_before_triggers.expect("the name-case migration is in the pending list");
+        assert_eq!(applied.first().copied(), Some(53));
+        assert_eq!(
+            applied.last().copied(),
+            Some(crate::migrations::LATEST_SCHEMA_VERSION)
+        );
+        assert!(
+            applied.contains(&65) && applied.contains(&66),
+            "close-children and name-case migrations both apply: {applied:?}"
+        );
+        let public_path = copy_dir.path().join("kanban-runner.sqlite");
+        std::fs::write(&public_path, &source_bytes).expect("the runner copy is written");
+        let mut via_runner =
+            crate::db::Database::open(&public_path).expect("the runner copy opens");
+        let report = via_runner
+            .migrate(&AllowAllMigrations)
+            .expect("Database::migrate upgrades a schema 52 copy");
+        assert_eq!(
+            report.applied, applied,
+            "the public runner applies the same migrations as the paused apply"
+        );
+        drop(via_runner);
+
+        let conn = database.connection();
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, crate::migrations::LATEST_SCHEMA_VERSION);
+        let tickets: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tickets", [], |row| row.get(0))
+            .unwrap();
+        let comments: i64 = conn
+            .query_row("SELECT COUNT(*) FROM comments", [], |row| row.get(0))
+            .unwrap();
+        let dependencies: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ticket_dependencies", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            (tickets, comments, dependencies),
+            (tickets_before, comments_before, dependencies_before)
+        );
+        assert_eq!((tickets, comments, dependencies), (11, 5, 4));
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT COALESCE(title, ''), COALESCE(slice, '') FROM tickets ORDER BY number",
+            ),
+            titles_before
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d.%d', comment_id, revision), text
+                 FROM comment_revisions ORDER BY comment_id, revision",
+            ),
+            revisions_before
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d', id), detail FROM timeline_events
+                 WHERE kind = 'comment' ORDER BY id",
+            ),
+            timeline_before,
+            "timeline authors stay in the events that recorded them"
+        );
+        assert_eq!(
+            text_pairs(
+                &conn,
+                "SELECT printf('%d', from_ticket), printf('%d', to_ticket)
+                 FROM ticket_dependencies ORDER BY id",
+            ),
+            edges_before
+        );
+        let keys: Vec<String> = conn
+            .prepare(
+                "SELECT p.code || '-' || t.number
+                 FROM tickets AS t
+                 JOIN projects AS p ON p.id = t.project_id
+                 ORDER BY t.number",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            keys,
+            (1..=11)
+                .map(|number| format!("OLD-{number}"))
+                .collect::<Vec<_>>()
+        );
+        let setting: (i64, i64) = conn
+            .query_row(
+                "SELECT auto_close_sub_issues, close_sub_issues_with_parent
+                 FROM projects WHERE code = 'OLD'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(setting, (0, 0));
+        let triggers: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'trigger' AND name LIKE '%name_case%'
+                 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            triggers,
+            [
+                "issue_labels_name_case_insert",
+                "issue_labels_name_case_update",
+                "issue_milestones_name_case_insert",
+                "issue_milestones_name_case_update",
+            ]
+        );
+        let labels_after = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), name FROM issue_labels ORDER BY id",
+        );
+        let milestones_after = text_pairs(
+            &conn,
+            "SELECT printf('%d', id), name FROM issue_milestones ORDER BY id",
+        );
+        assert_eq!(
+            (labels_after, milestones_after),
+            names_before_triggers,
+            "name-case triggers must not rewrite or invent rows"
+        );
+        let authors: Vec<(i64, String)> = conn
+            .prepare("SELECT id, author FROM comments ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let expected_authors: Vec<(i64, String)> = conn
+            .prepare(
+                "SELECT id, COALESCE(
+                     (SELECT json_extract(detail, '$.author')
+                      FROM timeline_events
+                      WHERE kind = 'comment'
+                        AND json_extract(detail, '$.comment_id') = comments.id
+                      ORDER BY recorded_at DESC
+                      LIMIT 1),
+                     ''
+                 )
+                 FROM comments
+                 ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            authors, expected_authors,
+            "a timeline author is kept; a missing one stays empty in storage"
+        );
+        assert!(
+            authors.iter().all(|(_, author)| author != "Unknown author"),
+            "the placeholder is a read, not a stored author: {authors:?}"
+        );
+        eprintln!("FIXTURE_AUTHORS={authors:?}");
+        drop(conn);
+        drop(database);
+
+        let source_after = std::fs::read(&source).expect("the fixture file is still readable");
+        let meta_after =
+            std::fs::metadata(&source).expect("the fixture metadata is still readable");
+        let mode_after = {
+            use std::os::unix::fs::PermissionsExt;
+            meta_after.permissions().mode()
+        };
+        assert_eq!(source_after, source_bytes, "the fixture file bytes changed");
+        assert_eq!(
+            meta_after.modified().expect("mtime"),
+            source_modified,
+            "the fixture modification time changed"
+        );
+        assert_eq!(mode_after, source_mode, "the fixture mode changed");
+        assert_eq!(
+            directory_listing(source_dir),
+            listing_before,
+            "the fixture directory gained, lost, or rewrote a file"
+        );
+    }
+
+    fn text_pairs(conn: &rusqlite::Connection, sql: &str) -> Vec<(String, String)> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn directory_listing(root: &std::path::Path) -> Vec<(String, u32, u64, std::time::SystemTime)> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut rows = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let mut entries = std::fs::read_dir(&dir)
+                .expect("the fixture directory is readable")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("the fixture directory lists");
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let meta = entry.metadata().expect("fixture entry metadata");
+                let relative = entry
+                    .path()
+                    .strip_prefix(root)
+                    .expect("an entry stays under the fixture directory")
+                    .to_string_lossy()
+                    .into_owned();
+                rows.push((
+                    relative,
+                    meta.permissions().mode(),
+                    meta.len(),
+                    meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                ));
+                if meta.is_dir() {
+                    pending.push(entry.path());
+                }
+            }
+        }
+        rows.sort();
+        rows
     }
 }

@@ -16,7 +16,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { KanbanClient } from '@kanban/contracts'
-import type { BoardGlobalCard, TicketRecord, TicketState } from '@kanban/contracts'
+import type { BoardGlobalCard, IssueRecord, TicketRecord, TicketState } from '@kanban/contracts'
 import AppButton from '../components/AppButton.vue'
 import AttemptHistory from '../components/AttemptHistory.vue'
 import BoardCard from '../components/board/BoardCard.vue'
@@ -29,13 +29,16 @@ import DetailDrawer from '../components/DetailDrawer.vue'
 import DoneBoardTable from '../components/DoneBoardTable.vue'
 import EmptyState from '../components/EmptyState.vue'
 import InlineAlert from '../components/InlineAlert.vue'
+import IssueDetailPanel from '../components/IssueDetailPanel.vue'
+import IssueSubIssues from '../components/IssueSubIssues.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 import StatusBadge from '../components/StatusBadge.vue'
-import TicketDetailSections from '../components/TicketDetailSections.vue'
 import TicketDrawerActions from '../components/TicketDrawerActions.vue'
-import TimelineSurface from '../components/TimelineSurface.vue'
+import TicketReviewSections from '../components/TicketReviewSections.vue'
 import { kanbanTransportKey, asApiError } from '../core/transport'
 import { useBoardStore } from '../stores/board'
+import { useIssueLinkStore } from '../stores/issue-link'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { usePreferencesStore } from '../stores/preferences'
 import { useProjectRegisterStore } from '../stores/project-register'
 import { scopeKeyOf, scopeOfRoute } from '../stores/scope'
@@ -77,12 +80,13 @@ import {
   KIND_LABELS,
   STATUS_LABELS,
   STATUS_TONES,
+  issueDisplayKey,
   statusSurfaceClass,
-  ticketTimelineId,
 } from './board-card'
+import { legacyStateToWorkflowName } from '../stores/issue-workflow'
 import type { BoardRegisterColumn, BoardRegisterRow } from './board-card'
-import { refreshesBoard } from './board-events'
-import { chipsFor } from './board-chips'
+import { issuesNamedBy, refreshesBoard } from './board-events'
+import { linearChipsFor } from './linear-chips'
 import type { CardChip } from './board-chips'
 import {
   activeFilterCount,
@@ -112,6 +116,8 @@ const route = useRoute()
 const router = useRouter()
 const projects = useProjectRegisterStore()
 const board = useBoardStore()
+const issueLink = useIssueLinkStore()
+const issueOverlay = useIssueOverlayStore()
 const savedViews = useSavedViewsStore()
 const collapse = usePreferencesStore()
 const shell = useShellStore()
@@ -195,7 +201,7 @@ onMounted(() => {
   if (!transport) return
   listening.push(
     transport.subscribe((event) => {
-      if (refreshesBoard(event.event_type)) void project_()
+      if (refreshesBoard(event.event_type)) void project_(issuesNamedBy(event))
     }),
     transport.onConnectionChange((state) => {
       if (state === 'connected') void load()
@@ -226,9 +232,37 @@ async function load(): Promise<void> {
 // Re-query the projection under the working filter; the views stand.
 // The store's own request generation settles overlapping reads, so
 // the projection on screen is always the newest answer.
-async function project_(): Promise<void> {
+async function project_(named: readonly number[] | null = null): Promise<void> {
   if (!transport || scope.value === null) return
   await board.refresh(transport, scope.value, owned.value.filter)
+  await refreshIssueOverlay(named)
+}
+
+async function refreshIssueOverlay(named: readonly number[] | null): Promise<void> {
+  if (!transport || board.cards.length === 0) return
+  if (named !== null) {
+    await issueOverlay.refreshIssues(
+      transport,
+      board.cards
+        .filter((card) => named.includes(card.ticket.id))
+        .map((card) => ({
+          ticketId: card.ticket.id,
+          projectId: card.ticket.project_id,
+          projectCode: card.project_code,
+          number: card.ticket.number,
+        })),
+    )
+    return
+  }
+  const grouped = new Map<number, number[]>()
+  for (const card of board.cards) {
+    const ids = grouped.get(card.ticket.project_id) ?? []
+    ids.push(card.ticket.id)
+    grouped.set(card.ticket.project_id, ids)
+  }
+  for (const [projectId, ids] of grouped) {
+    await issueOverlay.refreshForProject(transport, projectId, ids)
+  }
 }
 
 // The projection this route's scope holds. A board the store still
@@ -404,7 +438,7 @@ const registerColumns = computed<readonly BoardRegisterColumn[]>(() =>
 )
 
 function cardNumber(card: BoardGlobalCard): string {
-  return `${card.project_code}-T${card.ticket.number}`
+  return issueDisplayKey(card.project_code, card.ticket.number)
 }
 
 function cardTitle(ticket: TicketRecord): string {
@@ -430,22 +464,22 @@ function registerRow(card: BoardGlobalCard): BoardRegisterRow {
     priorityTone: PRIORITY_TONES[ticket.priority],
     progress: progressOf(card),
     moves: movesFor(card),
-    agentOwned: ticket.kind !== 'task',
+    agentOwned: false,
   }
 }
 
-// A register row is moved by naming its target, and the targets are
-// the core's: it says where this Ticket may go now, and the register
-// offers the visible columns that ask for one of those states
-// (KAN-T137-AC5). No lifecycle rule is kept here — the column only
-// says which state a move into it asks for.
+const FINISHED_STATES: readonly TicketRecord['state'][] = ['done', 'cancelled', 'superseded']
+
 function movesFor(card: BoardGlobalCard): readonly { column: BoardColumnId; label: string }[] {
-  const targets = board.legalTargetsFor(card.ticket.id)
-  if (targets.length === 0) return []
+  if (FINISHED_STATES.includes(card.ticket.state)) return []
+  const targetNames = board.workflowTargetsFor(card.ticket.id)
+  if (targetNames.length === 0) return []
   return registerColumnsFor(layouts.value, hidden.value)
     .filter((column) => {
       const drop = dropFor(card.ticket.state, column, layouts.value)
-      return drop !== undefined && targets.includes(drop.state)
+      if (drop === undefined) return false
+      const workflowName = legacyStateToWorkflowName(drop.state)
+      return targetNames.includes(workflowName)
     })
     .map((column) => ({ column, label: boardColumnLabel(column) }))
 }
@@ -481,7 +515,7 @@ const moving = ref(false)
 const notice = ref<string | null>(null)
 
 function canDrag(ticket: TicketRecord): boolean {
-  return ticket.kind === 'task'
+  return board.workflowTargetsFor(ticket.id).length > 0
 }
 
 function dropHighlight(target: BoardColumnId): boolean {
@@ -591,22 +625,21 @@ function cardChrome(ticket: TicketRecord, column: BoardColumnId): string {
 // projection holds back, the reviewers configured on it, the run
 // executing it, and how far its criteria have actually got.
 function cardChips(card: BoardGlobalCard): readonly CardChip[] {
-  return chipsFor(card.ticket, {
-    projectCode: card.project_code,
-    specNumber: card.spec_number,
-    laneId: card.lane_id,
-    blockers: board.blockersFor(card.ticket.id),
-    reviewers: board.reviewersFor(card.ticket.id),
-    execution: board.executionFor(card.ticket.id),
-    bindings: board.bindingsFor(card.ticket.id),
+  const issue = issueOverlay.issueFor(card.ticket.id)
+  return linearChipsFor(card.ticket, {
+    issue,
+    milestoneName: issueOverlay.milestoneName(card.ticket.project_id, issue?.milestone_id),
   })
 }
 
 // The detail drawer.
 const openTicketId = ref<number | null>(null)
 const drawerTicket = ref<TicketRecord | null>(null)
+const drawerIssue = ref<IssueRecord | null>(null)
 const drawerLoading = ref(false)
 const drawerError = ref<string | null>(null)
+const drawerUnread = ref<number | null>(null)
+const drawerSaves = new Map<number, Promise<unknown>>()
 
 const drawerCard = computed(() =>
   drawerTicket.value ? board.cardOf(drawerTicket.value.id) : undefined,
@@ -620,11 +653,11 @@ const drawerProjectCode = computed(
   () => drawerCard.value?.project_code ?? drawerProject.value?.code ?? '',
 )
 const drawerTitle = computed(() =>
-  drawerTicket.value ? cardTitle(drawerTicket.value) : 'Ticket',
+  drawerTicket.value ? cardTitle(drawerTicket.value) : 'Issue',
 )
 const drawerNumber = computed(() =>
   drawerTicket.value && drawerProjectCode.value
-    ? `${drawerProjectCode.value}-T${drawerTicket.value.number}`
+    ? issueDisplayKey(drawerProjectCode.value, drawerTicket.value.number)
     : undefined,
 )
 
@@ -648,13 +681,35 @@ async function loadDrawer(ticketId: number): Promise<void> {
   const attempt = drawerRequest
   drawerLoading.value = true
   drawerError.value = null
+  drawerUnread.value = null
   try {
+    if (drawerSaves.has(ticketId)) await drawerSaves.get(ticketId)
+    if (attempt !== drawerRequest) return
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: ticketId })
     if (attempt !== drawerRequest) return
     drawerTicket.value = record
     drawerError.value = null
-    // Everything the drawer says beyond the record itself is the
-    // core's to answer, read for exactly this Ticket.
+    const card = board.cardOf(ticketId)
+    const code =
+      card?.project_code ??
+      projects.projects.find((entry) => entry.id === record.project_id)?.code ??
+      ''
+    if (code && transport) {
+      try {
+        const issue = await issueOverlay.readIssue(
+          transport,
+          issueDisplayKey(code, record.number),
+        )
+        if (attempt !== drawerRequest) return
+        issueOverlay.put(issue)
+        drawerIssue.value = issueOverlay.issueFor(ticketId) ?? issue
+      } catch {
+        if (attempt !== drawerRequest) return
+        drawerIssue.value = issueOverlay.issueFor(ticketId)
+      }
+    }
+    // Footer actions (park, human review) still read authoritative detail
+    // beside the issue panel; legacy sections stay off the drawer face.
     await detail.load(transport, record)
   } catch (failure) {
     if (attempt !== drawerRequest) return
@@ -670,8 +725,10 @@ function clearDrawer(): void {
   drawerRequest += 1
   openTicketId.value = null
   drawerTicket.value = null
+  drawerIssue.value = null
   drawerError.value = null
   drawerLoading.value = false
+  drawerUnread.value = null
   detail.clear()
 }
 
@@ -727,24 +784,32 @@ async function refreshAttempts(): Promise<void> {
   }
 }
 
-// A command run from the drawer replaces the record the drawer is
-// showing with the one the core returned, and the board re-reads the
-// scope the move may have changed.
-function drawerActed(record: TicketRecord): void {
-  if (drawerTicket.value?.id !== record.id) return
-  drawerTicket.value = record
-  void load()
-}
-
 function openNewTicket(): void {
   ticketDialog.openCreate({
     projectId: scope.value === 'all' || scope.value === null ? null : scope.value,
   })
 }
 
-const drawerTimelineId = computed(() =>
-  drawerTicket.value ? ticketTimelineId(drawerTicket.value.id) : '',
-)
+async function rereadDrawerIssue(record: TicketRecord): Promise<void> {
+  const code = drawerProjectCode.value
+  if (!transport || !code) return
+  const attempt = drawerRequest
+  try {
+    const issue = await issueOverlay.readIssue(transport, issueDisplayKey(code, record.number))
+    if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
+    issueOverlay.put(issue)
+    showDrawerIssue(issueOverlay.issueFor(record.id) ?? issue)
+  } catch {
+    return
+  }
+}
+
+async function drawerActed(record: TicketRecord): Promise<void> {
+  if (drawerTicket.value?.id !== record.id) return
+  showDrawerTicket(record)
+  void load()
+  await rereadDrawerIssue(record)
+}
 
 // A human review verdict appends its audit against the Ticket without
 // moving the Ticket's own version, so the timeline is told to read
@@ -752,8 +817,11 @@ const drawerTimelineId = computed(() =>
 // change (KAN-T139-AC5).
 const drawerReviewTick = ref(0)
 
-function drawerReviewed(): void {
+async function drawerReviewed(ticketId: number): Promise<void> {
   drawerReviewTick.value += 1
+  const record = drawerTicket.value
+  if (record?.id !== ticketId) return
+  await rereadDrawerIssue(record)
 }
 
 // The facts the drawer shows for the open Ticket; the Spec identity
@@ -763,9 +831,8 @@ function drawerReviewed(): void {
 const drawerFacts = computed(() => {
   const ticket = drawerTicket.value
   if (!ticket) return []
-  const facts: { label: string; value: string }[] = [
-    { label: 'Kind', value: KIND_LABELS[ticket.kind] },
-    { label: 'State', value: STATUS_LABELS[ticket.state] },
+  return [
+    { label: 'State', value: legacyStateToWorkflowName(ticket.state) },
     { label: 'Priority', value: PRIORITY_LABELS[ticket.priority] },
     {
       label: 'Project',
@@ -774,16 +841,53 @@ const drawerFacts = computed(() => {
         : drawerProjectCode.value,
     },
   ]
-  const specNumber = drawerCard.value?.spec_number
-  if (specNumber != null) {
-    facts.push({ label: 'Spec', value: `${drawerProjectCode.value}-S${specNumber}` })
-  }
-  if (ticket.subtype) facts.push({ label: 'Subtype', value: ticket.subtype })
-  if (ticket.mode) facts.push({ label: 'Mode', value: ticket.mode })
-  if (ticket.scheduled_for) facts.push({ label: 'Scheduled for', value: ticket.scheduled_for })
-  if (ticket.due) facts.push({ label: 'Due', value: ticket.due })
-  return facts
 })
+
+function showDrawerTicket(record: TicketRecord): void {
+  const shown = drawerTicket.value
+  if (shown?.id === record.id && record.version < shown.version) return
+  drawerTicket.value = record
+  const issue = drawerIssue.value
+  if (issue?.ticket_id === record.id && issue.version < record.version) {
+    drawerIssue.value = { ...issue, version: record.version }
+  }
+}
+
+function showDrawerIssue(issue: IssueRecord): void {
+  const shown = drawerIssue.value
+  if (shown?.ticket_id === issue.ticket_id && issue.version < shown.version) return
+  drawerIssue.value = issue
+  const ticket = drawerTicket.value
+  if (ticket?.id === issue.ticket_id && ticket.version < issue.version) {
+    drawerTicket.value = { ...ticket, version: issue.version }
+  }
+}
+
+function onDrawerIssueSaving(ticketId: number, answered: Promise<unknown>): void {
+  const settled = answered.catch(() => undefined)
+  drawerSaves.set(ticketId, settled)
+  void settled.then(() => {
+    if (drawerSaves.get(ticketId) === settled) drawerSaves.delete(ticketId)
+  })
+}
+
+function onDrawerIssueSaved(ticketId: number): void {
+  if (drawerTicket.value?.id === ticketId) drawerUnread.value = ticketId
+}
+
+async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
+  if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
+  showDrawerIssue(issue)
+  if (drawerUnread.value === issue.ticket_id) drawerUnread.value = null
+  const attempt = drawerRequest
+  try {
+    const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: issue.ticket_id })
+    if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
+    showDrawerTicket(record)
+  } catch {
+    return
+  }
+}
 
 // The empty states: a scope with nothing in it points at planning; a
 // filter that matches nothing offers to clear itself.
@@ -831,8 +935,8 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
             {{ boardTitle }}
           </h1>
           <p class="mt-1.5 max-w-[62ch] text-sm text-ink-muted">
-            Implementation and Bug lifecycles are agent-owned; Task Tickets move freely. A refused
-            move keeps the ticket in its authoritative state.
+            Drag cards between workflow columns; moves land through the issue model and a refused
+            change keeps the ticket in its authoritative state.
           </p>
           <p
             class="mt-1.5 text-xs text-ink-subtle"
@@ -1108,10 +1212,10 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
       </p>
 
       <InlineAlert
-        v-if="board.error || savedViews.error"
+        v-if="board.error || savedViews.error || issueLink.error"
         data-testid="board-error"
       >
-        {{ board.error ?? savedViews.error }}
+        {{ board.error ?? savedViews.error ?? issueLink.error }}
       </InlineAlert>
 
       <InlineAlert
@@ -1382,7 +1486,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
                         :ticket-id="card.ticket.id"
                         :number="cardNumber(card)"
                         :title="cardTitle(card.ticket)"
-                        :kind-label="KIND_LABELS[card.ticket.kind]"
+                        :kind-label="''"
                         :project-code="card.project_code"
                         :show-project="scope === 'all'"
                         :chips="cardChips(card)"
@@ -1458,7 +1562,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
         class="text-sm text-ink-subtle"
         data-testid="drawer-loading"
       >
-        Loading ticket detail…
+        Loading issue detail…
       </p>
       <InlineAlert
         v-else-if="drawerError"
@@ -1485,13 +1589,6 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
               </StatusBadge>
             </dd>
             <dd
-              v-else-if="fact.label === 'Spec'"
-              data-testid="drawer-spec"
-              class="text-sm text-ink"
-            >
-              {{ fact.value }}
-            </dd>
-            <dd
               v-else
               class="text-sm text-ink"
             >
@@ -1500,29 +1597,26 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           </div>
         </dl>
 
-        <TicketDetailSections
+        <IssueSubIssues
+          v-if="drawerProjectCode && drawerTicket"
+          ref="subIssuesPanel"
           class="mt-6"
-          :ticket="drawerTicket"
+          :project-code="drawerProjectCode"
+          :project-id="drawerTicket.project_id"
+          :ticket-id="drawerTicket.id"
+          @open-issue="openTicket"
         />
 
-        <section
-          v-if="drawerTicket.completion.length > 0"
-          class="mt-6 flex flex-col gap-2"
-          data-testid="drawer-completion"
-        >
-          <h3 class="font-display text-sm font-semibold tracking-tight text-ink">
-            Completion criteria
-          </h3>
-          <ul class="flex flex-col gap-2">
-            <li
-              v-for="(outcome, position) in drawerTicket.completion"
-              :key="position"
-              class="rounded-control border border-line bg-surface/70 px-3 py-2 text-sm text-ink"
-            >
-              {{ outcome }}
-            </li>
-          </ul>
-        </section>
+        <IssueDetailPanel
+          v-if="drawerIssue && drawerProjectCode"
+          class="mt-6"
+          :issue="drawerIssue"
+          :project-id="drawerTicket.project_id"
+          :project-code="drawerProjectCode"
+          @refreshed="onDrawerIssueRefreshed"
+          @saved="onDrawerIssueSaved"
+          @saving="onDrawerIssueSaving"
+        />
 
         <AttemptHistory
           class="mt-6"
@@ -1530,21 +1624,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           @recovered="refreshAttempts"
         />
 
-        <div
-          class="mt-6"
-          data-testid="drawer-timeline"
-        >
-          <!-- Keyed on the record's version: a command run from the
-               footer appends its audit row, and the timeline re-reads
-               rather than standing on the answer it had before
-               (KAN-T139-AC5). -->
-          <TimelineSurface
-            :key="`${drawerTicket.id}:${drawerTicket.version}:${drawerReviewTick}`"
-            :scope="{ project: drawerTicket.project_id }"
-            entity-kind="ticket"
-            :entity-id="drawerTimelineId"
-          />
-        </div>
+        <TicketReviewSections class="mt-6" />
       </template>
 
       <template
@@ -1553,8 +1633,9 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
       >
         <TicketDrawerActions
           :ticket="drawerTicket"
-          :legal-targets="board.legalTargetsFor(drawerTicket.id)"
-          :state-labels="STATUS_LABELS"
+          :project-code="drawerProjectCode"
+          :legal-targets="board.workflowTargetsFor(drawerTicket.id)"
+          :locked="drawerLoading || drawerUnread === drawerTicket.id"
           @acted="drawerActed"
           @reviewed="drawerReviewed"
         />

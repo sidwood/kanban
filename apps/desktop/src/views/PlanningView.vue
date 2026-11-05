@@ -26,6 +26,7 @@ import ScheduleEditor from '../components/ScheduleEditor.vue'
 import InlineAlert from '../components/InlineAlert.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { issueDisplayKey } from './board-card'
 
 const transport = inject(kanbanTransportKey)
 const route = useRoute()
@@ -234,7 +235,7 @@ function specId(spec: number): string {
 }
 
 function ticketId(ticket: number): string {
-  return `${projectCode.value}-T${ticket}`
+  return issueDisplayKey(projectCode.value, ticket)
 }
 
 // A Story no Ticket claims is covered by an Implementation on this
@@ -248,6 +249,28 @@ function coverStory(story: string): void {
     specId: matrix.pickedSpecId,
     story,
   })
+}
+
+watch(
+  () => ticketDialog.editor,
+  (now, before) => {
+    if (now === null && before?.story != null && before.specId !== null) {
+      void readCoverageAgain(before.specId)
+    }
+  },
+)
+
+async function readCoverageAgain(specId: number): Promise<void> {
+  if (!transport || matrix.pickedSpecId !== specId) return
+  const claim = issueCommand(scope)
+  const specClaim = issueCommand(specScope)
+  await proposalCoverage.load(
+    transport,
+    specId,
+    graphs.proposals.map((entry) => entry.spec_version),
+  )
+  if (!scopeHolds(scope, claim) || !scopeHolds(specScope, specClaim)) return
+  await matrix.read(transport, specId)
 }
 
 // A saved schedule changes the Ticket the editors read, so the

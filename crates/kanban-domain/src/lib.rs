@@ -19,6 +19,7 @@ pub mod gate_revalidation;
 pub mod graph_proposal;
 pub mod herdr;
 pub mod initiative;
+pub mod issue;
 pub mod landing;
 pub mod lane;
 pub mod lifecycle;
@@ -64,6 +65,7 @@ pub use clone::{
 };
 pub use comment::{
     Comment, CommentError, CommentId, CommentRevision, CommentTarget, CommentText, TextError,
+    UNKNOWN_COMMENT_AUTHOR, displayed_comment_author, is_reserved_comment_author,
 };
 pub use coordinator::{execution_branch, execution_workspace_path, select_reusable_workspace};
 pub use coverage::{
@@ -93,6 +95,7 @@ pub use herdr::{HerdrSession, validate_herdr_session_name};
 pub use initiative::{
     Initiative, InitiativeError, InitiativeId, InitiativeName, InitiativeState, NameError,
 };
+pub use issue::{IssueKey, IssueStateTimestamps, LinearPriority, WorkflowStateType};
 pub use landing::{
     LandingGitObservation, LandingKind, LandingObservedOutcome, LandingRecoveryEffect,
     LandingRecoveryPolicy, LandingRecoveryRefusal, LandingRefusal, LandingRequest, land_lane,

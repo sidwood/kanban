@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TicketListResponse, TicketRecord } from '@kanban/contracts'
 import type { ShellTransport } from '../core/transport'
 import {
+  blankIssueCreateDraft,
   blankTicketDraft,
   parseStoryLinks,
   ticketCreateRequestOf,
@@ -193,5 +194,58 @@ describe('ticket editor store', () => {
     expect(first.mutation.idempotency_key).toBe('key-one')
     expect(second.mutation.idempotency_key).toBe('key-two')
     expect(first.mutation.optimistic_version).toBe(0)
+  })
+
+  it('an issue edit sends only the labels the draft adds or drops', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, command } = harness()
+    command.mockResolvedValue({ identifier: 'CORE-17', ticket_id: 1, url: 'kanban://issue/CORE-17' })
+    const editor = useTicketEditorStore()
+
+    const draft = {
+      ...blankIssueCreateDraft(),
+      title: 'Keep the labels honest',
+      labels: ['Bug', 'Feature'],
+    }
+    const saved = await editor.updateIssue(transport, 'CORE-17', 4, draft, ['Retired', 'Bug'])
+
+    expect(saved).toBe(true)
+    expect(operations.find((entry) => entry.name === 'issue.save')?.request).toStrictEqual({
+      mutation: { optimistic_version: 4, idempotency_key: expect.any(String) },
+      identifier: 'CORE-17',
+      title: 'Keep the labels honest',
+      description: '',
+      priority: 3,
+      due_date: null,
+      add_labels: ['Feature'],
+      remove_labels: ['Retired'],
+      milestone_id: null,
+    })
+  })
+
+  it('an issue edit that keeps every label, a retired one included, sends no label change', async () => {
+    setActivePinia(createPinia())
+    const { transport, operations, command } = harness()
+    command.mockResolvedValue({ identifier: 'CORE-17', ticket_id: 1, url: 'kanban://issue/CORE-17' })
+    const editor = useTicketEditorStore()
+
+    const draft = {
+      ...blankIssueCreateDraft(),
+      title: 'A sharper title',
+      dueDate: '2026-12-01',
+      labels: ['Retired', 'Bug'],
+    }
+    const saved = await editor.updateIssue(transport, 'CORE-17', 4, draft, ['Retired', 'Bug'])
+
+    expect(saved).toBe(true)
+    expect(operations.find((entry) => entry.name === 'issue.save')?.request).toStrictEqual({
+      mutation: { optimistic_version: 4, idempotency_key: expect.any(String) },
+      identifier: 'CORE-17',
+      title: 'A sharper title',
+      description: '',
+      priority: 3,
+      due_date: '2026-12-01',
+      milestone_id: null,
+    })
   })
 })

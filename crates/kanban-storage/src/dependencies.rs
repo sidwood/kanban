@@ -49,6 +49,9 @@ impl DependencyStore for SqliteDependencyStore {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         bump_waiting_version(&span, waiting)?;
+        if edge.from() != waiting.id() {
+            stamp_other_endpoint(&span, edge.from())?;
+        }
         span.execute(
             "INSERT INTO ticket_dependencies (from_ticket, to_ticket) VALUES (?1, ?2)",
             params![edge.from().value() as i64, edge.to().value() as i64,],
@@ -68,6 +71,9 @@ impl DependencyStore for SqliteDependencyStore {
         let conn = self.lock();
         let span = WriteSpan::begin(&conn).map_err(internal)?;
         bump_waiting_version(&span, waiting)?;
+        if edge.from() != waiting.id() {
+            stamp_other_endpoint(&span, edge.from())?;
+        }
         let removed = span
             .execute(
                 "DELETE FROM ticket_dependencies WHERE from_ticket = ?1 AND to_ticket = ?2",
@@ -199,39 +205,31 @@ fn moved(waiting: &Ticket) -> Ticket {
 }
 
 /// Move the waiting Ticket's aggregate version forward by one under
-/// its optimistic guard. The application layer checked the version
-/// before applying, so a refusal here means a concurrent writer
-/// moved it first, and nothing this span wrote may land.
+/// its optimistic guard, stamping the row's update time with it: the
+/// shared ticket-write boundary in [`crate::tickets`] owns the move,
+/// so the issue model's update stamp travels with the version.
 fn bump_waiting_version(span: &WriteSpan<'_>, waiting: &Ticket) -> Result<(), ApiError> {
-    let expected = waiting.version();
+    crate::tickets::bump_version_and_stamp_update(span, waiting)
+}
+fn stamp_other_endpoint(
+    span: &WriteSpan<'_>,
+    endpoint: kanban_domain::TicketId,
+) -> Result<(), ApiError> {
     let changed = span
         .execute(
-            "UPDATE tickets SET version = ?2 WHERE id = ?1 AND version = ?3",
-            params![
-                waiting.id().value() as i64,
-                expected as i64 + 1,
-                expected as i64,
-            ],
+            "UPDATE tickets
+             SET version = version + 1,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+            params![endpoint.value() as i64],
         )
         .map_err(internal)?;
     if changed != 1 {
-        return Err(ticket_write_refused(span, waiting.id(), expected));
+        return Err(ApiError::internal(
+            "the other dependency endpoint disappeared",
+        ));
     }
     Ok(())
-}
-
-/// Why a guarded Ticket write was refused, read from the row's
-/// current state.
-fn ticket_write_refused(span: &WriteSpan<'_>, id: TicketId, attempted_from: u64) -> ApiError {
-    match span.query_row(
-        "SELECT version FROM tickets WHERE id = ?1",
-        params![id.value() as i64],
-        |row| row.get::<_, i64>(0),
-    ) {
-        Ok(current) => ApiError::stale_version(attempted_from, current.unsigned_abs()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => ApiError::not_found(&format!("ticket {id}")),
-        Err(error) => internal(error),
-    }
 }
 
 /// Report a SQLite failure the caller cannot act on.

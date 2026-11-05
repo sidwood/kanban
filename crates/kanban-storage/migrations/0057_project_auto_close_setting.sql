@@ -1,0 +1,4 @@
+-- 0057 project auto-close setting
+--
+-- Applied idempotently from `src/linear_issue_migration.rs` so recovery
+-- tests can re-run migrations 47+ without failing on existing columns.

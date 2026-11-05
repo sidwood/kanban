@@ -170,7 +170,7 @@ describe('WorkspacesView execution', () => {
     const { wrapper } = await mountView()
 
     const row = wrapper.get('[data-testid="lane-row-1"]')
-    expect(row.get('[data-testid="lane-ticket-1"]').text()).toContain('CORE-T12')
+    expect(row.get('[data-testid="lane-ticket-1"]').text()).toContain('CORE-12')
     const current = row.get('[data-testid="lane-run-1"]')
     expect(current.text()).toContain('Run 8')
     expect(current.text()).toContain('deep')

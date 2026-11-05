@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Response payload for the `comment.resolve` command.",
+  "properties": {
+    "comment_id": {
+      "description": "The Comment whose resolution changed.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "resolved": {
+      "description": "Whether the Comment is now resolved.",
+      "type": "boolean"
+    },
+    "version": {
+      "description": "The aggregate version after the change, for optimistic checks.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "comment_id",
+    "resolved",
+    "version"
+  ],
+  "title": "CommentResolveResponse",
+  "type": "object"
+}

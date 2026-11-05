@@ -33,6 +33,7 @@ import InlineAlert from '../components/InlineAlert.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import type { StatusTone } from '../components/StatusBadge.vue'
+import { issueDisplayKey } from './board-card'
 
 const transport = inject(kanbanTransportKey)
 const route = useRoute()
@@ -179,7 +180,9 @@ const laneExecution = computed<Record<number, LaneExecution>>(() =>
           {
             // Until the Ticket rows are read, a Lane can only name the
             // identity it holds itself.
-            ticket: held ? `${project.value?.code ?? ''}-T${held.number}` : `Ticket ${ticketId}`,
+            ticket: held
+              ? issueDisplayKey(project.value?.code ?? '', held.number)
+              : `Ticket ${ticketId}`,
             current: attempts.find((entry) => entry.status === 'executing') ?? null,
             attempts,
           },

@@ -54,9 +54,6 @@ pub enum AdmissionRefusal {
         /// The terminal state the Ticket holds.
         state: TicketState,
     },
-    /// A Bug executes only once its qualification is complete
-    /// (DR-TK-09).
-    UnqualifiedBug,
     /// An Implementation executes only through the approved Ticket
     /// graph that pinned it (DR-PS-17, DR-DE-06).
     GraphUnapproved,
@@ -93,10 +90,6 @@ impl fmt::Display for AdmissionRefusal {
             Self::TerminalTicket { .. } => write!(
                 f,
                 "cancelled and superseded are terminal; the Ticket accepts no further changes"
-            ),
-            Self::UnqualifiedBug => write!(
-                f,
-                "the Bug is unqualified; a Bug executes only once its qualification is complete"
             ),
             Self::GraphUnapproved => write!(
                 f,
@@ -198,9 +191,6 @@ pub fn admit_execution(inputs: AdmissionInputs<'_>) -> Result<(), AdmissionRefus
         return Err(AdmissionRefusal::TerminalTicket {
             state: ticket.state(),
         });
-    }
-    if !ticket.is_qualified() {
-        return Err(AdmissionRefusal::UnqualifiedBug);
     }
     if ticket.pinned_version().is_none() {
         // An Implementation exists only to deliver a Spec version
@@ -436,14 +426,26 @@ mod admission_rules {
     }
 
     #[test]
-    fn an_unqualified_bug_is_refused_and_a_qualified_ready_bug_admits() {
+    fn a_draft_bug_is_not_executable_and_a_qualified_ready_bug_admits() {
         assert_eq!(
             admit(&bug(false), AdmissionRole::Implementer, &ready()),
-            Err(AdmissionRefusal::UnqualifiedBug)
+            Err(AdmissionRefusal::NotExecutable {
+                state: TicketState::Draft,
+                role: AdmissionRole::Implementer,
+            })
         );
         let qualified = at(bug(true), TicketState::Ready);
         assert_eq!(
             admit(&qualified, AdmissionRole::Implementer, &ready()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_unqualified_bug_in_ready_is_admitted() {
+        let unqualified = at(bug(false), TicketState::Ready);
+        assert_eq!(
+            admit(&unqualified, AdmissionRole::Implementer, &ready()),
             Ok(())
         );
     }
@@ -509,7 +511,7 @@ mod admission_rules {
                 TicketState::Ready | TicketState::Active => {
                     assert_eq!(outcome, Ok(()), "{state:?}")
                 }
-                TicketState::Cancelled | TicketState::Superseded => {
+                TicketState::Cancelled | TicketState::Superseded | TicketState::Duplicate => {
                     assert_eq!(outcome, Err(AdmissionRefusal::TerminalTicket { state }))
                 }
                 other => assert_eq!(
@@ -535,7 +537,7 @@ mod admission_rules {
                         "{state:?}: a reviewer answers no readiness gate"
                     )
                 }
-                TicketState::Cancelled | TicketState::Superseded => {
+                TicketState::Cancelled | TicketState::Superseded | TicketState::Duplicate => {
                     assert_eq!(outcome, Err(AdmissionRefusal::TerminalTicket { state }))
                 }
                 other => assert_eq!(

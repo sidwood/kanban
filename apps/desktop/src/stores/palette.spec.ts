@@ -60,7 +60,7 @@ describe('palette navigation', () => {
     expect(routeForSearchHit({
       kind: 'ticket',
       id: 2,
-      identifier: 'CORE-T2',
+      identifier: 'CORE-2',
       label: 'Archive the register',
       project_id: 1,
     })).toBe('/projects/1/board?ticket=2')
@@ -97,7 +97,7 @@ describe('palette navigation', () => {
     expect(routeForSearchHit({
       kind: 'ticket',
       id: 9,
-      identifier: 'CORE-T9',
+      identifier: 'CORE-9',
       label: 'Orphaned',
     })).toBe('/board')
     expect(routeForSearchHit({
@@ -172,6 +172,75 @@ describe('palette store', () => {
 
     expect(queries).toEqual([{ name: 'search.global', request: { q: 'core-p1' } }])
     expect(commands).toEqual([])
+  })
+
+  it('debounces search refresh while the query is non-empty', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      const answer = vi.fn(() => Promise.resolve({ hits: [] }))
+      const { transport, queries } = harness(answer)
+      const palette = usePaletteStore()
+      palette.openPalette()
+
+      const pending = palette.setQuery(transport, 'arch')
+      expect(queries).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(199)
+      expect(queries).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(queries).toEqual([{ name: 'search.global', request: { q: 'arch' } }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops a search answer that arrives after the input has changed', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      const answers: Array<(response: SearchGlobalResponse) => void> = []
+      const { transport, queries } = harness(
+        () => new Promise<SearchGlobalResponse>((resolve) => answers.push(resolve)),
+      )
+      const palette = usePaletteStore()
+      const search = useSearchStore()
+      palette.openPalette()
+
+      void palette.setQuery(transport, 'arch')
+      await vi.advanceTimersByTimeAsync(200)
+      expect(queries).toEqual([{ name: 'search.global', request: { q: 'arch' } }])
+
+      const next = palette.setQuery(transport, 'archive')
+      answers[0]({
+        hits: [{ kind: 'project', id: 4, identifier: 'ARCH', label: 'Architecture notes', project_id: 4 }],
+      })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(queries).toHaveLength(1)
+      expect(search.hits).toEqual([])
+      expect(palette.selectedItem()).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(100)
+      expect(queries.at(-1)).toEqual({ name: 'search.global', request: { q: 'archive' } })
+      const archived = {
+        kind: 'ticket' as const,
+        id: 2,
+        identifier: 'CORE-2',
+        label: 'Archive the register',
+        project_id: 1,
+      }
+      answers[1]({ hits: [archived] })
+      await next
+
+      expect(search.hits).toEqual([archived])
+      expect(palette.selectedItem()?.identifier).toBe('CORE-2')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears search state when it closes', async () => {

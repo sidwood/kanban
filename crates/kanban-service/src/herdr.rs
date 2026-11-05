@@ -2932,8 +2932,9 @@ mod tests {
                     json!({
                         "mutation": { "optimistic_version": 0, "idempotency_key": "comment-wave" },
                         "project_id": 1,
-                        "target": { "kind": "ticket", "id": "wave-1" },
+                        "target": { "kind": "ticket", "id": ticket.to_string() },
                         "text": "unrelated to any Coordinator wake",
+                        "author": "operator",
                     }),
                 );
             }),

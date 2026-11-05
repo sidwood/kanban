@@ -92,10 +92,13 @@ fn capability_enforcement_scopes_comments_before_replay() {
         .register_comments(
             Arc::new(kanban_storage::SqliteCommentStore::new(&h.database)),
             Arc::new(SqliteProjectStore::new(&h.database)),
+            Arc::new(kanban_app::IssueStoreCommentTargets::new(Arc::new(
+                kanban_storage::SqliteIssueStore::new(&h.database),
+            ))),
         )
         .unwrap();
     let request = json!({"mutation":common::mutation(0,"agent-comment"),"project_id":1,
-        "target":{"kind":"ticket","id":first.to_string()},"text":"Implementation evidence is ready."});
+        "target":{"kind":"ticket","id":first.to_string()},"text":"Implementation evidence is ready.","author":"agent"});
     let written = h
         .core
         .agent_command(cap, "comment.create", &request)
@@ -149,6 +152,61 @@ fn capability_enforcement_scopes_comments_before_replay() {
         h.core.command("comment.create", &request).unwrap(),
         "the stored operator outcome is preserved"
     );
+}
+
+#[test]
+fn a_comment_cannot_redirect_outside_the_granted_issue() {
+    let (mut h, own, other, cap) = fixture();
+    h.core
+        .register_comments(
+            Arc::new(kanban_storage::SqliteCommentStore::new(&h.database)),
+            Arc::new(SqliteProjectStore::new(&h.database)),
+            Arc::new(kanban_app::IssueStoreCommentTargets::new(Arc::new(
+                kanban_storage::SqliteIssueStore::new(&h.database),
+            ))),
+        )
+        .unwrap();
+    let comments = |id: u64| {
+        h.core
+            .query(
+                "comment.list",
+                &json!({"target":{"kind":"ticket","id":id.to_string()}}),
+            )
+            .unwrap()
+    };
+    let before = [comments(own), comments(other)];
+    let redirected = json!({
+        "mutation": common::mutation(0, "redirect"),
+        "target": {"kind":"ticket", "id":own.to_string()},
+        "issue": other.to_string(), "body":"Outside the grant", "author":"Ada"
+    });
+    let result = h.core.agent_command(cap, "comment.create", &redirected);
+    assert!(
+        result.is_err(),
+        "the effective issue must be within the grant: {result:?}"
+    );
+    assert_eq!([comments(own), comments(other)], before);
+
+    let authorized = json!({
+        "mutation": common::mutation(0, "own-issue"),
+        "issue": own.to_string(), "body":"Within the grant", "author":"Ada"
+    });
+    let written = h
+        .core
+        .agent_command(cap, "comment.create", &authorized)
+        .unwrap();
+    assert_eq!(written["target"]["id"], own.to_string());
+    assert_eq!(comments(own)["comments"].as_array().unwrap().len(), 1);
+    assert_eq!(comments(other), before[1]);
+    let mut without_author = authorized;
+    without_author["mutation"] = common::mutation(0, "missing-author");
+    without_author.as_object_mut().unwrap().remove("author");
+    assert!(
+        h.core
+            .agent_command(cap, "comment.create", &without_author)
+            .is_err()
+    );
+    assert_eq!(comments(own)["comments"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -418,6 +476,9 @@ fn capability_enforcement_rechecks_expiry_inside_the_write_span() {
         .register_comments(
             Arc::new(kanban_storage::SqliteCommentStore::new(&h.database)),
             Arc::new(SqliteProjectStore::new(&h.database)),
+            Arc::new(kanban_app::IssueStoreCommentTargets::new(Arc::new(
+                kanban_storage::SqliteIssueStore::new(&h.database),
+            ))),
         )
         .unwrap();
     h.core.register_agent_authority(Arc::new(
@@ -430,7 +491,7 @@ fn capability_enforcement_rechecks_expiry_inside_the_write_span() {
             Arc::new(kanban_storage::SqliteRunStore::new(&h.database)),
         ),
     ));
-    let input = json!({"mutation":common::mutation(0,"expiry-race"),"project_id":1,"target":{"kind":"ticket","id":ticket.to_string()},"text":"No late write"});
+    let input = json!({"mutation":common::mutation(0,"expiry-race"),"project_id":1,"target":{"kind":"ticket","id":ticket.to_string()},"text":"No late write","author":"agent"});
     assert!(
         h.core.agent_command(cap, "comment.create", &input).is_err(),
         "expiry between initial check and mutation must prevent the write"

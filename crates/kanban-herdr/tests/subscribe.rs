@@ -293,3 +293,33 @@ fn a_windowed_read_reports_the_streams_disconnection() {
         "the dropped stream reports its disconnection, not the failed deadline restore"
     );
 }
+
+#[test]
+fn a_subscription_the_peer_drops_at_once_reports_disconnected() {
+    let dir = TempDir::new().expect("a scratch directory is available");
+    let _fixture = ScriptedSession::bind(
+        dir.path(),
+        "kanban-main",
+        "/workspaces/kanban.seed",
+        SessionScript::default().with_flapping_subscriptions(),
+    );
+    let mapping = SessionMapping::new(
+        HerdrSession::named("kanban-main").expect("the name validates"),
+        "/workspaces/kanban.seed",
+        "kanban.seed",
+    );
+    let mut client =
+        SessionClient::open_with_io_timeout(mapping, dir.path(), Duration::from_millis(500))
+            .expect("the session socket opens");
+    client.snapshot().expect("the handshake answers");
+    client.subscribe().expect("the subscription is accepted");
+
+    // The peer has closed by the time the settle window applies its
+    // read deadline: the drop must surface as a disconnection whether
+    // the deadline call or the read notices it first.
+    assert_eq!(
+        client.read_event_within(Duration::from_millis(100)),
+        Err(HerdrError::Disconnected),
+        "a peer that dropped the subscription reports a disconnection"
+    );
+}

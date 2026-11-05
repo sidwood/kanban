@@ -135,6 +135,7 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         // The append-only triggers must fire for REPLACE's implicit delete.
         conn.pragma_update(None, "recursive_triggers", "ON")?;
+        register_text_functions(&conn)?;
         let database = Self {
             conn: Arc::new(ReentrantMutex::new(conn)),
             delivery_gate: delivery_gate::gate_for(path),
@@ -236,10 +237,41 @@ impl Database {
     }
 
     /// The raw connection, for tests that must fabricate state.
-    #[cfg(test)]
-    pub(crate) fn connection(&self) -> ReentrantMutexGuard<'_, Connection> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connection(&self) -> ReentrantMutexGuard<'_, Connection> {
         self.lock()
     }
+}
+
+/// The text-matching functions issue paging pushes into SQL, each
+/// backed by the same Rust comparison the in-memory filters always
+/// used, so moving the filter into the database changes no match.
+fn register_text_functions(conn: &Connection) -> Result<(), StorageError> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "fold_eq",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let left: String = context.get(0)?;
+            let right: String = context.get(1)?;
+            Ok(i64::from(focaccia::unicode_full_case_eq(&left, &right)))
+        },
+    )?;
+    conn.create_scalar_function(
+        "issue_query_matches",
+        4,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let identifier: String = context.get(0)?;
+            let title: String = context.get(1)?;
+            let description: String = context.get(2)?;
+            let needle: String = context.get(3)?;
+            let haystack = format!("{identifier} {title} {description}").to_lowercase();
+            Ok(i64::from(haystack.contains(&needle.to_lowercase())))
+        },
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -45,8 +45,9 @@ use crate::clone::{
     CloneRecoveriesResponse, CloneRecoveryRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
 use crate::comment::{
-    CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse,
+    CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentResolveResponse,
+    CommentRevisionRecord, CommentRevisionsQuery, CommentRevisionsResponse,
 };
 use crate::coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -85,6 +86,15 @@ use crate::herdr::{
 use crate::initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
+};
+use crate::issue::{
+    DescriptionEdit, IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest,
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueProjectRecord, IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse,
+    IssueRecord, IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
+    IssueStateHistoryRecord, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
+    IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
 use crate::lane::{
     LaneCreateRequest, LaneListQuery, LaneListResponse, LaneRecord, LaneTicketAssignRequest,
@@ -159,6 +169,42 @@ use crate::workspace::{
     WorkspaceObservationDto, WorkspaceObserveRequest, WorkspaceRecord, WorkspaceRegisterRequest,
     WorkspaceRetireRequest, WorkspaceReuseDto,
 };
+
+/// The create request with its author advertised as required. Serde
+/// defaults the field so an omitted author still reaches the
+/// command's named-field refusal instead of a generic parse error —
+/// a default schemars reads as optional — but the public contract
+/// must promise exactly what the runtime demands.
+fn comment_create_request_schema() -> RootSchema {
+    let mut schema = schema_for!(CommentCreateRequest);
+    if let Some(validation) = schema.schema.object.as_mut() {
+        validation.required.insert("author".to_owned());
+    }
+    with_field_aliases(schema, &[("parent_comment_id", "parentId")])
+}
+
+fn with_field_aliases(mut schema: RootSchema, aliases: &[(&str, &str)]) -> RootSchema {
+    let object = schema.schema.object.as_mut().expect("a request object");
+    for (canonical, alias) in aliases {
+        let field = object.properties[*canonical].clone();
+        object.properties.insert((*alias).to_owned(), field);
+    }
+    schema
+}
+
+fn issue_get_query_schema() -> RootSchema {
+    let mut schema = with_field_aliases(schema_for!(IssueGetQuery), &[("identifier", "id")]);
+    let mut by_id = schema.schema.clone();
+    by_id.object.as_mut().unwrap().required = ["id".to_owned()].into();
+    let variants = vec![schema.schema.clone().into(), by_id.into()];
+    schema
+        .schema
+        .subschemas
+        .get_or_insert_with(Default::default)
+        .any_of = Some(variants);
+    schema.schema.object.as_mut().unwrap().required.clear();
+    schema
+}
 
 /// Every DTO schema exported to `packages/contracts`.
 pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
@@ -274,10 +320,18 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("ChipKind", schema_for!(ChipKind)),
         ("ChipSet", schema_for!(ChipSet)),
         ("ChipVocabulary", schema_for!(ChipVocabulary)),
-        ("CommentCreateRequest", schema_for!(CommentCreateRequest)),
+        ("CommentCreateRequest", comment_create_request_schema()),
         ("CommentEditRequest", schema_for!(CommentEditRequest)),
         ("CommentRecord", schema_for!(CommentRecord)),
+        ("CommentResolveRequest", schema_for!(CommentResolveRequest)),
+        (
+            "CommentResolveResponse",
+            schema_for!(CommentResolveResponse),
+        ),
         ("CommentRevisionRecord", schema_for!(CommentRevisionRecord)),
+        ("CommentListItem", schema_for!(CommentListItem)),
+        ("CommentListQuery", schema_for!(CommentListQuery)),
+        ("CommentListResponse", schema_for!(CommentListResponse)),
         ("CommentRevisionsQuery", schema_for!(CommentRevisionsQuery)),
         (
             "CommentRevisionsResponse",
@@ -410,6 +464,78 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         (
             "InitiativeRenameRequest",
             schema_for!(InitiativeRenameRequest),
+        ),
+        ("IssueChildRecord", schema_for!(IssueChildRecord)),
+        (
+            "IssueCreateLabelRequest",
+            schema_for!(IssueCreateLabelRequest),
+        ),
+        (
+            "IssueRetireLabelRequest",
+            schema_for!(IssueRetireLabelRequest),
+        ),
+        (
+            "IssueCreateMilestoneRequest",
+            schema_for!(IssueCreateMilestoneRequest),
+        ),
+        ("IssueGetQuery", issue_get_query_schema()),
+        ("IssueLabelRecord", schema_for!(IssueLabelRecord)),
+        ("IssueLabelsQuery", schema_for!(IssueLabelsQuery)),
+        ("IssueLabelsResponse", schema_for!(IssueLabelsResponse)),
+        (
+            "IssueListQuery",
+            with_field_aliases(schema_for!(IssueListQuery), &[("parent_id", "parentId")]),
+        ),
+        ("IssueListResponse", schema_for!(IssueListResponse)),
+        ("IssueMilestoneRecord", schema_for!(IssueMilestoneRecord)),
+        ("IssueMilestonesQuery", schema_for!(IssueMilestonesQuery)),
+        (
+            "IssueMilestonesResponse",
+            schema_for!(IssueMilestonesResponse),
+        ),
+        ("IssueProjectRecord", schema_for!(IssueProjectRecord)),
+        (
+            "IssueProjectSettingsResponse",
+            schema_for!(IssueProjectSettingsResponse),
+        ),
+        ("IssueProjectsQuery", schema_for!(IssueProjectsQuery)),
+        ("IssueProjectsResponse", schema_for!(IssueProjectsResponse)),
+        ("IssueRecord", schema_for!(IssueRecord)),
+        ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
+        ("DescriptionEdit", schema_for!(DescriptionEdit)),
+        (
+            "IssueSaveRequest",
+            with_field_aliases(
+                schema_for!(IssueSaveRequest),
+                &[
+                    ("identifier", "id"),
+                    ("parent_id", "parentId"),
+                    ("due_date", "dueDate"),
+                    ("add_blocked_by", "blockedBy"),
+                ],
+            ),
+        ),
+        ("IssueSaveResponse", schema_for!(IssueSaveResponse)),
+        (
+            "IssueStateHistoryRecord",
+            schema_for!(IssueStateHistoryRecord),
+        ),
+        ("IssueSubIssueProgress", schema_for!(IssueSubIssueProgress)),
+        (
+            "IssueUpdateProjectSettingsRequest",
+            schema_for!(IssueUpdateProjectSettingsRequest),
+        ),
+        (
+            "IssueWorkflowStateRecord",
+            schema_for!(IssueWorkflowStateRecord),
+        ),
+        (
+            "IssueWorkflowStatesQuery",
+            schema_for!(IssueWorkflowStatesQuery),
+        ),
+        (
+            "IssueWorkflowStatesResponse",
+            schema_for!(IssueWorkflowStatesResponse),
         ),
         ("McpHealth", schema_for!(McpHealth)),
         ("MutationContext", schema_for!(MutationContext)),

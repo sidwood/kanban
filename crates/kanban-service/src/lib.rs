@@ -58,7 +58,7 @@ use kanban_storage::{
     SqliteRunStore, SqliteSavedViewStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
     SqliteWorkspaceStore, VerifiedBackupHook, load_backup_settings,
 };
-use kanban_transport::loopback::{LoopbackHttp, LoopbackHttpConfig};
+use kanban_transport::loopback::{LoopbackHttp, LoopbackHttpConfig, LoopbackHttpHandlers};
 use kanban_transport::{ServerHandle, SocketServer, TransportError};
 
 use herdr::{HerdrObserver, LiveHerdrDiagnostics, ObservationTuning, production_socket_root};
@@ -322,6 +322,14 @@ fn assemble_core_with_secret(
         spec_store.clone(),
         evidence_store.clone(),
     )?;
+    let issue_store = Arc::new(kanban_storage::SqliteIssueStore::new(&database));
+    core.register_issue_operator(
+        ticket_store.clone(),
+        projects.clone(),
+        spec_store.clone(),
+        issue_store.clone(),
+        comment_store.clone(),
+    )?;
     core.register_lanes(
         lane_store.clone(),
         projects.clone(),
@@ -474,7 +482,11 @@ fn assemble_core_with_secret(
         projects,
         Arc::new(export_files::LocalExportFiles),
     )?;
-    core.register_comments(comment_store, project_store.clone())?;
+    core.register_comments(
+        comment_store,
+        project_store.clone(),
+        Arc::new(kanban_app::IssueStoreCommentTargets::new(issue_store)),
+    )?;
     core.register_rulings(ruling_store, project_store.clone())?;
     core.register_run_recovery(
         Arc::new(kanban_storage::SqliteRunRecoveryStore::new(&database)),
@@ -740,13 +752,27 @@ fn serve_owned_with_mcp(
         notifications::NotificationScheduler::spawn(dispatcher, logs.clone());
     let core = Arc::new(core);
     let http_core = core.clone();
-    let http = LoopbackHttp::start(http, secret.clone(), move |capability| {
-        kanban_app::agent_authorization::AgentSession::new(
-            http_core.clone(),
-            kanban_domain::CapabilityId::new(capability),
-        )
-        .map(kanban_mcp::Adapter::from_session)
-    })
+    let operator_core = core.clone();
+    let operator_name = configured_operator_name(data_dir);
+    let http = LoopbackHttp::start_with_handlers(
+        http,
+        secret.clone(),
+        LoopbackHttpHandlers::with_operator(
+            move |capability| {
+                kanban_app::agent_authorization::AgentSession::new(
+                    http_core.clone(),
+                    kanban_domain::CapabilityId::new(capability),
+                )
+                .map(kanban_mcp::Adapter::from_session)
+            },
+            move || {
+                Ok(kanban_mcp::Adapter::from_operator_named(
+                    operator_core.clone(),
+                    operator_name.clone(),
+                ))
+            },
+        ),
+    )
     .map_err(|_| {
         herdr.shutdown();
         ServiceError::LoopbackHttp
@@ -855,6 +881,14 @@ pub enum ServiceError {
         /// The structured application refusal.
         cause: kanban_dto::ApiError,
     },
+}
+
+fn configured_operator_name(data_dir: &Path) -> Option<String> {
+    let configuration = crate::redaction::read_managed_config(data_dir)
+        .ok()
+        .flatten()?;
+    let name = configuration.get("operator_name")?.as_str()?;
+    (!name.trim().is_empty()).then(|| name.to_owned())
 }
 
 #[cfg(target_os = "macos")]
@@ -2031,12 +2065,26 @@ mod tests {
             }),
         );
         client.command(
+            "ticket.create",
+            json!({
+                "mutation": { "optimistic_version": 0, "idempotency_key": "ticket-1" },
+                "project_id": 1,
+                "kind": "task",
+                "priority": "normal",
+                "subtype": "operational",
+                "mode": "human",
+                "completion": ["Timeline host exists"],
+                "title": "Timeline host",
+            }),
+        );
+        client.command(
             "comment.create",
             json!({
                 "mutation": { "optimistic_version": 0, "idempotency_key": "comment-1" },
                 "project_id": 1,
-                "target": { "kind": "ticket", "id": "kan-t10" },
+                "target": { "kind": "ticket", "id": "1" },
                 "text": "One timeline",
+                "author": "operator",
             }),
         );
         client.command(
@@ -2089,7 +2137,7 @@ mod tests {
         client.command(
             "project.archive",
             json!({
-                "mutation": { "optimistic_version": 1, "idempotency_key": "archive-core" },
+                "mutation": { "optimistic_version": 2, "idempotency_key": "archive-core" },
                 "project_id": 1,
             }),
         );
@@ -2115,6 +2163,7 @@ mod tests {
                 json!({ "kind": "evidence", "scope": { "project": 1 } }),
                 json!({ "kind": "ruling", "scope": { "project": 1 } }),
                 json!({ "kind": "telemetry", "scope": { "project": 1 } }),
+                json!({ "kind": "transition", "scope": { "project": 1 } }),
                 json!({ "kind": "transition", "scope": { "project": 1 } }),
                 json!({ "kind": "transition", "scope": { "project": 1 } }),
             ],

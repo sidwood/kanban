@@ -484,12 +484,89 @@ fn expired(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
+/// `EINVAL` from a deadline syscall is how a socket whose peer
+/// already closed its end surfaces on macOS: applying a timeout is
+/// refused before any read has observed the end of the stream, so
+/// the otherwise-clean disconnection looks like a failed control
+/// call. That state is a disconnection, so the observer reports it
+/// as one; Linux never raises this error for a sound duration.
+const EINVAL: i32 = 22;
+
 fn apply_io_deadline(stream: &UnixStream, deadline: Duration) -> Result<(), HerdrError> {
     stream
         .set_read_timeout(Some(deadline))
-        .map_err(|error| HerdrError::Read(error.to_string()))?;
+        .map_err(|error| deadline_failure(error, HerdrError::Read))?;
     stream
         .set_write_timeout(Some(deadline))
-        .map_err(|error| HerdrError::Write(error.to_string()))?;
+        .map_err(|error| deadline_failure(error, HerdrError::Write))?;
     Ok(())
+}
+
+/// A deadline that could not be applied, keeping the caller's
+/// read-or-write framing for every failure but a closed peer.
+fn deadline_failure(error: std::io::Error, report: fn(String) -> HerdrError) -> HerdrError {
+    if error.raw_os_error() == Some(EINVAL) {
+        HerdrError::Disconnected
+    } else {
+        report(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::{EINVAL, apply_io_deadline, deadline_failure};
+    use crate::error::HerdrError;
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    /// The errno a closed peer produces on the deadline syscalls is
+    /// a disconnection, whatever read-or-write framing the caller
+    /// reports every other failure in.
+    #[test]
+    fn a_deadline_refused_with_einval_reports_disconnected() {
+        let refused = || std::io::Error::from_raw_os_error(EINVAL);
+        assert_eq!(
+            deadline_failure(refused(), HerdrError::Read),
+            HerdrError::Disconnected
+        );
+        assert_eq!(
+            deadline_failure(refused(), HerdrError::Write),
+            HerdrError::Disconnected
+        );
+        assert!(
+            matches!(
+                deadline_failure(std::io::Error::from_raw_os_error(9), HerdrError::Read),
+                HerdrError::Read(_)
+            ),
+            "every other deadline refusal keeps its read framing"
+        );
+    }
+
+    /// Applying a deadline to a socket whose peer closed surfaces the
+    /// closed peer, never a failed control call. On macOS the
+    /// deadline syscall itself is refused with EINVAL and that
+    /// refusal is the disconnection; wherever the OS still accepts
+    /// the deadline on a closed-peer socket, the stream then reads
+    /// as ended, which the reader reports the same way.
+    #[test]
+    fn applying_a_deadline_after_the_peer_closed_reports_disconnected() {
+        let (mut ours, theirs) = UnixStream::pair().expect("a socket pair is available");
+        // The peer closes before any read observes the end of the
+        // stream, so only the closed socket itself is left to ask.
+        drop(theirs);
+        match apply_io_deadline(&ours, Duration::from_millis(50)) {
+            Err(HerdrError::Disconnected) => {}
+            Err(other) => {
+                panic!("a sound duration must not fail the deadline elsewhere: {other:?}")
+            }
+            Ok(()) => {
+                let mut chunk = [0u8; 8];
+                let read = ours
+                    .read(&mut chunk)
+                    .expect("the ended stream reads rather than errors");
+                assert_eq!(read, 0, "the closed peer reads as the end of the stream");
+            }
+        }
+    }
 }

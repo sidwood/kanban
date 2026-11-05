@@ -337,4 +337,17 @@ describe('the application shell', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="ticket-dialog"]').exists()).toBe(true)
   })
+
+  it('refreshes the project register when the core announces a project change', async () => {
+    const shell = harness({ tickets: [ticket()] })
+    await mountApp(shell.transport)
+    const before = shell.query.mock.calls.filter(([name]) => name === 'project.list').length
+
+    shell.emit({ event_type: 'project.registered', project_id: 99 } as never)
+    await flushPromises()
+
+    expect(shell.query.mock.calls.filter(([name]) => name === 'project.list').length).toBe(
+      before + 1,
+    )
+  })
 })

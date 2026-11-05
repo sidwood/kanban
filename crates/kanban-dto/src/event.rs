@@ -1115,6 +1115,8 @@ mod tests {
                     },
                     text: "Updated".to_owned(),
                     version: 2,
+                    identifier: None,
+                    url: None,
                 },
             }
         );

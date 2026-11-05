@@ -19,6 +19,8 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true }
+serde_path_to_error = { workspace = true }
+focaccia = { workspace = true }
 base64 = "0.22.1"
 sha2 = "0.10.9"
 zeroize = "1.9.0"
@@ -31,5 +33,5 @@ path = "src/bin/kanban-contracts-gen.rs"
 tempfile = "3.27.0"
 kanban-herdr = { path = "../kanban-herdr", features = ["test-support"] }
 kanban-service = { path = "../kanban-service" }
-kanban-storage = { path = "../kanban-storage" }
+kanban-storage = { path = "../kanban-storage", features = ["test-support"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

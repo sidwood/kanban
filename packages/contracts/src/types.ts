@@ -11,6 +11,7 @@ export type JsonValue =
 export type ApiError = {
   code: ErrorCode;
   current_version?: number | null;
+  field?: string | null;
   message: string;
 };
 export type AttentionAcknowledgeRequest = {
@@ -186,21 +187,57 @@ export type CloneRemovedRecord = {
   workspace_id: number;
 };
 export type CommentCreateRequest = {
+  author: string;
+  body?: string | null;
+  issue?: string | null;
   mutation: MutationContext;
-  project_id: number;
-  target: TimelineEntityRef;
-  text: string;
+  parentId?: number | null;
+  parent_comment_id?: number | null;
+  project_id?: number | null;
+  target?: TimelineEntityRef | null;
+  text?: string;
 };
 export type CommentEditRequest = {
   comment_id: number;
   mutation: MutationContext;
   text: string;
 };
+export type CommentListItem = {
+  author: string;
+  body: string;
+  created_at: string;
+  edited_at?: string | null;
+  id: number;
+  parent_comment_id?: number | null;
+  resolved_at?: string | null;
+  version: number;
+};
+export type CommentListQuery = {
+  cursor?: string | null;
+  limit?: number;
+  target: TimelineEntityRef;
+};
+export type CommentListResponse = {
+  comments: CommentListItem[];
+  next_cursor?: string | null;
+};
 export type CommentRecord = {
   id: number;
+  identifier?: string | null;
   project_id: number;
   target: TimelineEntityRef;
   text: string;
+  url?: string | null;
+  version: number;
+};
+export type CommentResolveRequest = {
+  comment_id: number;
+  mutation: MutationContext;
+  resolved: boolean;
+};
+export type CommentResolveResponse = {
+  comment_id: number;
+  resolved: boolean;
   version: number;
 };
 export type CommentRevisionRecord = {
@@ -326,6 +363,15 @@ export type DeferralSupersedeRequest = {
   project_id: number;
   reason: string;
 };
+export type DescriptionEdit = {
+  anchor?: string | null;
+  end?: string | null;
+  find?: string | null;
+  replace?: string | null;
+  start?: string | null;
+  text?: string | null;
+  type: string;
+};
 export type DiagnosticsExportQuery = Record<string, never>;
 export type DiagnosticsExportResponse = {
   bundle_dir: string;
@@ -367,7 +413,7 @@ export type DispatchRequestRecord = {
 };
 export type DispatchStatus = 'queued' | 'claimed';
 export type DonePlacement = 'column' | 'table';
-export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'internal';
+export type ErrorCode = 'unknown_field' | 'stale_version' | 'duplicate_idempotency_key' | 'ambiguous_idempotency_key' | 'not_found' | 'invalid_request' | 'conflict' | 'internal';
 export type EventEnvelope = {
   event_type: string;
   payload: JsonValue;
@@ -548,6 +594,201 @@ export type InitiativeRenameRequest = {
   initiative_id: number;
   mutation: MutationContext;
   name: string;
+};
+export type IssueChildRecord = {
+  identifier: string;
+  sort_order: number;
+  state: string;
+  title: string;
+};
+export type IssueCreateLabelRequest = {
+  color: string;
+  group?: string | null;
+  group_single_select?: boolean;
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+};
+export type IssueCreateMilestoneRequest = {
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+  target_date?: string | null;
+};
+export type IssueGetQuery = {
+  id?: string;
+  identifier: string;
+} | {
+  id: string;
+  identifier?: string;
+};
+export type IssueLabelRecord = {
+  color: string;
+  group?: string | null;
+  group_single_select?: boolean;
+  name: string;
+  retired?: boolean;
+};
+export type IssueLabelsQuery = {
+  project_id: number;
+};
+export type IssueLabelsResponse = {
+  labels: IssueLabelRecord[];
+};
+export type IssueListQuery = {
+  assignee?: string | null;
+  cursor?: string | null;
+  fields?: string[] | null;
+  label?: string | null;
+  limit?: number;
+  milestone_id?: number | null;
+  parentId?: string | number | null;
+  parent_id?: string | number | null;
+  project?: string | null;
+  project_id?: number | null;
+  query?: string | null;
+  state?: string | null;
+  team?: string | null;
+  team_id?: number | null;
+  updated_since?: string | null;
+};
+export type IssueListResponse = {
+  issues: IssueRecord[];
+  next_cursor?: string | null;
+};
+export type IssueMilestoneRecord = {
+  id: number;
+  issues_done: number;
+  issues_total: number;
+  name: string;
+  target_date?: string | null;
+};
+export type IssueMilestonesQuery = {
+  project_id: number;
+};
+export type IssueMilestonesResponse = {
+  milestones: IssueMilestoneRecord[];
+};
+export type IssueProjectRecord = {
+  auto_close_sub_issues: boolean;
+  close_sub_issues_with_parent: boolean;
+  code: string;
+  id: number;
+  name: string;
+};
+export type IssueProjectSettingsResponse = {
+  auto_close_sub_issues: boolean;
+  close_sub_issues_with_parent: boolean;
+  project_id: number;
+};
+export type IssueProjectsQuery = Record<string, never>;
+export type IssueProjectsResponse = {
+  projects: IssueProjectRecord[];
+};
+export type IssueRecord = {
+  assignee?: string | null;
+  canceled_at?: string | null;
+  children?: IssueChildRecord[] | null;
+  completed_at?: string | null;
+  created_at: string;
+  creator?: string | null;
+  description?: string;
+  due_date?: string | null;
+  duplicate_of?: string | null;
+  duplicates?: string[] | null;
+  identifier: string;
+  labels: string[];
+  milestone?: string | null;
+  milestone_id?: number | null;
+  parent?: string | null;
+  priority: number;
+  project?: string | null;
+  project_id: number;
+  relations: IssueRelationRecord[];
+  started_at?: string | null;
+  state: string;
+  state_history?: IssueStateHistoryRecord[];
+  state_type: string;
+  sub_issues?: IssueSubIssueProgress | null;
+  team?: string | null;
+  ticket_id: number;
+  title: string;
+  updated_at: string;
+  url: string;
+  version: number;
+};
+export type IssueRelationRecord = {
+  identifier: string;
+  kind: string;
+};
+export type IssueRetireLabelRequest = {
+  mutation: MutationContext;
+  name: string;
+  project_id: number;
+};
+export type IssueSaveRequest = {
+  add_blocked_by?: string[] | null;
+  add_blocks?: string[] | null;
+  add_labels?: string[] | null;
+  add_related?: string[] | null;
+  assignee?: string | null;
+  blockedBy?: string[] | null;
+  creator?: string | null;
+  description?: string | null;
+  description_edits?: DescriptionEdit[] | null;
+  description_patch?: string | null;
+  dueDate?: string | null;
+  due_date?: string | null;
+  duplicate_of?: string | null;
+  id?: string | null;
+  identifier?: string | null;
+  milestone?: string | null;
+  milestone_id?: number | null;
+  mutation: MutationContext;
+  parentId?: string | number | null;
+  parent_id?: string | number | null;
+  priority?: number | null;
+  project?: string | null;
+  project_id?: number | null;
+  remove_blocked_by?: string[] | null;
+  remove_blocks?: string[] | null;
+  remove_labels?: string[] | null;
+  remove_related?: string[] | null;
+  sort_order?: number | null;
+  state?: string | null;
+  team?: string | null;
+  title?: string | null;
+};
+export type IssueSaveResponse = {
+  identifier: string;
+  ticket_id: number;
+  url: string;
+};
+export type IssueStateHistoryRecord = {
+  ended_at?: string | null;
+  started_at: string;
+  state: string;
+  state_type: string;
+};
+export type IssueSubIssueProgress = {
+  done: number;
+  total: number;
+};
+export type IssueUpdateProjectSettingsRequest = {
+  auto_close_sub_issues?: boolean | null;
+  close_sub_issues_with_parent?: boolean | null;
+  mutation: MutationContext;
+  project_id: number;
+};
+export type IssueWorkflowStateRecord = {
+  name: string;
+  state_type: string;
+};
+export type IssueWorkflowStatesQuery = {
+  project_id: number;
+};
+export type IssueWorkflowStatesResponse = {
+  states: IssueWorkflowStateRecord[];
 };
 export type LandingBugRequest = {
   from_path: string;
@@ -1713,7 +1954,7 @@ export type TicketSpecMoveRequest = {
   spec_id: number;
   ticket_id: number;
 };
-export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded';
+export type TicketState = 'draft' | 'parked' | 'blocked' | 'scheduled' | 'ready' | 'active' | 'in_review' | 'approved' | 'landing' | 'done' | 'cancelled' | 'superseded' | 'duplicate';
 export type TicketTransitionRequest = {
   mutation: MutationContext;
   ticket_id: number;

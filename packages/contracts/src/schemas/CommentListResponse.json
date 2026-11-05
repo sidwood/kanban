@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "CommentListItem": {
+      "additionalProperties": false,
+      "description": "One comment row for list views (operator MCP).",
+      "properties": {
+        "author": {
+          "description": "The author the comment speaks for, or `Unknown author` when none was recorded (comments carried over from the ticket model).",
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "edited_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "parent_comment_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resolved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "author",
+        "body",
+        "created_at",
+        "id",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Response payload for the `comment.list` query.",
+  "properties": {
+    "comments": {
+      "items": {
+        "$ref": "#/definitions/CommentListItem"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "comments"
+  ],
+  "title": "CommentListResponse",
+  "type": "object"
+}

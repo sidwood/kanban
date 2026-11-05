@@ -10,6 +10,7 @@ import { computed, inject, ref, watch } from 'vue'
 import type { TicketRecord, TicketReviewStage } from '@kanban/contracts'
 import { kanbanTransportKey } from '../core/transport'
 import { useReviewConfigStore } from '../stores/review-config'
+import { issueDisplayKey } from '../views/board-card'
 
 type SlotDraft = {
   occupant: 'human' | 'profile'
@@ -45,7 +46,7 @@ const pickedTicket = computed(() =>
 )
 
 function ticketId(ticket: { number: number }): string {
-  return `${props.projectCode}-T${ticket.number}`
+  return issueDisplayKey(props.projectCode, ticket.number)
 }
 
 function summary(ticket: { slice?: string | null; title?: string | null }): string {

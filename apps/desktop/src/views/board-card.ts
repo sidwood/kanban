@@ -25,6 +25,7 @@ export const STATUS_LABELS: Record<TicketState, string> = {
   done: 'Done',
   cancelled: 'Cancelled',
   superseded: 'Superseded',
+  duplicate: 'Duplicate',
 }
 
 export const STATUS_TONES: Record<TicketState, StatusTone> = {
@@ -40,6 +41,7 @@ export const STATUS_TONES: Record<TicketState, StatusTone> = {
   done: 'positive',
   cancelled: 'neutral',
   superseded: 'neutral',
+  duplicate: 'neutral',
 }
 
 /**
@@ -68,9 +70,14 @@ export function boardCardTitle(ticket: TicketRecord): string {
   return ticket.slice ?? ticket.title ?? 'Untitled Ticket'
 }
 
-/** The Ticket's global identity, `KAN-T12`, minted by its Project. */
+/** The issue's Linear-style key (`CORE-12`), minted by its Project. */
 export function boardCardNumber(ticket: TicketRecord, projectCode: string): string {
-  return `${projectCode}-T${ticket.number}`
+  return `${projectCode}-${ticket.number}`
+}
+
+/** Linear-style issue key from project code and ticket number. */
+export function issueDisplayKey(projectCode: string, number: number): string {
+  return `${projectCode}-${number}`
 }
 
 /** The timeline entity id the core stores for one Ticket. */

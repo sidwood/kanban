@@ -1,24 +1,18 @@
-// KAN-T139-AC4 (KAN-S10-US5): the drawer derives criteria revisions,
-// dependencies, execution, attempts, reviews, findings, evidence, and
-// the timeline from authoritative records. Nothing is invented: a
-// record the core does not hold is stated as absent, never filled in.
+// Issue drawer detail (U2): authoritative issue.get, not legacy ticket sections.
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
-  CriterionBindingRecord,
-  EvidenceRecord,
   FindingRecord,
-  LaneRecord,
+  IssueRecord,
   ProfileSnapshotRecord,
   ReviewExecutionRecord,
-  RunRecord,
   TicketRecord,
-  WorkspaceRecord,
 } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
+import { useTicketDetailStore } from '../stores/ticket-detail'
 import { harness, ticket } from '../test/shell-harness'
 import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
@@ -29,17 +23,8 @@ const implementation = (overrides: Partial<TicketRecord> = {}): TicketRecord =>
     number: 13,
     kind: 'implementation',
     state: 'in_review',
-    spec_id: 4,
     title: null,
     slice: 'Serve the lifecycle command surface',
-    criteria: [
-      { outcome: 'The commands are served.', stories: ['CORE-S4-US2'] },
-      { outcome: 'The core refuses misuse.', stories: ['CORE-S4-US3'] },
-    ],
-    subtype: null,
-    mode: null,
-    completion: [],
-    profile: 'glm-implementer',
     version: 5,
     ...overrides,
   })
@@ -51,65 +36,6 @@ const snapshot = (name: string): ProfileSnapshotRecord => ({
   effort: 'high',
   usage_pool: 'operator',
 })
-
-const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
-  id: 3,
-  project_id: 1,
-  ticket_id: 8,
-  dispatch_request_id: 4,
-  status: 'executing',
-  requested: snapshot('glm-implementer'),
-  effective: snapshot('glm-fallback'),
-  fallback: true,
-  fallback_path: ['glm-implementer', 'glm-fallback'],
-  created_at: 20,
-  version: 1,
-  ...overrides,
-})
-
-const lane: LaneRecord = { id: 11, project_id: 1, ticket_id: 8, workspace_id: 21, version: 2 }
-
-const workspace: WorkspaceRecord = {
-  id: 21,
-  project_id: 1,
-  path: '/workspaces/kanban.lane-11',
-  is_seed: false,
-  health: 'assigned',
-  observation: {
-    branch: 'kan-recovery-t139',
-    checkout: 'branch',
-    head: 'f00dcafe',
-    lane_assignment: 11,
-    repository_identity: 'kanban',
-    unique_unlanded_commits: false,
-    working_tree_clean: true,
-  },
-  reuse: { clean: true, free_of_unlanded_commits: true, reusable: false, unassigned: false },
-  version: 4,
-}
-
-const bindings: CriterionBindingRecord[] = [
-  {
-    ticket_id: 8,
-    criterion_index: 0,
-    kind: 'acceptance',
-    evidence_id: 31,
-    review: 'validated',
-    satisfied: true,
-    void: false,
-    tip: 'f00dcafe',
-  },
-  {
-    ticket_id: 8,
-    criterion_index: 1,
-    kind: 'acceptance',
-    evidence_id: 32,
-    review: 'pending',
-    satisfied: false,
-    void: true,
-    tip: 'deadbeef',
-  },
-]
 
 const review: ReviewExecutionRecord = {
   id: 55,
@@ -158,8 +84,6 @@ const review: ReviewExecutionRecord = {
   ],
 }
 
-// The prior gate the core expired: the only attempt and revalidation
-// the drawer can be shown are the ones a terminal execution wrote.
 const expired: ReviewExecutionRecord = {
   ...review,
   id: 54,
@@ -189,34 +113,20 @@ const finding: FindingRecord = {
   },
 }
 
-const evidence: EvidenceRecord = {
-  id: 31,
-  project_id: 1,
-  entity_kind: 'ticket',
-  entity_id: '8',
-  evidence_kind: 'repository',
-  commit_identity: 'f00dcafe',
-  content_hash: 'sha256:abc',
-  relative_path: 'temp/review-ready.md',
-}
-
-function shell(options: Partial<HarnessOptions> = {}) {
-  return harness({
-    tickets: [implementation()],
-    runs: [run()],
-    ...options,
-  })
-}
-
 const mountedBoards: VueWrapper[] = []
 
-async function openDrawer(transport: ReturnType<typeof harness>['transport'], ticketId = 8) {
+async function openDrawer(
+  tickets: TicketRecord[],
+  ticketId: number,
+  options: Partial<HarnessOptions> = {},
+) {
+  const shell = harness({ tickets, ...options })
   await router.push('/projects/1/board')
   await router.isReady()
   const wrapper = mount(BoardView, {
     global: {
       plugins: [createPinia(), router],
-      provide: { [kanbanTransportKey as symbol]: transport },
+      provide: { [kanbanTransportKey as symbol]: shell.transport },
     },
     attachTo: document.body,
   })
@@ -224,7 +134,7 @@ async function openDrawer(transport: ReturnType<typeof harness>['transport'], ti
   await flushPromises()
   await wrapper.find(`[data-testid="open-ticket-${ticketId}"]`).trigger('click')
   await flushPromises()
-  return wrapper
+  return { wrapper, query: shell.query }
 }
 
 const text = (testid: string): string =>
@@ -239,97 +149,31 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('the drawer detail, derived from authoritative records', () => {
-  it('shows each criterion revision the core bound: tip, evidence review, and void', async () => {
-    const { transport, query } = shell({ bindings: { 8: bindings } })
-    await openDrawer(transport)
-
-    expect(query).toHaveBeenCalledWith('criterion.bindings', { ticket_id: 8 })
-    expect(text('drawer-criterion-revision-0')).toContain('f00dcafe')
-    expect(text('drawer-criterion-revision-0')).toContain('validated')
-    expect(text('drawer-criterion-revision-1')).toContain('deadbeef')
-    expect(text('drawer-criterion-revision-1')).toContain('pending')
-    expect(text('drawer-criterion-revision-1')).toContain('void')
-  })
-
-  it('states a criterion no revision is bound to rather than inventing one', async () => {
-    const { transport } = shell({ bindings: { 8: [bindings[0]!] } })
-    await openDrawer(transport)
-
-    expect(text('drawer-criterion-revision-0')).toContain('f00dcafe')
-    expect(text('drawer-criterion-revision-1')).toBe('No evidence bound yet')
-  })
-
-  it('reads dependencies and external blockers from ticket.dependencies', async () => {
-    const { transport, query } = shell({
-      dependencies: {
-        8: {
-          dependencies: [
-            { from_ticket_id: 4, from_project_id: 1, from_number: 9, from_state: 'active' },
-          ],
-          blockers: [
-            { id: 51, ticket_id: 8, description: 'The vendor has not shipped the fix.' },
-          ],
-        },
-      },
+describe('the issue drawer detail', () => {
+  it('loads issue.get and shows the issue panel, not legacy criteria', async () => {
+    const held = ticket({
+      id: 8,
+      number: 13,
+      kind: 'implementation',
+      state: 'active',
+      title: 'Serve the lifecycle command surface',
+      slice: 'Serve the lifecycle command surface',
     })
-    await openDrawer(transport)
+    const { query } = await openDrawer([held], 8)
 
-    expect(query).toHaveBeenCalledWith('ticket.dependencies', { ticket_id: 8 })
-    expect(text('drawer-dependency-4')).toContain('CORE-T9')
-    expect(text('drawer-dependency-4')).toContain('active')
-    expect(text('drawer-blocker-51')).toContain('The vendor has not shipped the fix.')
+    expect(query).toHaveBeenCalledWith('issue.get', { identifier: 'CORE-13' })
+    expect(document.querySelector('[data-testid="issue-detail-panel"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="drawer-criteria"]')).toBeFalsy()
+    expect(document.querySelector('[data-testid="drawer-timeline"]')).toBeFalsy()
   })
 
-  // SOL-T139-A-06: a Project-scoped number is unique only inside its
-  // Project, so a blocking Ticket in another Project is named in full.
-  it('names a cross-Project dependency by the Project that owns it', async () => {
-    const { transport } = shell({
-      dependencies: {
-        8: {
-          dependencies: [
-            { from_ticket_id: 4, from_project_id: 2, from_number: 9, from_state: 'active' },
-            { from_ticket_id: 5, from_project_id: 1, from_number: 9, from_state: 'ready' },
-          ],
-          blockers: [],
-        },
-      },
-    })
-    await openDrawer(transport)
-
-    expect(text('drawer-dependency-4')).toContain('EDGE-T9')
-    expect(text('drawer-dependency-4')).not.toContain('CORE-T9')
-    expect(text('drawer-dependency-5')).toContain('CORE-T9')
-  })
-
-  it('shows the planned and effective profile, the fallback, and the lane and workspace', async () => {
-    const { transport, query } = shell({ lanes: [lane], workspaces: [workspace] })
-    await openDrawer(transport)
-
-    expect(query).toHaveBeenCalledWith('lane.list', { project_id: 1 })
-    expect(query).toHaveBeenCalledWith('workspace.list', { project_id: 1 })
-    const execution = text('drawer-execution')
-    expect(execution).toContain('glm-implementer')
-    expect(execution).toContain('glm-fallback')
-    expect(execution).toContain('fallback')
-    expect(execution).toContain('Lane 11')
-    expect(execution).toContain('/workspaces/kanban.lane-11')
-    expect(execution).toContain('Run 3')
-  })
-
-  it('says a Ticket with no run, lane, or workspace has none', async () => {
-    const { transport } = shell({ runs: [] })
-    await openDrawer(transport)
-
-    const execution = text('drawer-execution')
-    expect(execution).toContain('No run has executed this Ticket')
-    expect(execution).not.toContain('Lane')
-    expect(execution).not.toContain('fallback')
+  it('shows state history from the issue record', async () => {
+    await openDrawer([ticket({ id: 7, number: 12, state: 'ready' })], 7)
+    expect(document.querySelector('[data-testid="issue-state-history"]')).toBeTruthy()
   })
 
   it('reads the review stages, their verdicts, and the revalidation the core flags', async () => {
-    const { transport, query } = shell({ reviews: [expired, review] })
-    await openDrawer(transport)
+    const { query } = await openDrawer([implementation()], 8, { reviews: [expired, review] })
 
     expect(query).toHaveBeenCalledWith('review.history', { ticket_id: 8 })
     expect(query).toHaveBeenCalledWith('review.latest', { ticket_id: 8 })
@@ -340,11 +184,11 @@ describe('the drawer detail, derived from authoritative records', () => {
     expect(text('drawer-review-attempt-1')).toContain('expired')
     expect(text('drawer-review-attempt-1')).toContain('gate expired')
     expect(text('drawer-review-revalidation')).toContain('revalidation')
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).not.toBeNull()
   })
 
   it('lists the findings the core holds for the Ticket with their full structure', async () => {
-    const { transport, query } = shell({ findings: [finding] })
-    await openDrawer(transport)
+    const { query } = await openDrawer([implementation()], 8, { findings: [finding] })
 
     expect(query).toHaveBeenCalledWith('finding.list', { project_id: 1 })
     const shown = text('drawer-finding-f-1')
@@ -356,121 +200,247 @@ describe('the drawer detail, derived from authoritative records', () => {
   })
 
   it('leaves out findings recorded against another Ticket', async () => {
-    const { transport } = shell({
+    await openDrawer([implementation()], 8, {
       findings: [{ ...finding, id: 'f-2', ticket_id: 99 }],
     })
-    await openDrawer(transport)
 
     expect(document.querySelector('[data-testid="drawer-finding-f-2"]')).toBeNull()
     expect(text('drawer-findings')).toContain('No findings recorded')
   })
 
-  it('reads the evidence attached to this Ticket alone', async () => {
-    const { transport, query } = shell({
-      evidence: [evidence, { ...evidence, id: 32, entity_id: '99' }],
-    })
-    await openDrawer(transport)
-
-    expect(query).toHaveBeenCalledWith('evidence.list', {
+  it('keeps showing the newer cached issue when the drawer read answers after it', async () => {
+    const record = (overrides: Partial<IssueRecord>): IssueRecord => ({
+      identifier: 'CORE-12',
+      url: 'kanban://issue/CORE-12',
+      ticket_id: 7,
       project_id: 1,
-      entity_kind: 'ticket',
-      entity_id: '8',
+      title: 'Archive the old exports',
+      description: '',
+      state: 'Ready',
+      state_type: 'backlog',
+      priority: 3,
+      labels: [],
+      relations: [],
+      state_history: [],
+      version: 3,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      ...overrides,
     })
-    expect(text('drawer-evidence-31')).toContain('repository')
-    expect(text('drawer-evidence-31')).toContain('f00dcafe')
-    expect(document.querySelector('[data-testid="drawer-evidence-32"]')).toBeNull()
-  })
-
-  it('keeps the attempts and the timeline the drawer already derived', async () => {
-    const { transport } = shell({
-      runs: [run({ id: 1, created_at: 10, effective: snapshot('first-run') }), run()],
-    })
-    await openDrawer(transport)
-
-    expect(document.querySelectorAll('[data-testid^="drawer-attempt-"]')).toHaveLength(2)
-    expect(document.querySelector('[data-testid="drawer-timeline"]')).not.toBeNull()
-  })
-
-  // SOL-T139-A-05: an unanswered source knows nothing about its own
-  // records and nothing at all about anyone else's.
-  it('one unanswered source never turns the other sections into false absence', async () => {
-    const { transport } = shell({
-      findings: [finding],
-      evidence: [evidence],
-      reviews: [review],
-      dependencies: {
-        8: {
-          dependencies: [
-            { from_ticket_id: 4, from_project_id: 1, from_number: 9, from_state: 'active' },
-          ],
-          blockers: [],
-        },
+    const answers: Array<(issue: IssueRecord) => void> = []
+    const shell = harness({
+      tickets: [ticket({ id: 7, number: 12, state: 'ready' })],
+      override: (name) => {
+        if (name === 'issue.list') {
+          return Promise.resolve({ issues: [record({ labels: ['Queued'] })], next_cursor: null })
+        }
+        if (name !== 'issue.get') return undefined
+        return new Promise<IssueRecord>((resolve) => answers.push(resolve))
       },
-      override: (name) =>
-        name === 'finding.list'
-          ? Promise.reject({ code: 'unavailable', message: 'the core is offline' })
-          : undefined,
     })
-    await openDrawer(transport)
-
-    expect(text('drawer-findings')).not.toContain('No findings recorded')
-    expect(text('drawer-findings-unreadable')).toContain('could not be read')
-    expect(text('drawer-detail-error')).toContain('the core is offline')
-    // Every other section still stands on its own authority.
-    expect(text('drawer-dependency-4')).toContain('CORE-T9')
-    expect(text('drawer-evidence-31')).toContain('repository')
-    expect(text('drawer-review-slot-71')).toContain('sol-reviewer')
-    expect(text('drawer-execution')).toContain('Run 3')
-    expect(text('drawer-criterion-revision-0')).toBe('No evidence bound yet')
-  })
-
-  it('keeps the run it did read when the Lane and Workspace read fails', async () => {
-    const { transport } = shell({
-      lanes: [lane],
-      workspaces: [workspace],
-      override: (name) =>
-        name === 'lane.list'
-          ? Promise.reject({ code: 'unavailable', message: 'the core is offline' })
-          : undefined,
+    await router.push('/projects/1/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+      attachTo: document.body,
     })
-    await openDrawer(transport)
-
-    const shown = text('drawer-execution')
-    expect(shown).toContain('Run 3')
-    expect(shown).toContain('glm-fallback')
-    expect(shown).toContain('The Lane and Workspace could not be read.')
-    expect(shown).not.toContain('Lane 11')
-  })
-
-  it('states no records of a section whose own authority did not answer', async () => {
-    const { transport } = shell({
-      reviews: [review],
-      override: (name) =>
-        name === 'review.latest'
-          ? Promise.reject({ code: 'unavailable', message: 'the core is offline' })
-          : undefined,
-    })
-    await openDrawer(transport)
-
-    expect(text('drawer-reviews')).not.toContain('No review has run')
-    expect(text('drawer-reviews-unreadable')).toContain('could not be read')
-    expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
-    expect(text('drawer-evidence')).toContain('No evidence attached')
-    expect(text('drawer-findings')).toContain('No findings recorded')
-    expect(text('drawer-dependencies')).toContain('Nothing holds this Ticket back')
-  })
-
-  it('never writes one Ticket detail over another: a superseded read renders nowhere', async () => {
-    const second = implementation({ id: 9, number: 14, state: 'active', criteria: [] })
-    const { transport } = shell({
-      tickets: [implementation(), second],
-      bindings: { 8: bindings, 9: [] },
-    })
-    const wrapper = await openDrawer(transport)
-
-    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    mountedBoards.push(wrapper)
     await flushPromises()
 
-    expect(document.querySelector('[data-testid="drawer-criterion-revision-0"]')).toBeNull()
+    await wrapper.find('[data-testid="open-ticket-7"]').trigger('click')
+    await flushPromises()
+    shell.emit({ sequence: 4, event_type: 'ticket.edited', payload: shell.tickets[0] })
+    await flushPromises()
+    expect(answers).toHaveLength(2)
+
+    answers[1](record({ version: 5, labels: ['Shipped'] }))
+    await flushPromises()
+    answers[0](record({ version: 4, labels: ['Stale'] }))
+    await flushPromises()
+
+    expect(
+      document.querySelector('[data-testid="issue-detail-labels"]')?.textContent?.trim(),
+    ).toBe('Shipped')
+  })
+
+  it('waits its turn behind the board refresh reads, keeping four issue reads on the wire', async () => {
+    const answers: Array<() => void> = []
+    let onWire = 0
+    let most = 0
+    const shell = harness({
+      tickets: [7, 8, 9, 10, 11].map((id) =>
+        ticket({ id, number: id + 5, state: 'ready', title: `Issue ${id + 5}` }),
+      ),
+      override: (name, request) => {
+        if (name !== 'issue.get') return undefined
+        const { identifier } = request as { identifier: string }
+        const number = Number(identifier.split('-')[1])
+        onWire += 1
+        most = Math.max(most, onWire)
+        return new Promise<IssueRecord>((resolve) =>
+          answers.push(() => {
+            onWire -= 1
+            resolve({
+              identifier,
+              url: `kanban://issue/${identifier}`,
+              ticket_id: number - 5,
+              project_id: 1,
+              title: `Issue ${number}`,
+              description: '',
+              state: 'Ready',
+              state_type: 'backlog',
+              priority: 3,
+              labels: [identifier],
+              relations: [],
+              state_history: [],
+              version: 4,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            })
+          }),
+        )
+      },
+    })
+    await router.push('/projects/1/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+      attachTo: document.body,
+    })
+    mountedBoards.push(wrapper)
+    await flushPromises()
+
+    for (const [index, held] of shell.tickets.slice(0, 4).entries()) {
+      shell.emit({ sequence: 4 + index, event_type: 'ticket.edited', payload: held })
+    }
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    await wrapper.find('[data-testid="open-ticket-11"]').trigger('click')
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    while (answers.length > 0) {
+      answers.shift()!()
+      await flushPromises()
+    }
+
+    expect(most).toBe(4)
+    expect(shell.query).toHaveBeenCalledWith('issue.get', { identifier: 'CORE-16' })
+    expect(
+      document.querySelector('[data-testid="issue-detail-labels"]')?.textContent?.trim(),
+    ).toBe('CORE-16')
+  })
+
+  it.each([
+    ['answers', true],
+    ['fails', false],
+  ])('keeps a late issue read that %s for the Ticket the operator left off the Ticket now on show', async (_outcome, answers) => {
+    const left = ticket({
+      id: 8,
+      number: 13,
+      kind: 'implementation',
+      state: 'in_review',
+      title: null,
+      slice: 'Serve the lifecycle command surface',
+      version: 5,
+    })
+    const shown = ticket({ id: 9, number: 14, title: 'Clone guard misses a dirty tree' })
+    const waiting: ReviewExecutionRecord = {
+      id: 55,
+      project_id: 1,
+      ticket_id: 8,
+      submission_id: 9,
+      configuration_version: 2,
+      tip: 'f00dcafe',
+      status: 'in_progress',
+      version: 6,
+      bounce: null,
+      stages: [
+        {
+          index: 0,
+          status: 'waiting',
+          slots: [
+            {
+              id: 72,
+              occupant: { kind: 'human' },
+              requirement: 'required',
+              requested: null,
+              effective: null,
+              fallback_path: [],
+              dispatch_request_id: null,
+              verdict: null,
+            },
+          ],
+        },
+      ],
+    }
+    let holding = false
+    let releaseLeft: (() => void) | null = null
+    const shell = harness({
+      tickets: [left, shown],
+      reviews: [waiting],
+      override: (name, request) => {
+        if (name !== 'issue.get' || !holding) return undefined
+        if ((request as { identifier: string }).identifier !== 'CORE-13') return undefined
+        return new Promise<IssueRecord>((resolve, reject) => {
+          releaseLeft = () =>
+            answers
+              ? resolve({
+                  identifier: 'CORE-13',
+                  url: 'kanban://issue/CORE-13',
+                  ticket_id: 8,
+                  project_id: 1,
+                  title: 'Serve the lifecycle command surface',
+                  description: 'Serve the lifecycle command surface',
+                  state: 'In Review',
+                  state_type: 'started',
+                  priority: 3,
+                  labels: [],
+                  relations: [],
+                  state_history: [],
+                  version: 5,
+                  created_at: '2026-01-01T00:00:00Z',
+                  updated_at: '2026-01-01T00:00:00Z',
+                })
+              : reject({ code: 'unavailable', message: 'the issue read failed' })
+        })
+      },
+    })
+    const pinia = createPinia()
+    await router.push('/projects/1/board')
+    await router.isReady()
+    const wrapper = mount(BoardView, {
+      global: {
+        plugins: [pinia, router],
+        provide: { [kanbanTransportKey as symbol]: shell.transport },
+      },
+      attachTo: document.body,
+    })
+    mountedBoards.push(wrapper)
+    await flushPromises()
+
+    holding = true
+    await wrapper.find('[data-testid="open-ticket-8"]').trigger('click')
+    await flushPromises()
+    expect(releaseLeft).not.toBeNull()
+    await wrapper.find('[data-testid="open-ticket-9"]').trigger('click')
+    await flushPromises()
+    releaseLeft!()
+    await flushPromises()
+
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(
+      document.querySelector('[data-testid="issue-description-body"]')?.textContent?.trim(),
+    ).toBe('Clone guard misses a dirty tree')
+    expect(useTicketDetailStore(pinia).ticketId).toBe(9)
+    expect(useTicketDetailStore(pinia).review).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-review-decision"]')).toBeNull()
   })
 })

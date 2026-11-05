@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "IssueMilestoneRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "issues_done": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "issues_total": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "issues_done",
+        "issues_total",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "milestones": {
+      "items": {
+        "$ref": "#/definitions/IssueMilestoneRecord"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "milestones"
+  ],
+  "title": "IssueMilestonesResponse",
+  "type": "object"
+}

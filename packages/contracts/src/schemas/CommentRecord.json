@@ -48,6 +48,13 @@
       "minimum": 0.0,
       "type": "integer"
     },
+    "identifier": {
+      "description": "The issue key when this comment is on an issue.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "project_id": {
       "description": "The owning Project.",
       "format": "uint64",
@@ -65,6 +72,13 @@
     "text": {
       "description": "The current text, resolved from the latest revision.",
       "type": "string"
+    },
+    "url": {
+      "description": "The issue URL when this comment is on an issue.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "version": {
       "description": "The aggregate version, for optimistic mutation checks.",

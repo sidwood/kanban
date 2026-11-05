@@ -10,7 +10,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { BoardGlobalCard, TicketRecord, ViewSorting } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
-import { defaultViews, harness, projection, ticket as record } from '../test/shell-harness'
+import {
+  defaultViews,
+  harness,
+  issueOf,
+  projection,
+  ticket as record,
+} from '../test/shell-harness'
+import type { HarnessOptions } from '../test/shell-harness'
 import BoardView from './BoardView.vue'
 import { orderCards, orderGlobalCards } from './board-ordering'
 
@@ -151,10 +158,15 @@ const mountedBoards: VueWrapper[] = []
 // reload holds the same relative order from a different arrival
 // order. The Project's default view carries the sorting key a test
 // names.
-async function mountedBoard(tickets: TicketRecord[], sorting: ViewSorting = 'priority') {
+async function mountedBoard(
+  tickets: TicketRecord[],
+  sorting: ViewSorting = 'priority',
+  override?: HarnessOptions['override'],
+) {
   const shell = harness({
     tickets,
     views: defaultViews().map((view) => ({ ...view, sorting })),
+    override,
   })
   await router.push('/projects/1/board')
   await router.isReady()
@@ -167,6 +179,24 @@ async function mountedBoard(tickets: TicketRecord[], sorting: ViewSorting = 'pri
   mountedBoards.push(wrapper)
   await flushPromises()
   return wrapper
+}
+
+// The issue records the board reads beside its cards, each at the
+// issue priority a test names.
+function issuesAt(
+  tickets: readonly TicketRecord[],
+  priorities: Readonly<Record<number, number>>,
+): HarnessOptions['override'] {
+  return (name) =>
+    name === 'issue.list'
+      ? Promise.resolve({
+          issues: tickets.map((entry) => {
+            const issue = issueOf(entry, `CORE-${entry.number}`)
+            return { ...issue, priority: priorities[entry.id] ?? issue.priority }
+          }),
+          next_cursor: null,
+        })
+      : undefined
 }
 
 function columnCardIds(wrapper: VueWrapper, column: string): number[] {
@@ -218,5 +248,24 @@ describe('the ordered board', () => {
     // pair by priority beneath it.
     expect(wrapper.get('[data-testid="sort-readiness"]').attributes('aria-pressed')).toBe('true')
     expect(columnCardIds(wrapper, 'backlog')).toEqual([2, 4, 3, 5, 1])
+  })
+
+  it('keeps a no-priority issue ahead of a Low one in a readiness tie', async () => {
+    // The core files an issue with no priority in the normal bucket,
+    // ahead of low, and keeps the ticket column in step with it.
+    const tickets = [
+      ticket({ id: 1, number: 1, state: 'ready', priority: 'low' }),
+      ticket({ id: 2, number: 2, state: 'ready', priority: 'normal' }),
+    ]
+    const wrapper = await mountedBoard(tickets, 'priority', issuesAt(tickets, { 1: 4, 2: 0 }))
+
+    expect(wrapper.get('[data-testid="card-chip-priority-1"]').text()).toBe('PriorityLow')
+    expect(wrapper.get('[data-testid="card-chip-priority-2"]').text()).toBe('PriorityNone')
+    expect(columnCardIds(wrapper, 'backlog')).toEqual([2, 1])
+
+    await wrapper.get('[data-testid="sort-readiness"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="sort-readiness"]').attributes('aria-pressed')).toBe('true')
+    expect(columnCardIds(wrapper, 'backlog')).toEqual([2, 1])
   })
 })

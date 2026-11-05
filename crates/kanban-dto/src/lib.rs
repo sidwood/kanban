@@ -29,9 +29,11 @@ pub mod finding;
 pub mod health;
 pub mod herdr;
 pub mod initiative;
+pub mod issue;
 pub mod landing;
 pub mod lane;
 pub mod mutation;
+pub mod nullable_patch;
 pub mod plan;
 pub mod profile;
 pub mod project;
@@ -98,8 +100,9 @@ pub use clone::{
     CloneRecoveriesResponse, CloneRecoveryRecord, CloneRemoveRequest, CloneRemovedRecord,
 };
 pub use comment::{
-    CommentCreateRequest, CommentEditRequest, CommentRecord, CommentRevisionRecord,
-    CommentRevisionsQuery, CommentRevisionsResponse,
+    CommentCreateRequest, CommentEditRequest, CommentListItem, CommentListQuery,
+    CommentListResponse, CommentRecord, CommentResolveRequest, CommentResolveResponse,
+    CommentRevisionRecord, CommentRevisionsQuery, CommentRevisionsResponse,
 };
 pub use coverage::{
     CoverageCriterionProposal, CriterionRefusal, RefusedCriterion, SpecCoverageCheckQuery,
@@ -141,6 +144,15 @@ pub use herdr::{
 pub use initiative::{
     InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery, InitiativeListResponse,
     InitiativeRecord, InitiativeRenameRequest,
+};
+pub use issue::{
+    DescriptionEdit, IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest,
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueProjectRecord, IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse,
+    IssueRecord, IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
+    IssueStateHistoryRecord, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
+    IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
 pub use landing::{
     LandingBugRequest, LandingLaneRequest, LandingReconcileRecord, LandingReconcileRequest,
@@ -347,7 +359,12 @@ mod tests {
                 "CommentCreateRequest",
                 "CommentEditRequest",
                 "CommentRecord",
+                "CommentResolveRequest",
+                "CommentResolveResponse",
                 "CommentRevisionRecord",
+                "CommentListItem",
+                "CommentListQuery",
+                "CommentListResponse",
                 "CommentRevisionsQuery",
                 "CommentRevisionsResponse",
                 "CoverageCriterionProposal",
@@ -412,6 +429,34 @@ mod tests {
                 "InitiativeListResponse",
                 "InitiativeRecord",
                 "InitiativeRenameRequest",
+                "IssueChildRecord",
+                "IssueCreateLabelRequest",
+                "IssueRetireLabelRequest",
+                "IssueCreateMilestoneRequest",
+                "IssueGetQuery",
+                "IssueLabelRecord",
+                "IssueLabelsQuery",
+                "IssueLabelsResponse",
+                "IssueListQuery",
+                "IssueListResponse",
+                "IssueMilestoneRecord",
+                "IssueMilestonesQuery",
+                "IssueMilestonesResponse",
+                "IssueProjectRecord",
+                "IssueProjectSettingsResponse",
+                "IssueProjectsQuery",
+                "IssueProjectsResponse",
+                "IssueRecord",
+                "IssueRelationRecord",
+                "DescriptionEdit",
+                "IssueSaveRequest",
+                "IssueSaveResponse",
+                "IssueStateHistoryRecord",
+                "IssueSubIssueProgress",
+                "IssueUpdateProjectSettingsRequest",
+                "IssueWorkflowStateRecord",
+                "IssueWorkflowStatesQuery",
+                "IssueWorkflowStatesResponse",
                 "McpHealth",
                 "MutationContext",
                 "PlanActivateRequest",

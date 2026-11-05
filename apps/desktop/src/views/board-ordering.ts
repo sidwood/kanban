@@ -40,6 +40,7 @@ const READINESS_RANK: Record<TicketState, number> = {
   done: 9,
   cancelled: -1,
   superseded: -1,
+  duplicate: -1,
 }
 
 /** The order the board, register, and Done table render cards in,

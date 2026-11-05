@@ -14,24 +14,27 @@ use kanban_desktop_lib::commands::{
 use kanban_dto::{
     BoardGlobalQuery, CapacityDefaultsGetQuery, CapacityDefaultsUpdateRequest,
     CapacitySettingsGetQuery, CapacitySettingsUpdateRequest, CloneCreateRequest,
-    CloneRemoveRequest, CommentCreateRequest, CommentEditRequest, CommentRevisionsQuery,
-    DeferralListQuery, DeferralRecordRequest, DeferralSupersedeRequest, DiagnosticsExportQuery,
-    DispatchClaimRequest, DispatchQueueQuery, DispatchRequestCreateRequest, EvidenceAttachRequest,
-    EvidenceListQuery, ExportDriftQuery, ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery,
-    HerdrDefaultsUpdateRequest, HerdrSettingsGetQuery, HerdrSettingsUpdateRequest,
-    InitiativeArchiveRequest, InitiativeCreateRequest, InitiativeListQuery,
-    InitiativeRenameRequest, LaneCreateRequest, LaneListQuery, LaneTicketAssignRequest,
-    LaneTicketReleaseRequest, LaneWorkspaceAssignRequest, LaneWorkspaceReleaseRequest,
-    MutationContext, PlanActivateRequest, PlanArchiveRequest, PlanCancelRequest,
-    PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery, PlanEdgeAddRequest,
-    PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest, PlanSpecAddRequest,
-    PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest, ProfileGetQuery,
-    ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest, ProjectArchiveRequest,
-    ProjectListQuery, ProjectRegisterRequest, ProjectUpdateRequest, RulingListQuery,
-    RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest, RunListQuery,
-    SearchGlobalQuery, ShellPreferencesQuery, ShellPreferencesUpdateRequest, SpecContent,
-    SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageMatrixQuery, SpecCreateRequest,
-    SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
+    CloneRemoveRequest, CommentCreateRequest, CommentEditRequest, CommentListQuery,
+    CommentResolveRequest, CommentRevisionsQuery, DeferralListQuery, DeferralRecordRequest,
+    DeferralSupersedeRequest, DiagnosticsExportQuery, DispatchClaimRequest, DispatchQueueQuery,
+    DispatchRequestCreateRequest, EvidenceAttachRequest, EvidenceListQuery, ExportDriftQuery,
+    ExportRenderRequest, HealthQuery, HerdrDefaultsGetQuery, HerdrDefaultsUpdateRequest,
+    HerdrSettingsGetQuery, HerdrSettingsUpdateRequest, InitiativeArchiveRequest,
+    InitiativeCreateRequest, InitiativeListQuery, InitiativeRenameRequest, IssueCreateLabelRequest,
+    IssueCreateMilestoneRequest, IssueGetQuery, IssueLabelsQuery, IssueListQuery,
+    IssueMilestonesQuery, IssueProjectsQuery, IssueRetireLabelRequest, IssueSaveRequest,
+    IssueUpdateProjectSettingsRequest, IssueWorkflowStatesQuery, LaneCreateRequest, LaneListQuery,
+    LaneTicketAssignRequest, LaneTicketReleaseRequest, LaneWorkspaceAssignRequest,
+    LaneWorkspaceReleaseRequest, MutationContext, PlanActivateRequest, PlanArchiveRequest,
+    PlanCancelRequest, PlanCompleteRequest, PlanCreateRequest, PlanDiagnosticsQuery,
+    PlanEdgeAddRequest, PlanEdgeRemoveRequest, PlanGetQuery, PlanListQuery, PlanReplanRequest,
+    PlanSpecAddRequest, PlanSpecMoveRequest, PlanSpecRemoveRequest, ProfileDefineRequest,
+    ProfileGetQuery, ProfileListQuery, ProfileRetireRequest, ProfileUpdateRequest,
+    ProjectArchiveRequest, ProjectListQuery, ProjectRegisterRequest, ProjectUpdateRequest,
+    RulingListQuery, RulingRecordRequest, RulingSupersedeRequest, RunAcknowledgeRequest,
+    RunListQuery, SearchGlobalQuery, ShellPreferencesQuery, ShellPreferencesUpdateRequest,
+    SpecContent, SpecContentUpdateRequest, SpecCoverageCheckQuery, SpecCoverageMatrixQuery,
+    SpecCreateRequest, SpecExecutionMoveRequest, SpecGetQuery, SpecListQuery, SpecPlanJoinRequest,
     SpecVersionApproveRequest, SpecVersionGetQuery, SpecVersionSupersedeRequest,
     TicketAssignRequest, TicketBlockerAddRequest, TicketBlockerRemoveRequest,
     TicketBugFactsRequest, TicketBugQualifyRequest, TicketCancelRequest, TicketCreateRequest,
@@ -406,6 +409,10 @@ fn sample_request(schema: &str) -> Value {
             "text": "edited",
         }),
         "CommentRevisionsQuery" => json!({ "comment_id": 1 }),
+        "CommentListQuery" => json!({
+            "target": { "kind": "ticket", "id": "kan-t1" },
+            "limit": 50,
+        }),
         "RulingRecordRequest" => json!({
             "mutation": mutation,
             "project_id": 1,
@@ -658,6 +665,45 @@ fn sample_request(schema: &str) -> Value {
             json!({ "mutation": mutation, "instance_id": "fixture", "enabled": true })
         }
         "SearchGlobalQuery" => json!({ "q": "core-t1" }),
+        "IssueSaveRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "title": "Operator fixture issue",
+            "state": "Draft",
+            "priority": 3,
+        }),
+        "IssueGetQuery" => json!({ "identifier": "CORE-1" }),
+        "IssueListQuery" => json!({ "project_id": 1, "limit": 10 }),
+        "IssueWorkflowStatesQuery" => json!({ "project_id": 1 }),
+        "IssueLabelsQuery" => json!({ "project_id": 1 }),
+        "IssueMilestonesQuery" => json!({ "project_id": 1 }),
+        "CommentResolveRequest" => json!({
+            "mutation": mutation,
+            "comment_id": 1,
+            "resolved": true,
+        }),
+        "IssueProjectsQuery" => json!({}),
+        "IssueCreateMilestoneRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "Stage 2",
+        }),
+        "IssueCreateLabelRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "severity-high",
+            "color": "#ff0000",
+        }),
+        "IssueRetireLabelRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "name": "severity-high",
+        }),
+        "IssueUpdateProjectSettingsRequest" => json!({
+            "mutation": mutation,
+            "project_id": 1,
+            "auto_close_sub_issues": true,
+        }),
         "ShellPreferencesUpdateRequest" => json!({
             "mutation": mutation,
             "rail_open": true,
@@ -785,7 +831,9 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "TimelineQuery" => decode_invoke_args::<TimelineQuery>(request).is_err(),
         "CommentCreateRequest" => decode_invoke_args::<CommentCreateRequest>(request).is_err(),
         "CommentEditRequest" => decode_invoke_args::<CommentEditRequest>(request).is_err(),
+        "CommentResolveRequest" => decode_invoke_args::<CommentResolveRequest>(request).is_err(),
         "CommentRevisionsQuery" => decode_invoke_args::<CommentRevisionsQuery>(request).is_err(),
+        "CommentListQuery" => decode_invoke_args::<CommentListQuery>(request).is_err(),
         "RulingRecordRequest" => decode_invoke_args::<RulingRecordRequest>(request).is_err(),
         "RulingSupersedeRequest" => decode_invoke_args::<RulingSupersedeRequest>(request).is_err(),
         "RulingListQuery" => decode_invoke_args::<RulingListQuery>(request).is_err(),
@@ -1060,6 +1108,27 @@ fn assert_unknown_fields_refused(schema: &str, request: Value) {
         "ShellPreferencesQuery" => decode_invoke_args::<ShellPreferencesQuery>(request).is_err(),
         "ShellPreferencesUpdateRequest" => {
             decode_invoke_args::<ShellPreferencesUpdateRequest>(request).is_err()
+        }
+        "IssueSaveRequest" => decode_invoke_args::<IssueSaveRequest>(request).is_err(),
+        "IssueGetQuery" => decode_invoke_args::<IssueGetQuery>(request).is_err(),
+        "IssueListQuery" => decode_invoke_args::<IssueListQuery>(request).is_err(),
+        "IssueWorkflowStatesQuery" => {
+            decode_invoke_args::<IssueWorkflowStatesQuery>(request).is_err()
+        }
+        "IssueLabelsQuery" => decode_invoke_args::<IssueLabelsQuery>(request).is_err(),
+        "IssueMilestonesQuery" => decode_invoke_args::<IssueMilestonesQuery>(request).is_err(),
+        "IssueProjectsQuery" => decode_invoke_args::<IssueProjectsQuery>(request).is_err(),
+        "IssueCreateLabelRequest" => {
+            decode_invoke_args::<IssueCreateLabelRequest>(request).is_err()
+        }
+        "IssueCreateMilestoneRequest" => {
+            decode_invoke_args::<IssueCreateMilestoneRequest>(request).is_err()
+        }
+        "IssueRetireLabelRequest" => {
+            decode_invoke_args::<IssueRetireLabelRequest>(request).is_err()
+        }
+        "IssueUpdateProjectSettingsRequest" => {
+            decode_invoke_args::<IssueUpdateProjectSettingsRequest>(request).is_err()
         }
         "WorkspaceListQuery" => decode_invoke_args::<WorkspaceListQuery>(request).is_err(),
         other => panic!("no unknown-field arm for {other}"),

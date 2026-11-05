@@ -236,7 +236,7 @@ fn admission_refuses_unsafe_claims_over_the_socket_and_admits_legal_work_across_
     assert_eq!(refusal["code"], "invalid_request", "{refusal}");
     assert_eq!(
         refusal["message"],
-        "the Bug is unqualified; a Bug executes only once its qualification is complete"
+        "a draft Ticket is not executable; an implementer run admits a ready or active Ticket"
     );
     assert_eq!(ticket_state(&mut client, id(&bug)), bug_before);
     assert_eq!(queued_ids(&mut client, 1), vec![unqualified]);
@@ -304,7 +304,7 @@ fn admission_refuses_unsafe_claims_over_the_socket_and_admits_legal_work_across_
     );
     assert_eq!(
         refusal["message"],
-        "the Bug is unqualified; a Bug executes only once its qualification is complete"
+        "a draft Ticket is not executable; an implementer run admits a ready or active Ticket"
     );
     let refusal =
         client.command_error("dispatch.claim", claim_payload(stale, "cancelled-reloaded"));

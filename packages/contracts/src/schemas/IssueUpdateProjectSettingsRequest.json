@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MutationContext": {
+      "additionalProperties": false,
+      "description": "Metadata every mutation must carry so retries and stale edits are safe.",
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "optimistic_version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "optimistic_version"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "auto_close_sub_issues": {
+      "description": "Close an open parent automatically once every sub-issue is closed (Linear's \"auto-close parent issues\").",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "close_sub_issues_with_parent": {
+      "description": "Close a parent's open sub-issues when the parent closes (Linear's \"auto-close sub-issues\"): a completed parent completes them, and a canceled or duplicate parent cancels them.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "mutation": {
+      "$ref": "#/definitions/MutationContext"
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "mutation",
+    "project_id"
+  ],
+  "title": "IssueUpdateProjectSettingsRequest",
+  "type": "object"
+}

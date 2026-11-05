@@ -11,6 +11,7 @@
 import { defineStore } from 'pinia'
 import { KanbanClient } from '@kanban/contracts'
 import type {
+  IssueSaveRequest,
   TaskMode,
   TaskSubtype,
   TicketCreateRequest,
@@ -35,6 +36,34 @@ export const TASK_SUBTYPES: TaskSubtype[] = [
   'manual',
 ]
 export const TASK_MODES: TaskMode[] = ['human', 'agent']
+
+export const LINEAR_PRIORITIES: readonly { value: number; label: string }[] = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Urgent' },
+  { value: 2, label: 'High' },
+  { value: 3, label: 'Medium' },
+  { value: 4, label: 'Low' },
+]
+
+export interface IssueCreateDraft {
+  title: string
+  description: string
+  priority: number
+  dueDate: string
+  labels: string[]
+  milestoneId: number | null
+}
+
+export function blankIssueCreateDraft(): IssueCreateDraft {
+  return {
+    title: '',
+    description: '',
+    priority: 3,
+    dueDate: '',
+    labels: [],
+    milestoneId: null,
+  }
+}
 
 // One criterion row the editor holds before its story links parse.
 export interface TicketCriterionDraft {
@@ -147,6 +176,57 @@ export function ticketCreateRequestOf(
   return request
 }
 
+const TICKET_PRIORITY_OF_LINEAR: Readonly<Record<number, TicketPriority>> = {
+  1: 'urgent',
+  2: 'high',
+  4: 'low',
+}
+
+export function storyCoverDraft(
+  specId: number,
+  story: string,
+  draft: IssueCreateDraft,
+): TicketDraft {
+  return {
+    ...blankTicketDraft(),
+    kind: 'implementation',
+    priority: TICKET_PRIORITY_OF_LINEAR[draft.priority] ?? 'normal',
+    specId,
+    slice: draft.title,
+    criteria: [
+      {
+        outcome: draft.description.trim() === '' ? `Covers story ${story}.` : draft.description,
+        stories: story,
+      },
+    ],
+  }
+}
+
+export function storyCoverFieldsRequest(
+  identifier: string,
+  landed: TicketRecord,
+  draft: IssueCreateDraft,
+): IssueSaveRequest {
+  const request: IssueSaveRequest = {
+    mutation: { optimistic_version: landed.version, idempotency_key: crypto.randomUUID() },
+    identifier,
+    title: draft.title,
+    description: draft.description,
+    priority: draft.priority,
+  }
+  const due = draft.dueDate.trim()
+  if (due !== '') {
+    request.due_date = due
+  }
+  if (draft.labels.length > 0) {
+    request.add_labels = [...draft.labels]
+  }
+  if (draft.milestoneId !== null) {
+    request.milestone_id = draft.milestoneId
+  }
+  return request
+}
+
 export const useTicketEditorStore = defineStore('ticket-editor', {
   state: () => ({
     tickets: [] as TicketRecord[],
@@ -164,6 +244,80 @@ export const useTicketEditorStore = defineStore('ticket-editor', {
         this.error = null
       } catch (failure) {
         this.error = asApiError(failure).message
+      }
+    },
+    async createIssue(
+      transport: ShellTransport,
+      projectId: number,
+      draft: IssueCreateDraft,
+      parentTicketId: number | null = null,
+    ): Promise<boolean> {
+      const request: IssueSaveRequest = {
+        mutation: { optimistic_version: 0, idempotency_key: crypto.randomUUID() },
+        project_id: projectId,
+        title: draft.title.trim(),
+        description: draft.description,
+        priority: draft.priority,
+        state: 'Draft',
+      }
+      if (parentTicketId !== null) {
+        request.parent_id = String(parentTicketId)
+      }
+      const due = draft.dueDate.trim()
+      if (due !== '') {
+        request.due_date = due
+      }
+      if (draft.labels.length > 0) {
+        request.add_labels = [...draft.labels]
+      }
+      if (draft.milestoneId !== null) {
+        request.milestone_id = draft.milestoneId
+      }
+      try {
+        await new KanbanClient(transport).commandIssueSave(request)
+        this.error = null
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return false
+      }
+      await this.refresh(transport, projectId)
+      return true
+    },
+    async updateIssue(
+      transport: ShellTransport,
+      identifier: string,
+      optimisticVersion: number,
+      draft: IssueCreateDraft,
+      existingLabels: readonly string[],
+    ): Promise<boolean> {
+      const request: IssueSaveRequest = {
+        mutation: {
+          optimistic_version: optimisticVersion,
+          idempotency_key: crypto.randomUUID(),
+        },
+        identifier,
+        title: draft.title.trim(),
+        description: draft.description,
+        priority: draft.priority,
+      }
+      const due = draft.dueDate.trim()
+      request.due_date = due === '' ? null : due
+      const added = draft.labels.filter((label) => !existingLabels.includes(label))
+      if (added.length > 0) {
+        request.add_labels = added
+      }
+      const removed = existingLabels.filter((label) => !draft.labels.includes(label))
+      if (removed.length > 0) {
+        request.remove_labels = removed
+      }
+      request.milestone_id = draft.milestoneId
+      try {
+        await new KanbanClient(transport).commandIssueSave(request)
+        this.error = null
+        return true
+      } catch (failure) {
+        this.error = asApiError(failure).message
+        return false
       }
     },
     // Create one Ticket under its kind's schema. Reports whether the

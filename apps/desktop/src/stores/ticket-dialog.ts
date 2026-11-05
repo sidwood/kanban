@@ -29,6 +29,8 @@ export interface TicketEditorRequest {
   story: string | null
   /** The Ticket being revised, in edit mode. */
   ticketId: number | null
+  /** When creating a sub-issue, the parent ticket id. */
+  parentTicketId: number | null
 }
 
 export const useTicketDialogStore = defineStore('ticket-dialog', {
@@ -49,11 +51,25 @@ export const useTicketDialogStore = defineStore('ticket-dialog', {
       this.editor = {
         mode: 'create',
         projectId: request.projectId,
-        kind: request.kind ?? 'implementation',
+        kind: request.kind ?? 'task',
         kindLocked: false,
         specId: null,
         story: null,
         ticketId: null,
+        parentTicketId: null,
+      }
+    },
+    /** Create a child issue under an open parent. */
+    openSubIssue(request: { projectId: number; parentTicketId: number }): void {
+      this.editor = {
+        mode: 'create',
+        projectId: request.projectId,
+        kind: 'task',
+        kindLocked: false,
+        specId: null,
+        story: null,
+        ticketId: null,
+        parentTicketId: request.parentTicketId,
       }
     },
     /** A Spec's uncovered Story: only an Implementation covers one,
@@ -67,6 +83,7 @@ export const useTicketDialogStore = defineStore('ticket-dialog', {
         specId: request.specId,
         story: request.story,
         ticketId: null,
+        parentTicketId: null,
       }
     },
     /** Drawer Edit: the standing Ticket fixes the kind, and the
@@ -80,6 +97,7 @@ export const useTicketDialogStore = defineStore('ticket-dialog', {
         specId: null,
         story: null,
         ticketId: request.ticketId,
+        parentTicketId: null,
       }
     },
     closeEditor(): void {

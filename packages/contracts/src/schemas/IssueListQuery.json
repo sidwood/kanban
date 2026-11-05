@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "assignee": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cursor": {
+      "description": "Opaque page boundary. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fields": {
+      "description": "Extra record fields to include. `description` and `history` are omitted unless named here. Unrecognised names are ignored.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "default": 0,
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "milestone_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "parentId": {
+      "description": "Parent issue by key (`CODE-123`) or numeric ticket id. JSON `null` clears the filter.",
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "parent_id": {
+      "description": "Parent issue by key (`CODE-123`) or numeric ticket id. JSON `null` clears the filter.",
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "project": {
+      "description": "Project-group label name. This is not the Kanban project id.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "query": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "description": "Filter by Kanban workflow state name: Draft, Parked, Blocked, Scheduled, Ready, Active, In Review, Approved, Landing, Done, Cancelled, Superseded, or Duplicate. Also accepts workflow types: backlog, unstarted, started, completed, canceled, and duplicate; a type matches every state of that type. Matching is case-insensitive and input is not trimmed. Unknown values such as Todo are refused. Omit or send null for all states.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "team": {
+      "description": "Kanban project code, the Linear team. For example `CORE`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "team_id": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "updated_since": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "IssueListQuery",
+  "type": "object"
+}

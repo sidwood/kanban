@@ -50,17 +50,22 @@ const emit = defineEmits<{
   dragstart: [event: DragEvent]
   dragend: []
 }>()
+
+function onOpen(): void {
+  emit('open')
+}
 </script>
 
 <template>
   <article
     class="flex w-full flex-col gap-2 rounded-control border bg-surface px-3 py-3 text-left shadow-panel transition-[border-color,box-shadow,opacity]"
-    :class="[chrome, dragging ? 'opacity-60' : '', draggable ? 'cursor-grab' : '']"
+    :class="[chrome, dragging ? 'opacity-60' : '', draggable ? 'cursor-grab' : 'cursor-pointer']"
     :draggable="draggable"
     :aria-label="label"
     :data-testid="`kanban-card-${ticketId}`"
     :data-kind="kind"
     :data-state="state"
+    @click="onOpen"
     @dragstart="emit('dragstart', $event)"
     @dragend="emit('dragend')"
   >
@@ -72,6 +77,7 @@ const emit = defineEmits<{
         {{ number }}
       </span>
       <span
+        v-if="kindLabel"
         class="text-[0.625rem] font-semibold tracking-[0.06em] text-ink-subtle uppercase"
         :data-testid="`card-kind-${ticketId}`"
       >
@@ -80,9 +86,8 @@ const emit = defineEmits<{
     </div>
     <button
       type="button"
-      class="self-start text-left text-sm font-medium text-ink underline-offset-2 transition-colors hover:text-accent hover:underline focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      class="cursor-[inherit] text-left text-sm font-medium text-ink focus-visible:rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       :data-testid="`open-ticket-${ticketId}`"
-      @click="emit('open')"
     >
       {{ title }}
     </button>
@@ -101,7 +106,7 @@ const emit = defineEmits<{
       </li>
       <li
         v-for="chip in chips"
-        :key="chip.kind"
+        :key="chip.key ?? chip.kind"
         class="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] leading-[1.3]"
         :class="chipSurfaceClass(chip.tone)"
         :data-tone="chip.tone ?? 'neutral'"

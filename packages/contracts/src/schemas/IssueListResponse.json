@@ -1,0 +1,304 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "IssueChildRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "sort_order": {
+          "format": "double",
+          "type": "number"
+        },
+        "state": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "sort_order",
+        "state",
+        "title"
+      ],
+      "type": "object"
+    },
+    "IssueRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canceled_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "items": {
+            "$ref": "#/definitions/IssueChildRecord"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "creator": {
+          "description": "Who created the issue, when that was recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "due_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duplicate_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duplicates": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "identifier": {
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "milestone": {
+          "description": "Milestone name within the team.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "milestone_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "The issue's label in the single-select Project group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "relations": {
+          "items": {
+            "$ref": "#/definitions/IssueRelationRecord"
+          },
+          "type": "array"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": "string"
+        },
+        "state_history": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/IssueStateHistoryRecord"
+          },
+          "type": "array"
+        },
+        "state_type": {
+          "type": "string"
+        },
+        "sub_issues": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IssueSubIssueProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "team": {
+          "description": "Kanban project code, the Linear team.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "created_at",
+        "identifier",
+        "labels",
+        "priority",
+        "project_id",
+        "relations",
+        "state",
+        "state_type",
+        "ticket_id",
+        "title",
+        "updated_at",
+        "url",
+        "version"
+      ],
+      "type": "object"
+    },
+    "IssueRelationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "IssueStateHistoryRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "ended_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "state_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "started_at",
+        "state",
+        "state_type"
+      ],
+      "type": "object"
+    },
+    "IssueSubIssueProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "done": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "done",
+        "total"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "issues": {
+      "items": {
+        "$ref": "#/definitions/IssueRecord"
+      },
+      "type": "array"
+    },
+    "next_cursor": {
+      "description": "Opaque page boundary for the next page. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "issues"
+  ],
+  "title": "IssueListResponse",
+  "type": "object"
+}

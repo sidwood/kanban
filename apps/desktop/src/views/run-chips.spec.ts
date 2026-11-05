@@ -94,7 +94,7 @@ describe('board store runs', () => {
   })
 })
 
-describe('BoardView run chips', () => {
+describe('BoardView linear chips', () => {
   const mountedBoards: VueWrapper[] = []
 
   afterEach(() => {
@@ -106,6 +106,7 @@ describe('BoardView run chips', () => {
     await router.push('/projects/1/board')
     await router.isReady()
     const wrapper = mount(BoardView, {
+      attachTo: document.body,
       global: {
         plugins: [createPinia(), router],
         provide: { [kanbanTransportKey as symbol]: transport },
@@ -113,25 +114,25 @@ describe('BoardView run chips', () => {
     })
     mountedBoards.push(wrapper)
     await flushPromises()
+    await flushPromises()
     return wrapper
   }
 
-  it('shows the effective profile with the fallback indicator during execution', async () => {
+  it('shows workflow state on the card from the issue overlay', async () => {
     const { transport } = harness({ tickets: [executingTicket], runs: [run({ ticket_id: 8 })] })
     const wrapper = await mountBoard(transport)
 
-    const chip = wrapper.find('[data-testid="card-chip-implementer-8"]')
-    expect(chip.text()).toContain('glm-fallback')
-    expect(wrapper.find('[data-testid="card-fallback-8"]').exists()).toBe(true)
-    expect(chip.attributes('title')).toContain('glm-implementer')
+    const stateChip = wrapper.find('[data-testid="card-chip-lane-8"]')
+    expect(stateChip.exists()).toBe(true)
+    expect(stateChip.text()).toContain('Active')
+    expect(wrapper.find('[data-testid="card-chip-implementer-8"]').exists()).toBe(false)
   })
 
-  it('shows the planned profile before dispatch, with no fallback indicator', async () => {
+  it('shows priority without legacy implementer chips before dispatch', async () => {
     const { transport } = harness({ tickets: [executingTicket], runs: [] })
     const wrapper = await mountBoard(transport)
 
-    const chip = wrapper.find('[data-testid="card-chip-implementer-8"]')
-    expect(chip.text()).toContain('glm-implementer')
-    expect(wrapper.find('[data-testid="card-fallback-8"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="card-chip-priority-8"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="card-chip-implementer-8"]').exists()).toBe(false)
   })
 })

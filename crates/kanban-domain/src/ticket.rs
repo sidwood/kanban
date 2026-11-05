@@ -174,6 +174,20 @@ impl Priority {
             .find(|priority| priority.wire_name() == stored)
     }
 
+    /// The legacy priority a Linear issue priority maps back to,
+    /// inverting the migration's mapping of stored rows. The legacy
+    /// vocabulary has no "none", so No priority (0) keeps the
+    /// default normal bucket: a card saved without a priority stays
+    /// on the board beside normal work instead of dropping off it.
+    pub fn of_linear(value: u8) -> Self {
+        match value {
+            1 => Self::Urgent,
+            2 => Self::High,
+            4 => Self::Low,
+            _ => Self::Normal,
+        }
+    }
+
     /// Rank for deterministic Dispatch Request queue order: urgent
     /// first, then high, normal, and low. Lower ranks precede higher
     /// ones.
@@ -256,6 +270,8 @@ pub enum TicketState {
     Cancelled,
     /// Terminal: replaced by a reassignment Ticket.
     Superseded,
+    /// Terminal: duplicate of another issue (Linear parity).
+    Duplicate,
 }
 
 impl TicketState {
@@ -273,12 +289,13 @@ impl TicketState {
         Self::Done,
         Self::Cancelled,
         Self::Superseded,
+        Self::Duplicate,
     ];
 
     /// Whether this state accepts no further lifecycle movement.
-    /// Cancelled and superseded are the terminal states (DR-LC-02).
+    /// Cancelled, superseded, and duplicate are terminal (DR-LC-02).
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Cancelled | Self::Superseded)
+        matches!(self, Self::Cancelled | Self::Superseded | Self::Duplicate)
     }
 
     /// The stored and wire name of this state.
@@ -296,6 +313,7 @@ impl TicketState {
             Self::Done => "done",
             Self::Cancelled => "cancelled",
             Self::Superseded => "superseded",
+            Self::Duplicate => "duplicate",
         }
     }
 
@@ -1279,6 +1297,12 @@ pub struct Ticket {
     profile: Option<ProfileName>,
     pin: Option<u64>,
     version: u64,
+    /// Whether the last applied change explicitly assigned this
+    /// Ticket's priority, as `prioritise` does. A change that merely
+    /// carries the stored priority along leaves the flag clear, so
+    /// persistence can tell an explicit assignment from an unchanged
+    /// value even when both hold the same priority.
+    priority_reassigned: bool,
 }
 
 impl Ticket {
@@ -1304,6 +1328,7 @@ impl Ticket {
             profile: None,
             pin: None,
             version: 1,
+            priority_reassigned: false,
         }
     }
 
@@ -1332,6 +1357,7 @@ impl Ticket {
             profile: None,
             pin: None,
             version: 1,
+            priority_reassigned: false,
         }
     }
 
@@ -1360,6 +1386,7 @@ impl Ticket {
             profile,
             pin,
             version,
+            priority_reassigned: false,
         }
     }
 
@@ -1393,6 +1420,15 @@ impl Ticket {
     /// The Ticket's priority (DR-LC-12).
     pub fn priority(&self) -> Priority {
         self.priority
+    }
+
+    /// Whether the last applied change explicitly assigned this
+    /// Ticket's priority, as [`Ticket::prioritise`] does. A stored
+    /// priority the last change merely carried along answers false,
+    /// so persistence can tell an explicit assignment from an
+    /// unchanged value even when both hold the same priority.
+    pub fn priority_reassigned(&self) -> bool {
+        self.priority_reassigned
     }
 
     /// The lifecycle state (DR-LC-01).
@@ -1653,6 +1689,7 @@ impl Ticket {
             return Err(TicketError::Terminal);
         }
         self.priority = priority;
+        self.priority_reassigned = true;
         self.version += 1;
         Ok(())
     }
@@ -1777,7 +1814,7 @@ mod ticket_kinds {
         }
         assert_eq!(Priority::parse("ghost"), None);
 
-        assert_eq!(TicketState::ALL.len(), 12);
+        assert_eq!(TicketState::ALL.len(), 13);
         for state in TicketState::ALL {
             assert_eq!(
                 TicketState::parse(state.wire_name()),
@@ -1791,9 +1828,10 @@ mod ticket_kinds {
     }
 
     #[test]
-    fn terminal_states_are_cancelled_and_superseded() {
+    fn terminal_states_are_cancelled_superseded_and_duplicate() {
         assert!(TicketState::Cancelled.is_terminal());
         assert!(TicketState::Superseded.is_terminal());
+        assert!(TicketState::Duplicate.is_terminal());
         for open in [
             TicketState::Draft,
             TicketState::Parked,

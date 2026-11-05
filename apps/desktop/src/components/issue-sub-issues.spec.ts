@@ -1,0 +1,331 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { IssueRecord } from '@kanban/contracts'
+import router from '../router'
+import { kanbanTransportKey } from '../core/transport'
+import type { ShellTransport } from '../core/transport'
+import { useIssueOverlayStore } from '../stores/issue-overlay'
+import IssueSubIssues from './IssueSubIssues.vue'
+
+const mounted: ReturnType<typeof mount>[] = []
+
+function issueRecord(overrides: Partial<IssueRecord> = {}): IssueRecord {
+  return {
+    identifier: 'CORE-1',
+    url: 'kanban://issue/CORE-1',
+    ticket_id: 1,
+    project_id: 4,
+    title: 'Parent',
+    description: '',
+    state: 'Active',
+    state_type: 'started',
+    priority: 3,
+    labels: [],
+    relations: [],
+    state_history: [],
+    version: 1,
+    created_at: '2026-01-01T00:00:00.000000Z',
+    updated_at: '2026-01-01T00:00:00.000000Z',
+    children: [
+      {
+        identifier: 'CORE-2',
+        title: 'Done child',
+        state: 'Done',
+        sort_order: 0,
+      },
+      {
+        identifier: 'CORE-3',
+        title: 'Open child',
+        state: 'Active',
+        sort_order: 1,
+      },
+    ],
+    ...overrides,
+  }
+}
+
+function transportFor(issue: IssueRecord, onSave?: (body: Record<string, unknown>) => void): ShellTransport {
+  let current = issue
+  return {
+    query: ((name, request) => {
+      if (name === 'ticket.get') {
+        return Promise.resolve({
+          id: current.ticket_id,
+          project_id: current.project_id,
+          number: 1,
+          kind: 'task',
+          priority: 'normal',
+          state: 'active',
+          spec_id: null,
+          title: current.title,
+          slice: null,
+          criteria: [],
+          bug: null,
+          subtype: null,
+          mode: null,
+          completion: [],
+          scheduled_for: null,
+          due: null,
+          profile: null,
+          version: 1,
+        })
+      }
+      if (name === 'issue.get') {
+        const body = request as { identifier?: string }
+        if (body.identifier === current.identifier) {
+          return Promise.resolve(current)
+        }
+        const child = current.children?.find((entry) => entry.identifier === body.identifier)
+        if (child) {
+          return Promise.resolve({
+            ...current,
+            identifier: child.identifier,
+            ticket_id: Number(child.identifier.split('-').pop()),
+            title: child.title,
+            state: child.state,
+            children: [],
+            version: 1,
+          })
+        }
+        return Promise.reject({ code: 'not_found', message: 'issue' })
+      }
+      return Promise.reject({ code: 'not_found', message: name })
+    }) as ShellTransport['query'],
+    command: ((name, request) => {
+      if (name === 'issue.save') {
+        const body = request as Record<string, unknown>
+        onSave?.(body)
+        const identifier = body.identifier as string
+        const sortOrder = body.sort_order as number | undefined
+        if (identifier != null && sortOrder != null && current.children) {
+          const next = current.children.map((child) =>
+            child.identifier === identifier ? { ...child, sort_order: sortOrder } : child,
+          )
+          next.sort((a, b) => a.sort_order - b.sort_order)
+          current = { ...current, children: next }
+        }
+        return Promise.resolve({ identifier, ticket_id: 1, url: `kanban://issue/${identifier}` })
+      }
+      return Promise.reject({ code: 'not_found', message: name })
+    }) as ShellTransport['command'],
+    subscribe: (() => () => {}) as ShellTransport['subscribe'],
+    onConnectionChange: () => () => {},
+  }
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+afterEach(() => {
+  for (const wrapper of mounted.splice(0)) wrapper.unmount()
+})
+
+function mountWith(issue: IssueRecord, onSave?: (body: Record<string, unknown>) => void) {
+  const wrapper = mount(IssueSubIssues, {
+    props: {
+      projectCode: 'CORE',
+      ticketId: 1,
+      projectId: 4,
+    },
+    attachTo: document.body,
+    global: {
+      plugins: [createPinia(), router],
+      provide: { [kanbanTransportKey as symbol]: transportFor(issue, onSave) },
+    },
+  })
+  mounted.push(wrapper)
+  return wrapper
+}
+
+function spacedChildren(): IssueRecord {
+  return issueRecord({
+    children: [
+      { identifier: 'CORE-2', title: 'First', state: 'Active', sort_order: 10 },
+      { identifier: 'CORE-3', title: 'Second', state: 'Active', sort_order: 20 },
+      { identifier: 'CORE-4', title: 'Third', state: 'Active', sort_order: 30 },
+      { identifier: 'CORE-5', title: 'Fourth', state: 'Active', sort_order: 40 },
+    ],
+  })
+}
+
+function rowOrder(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper
+    .findAll('[data-testid^="drawer-sub-issue-row-"]')
+    .map((row) => (row.attributes('data-testid') ?? '').replace('drawer-sub-issue-row-', ''))
+}
+
+describe('IssueSubIssues progress', () => {
+  it('shows how many children are done (Done, Cancelled, Superseded, Duplicate)', async () => {
+    const wrapper = mount(IssueSubIssues, {
+      props: {
+        projectCode: 'CORE',
+        ticketId: 1,
+        projectId: 4,
+      },
+      global: {
+        plugins: [createPinia(), router],
+        provide: { [kanbanTransportKey as symbol]: transportFor(issueRecord()) },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+  })
+
+  it('swaps the stored sort values of a child moved down, gaps and all', async () => {
+    const saves: Record<string, unknown>[] = []
+    const wrapper = mountWith(spacedChildren(), (body) => saves.push(body))
+    await flushPromises()
+
+    await wrapper.find('[data-testid="drawer-sub-issue-down-CORE-3"]').trigger('click')
+    await flushPromises()
+
+    expect(saves.map(({ identifier, sort_order }) => ({ identifier, sort_order }))).toEqual([
+      { identifier: 'CORE-3', sort_order: 30 },
+      { identifier: 'CORE-4', sort_order: 20 },
+    ])
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'CORE-4', 'CORE-3', 'CORE-5'])
+  })
+
+  it('swaps the stored sort values of a child moved up, gaps and all', async () => {
+    const saves: Record<string, unknown>[] = []
+    const wrapper = mountWith(spacedChildren(), (body) => saves.push(body))
+    await flushPromises()
+
+    await wrapper.find('[data-testid="drawer-sub-issue-up-CORE-5"]').trigger('click')
+    await flushPromises()
+
+    expect(saves.map(({ identifier, sort_order }) => ({ identifier, sort_order }))).toEqual([
+      { identifier: 'CORE-5', sort_order: 30 },
+      { identifier: 'CORE-4', sort_order: 40 },
+    ])
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'CORE-3', 'CORE-5', 'CORE-4'])
+  })
+})
+
+describe('IssueSubIssues keyboard access', () => {
+  it('opens a child from a focusable button holding its identifier and title', async () => {
+    const wrapper = mountWith(issueRecord())
+    await flushPromises()
+
+    const row = wrapper.find('[data-testid="drawer-sub-issue-row-CORE-3"]')
+    const open = row.find('button[data-testid="drawer-sub-issue-open-CORE-3"]')
+    expect(open.exists()).toBe(true)
+    expect(open.attributes('type')).toBe('button')
+    expect(open.text()).toContain('CORE-3')
+    expect(open.text()).toContain('Open child')
+
+    const button = open.element as HTMLButtonElement
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    expect(button.tabIndex).toBe(0)
+
+    button.click()
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toEqual([[3]])
+  })
+
+  it('keeps the reorder controls outside the open button', async () => {
+    const wrapper = mountWith(issueRecord())
+    await flushPromises()
+
+    const open = wrapper.find('[data-testid="drawer-sub-issue-open-CORE-3"]')
+    expect(open.find('[data-testid="drawer-sub-issue-up-CORE-3"]').exists()).toBe(false)
+    expect(open.find('[data-testid="drawer-sub-issue-down-CORE-3"]').exists()).toBe(false)
+    expect(open.text()).not.toContain('Up')
+
+    await wrapper.find('[data-testid="drawer-sub-issue-up-CORE-3"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toBeUndefined()
+  })
+})
+
+describe('IssueSubIssues across Projects', () => {
+  it('lists a child from another Project under its own key and opens it by that key', async () => {
+    const wrapper = mountWith(
+      issueRecord({
+        children: [
+          { identifier: 'CORE-2', title: 'Done here', state: 'Done', sort_order: 0 },
+          { identifier: 'EDGE-9', title: 'Open elsewhere', state: 'Active', sort_order: 1 },
+        ],
+      }),
+    )
+    await flushPromises()
+
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'EDGE-9'])
+    expect(wrapper.find('[data-testid="drawer-sub-issue-open-EDGE-9"]').text()).toContain('EDGE-9')
+    expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+
+    await wrapper.find('[data-testid="drawer-sub-issue-open-EDGE-9"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toEqual([[9]])
+  })
+})
+
+
+describe('IssueSubIssues reads', () => {
+  it('waits for a free issue read while four are on the wire', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const answers: Array<() => void> = []
+    const busy = {
+      query: (name: string, request: unknown) => {
+        if (name === 'issue.list_milestones') return Promise.resolve({ milestones: [] })
+        const { identifier } = request as { identifier: string }
+        return new Promise<IssueRecord>((resolve) =>
+          answers.push(() =>
+            resolve(issueRecord({ identifier, ticket_id: Number(identifier.split('-')[1]) })),
+          ),
+        )
+      },
+    } as unknown as ShellTransport
+    const board = useIssueOverlayStore().refreshIssues(
+      busy,
+      [11, 12, 13, 14].map((number) => ({
+        ticketId: number,
+        projectId: 4,
+        projectCode: 'CORE',
+        number,
+      })),
+    )
+    await flushPromises()
+    expect(answers).toHaveLength(4)
+
+    const served = transportFor(issueRecord())
+    const issueReads: string[] = []
+    const transport: ShellTransport = {
+      ...served,
+      query: ((name, request) => {
+        if (name === 'issue.get') issueReads.push((request as { identifier: string }).identifier)
+        return served.query(name, request)
+      }) as ShellTransport['query'],
+    }
+    const wrapper = mount(IssueSubIssues, {
+      props: { projectCode: 'CORE', ticketId: 1, projectId: 4 },
+      global: {
+        plugins: [pinia, router],
+        provide: { [kanbanTransportKey as symbol]: transport },
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(issueReads).toEqual([])
+
+    answers.shift()!()
+    await flushPromises()
+    expect(issueReads).toEqual(['CORE-1'])
+    expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+
+    while (answers.length > 0) {
+      answers.shift()!()
+      await flushPromises()
+    }
+    await board
+  })
+})

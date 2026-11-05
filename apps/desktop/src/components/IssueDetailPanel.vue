@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refreshed: [issue: IssueRecord]
+  saved: [ticketId: number]
 }>()
 
 const transport = inject(kanbanTransportKey)
@@ -139,6 +140,7 @@ async function saveDescription(): Promise<void> {
       identifier: props.issue.identifier,
       description: descriptionLocal.value,
     })
+    emit('saved', props.issue.ticket_id)
     const refreshed = await overlay.refreshOne(
       transport,
       props.projectId,

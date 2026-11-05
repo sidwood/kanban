@@ -16,11 +16,12 @@ import { useTicketDialogStore } from '../stores/ticket-dialog'
 import AppButton from './AppButton.vue'
 import InlineAlert from './InlineAlert.vue'
 
-const { ticket, legalTargets, projectCode } = defineProps<{
+const { ticket, legalTargets, projectCode, locked } = defineProps<{
   ticket: TicketRecord
   /** Workflow states this issue may move to now. */
   legalTargets: readonly string[]
   projectCode: string
+  locked: boolean
   /** @deprecated unused; workflow names are shown directly */
   stateLabels?: Record<string, string>
 }>()
@@ -158,16 +159,16 @@ function edit(): void {
 }
 
 async function park(): Promise<void> {
-  if (transport) await run(() => lifecycle.park(transport))
+  if (transport && !locked) await run(() => lifecycle.park(transport))
 }
 
 async function unpark(): Promise<void> {
-  if (transport) await run(() => lifecycle.unpark(transport))
+  if (transport && !locked) await run(() => lifecycle.unpark(transport))
 }
 
 async function move(event: Event): Promise<void> {
   const target = (event.target as HTMLSelectElement).value
-  if (!transport || target === '') return
+  if (!transport || locked || target === '') return
   await run(() => lifecycle.moveToWorkflowState(transport, projectCode, target))
 }
 
@@ -207,7 +208,7 @@ async function submitReview(): Promise<void> {
 }
 
 async function confirmRecovery(): Promise<void> {
-  if (!transport || recoveryGap.value !== null || recoveryTo.value === '') return
+  if (!transport || locked || recoveryGap.value !== null || recoveryTo.value === '') return
   const landed = await run(() =>
     lifecycle.override(transport, recoveryTo.value as TicketState, recoveryWho.value, recoveryWhy.value),
   )
@@ -249,6 +250,7 @@ const FIELD_CLASS =
           aria-label="Move this issue"
           :class="FIELD_CLASS"
           :value="''"
+          :disabled="locked"
           @change="move"
         >
           <option value="">
@@ -275,6 +277,7 @@ const FIELD_CLASS =
         v-if="ticket.state === 'parked'"
         size="sm"
         data-testid="drawer-unpark"
+        :disabled="locked"
         @click="unpark"
       >
         Unpark
@@ -283,6 +286,7 @@ const FIELD_CLASS =
         v-else
         size="sm"
         data-testid="drawer-park"
+        :disabled="locked"
         @click="park"
       >
         Park
@@ -512,7 +516,7 @@ const FIELD_CLASS =
           size="sm"
           type="submit"
           data-testid="recovery-submit"
-          :disabled="recoveryGap !== null"
+          :disabled="recoveryGap !== null || locked"
         >
           Confirm recovery
         </AppButton>

@@ -636,6 +636,7 @@ const drawerTicket = ref<TicketRecord | null>(null)
 const drawerIssue = ref<IssueRecord | null>(null)
 const drawerLoading = ref(false)
 const drawerError = ref<string | null>(null)
+const drawerUnread = ref<number | null>(null)
 
 const drawerCard = computed(() =>
   drawerTicket.value ? board.cardOf(drawerTicket.value.id) : undefined,
@@ -677,6 +678,7 @@ async function loadDrawer(ticketId: number): Promise<void> {
   const attempt = drawerRequest
   drawerLoading.value = true
   drawerError.value = null
+  drawerUnread.value = null
   try {
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: ticketId })
     if (attempt !== drawerRequest) return
@@ -721,6 +723,7 @@ function clearDrawer(): void {
   drawerIssue.value = null
   drawerError.value = null
   drawerLoading.value = false
+  drawerUnread.value = null
   detail.clear()
 }
 
@@ -855,9 +858,14 @@ function showDrawerIssue(issue: IssueRecord): void {
   }
 }
 
+function onDrawerIssueSaved(ticketId: number): void {
+  if (drawerTicket.value?.id === ticketId) drawerUnread.value = ticketId
+}
+
 async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
   if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
   showDrawerIssue(issue)
+  if (drawerUnread.value === issue.ticket_id) drawerUnread.value = null
   const attempt = drawerRequest
   try {
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: issue.ticket_id })
@@ -1593,6 +1601,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :project-id="drawerTicket.project_id"
           :project-code="drawerProjectCode"
           @refreshed="onDrawerIssueRefreshed"
+          @saved="onDrawerIssueSaved"
         />
 
         <AttemptHistory
@@ -1612,6 +1621,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :ticket="drawerTicket"
           :project-code="drawerProjectCode"
           :legal-targets="board.workflowTargetsFor(drawerTicket.id)"
+          :locked="drawerUnread === drawerTicket.id"
           @acted="drawerActed"
           @reviewed="drawerReviewed"
         />

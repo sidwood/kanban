@@ -569,6 +569,11 @@ fn the_parent_filter_finds_sub_issues_in_every_project() {
         "the numeric parent id filters the same way"
     );
     assert_eq!(
+        list(s, json!({ "parent_id": parent.ticket_id })),
+        vec!["CORE-2", "EDGE-1"],
+        "a numeric parent id, not only its decimal spelling, returns that ticket's children"
+    );
+    assert_eq!(
         list(
             s,
             json!({ "parent_id": parent.identifier, "project_id": EDGE })

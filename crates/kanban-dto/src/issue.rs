@@ -110,6 +110,32 @@ fn description_patch_schema(
     .into()
 }
 
+/// `parent_id` on a list accepts an issue key, a numeric ticket id, or
+/// JSON `null`. The runtime already deserialises the number; the
+/// published schema has to say so.
+fn parent_filter_schema(
+    _generator: &mut schemars::r#gen::SchemaGenerator,
+) -> schemars::schema::Schema {
+    use schemars::schema::{InstanceType, Metadata, SchemaObject, SingleOrVec};
+    SchemaObject {
+        metadata: Some(Box::new(Metadata {
+            description: Some(
+                "Parent issue by key (`CODE-123`) or numeric ticket id, such as 12. \
+                 JSON null clears the filter."
+                    .to_owned(),
+            ),
+            ..Default::default()
+        })),
+        instance_type: Some(SingleOrVec::Vec(vec![
+            InstanceType::String,
+            InstanceType::Integer,
+            InstanceType::Null,
+        ])),
+        ..Default::default()
+    }
+    .into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSaveResponse {
@@ -212,11 +238,14 @@ pub struct IssueListQuery {
     pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_since: Option<String>,
+    /// Parent issue by key (`CODE-123`) or numeric ticket id. JSON
+    /// `null` clears the filter.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::nullable_patch::deserialize_optional_parent_filter"
     )]
+    #[schemars(schema_with = "parent_filter_schema")]
     pub parent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone_id: Option<u64>,
@@ -411,5 +440,66 @@ mod tests {
         }))
         .expect("payload parses");
         assert_eq!(request.due_date.as_ref(), Some(&None));
+    }
+
+    #[test]
+    fn list_query_schema_accepts_a_numeric_parent_id() {
+        let schema = schemars::schema_for!(super::IssueListQuery);
+        let encoded = serde_json::to_value(&schema).expect("the schema serialises");
+        let parent = &encoded["properties"]["parent_id"];
+        let accepts_integer = parent["type"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "integer"))
+            || parent["anyOf"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| option["type"] == "integer"));
+        assert!(
+            accepts_integer,
+            "parent_id must accept a numeric ticket id: {parent}"
+        );
+
+        let published = std::fs::read_to_string(format!(
+            "{}/../../packages/contracts/src/schemas/IssueListQuery.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("the published list query schema reads");
+        let published: serde_json::Value =
+            serde_json::from_str(&published).expect("the published schema is JSON");
+        let published_parent = &published["properties"]["parent_id"];
+        let published_accepts = published_parent["type"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "integer"))
+            || published_parent["anyOf"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| option["type"] == "integer"));
+        assert!(
+            published_accepts,
+            "the published list_issues schema must accept {{\"parent_id\": 12}}: {published_parent}"
+        );
+
+        let tools = std::fs::read_to_string(format!(
+            "{}/../../packages/contracts/src/mcp-tools.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("the published MCP tools read");
+        let tools: serde_json::Value =
+            serde_json::from_str(&tools).expect("the published tools are JSON");
+        let list_issues = tools
+            .as_array()
+            .expect("tools are a list")
+            .iter()
+            .find(|tool| tool["name"] == "list_issues")
+            .expect("list_issues is published");
+        let listed = &list_issues["inputSchema"]["properties"]["parent_id"];
+        let listed_accepts = listed["type"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "integer"))
+            || listed["anyOf"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| option["type"] == "integer"));
+        assert!(
+            listed_accepts,
+            "the list_issues input schema must accept {{\"parent_id\": 12}}: {listed}"
+        );
     }
 }

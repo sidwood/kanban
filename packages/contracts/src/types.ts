@@ -623,7 +623,7 @@ export type IssueListQuery = {
   label?: string | null;
   limit?: number;
   milestone_id?: number | null;
-  parent_id?: string | null;
+  parent_id?: string | number | null;
   project_id?: number | null;
   query?: string | null;
   state?: string | null;

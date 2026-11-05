@@ -41073,8 +41073,10 @@
           ]
         },
         "parent_id": {
+          "description": "Parent issue by key (`CODE-123`) or numeric ticket id. JSON `null` clears the filter.",
           "type": [
             "string",
+            "integer",
             "null"
           ]
         },

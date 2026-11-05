@@ -263,3 +263,60 @@ fn get_issue_shows_team_project_milestone_and_creator() {
         .expect("issue.list");
     assert_eq!(detailed["issues"][0]["description"], json!("Full text"));
 }
+
+#[test]
+fn description_edits_apply_together_or_not_at_all() {
+    let session = session();
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "edits-create",
+        json!({
+            "project_id": 1,
+            "title": "Edited",
+            "description": "alpha beta alpha"
+        }),
+    ))
+    .expect("save shape");
+    let version = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get")["version"]
+        .as_u64()
+        .expect("version");
+    let applied = session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(version, "edits-apply"),
+                "identifier": saved.identifier,
+                "description_edits": [
+                    {"type": "append", "text": " tail"},
+                    {"type": "replace", "find": "beta", "replace": "BETA"}
+                ]
+            }),
+        )
+        .expect("the edits apply");
+    let _ = applied;
+    let after = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get");
+    assert_eq!(after["description"], json!("alpha BETA alpha tail"));
+
+    let before_version = after["version"].as_u64().expect("version");
+    let refused = session.call(
+        "issue.save",
+        &json!({
+            "mutation": mutation(before_version, "edits-twice"),
+            "identifier": saved.identifier,
+            "description_edits": [
+                {"type": "replace", "find": "alpha", "replace": "ALPHA"}
+            ]
+        }),
+    );
+    assert!(refused.is_err(), "an anchor that matches twice is refused");
+    let unchanged = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get");
+    assert_eq!(unchanged["description"], json!("alpha BETA alpha tail"));
+    assert_eq!(unchanged["version"], json!(before_version));
+}

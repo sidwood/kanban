@@ -146,7 +146,8 @@ pub use initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 pub use issue::{
-    IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
+    DescriptionEdit, IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest,
+    IssueGetQuery,
     IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
     IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
     IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,

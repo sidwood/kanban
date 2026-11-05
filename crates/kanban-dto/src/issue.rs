@@ -26,6 +26,8 @@ pub struct IssueSaveRequest {
     /// Milestone name within the team.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_edits: Option<Vec<DescriptionEdit>>,
     /// Existing issue key (`CODE-123`) when updating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
@@ -97,6 +99,29 @@ pub struct IssueSaveRequest {
     )]
     pub assignee: Option<Option<String>>,
 }
+
+/// One description edit in a save. Anchors must match exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptionEdit {
+    /// `replace`, `insert_before`, `insert_after`, `prepend`, `append`,
+    /// or `replace_range`.
+    #[serde(rename = "type")]
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub find: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
 
 /// The runtime accepts `description_patch` as a JSON-encoded object
 /// with string `find` and `replace` fields, not free text: the first

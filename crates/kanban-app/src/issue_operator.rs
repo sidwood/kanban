@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kanban_domain::{ProjectId, Ticket, TicketId};
 use kanban_dto::LiveEventName;
 use kanban_dto::{
-    ApiError, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
+    ApiError, DescriptionEdit, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
     IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
     IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
     IssueProjectSettingsResponse, IssueProjectsResponse, IssueRecord, IssueRetireLabelRequest,
@@ -230,6 +230,99 @@ impl QueryHandler for ListIssues {
         Ok(value)
     }
 }
+
+fn apply_description_edits(base: &str, edits: &[DescriptionEdit]) -> Result<String, ApiError> {
+    let mut text = base.to_owned();
+    for edit in edits {
+        text = apply_one_description_edit(&text, edit)?;
+    }
+    Ok(text)
+}
+
+fn apply_one_description_edit(text: &str, edit: &DescriptionEdit) -> Result<String, ApiError> {
+    match edit.op.as_str() {
+        "prepend" => Ok(format!("{}{}", edit_text(edit)?, text)),
+        "append" => Ok(format!("{text}{}", edit_text(edit)?)),
+        "replace" => {
+            let find = required_edit_field(edit.find.as_deref(), "find")?;
+            let replace = required_edit_field(edit.replace.as_deref(), "replace")?;
+            let start = unique_anchor(text, find)?;
+            let mut merged = String::with_capacity(text.len() - find.len() + replace.len());
+            merged.push_str(&text[..start]);
+            merged.push_str(replace);
+            merged.push_str(&text[start + find.len()..]);
+            Ok(merged)
+        }
+        "insert_before" => {
+            let anchor = required_edit_field(edit.anchor.as_deref(), "anchor")?;
+            let start = unique_anchor(text, anchor)?;
+            let mut merged = String::new();
+            merged.push_str(&text[..start]);
+            merged.push_str(edit_text(edit)?);
+            merged.push_str(&text[start..]);
+            Ok(merged)
+        }
+        "insert_after" => {
+            let anchor = required_edit_field(edit.anchor.as_deref(), "anchor")?;
+            let start = unique_anchor(text, anchor)?;
+            let end = start + anchor.len();
+            let mut merged = String::new();
+            merged.push_str(&text[..end]);
+            merged.push_str(edit_text(edit)?);
+            merged.push_str(&text[end..]);
+            Ok(merged)
+        }
+        "replace_range" => {
+            let start_anchor = required_edit_field(edit.start.as_deref(), "start")?;
+            let end_anchor = required_edit_field(edit.end.as_deref(), "end")?;
+            let start = unique_anchor(text, start_anchor)?;
+            let end_at = unique_anchor(text, end_anchor)?;
+            if end_at < start {
+                return Err(ApiError::invalid_request_field(
+                    "description_edits",
+                    "replace_range end appears before start",
+                ));
+            }
+            let end = end_at + end_anchor.len();
+            let mut merged = String::new();
+            merged.push_str(&text[..start]);
+            merged.push_str(edit_text(edit)?);
+            merged.push_str(&text[end..]);
+            Ok(merged)
+        }
+        other => Err(ApiError::invalid_request_field(
+            "description_edits",
+            &format!("unknown description edit `{other}`"),
+        )),
+    }
+}
+
+fn edit_text(edit: &DescriptionEdit) -> Result<&str, ApiError> {
+    edit.text.as_deref().ok_or_else(|| {
+        ApiError::invalid_request_field("description_edits", "description edit text is required")
+    })
+}
+
+fn required_edit_field<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, ApiError> {
+    value.ok_or_else(|| {
+        ApiError::invalid_request_field(
+            "description_edits",
+            &format!("description edit {name} is required"),
+        )
+    })
+}
+
+fn unique_anchor(text: &str, anchor: &str) -> Result<usize, ApiError> {
+    let count = text.matches(anchor).count();
+    if count != 1 {
+        return Err(ApiError::invalid_request_field(
+            "description_edits",
+            &format!("anchor matched {count} times; it must match exactly once"),
+        ));
+    }
+    Ok(text.find(anchor).expect("the anchor matched once"))
+}
+
 
 fn compact_list_rows(value: &mut Value, fields: Option<&[String]>) {
     let requested = fields.unwrap_or(&[]);
@@ -804,7 +897,11 @@ fn create_issue(
         .as_u64()
         .ok_or_else(|| ApiError::internal("ticket id missing"))?;
     let mut secondary = SecondaryGuard::begin(ctx.issues.as_ref());
-    if let Some(description) = request.description.as_deref() {
+    if let Some(edits) = request.description_edits.as_deref() {
+        let base = request.description.clone().unwrap_or_default();
+        let merged = apply_description_edits(&base, edits)?;
+        ctx.issues.set_description(ticket_id as i64, &merged)?;
+    } else if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id as i64, description)?;
     }
     if request.priority.is_some() {
@@ -905,7 +1002,15 @@ fn update_issue(
         ));
     }
     let mut secondary = SecondaryGuard::begin(ctx.issues.as_ref());
-    if let Some(description) = request.description.as_deref() {
+    if let Some(edits) = request.description_edits.as_deref() {
+        let current = if let Some(description) = request.description.as_deref() {
+            description.to_owned()
+        } else {
+            ctx.issues.issue_fields(ticket_id)?.description
+        };
+        let merged = apply_description_edits(&current, edits)?;
+        ctx.issues.set_description(ticket_id, &merged)?;
+    } else if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id, description)?;
     } else if let Some(patch) = request.description_patch.as_deref() {
         ctx.issues.patch_description(ticket_id, patch)?;
@@ -979,6 +1084,7 @@ fn announce_saved_issue(
     let other_fields = request.title.is_some()
         || request.description.is_some()
         || request.description_patch.is_some()
+        || request.description_edits.is_some()
         || request.priority.is_some()
         || request.due_date.is_some()
         || request.milestone_id.is_some()

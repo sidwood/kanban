@@ -719,6 +719,7 @@ export type IssueSaveRequest = {
   assignee?: string | null;
   creator?: string | null;
   description?: string | null;
+  description_edits?: DescriptionEdit[] | null;
   description_patch?: string | null;
   due_date?: string | null;
   duplicate_of?: string | null;

@@ -1474,3 +1474,63 @@ async fn operator_route_accepts_linear_shaped_calls() {
     client.cancel().await.unwrap();
     service.shutdown();
 }
+
+fn validate_schemas(cases: Value) {
+    use std::process::{Command, Stdio};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut child = Command::new("node")
+        .current_dir(root)
+        .args(["-e", r#"
+            const fs = require('node:fs');
+            const assert = require('node:assert/strict');
+            const Ajv = require('./node_modules/.pnpm/node_modules/ajv');
+            const cases = JSON.parse(fs.readFileSync(0, 'utf8'));
+            for (const {name, schema, body, valid} of cases) {
+                const check = new Ajv({allErrors:true, unknownFormats:'ignore', logger:false}).compile(schema);
+                assert.equal(check(body), valid, name + ': ' + JSON.stringify(check.errors));
+            }
+            console.log('Validated ' + cases.length + ' schema payloads');
+        "#])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().expect("Node and the installed web dependencies are available");
+    serde_json::to_writer(child.stdin.take().unwrap(), &cases).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn operator_comment_schemas_allow_the_default_author_only_for_operators() {
+    let f = Fixture::new(true);
+    let operator = operator_client(f.service(), &f.secret).await;
+    let operator_tools = operator.list_all_tools().await.unwrap();
+    let run = f.client().await;
+    let run_tools = run.list_all_tools().await.unwrap();
+    let mut cases = Vec::new();
+    for name in ["comment_create", "save_comment"] {
+        let tool = operator_tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap();
+        cases.push(json!({"name":name,"schema":tool.input_schema,"body":{"issue":"CORE-2","body":"Raw body"},"valid":true}));
+    }
+    let run_schema = &run_tools
+        .iter()
+        .find(|tool| tool.name == "comment_create")
+        .unwrap()
+        .input_schema;
+    let body =
+        json!({"mutation":common::mutation(0,"run-comment"),"issue":"CORE-2","body":"Raw body"});
+    cases.push(json!({"name":"run without author","schema":run_schema,"body":body,"valid":false}));
+    let mut authored = body;
+    authored["author"] = json!("Ada");
+    cases.push(json!({"name":"run with author","schema":run_schema,"body":authored,"valid":true}));
+    validate_schemas(json!(cases));
+    operator.cancel().await.unwrap();
+    run.cancel().await.unwrap();
+}

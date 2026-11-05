@@ -1168,3 +1168,147 @@ async fn operator_route_names_every_issue_a_save_changes() {
     client.cancel().await.unwrap();
     service.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_route_accepts_linear_shaped_calls() {
+    let h = common::harness();
+    std::fs::write(
+        h._dir.path().join("config.json"),
+        r#"{"operator_name":"Ada"}"#,
+    )
+    .unwrap();
+    let secret = Arc::new(InstallationSecret::from_key(&[61; 32]));
+    let service = kanban_service::serve_with_http(
+        h._dir.path(),
+        kanban_service::ServiceRuntime {
+            mcp_executable: env!("CARGO_BIN_EXE_kanban-mcp").into(),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let client = operator_client(&service, &secret).await;
+    let tools = client.list_all_tools().await.unwrap();
+    let save_tool = tools
+        .iter()
+        .find(|tool| tool.name == "save_issue")
+        .expect("save_issue is listed");
+    let described = serde_json::to_value(&save_tool.input_schema).unwrap()["properties"]["state"]
+        ["description"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    assert!(
+        described.contains("Draft") && described.contains("Duplicate"),
+        "tools/list describes state with the Kanban names: {described}"
+    );
+    assert!(
+        tools.iter().any(|tool| tool.name == "save_comment"),
+        "save_comment is offered"
+    );
+
+    let label = client
+        .call_tool(call(
+            "create_issue_label",
+            json!({
+                "project_id": 1,
+                "name": "Web",
+                "color": "#336699",
+                "group": "Project",
+                "group_single_select": true
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!label.is_error.unwrap_or(false), "{label:?}");
+    let milestone = client
+        .call_tool(call(
+            "save_milestone",
+            json!({ "project_id": 1, "name": "M1 Foundations" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!milestone.is_error.unwrap_or(false), "{milestone:?}");
+
+    let created = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "team": "CORE",
+                "project": "Web",
+                "milestone": "M1 Foundations",
+                "title": "Named over HTTP",
+                "description": "Full text",
+                "assignee": "me"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!created.is_error.unwrap_or(false), "{created:?}");
+    let created = created.structured_content.unwrap();
+    let key = created["identifier"].as_str().unwrap().to_owned();
+    assert!(key.starts_with("CORE-"), "{key}");
+
+    let read = client
+        .call_tool(call("get_issue", json!({ "id": key })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(read["team"], json!("CORE"));
+    assert_eq!(read["project"], json!("Web"));
+    assert_eq!(read["milestone"], json!("M1 Foundations"));
+    assert_eq!(read["creator"], json!("Ada"));
+    assert_eq!(read["assignee"], json!("Ada"));
+
+    let listed = client
+        .call_tool(call("list_issues", json!({ "project": "Web" })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(listed["issues"][0].get("description").is_none());
+    let detailed = client
+        .call_tool(call(
+            "list_issues",
+            json!({ "project": "Web", "fields": ["description"] }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(detailed["issues"][0]["description"], json!("Full text"));
+
+    let posted = client
+        .call_tool(call(
+            "save_comment",
+            json!({ "issue": key, "body": "Ship report" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!posted.is_error.unwrap_or(false), "{posted:?}");
+    let posted = posted.structured_content.unwrap();
+    assert!(posted["id"].as_u64().is_some());
+    assert_eq!(posted["identifier"], json!(key));
+    assert!(posted["url"].as_str().unwrap_or("").contains(&key));
+
+    let refused = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Bad state", "state": "Todo" }),
+        ))
+        .await
+        .unwrap();
+    assert!(refused.is_error.unwrap_or(false));
+    let message = refused.structured_content.unwrap()["message"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    assert!(message.contains("Draft") && message.contains("Todo"), "{message}");
+
+    client.cancel().await.unwrap();
+    service.shutdown();
+}

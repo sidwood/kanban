@@ -853,6 +853,39 @@ class ReadOnlyStoreTests(unittest.TestCase):
             ]
             self.assertTrue(failed)
 
+    def test_a_snapshot_keeps_private_credential_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            private = source / "installation-credential"
+            private.mkdir(parents=True, mode=0o700)
+            credential = private / "installation"
+            credential.write_bytes(b"0123456789" + b"abcdefghijklmnopqrstuv")
+            credential.chmod(0o600)
+            (source / "kanban.sqlite").write_bytes(b"database")
+            before = (
+                credential.read_bytes(),
+                credential.stat().st_mode & 0o777,
+                private.stat().st_mode & 0o777,
+                (source / "kanban.sqlite").read_bytes(),
+            )
+            destination = Path(tmp) / "copy"
+            harness.copy_store(source, destination)
+            copied_dir = destination / "installation-credential"
+            copied = copied_dir / "installation"
+            self.assertEqual(copied_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(copied.read_bytes(), credential.read_bytes())
+            self.assertEqual((destination / "kanban.sqlite").read_bytes(), b"database")
+            self.assertEqual(
+                (
+                    credential.read_bytes(),
+                    credential.stat().st_mode & 0o777,
+                    private.stat().st_mode & 0o777,
+                    (source / "kanban.sqlite").read_bytes(),
+                ),
+                before,
+            )
+
 
 
 class TextQueryTests(unittest.TestCase):

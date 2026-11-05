@@ -496,7 +496,11 @@ def store_changes(before, after):
 
 
 def copy_store(source, destination):
-    """Copy a store's files without preserving links back into it."""
+    """Copy a store's files without preserving links back into it.
+
+    Permission bits are copied too. A credential directory must stay
+    private, or the core refuses to read the installation secret.
+    """
     source = Path(source)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
@@ -504,11 +508,13 @@ def copy_store(source, destination):
         target = destination / path.relative_to(source)
         if path.is_dir() and not path.is_symlink():
             target.mkdir(parents=True, exist_ok=True)
+            target.chmod(path.stat().st_mode & 0o777)
             continue
         if not path.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target, follow_symlinks=True)
+        target.chmod(path.stat().st_mode & 0o777)
 
 
 def disposable_directory(inspected):

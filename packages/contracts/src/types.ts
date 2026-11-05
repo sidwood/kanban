@@ -362,6 +362,15 @@ export type DeferralSupersedeRequest = {
   project_id: number;
   reason: string;
 };
+export type DescriptionEdit = {
+  anchor?: string | null;
+  end?: string | null;
+  find?: string | null;
+  replace?: string | null;
+  start?: string | null;
+  text?: string | null;
+  type: string;
+};
 export type DiagnosticsExportQuery = Record<string, never>;
 export type DiagnosticsExportResponse = {
   bundle_dir: string;

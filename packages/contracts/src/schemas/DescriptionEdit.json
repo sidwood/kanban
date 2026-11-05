@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "One description edit in a save. Anchors must match exactly once.",
+  "properties": {
+    "anchor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "end": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "find": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "replace": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "start": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "description": "`replace`, `insert_before`, `insert_after`, `prepend`, `append`, or `replace_range`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "title": "DescriptionEdit",
+  "type": "object"
+}

@@ -88,11 +88,11 @@ use crate::initiative::{
     InitiativeRecord, InitiativeRenameRequest,
 };
 use crate::issue::{
-    IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
-    IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
-    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
-    IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,
-    IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
+    DescriptionEdit, IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest,
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueProjectRecord, IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse,
+    IssueRecord, IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
     IssueStateHistoryRecord, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
     IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };
@@ -476,6 +476,7 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("IssueProjectsResponse", schema_for!(IssueProjectsResponse)),
         ("IssueRecord", schema_for!(IssueRecord)),
         ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
+        ("DescriptionEdit", schema_for!(DescriptionEdit)),
         ("IssueSaveRequest", schema_for!(IssueSaveRequest)),
         ("IssueSaveResponse", schema_for!(IssueSaveResponse)),
         (

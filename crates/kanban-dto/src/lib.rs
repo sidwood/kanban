@@ -448,6 +448,7 @@ mod tests {
                 "IssueProjectsResponse",
                 "IssueRecord",
                 "IssueRelationRecord",
+                "DescriptionEdit",
                 "IssueSaveRequest",
                 "IssueSaveResponse",
                 "IssueStateHistoryRecord",

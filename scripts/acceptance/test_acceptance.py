@@ -224,6 +224,89 @@ class BearerTests(unittest.TestCase):
         self.assertNotIn(secret.hex()[:16], rendered)
         self.assertNotIn(harness.derive_bearer(secret), rendered)
 
+    def test_a_printable_secret_is_removed_before_it_can_be_cut(self):
+        """Raw text of a printable secret must not survive shortening or a difference."""
+        redact = harness.Redactor()
+        secret = b"0123456789" + bytes(range(ord("a"), ord("v") + 1))
+        other = b"Z" * 32
+        text = secret.decode("ascii")
+        self.assertEqual(len(secret), 32)
+        self.assertTrue(text.isprintable())
+        redact.add(secret)
+        redact.add(other)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, text)
+        matched = recorder.equal("raw bytes", secret, secret)
+        differed = recorder.equal("raw bytes differ", secret, other)
+        recorder.equal("text boundary", "x" * 140 + text, "x" * 140 + text)
+        recorder.equal("text difference", {"token": "x" * 130 + text}, {"token": "other"})
+        recorder.abort("a" * 280 + text)
+        recorder.abort(secret)
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertTrue(matched)
+        self.assertFalse(differed)
+        self.assertNotIn(text, rendered)
+        self.assertNotIn(text[:12], rendered)
+        self.assertNotIn(text[-8:], rendered)
+        self.assertNotIn(other.decode("ascii"), rendered)
+
+    def test_a_binary_secret_bytes_rendering_is_removed_before_it_can_be_cut(self):
+        """The Python rendering of arbitrary secret bytes must not survive shortening."""
+        redact = harness.Redactor()
+        secret = bytes([255, 254]) + bytes(range(30))
+        other = b"\x11" * 32
+        rendering = repr(secret)
+        self.assertEqual(len(secret), 32)
+        with self.assertRaises(UnicodeDecodeError):
+            secret.decode("utf-8")
+        redact.add(secret)
+        redact.add(other)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, rendering)
+        matched = recorder.equal("raw bytes", secret, secret)
+        differed = recorder.equal("raw bytes differ", secret, other)
+        recorder.equal("repr boundary", "m" * 140 + rendering, "m" * 140 + rendering)
+        recorder.equal("repr difference", {"token": secret}, {"token": other})
+        recorder.abort("a" * 280 + rendering)
+        recorder.abort(secret)
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertTrue(matched)
+        self.assertFalse(differed)
+        self.assertNotIn(rendering, rendered)
+        self.assertNotIn(rendering[:16], rendered)
+        self.assertNotIn(rendering[-12:], rendered)
+        self.assertNotIn(repr(other), rendered)
+
+    def test_an_embedded_secret_leaves_no_fragment_of_its_bytes_rendering(self):
+        """A secret spliced into longer bytes must not survive shortening."""
+        binary = bytes([255, 254]) + bytes(range(30))
+        quoted = b"0123456789'" + bytes(range(ord("a"), ord("a") + 21))
+        binary_embedded = b"x" * 140 + binary
+        quoted_embedded = b'"' * 140 + quoted
+        self.assertEqual(len(quoted), 32)
+        self.assertIn("\\xff\\xfe", repr(binary_embedded)[:157])
+        self.assertIn("\\'", repr(quoted_embedded)[:157])
+        redact = harness.Redactor()
+        redact.add(binary)
+        redact.add(quoted)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        recorder.equal("binary boundary", binary_embedded, binary_embedded)
+        recorder.equal("binary difference", binary_embedded, b"other")
+        recorder.abort(binary_embedded)
+        matched = recorder.equal("quoted boundary", quoted_embedded, quoted_embedded)
+        differed = recorder.equal("quoted difference", quoted_embedded, b"other")
+        recorder.abort(quoted_embedded)
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertTrue(matched)
+        self.assertFalse(differed)
+        self.assertNotIn("\\xff\\xfe", rendered)
+        self.assertNotIn("\\'", rendered)
+        self.assertNotIn(quoted.decode("ascii"), rendered)
+
 class CoreProcessTests(unittest.TestCase):
     def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):
         import sys
@@ -1031,5 +1114,3 @@ class SubIssueClosureTests(unittest.TestCase):
                 if state in line and "version" in line and "timestamp" in line
             ]
             self.assertTrue(matched, state)
-
-

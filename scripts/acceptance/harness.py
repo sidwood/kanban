@@ -168,8 +168,9 @@ def bearer_candidates(data_dir, environ=None, platform=None, keychain=None, reda
 class Redactor:
     """Strip known secrets from any text before it leaves the process.
 
-    Complete values are removed, including every printable form of an
-    installation secret, so a later shortening cannot leave a fragment.
+    Complete values are removed, including the raw text and the Python
+    bytes rendering of an installation secret, so a later shortening
+    cannot leave a fragment.
     """
 
     def __init__(self):
@@ -195,13 +196,54 @@ class Redactor:
 
 
 def secret_renderings(secret):
-    """Printable forms of an installation secret that must never appear."""
+    """Forms of an installation secret that must never appear.
+
+    Encodings, the raw text when those bytes are printable, and every
+    Python bytes rendering, including a secret spliced into a longer
+    value. Removing each complete form first keeps a later shortening
+    from leaving a fragment.
+    """
     standard = base64.b64encode(secret).decode("ascii")
     url = base64.urlsafe_b64encode(secret).decode("ascii")
-    renderings = [secret.hex(), standard, standard.rstrip("="), url, url.rstrip("=")]
+    renderings = [secret.hex(), standard, standard.rstrip("="), url, url.rstrip("="), repr(secret)]
+    renderings.extend(bytes_repr_bodies(secret))
     if len(secret) == SECRET_LENGTH:
         renderings.append(derive_bearer(secret))
+    try:
+        text = secret.decode("utf-8")
+    except UnicodeDecodeError:
+        text = ""
+    if text.isprintable():
+        renderings.append(text)
     return [rendering for rendering in renderings if len(rendering) >= 8]
+
+
+def bytes_repr_bodies(secret):
+    """Escaped interiors Python may splice into a larger bytes rendering.
+
+    The quote Python picks depends on the surrounding bytes, so both
+    choices are removed. Other bytes are escaped the same way in either.
+    """
+    return [escaped_bytes(secret, "'"), escaped_bytes(secret, '"')]
+
+
+def escaped_bytes(secret, quote):
+    """How Python renders these bytes inside a `quote`-delimited literal."""
+    pieces = []
+    for byte in secret:
+        if byte == ord(quote) or byte == 0x5C:
+            pieces.append("\\" + chr(byte))
+        elif byte == 0x09:
+            pieces.append("\\t")
+        elif byte == 0x0A:
+            pieces.append("\\n")
+        elif byte == 0x0D:
+            pieces.append("\\r")
+        elif 0x20 <= byte < 0x7F:
+            pieces.append(chr(byte))
+        else:
+            pieces.append("\\x%02x" % byte)
+    return "".join(pieces)
 
 
 def parse_rpc_body(content_type, body, request_id):

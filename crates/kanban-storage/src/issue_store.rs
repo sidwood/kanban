@@ -490,7 +490,8 @@ impl SqliteIssueStore {
         )
         .map_err(internal)?;
         if changed {
-            self.touch_updated_at(ticket_id)?;
+            drop(conn);
+            self.bump_version(ticket_id)?;
         }
         Ok(())
     }
@@ -525,7 +526,9 @@ impl SqliteIssueStore {
         if changed == 0 {
             return Ok(());
         }
-        self.touch_updated_at(ticket_id)
+        drop(conn);
+        self.bump_version(ticket_id)?;
+        Ok(())
     }
 
     pub fn load_issue_key(&self, ticket_id: i64) -> Result<IssueKey, ApiError> {
@@ -845,7 +848,8 @@ impl SqliteIssueStore {
             )
             .optional()
             .map_err(internal)?;
-        if current.flatten() == parent_id {
+        let previous = current.flatten();
+        if previous == parent_id {
             return Ok(());
         }
         conn.execute(
@@ -854,6 +858,13 @@ impl SqliteIssueStore {
             params![ticket_id, parent_id],
         )
         .map_err(internal)?;
+        drop(conn);
+        if let Some(old_parent) = previous {
+            auto_close_parent_if_children_done(&self.lock(), old_parent)?;
+        }
+        if let Some(new_parent) = parent_id {
+            auto_close_parent_if_children_done(&self.lock(), new_parent)?;
+        }
         Ok(())
     }
 
@@ -915,6 +926,14 @@ impl SqliteIssueStore {
                 "unsupported relation kind `{kind}`"
             )));
         }
+        drop(conn);
+        if kind == "blocks" {
+            return self.add_blocks_edge(from_ticket_id, to_ticket_id);
+        }
+        if kind == "related" {
+            return self.add_related_edge(from_ticket_id, to_ticket_id);
+        }
+        let conn = self.lock();
         let changed = conn
             .execute(
                 "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
@@ -926,6 +945,80 @@ impl SqliteIssueStore {
             return Ok(());
         }
         self.bump_version(from_ticket_id)?;
+        Ok(())
+    }
+
+    /// One blocks edge: the dependency graph the board and dispatch
+    /// readiness read, under the same cycle rule the legacy graph
+    /// enforces, moving both issues' versions with the edge.
+    fn add_blocks_edge(&self, from: i64, to: i64) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let mut graph = kanban_domain::TicketDependencyGraph::new();
+        let mut statement = conn
+            .prepare("SELECT from_ticket, to_ticket FROM ticket_dependencies ORDER BY id")
+            .map_err(internal)?;
+        let edges = statement
+            .query_map([], |row| {
+                Ok(kanban_domain::TicketDependency::new(
+                    kanban_domain::TicketId::new(row.get::<_, i64>(0)?.unsigned_abs()),
+                    kanban_domain::TicketId::new(row.get::<_, i64>(1)?.unsigned_abs()),
+                ))
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)?;
+        drop(statement);
+        for edge in &edges {
+            graph
+                .add(edge.from(), edge.to())
+                .map_err(|error| ApiError::internal(&error.to_string()))?;
+        }
+        let from_id = kanban_domain::TicketId::new(from.unsigned_abs());
+        let to_id = kanban_domain::TicketId::new(to.unsigned_abs());
+        if edges
+            .iter()
+            .any(|edge| edge.from() == from_id && edge.to() == to_id)
+        {
+            return Ok(());
+        }
+        graph
+            .add(from_id, to_id)
+            .map_err(|error| ApiError::invalid_request(&error.to_string()))?;
+        let changed = conn
+            .execute(
+                "INSERT OR IGNORE INTO ticket_dependencies (from_ticket, to_ticket)
+                 VALUES (?1, ?2)",
+                params![from, to],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Ok(());
+        }
+        drop(conn);
+        self.bump_version(from)?;
+        self.bump_version(to)?;
+        Ok(())
+    }
+
+    /// One related link: undirected, stored in the canonical
+    /// min-to-max direction so both endpoints list the same single
+    /// row and either endpoint can remove it.
+    fn add_related_edge(&self, from: i64, to: i64) -> Result<(), ApiError> {
+        let (low, high) = if from < to { (from, to) } else { (to, from) };
+        let conn = self.lock();
+        let changed = conn
+            .execute(
+                "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+                 VALUES (?1, ?2, 'related')",
+                params![low, high],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Ok(());
+        }
+        drop(conn);
+        self.bump_version(from)?;
+        self.bump_version(to)?;
         Ok(())
     }
 
@@ -941,17 +1034,43 @@ impl SqliteIssueStore {
         else {
             return Err(ApiError::not_found(to_identifier));
         };
-        let changed = conn
-            .execute(
-                "DELETE FROM issue_relations
-                 WHERE from_ticket_id = ?1 AND to_ticket_id = ?2 AND kind = ?3",
-                params![from_ticket_id, to_ticket_id, kind],
-            )
-            .map_err(internal)?;
+        drop(conn);
+        let changed = match kind {
+            "blocks" => {
+                let conn = self.lock();
+                conn.execute(
+                    "DELETE FROM ticket_dependencies
+                     WHERE from_ticket = ?1 AND to_ticket = ?2",
+                    params![from_ticket_id, to_ticket_id],
+                )
+                .map_err(internal)?
+            }
+            "related" => {
+                let conn = self.lock();
+                conn.execute(
+                    "DELETE FROM issue_relations
+                     WHERE kind = 'related'
+                       AND ((from_ticket_id = ?1 AND to_ticket_id = ?2)
+                        OR (from_ticket_id = ?2 AND to_ticket_id = ?1))",
+                    params![from_ticket_id, to_ticket_id],
+                )
+                .map_err(internal)?
+            }
+            _ => {
+                let conn = self.lock();
+                conn.execute(
+                    "DELETE FROM issue_relations
+                     WHERE from_ticket_id = ?1 AND to_ticket_id = ?2 AND kind = ?3",
+                    params![from_ticket_id, to_ticket_id, kind],
+                )
+                .map_err(internal)?
+            }
+        };
         if changed == 0 {
             return Ok(());
         }
         self.bump_version(from_ticket_id)?;
+        self.bump_version(to_ticket_id)?;
         Ok(())
     }
 
@@ -1282,6 +1401,7 @@ impl SqliteIssueStore {
         let key = self.load_issue_key(ticket_id)?;
         self.remove_relation(blocker_id, &key.display(), "blocks")
     }
+
 
     pub fn sync_description_mentions(
         &self,
@@ -1663,16 +1783,16 @@ impl SqliteIssueStore {
         let mut statement = conn
             .prepare(
                 "SELECT 'blocks' AS kind, p.code, t.number
-                 FROM issue_relations AS r
-                 JOIN tickets AS t ON t.id = r.to_ticket_id
+                 FROM ticket_dependencies AS d
+                 JOIN tickets AS t ON t.id = d.to_ticket
                  JOIN projects AS p ON p.id = t.project_id
-                 WHERE r.from_ticket_id = ?1 AND r.kind = 'blocks'
+                 WHERE d.from_ticket = ?1
                  UNION ALL
                  SELECT 'blocked-by', p.code, t.number
-                 FROM issue_relations AS r
-                 JOIN tickets AS t ON t.id = r.from_ticket_id
+                 FROM ticket_dependencies AS d
+                 JOIN tickets AS t ON t.id = d.from_ticket
                  JOIN projects AS p ON p.id = t.project_id
-                 WHERE r.to_ticket_id = ?1 AND r.kind = 'blocks'
+                 WHERE d.to_ticket = ?1
                  UNION ALL
                  SELECT 'related' AS kind, p.code, t.number
                  FROM issue_relations AS r

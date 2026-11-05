@@ -930,3 +930,106 @@ class StateMoveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+class SubIssueClosureTests(unittest.TestCase):
+    def context(self):
+        class MemoryMcp:
+            def __init__(self):
+                self.issues = {}
+                self.next_id = 1
+                self.states = []
+                self.auto_close = False
+
+            def call(self, name, arguments):
+                if name == "save_issue":
+                    return harness.ToolResult(True, self.save(arguments))
+                if name == "get_issue":
+                    return harness.ToolResult(True, self.issue(arguments["identifier"]))
+                if name == "update_project_settings":
+                    if "auto_close_sub_issues" in arguments:
+                        self.auto_close = arguments["auto_close_sub_issues"]
+                    return harness.ToolResult(True, {"auto_close_sub_issues": self.auto_close})
+                if name == "list_issue_statuses":
+                    return harness.ToolResult(True, {"states": [
+                        {"name": "Draft", "state_type": "backlog"},
+                        {"name": "Active", "state_type": "started"},
+                        {"name": "Done", "state_type": "completed"},
+                        {"name": "Cancelled", "state_type": "canceled"},
+                        {"name": "Superseded", "state_type": "canceled"},
+                        {"name": "Duplicate", "state_type": "duplicate"},
+                    ]})
+                if name == "list_issues":
+                    return harness.ToolResult(True, {"issues": []})
+                return harness.ToolResult(True, {})
+
+            def save(self, arguments):
+                if arguments.get("identifier"):
+                    issue = self.issues[arguments["identifier"]]
+                    if "state" in arguments:
+                        issue["state"] = arguments["state"]
+                        self.states.append(arguments["state"])
+                    return {"identifier": arguments["identifier"]}
+                number = self.next_id
+                self.next_id += 1
+                key = f"LIN-{number}"
+                state = arguments.get("state", "Draft")
+                self.issues[key] = {
+                    "title": arguments.get("title", ""),
+                    "state": state,
+                    "project_id": arguments.get("project_id", 1),
+                    "priority": arguments.get("priority", 0),
+                    "labels": list(arguments.get("add_labels") or []),
+                    "parent": arguments.get("parent_id"),
+                    "milestone_id": arguments.get("milestone_id"),
+                }
+                if "state" in arguments:
+                    self.states.append(state)
+                return {"identifier": key}
+
+            def issue(self, key):
+                stored = self.issues[key]
+                record = {
+                    "identifier": key,
+                    "title": stored["title"],
+                    "project_id": stored["project_id"],
+                    "state": stored["state"],
+                    "state_type": "backlog",
+                    "priority": stored["priority"],
+                    "labels": stored["labels"],
+                    "version": 1,
+                    "created_at": "2026-11-05T00:00:01.000Z",
+                    "updated_at": "2026-11-05T00:00:01.000Z",
+                    "state_history": [{
+                        "state": stored["state"], "state_type": "backlog",
+                        "started_at": "2026-11-05T00:00:01.000Z",
+                    }],
+                    "children": [],
+                }
+                if stored.get("parent"):
+                    record["parent"] = stored["parent"]
+                if stored.get("milestone_id") is not None:
+                    record["milestone_id"] = stored["milestone_id"]
+                return record
+
+        mcp = MemoryMcp()
+        recorder = checks.Recorder(emit=lambda line: None)
+        ctx = context.Context(mcp, None, recorder, "run", read_only=False, pause=0)
+        ctx.projects = {"LIN": 1, "LTB": 2}
+        ctx.project_code = "LIN"
+        ctx.milestones = {"M1": 1, "M2": 2}
+        ctx.mcp = mcp
+        return ctx
+
+    def test_closed_children_and_terminal_parents_keep_their_clock(self):
+        ctx = self.context()
+        ctx.rec.begin(11, "Sub-issues")
+        scenarios.test_sub_issues(ctx)
+        self.assertTrue({"Cancelled", "Superseded", "Duplicate"} <= set(ctx.mcp.states))
+        descriptions = [result[2] for result in ctx.rec.tests[-1].results]
+        for state in ("Done", "Cancelled", "Superseded", "Duplicate"):
+            matched = [
+                line for line in descriptions
+                if state in line and "version" in line and "timestamp" in line
+            ]
+            self.assertTrue(matched, state)
+
+

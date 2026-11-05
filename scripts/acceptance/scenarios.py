@@ -1380,11 +1380,25 @@ def test_sub_issues(ctx):
     settings = ctx.must("update_project_settings", {"mutation": ctx.mutation(0, "settings"),
                                                     "project_id": ctx.project_id})
     rec.equal("auto-close is off by default", settings.get("auto_close_sub_issues"), False)
+    before_close = ctx.get(parent)
     ctx.save_must(three, state="Done")
     record = ctx.get(parent)
     rec.check("with auto-close off, closing the last sub-issue leaves the parent open",
               record["state"] == "Active" and record.get("sub_issues") == {"done": 3, "total": 3},
               f"{record['state']}, {record.get('sub_issues')}")
+    rec.check("with auto-close off, the parent keeps its version and timestamps",
+              (before_close["version"], before_close["updated_at"], before_close.get("started_at"),
+               before_close.get("completed_at"), before_close.get("canceled_at")) ==
+              (record["version"], record["updated_at"], record.get("started_at"),
+               record.get("completed_at"), record.get("canceled_at")),
+              f"version {before_close['version']} -> {record['version']}, "
+              f"updated_at {before_close['updated_at']} -> {record['updated_at']}")
+    progress = ctx.create("T11 Closed-child progress", "LIN", state="Active")
+    ctx.create("T11 Cancelled child", parent_id=progress, state="Cancelled")
+    ctx.create("T11 Superseded child", parent_id=progress, state="Superseded")
+    ctx.create("T11 Duplicate child", parent_id=progress, state="Duplicate")
+    rec.equal("progress counts cancelled, superseded and duplicate children as closed",
+              ctx.get(progress).get("sub_issues"), {"done": 3, "total": 3})
 
     other = ctx.create("T11 Second parent", "LIN")
     ctx.save_must(two, parent_id=other)
@@ -1419,6 +1433,43 @@ def test_sub_issues(ctx):
         again = ctx.get(closing)
         rec.equal("an already closed parent is not closed again", len(again["state_history"]),
                   len(after["state_history"]))
+        mixed = ctx.create("T11 Mixed closed children", "LIN", state="Active")
+        cancelled_child = ctx.create("T11 Mixed cancelled child", parent_id=mixed, state="Active")
+        superseded_child = ctx.create("T11 Mixed superseded child", parent_id=mixed, state="Active")
+        duplicate_child = ctx.create("T11 Mixed duplicate child", parent_id=mixed, state="Active")
+        ctx.save_must(cancelled_child, state="Cancelled")
+        rec.equal("a cancelled child leaves the parent open while another child is open",
+                  ctx.get(mixed)["state"], "Active")
+        ctx.save_must(superseded_child, state="Superseded")
+        rec.equal("a superseded child leaves the parent open while another child is open",
+                  ctx.get(mixed)["state"], "Active")
+        ctx.save_must(duplicate_child, state="Duplicate")
+        closed = ctx.get(mixed)
+        rec.equal("the last cancelled, superseded or duplicate child closes the parent",
+                  (closed["state"], closed["state_type"]), ("Done", "completed"))
+        for state in ctx.must("list_issue_statuses", {"project_id": ctx.project_id})["states"]:
+            if state["state_type"] not in CLOSED_TYPES:
+                continue
+            terminal = ctx.create(f"T11 {state['name']} parent", "LIN", state=state["name"])
+            child = ctx.create(f"T11 Child of {state['name']}", parent_id=terminal, state="Active")
+            before = ctx.get(terminal)
+            ctx.save_must(child, state="Done")
+            after_parent = ctx.get(terminal)
+            unchanged = (
+                before["version"], before["updated_at"], before.get("started_at"),
+                before.get("completed_at"), before.get("canceled_at"), before["state"],
+                before["state_history"],
+            ) == (
+                after_parent["version"], after_parent["updated_at"], after_parent.get("started_at"),
+                after_parent.get("completed_at"), after_parent.get("canceled_at"),
+                after_parent["state"], after_parent["state_history"],
+            )
+            rec.check(
+                f"a {state['name']} parent keeps its version and timestamps when its last child closes",
+                unchanged,
+                f"version {before['version']} -> {after_parent['version']}, "
+                f"updated_at {before['updated_at']} -> {after_parent['updated_at']}",
+            )
     finally:
         ctx.must("update_project_settings", {"mutation": ctx.mutation(0, "settings"),
                                              "project_id": ctx.project_id, "auto_close_sub_issues": False})

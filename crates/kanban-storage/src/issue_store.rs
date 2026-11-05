@@ -1,5 +1,6 @@
 //! SQLite-backed Linear issue fields and history.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use kanban_app::TimelineEnvelope;
@@ -14,6 +15,57 @@ use crate::error::StorageError;
 use crate::timeline::insert_event;
 
 use super::linear_issue::{WorkflowStateRecord, workflow_state_by_legacy, workflow_state_by_name};
+thread_local! {
+    static SECONDARY_EFFECTS: RefCell<Option<Vec<kanban_app::SecondaryEffect>>> =
+        const { RefCell::new(None) };
+}
+
+fn open_secondary_effects() {
+    SECONDARY_EFFECTS.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+}
+
+fn drain_secondary_effects() -> Vec<kanban_app::SecondaryEffect> {
+    SECONDARY_EFFECTS.with(|slot| slot.borrow_mut().take().unwrap_or_default())
+}
+
+fn note_secondary_effect(conn: &rusqlite::Connection, ticket_id: i64) {
+    let recording = SECONDARY_EFFECTS.with(|slot| slot.borrow().is_some());
+    if !recording {
+        return;
+    }
+    let already = SECONDARY_EFFECTS.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|rows| rows.iter().any(|row| row.ticket_id == ticket_id))
+    });
+    if already {
+        return;
+    }
+    let Ok((version, state)) = conn.query_row(
+        "SELECT version, state FROM tickets WHERE id = ?1",
+        [ticket_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    ) else {
+        return;
+    };
+    let Some(state) = TicketState::parse(&state) else {
+        return;
+    };
+    SECONDARY_EFFECTS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(rows) = slot.as_mut() else {
+            return;
+        };
+        if rows.iter().any(|row| row.ticket_id == ticket_id) {
+            return;
+        }
+        rows.push(kanban_app::SecondaryEffect {
+            ticket_id,
+            version: version as u64,
+            state,
+        });
+    });
+}
 
 /// A calendar date exactly as Linear stores it: zero-padded
 /// `YYYY-MM-DD` with no surrounding whitespace and a real day of a
@@ -777,6 +829,7 @@ impl SqliteIssueStore {
 
     pub fn bump_version(&self, ticket_id: i64) -> Result<u64, ApiError> {
         let conn = self.lock();
+        note_secondary_effect(&conn, ticket_id);
         conn.execute(
             "UPDATE tickets SET version = version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1",
@@ -2267,6 +2320,14 @@ impl kanban_app::IssueStore for SqliteIssueStore {
     fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError> {
         SqliteIssueStore::set_assignee(self, ticket_id, assignee)
     }
+
+    fn begin_secondary_effects(&self) {
+        open_secondary_effects();
+    }
+
+    fn take_secondary_effects(&self) -> Vec<kanban_app::SecondaryEffect> {
+        drain_secondary_effects()
+    }
 }
 
 /// Land one free state move over `conn`: the workflow row, one open
@@ -2358,6 +2419,7 @@ pub(crate) fn apply_free_state_on(
     .map_err(internal)?;
     let legacy = TicketState::parse(&to_state.legacy_state)
         .ok_or_else(|| ApiError::internal("stored workflow state is invalid"))?;
+    note_secondary_effect(&span, ticket_id);
     span.execute(
         "UPDATE tickets
              SET state = ?2,

@@ -1,6 +1,6 @@
 //! Linear issue persistence port (operator MCP and UI adapters).
 
-use kanban_domain::{IssueKey, WorkflowStateType};
+use kanban_domain::{IssueKey, TicketState, WorkflowStateType};
 use kanban_dto::{ApiError, IssueRelationRecord};
 
 use crate::TimelineEnvelope;
@@ -163,6 +163,21 @@ pub trait IssueStore: Send + Sync {
     /// newest; a cursor resumes strictly after the boundary it carries
     /// even when that issue no longer matches.
     fn page_issue_ids(&self, query: &IssuePageQuery<'_>) -> Result<IssuePage, ApiError>;
+    /// Start recording every issue a following write actually changes,
+    /// so the caller can announce that set instead of guessing it.
+    fn begin_secondary_effects(&self);
+    /// The issues recorded since [`IssueStore::begin_secondary_effects`],
+    /// in the order they changed, and clear the record.
+    fn take_secondary_effects(&self) -> Vec<SecondaryEffect>;
+}
+
+/// An issue a write changed, captured before that change so a later
+/// announcement can tell an edit from a state move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecondaryEffect {
+    pub ticket_id: i64,
+    pub version: u64,
+    pub state: TicketState,
 }
 
 /// The filters an issue listing applies, already resolved to the

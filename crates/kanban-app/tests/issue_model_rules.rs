@@ -4963,3 +4963,357 @@ fn missing_named_references_carry_the_supplied_field() {
         "a missing named reference must carry its input field: {missing:?}"
     );
 }
+fn announced_for(sink: &RecordingSink, event: &str, ticket_id: u64) -> bool {
+    sink.announced()
+        .iter()
+        .any(|(name, payload)| name == event && payload["id"] == json!(ticket_id))
+}
+
+fn mention_prose(kind: &str, key: &str) -> String {
+    match kind {
+        "bare" => format!("See {key} now"),
+        "markdown" => format!("Follow [{key}](https://example.test/issue)"),
+        "checkbox" => format!("- [ ] Follow [{key}](https://example.test/issue)"),
+        "deep-link" => format!("Open kanban://issue/{key} please"),
+        _ => panic!("unknown mention form {kind}"),
+    }
+}
+
+#[test]
+fn a_new_mention_announces_the_related_issue() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let mut missing = Vec::new();
+    for (label, create) in [
+        ("bare-update", false),
+        ("markdown-update", false),
+        ("checkbox-update", false),
+        ("deep-link-update", false),
+        ("bare-create", true),
+        ("markdown-create", true),
+        ("checkbox-create", true),
+        ("deep-link-create", true),
+    ] {
+        let kind = label.rsplit_once('-').map(|(kind, _)| kind).expect("form");
+        let mentioned = save_issue(
+            session,
+            0,
+            &format!("mention-target-{label}"),
+            json!({ "project_id": 1, "title": format!("Mentioned {label}") }),
+        );
+        let prose = mention_prose(kind, &mentioned.identifier);
+        let before = read_issue(session, &mentioned.identifier);
+        sink.forget();
+        if create {
+            save_issue(
+                session,
+                0,
+                &format!("mention-source-{label}"),
+                json!({ "project_id": 1, "title": format!("Source {label}"), "description": prose }),
+            );
+        } else {
+            let source = save_issue(
+                session,
+                0,
+                &format!("mention-source-{label}"),
+                json!({ "project_id": 1, "title": format!("Source {label}") }),
+            );
+            sink.forget();
+            save_issue(
+                session,
+                read_issue(session, &source.identifier).version,
+                &format!("mention-save-{label}"),
+                json!({ "identifier": source.identifier, "description": prose }),
+            );
+        }
+        let after = read_issue(session, &mentioned.identifier);
+        assert!(
+            after.version > before.version,
+            "{label} advances the mentioned issue"
+        );
+        assert!(
+            after
+                .relations
+                .iter()
+                .any(|relation| relation.kind == "related"),
+            "{label} relates the mentioned issue: {:?}",
+            after.relations
+        );
+        if !announced_for(sink.as_ref(), "ticket.edited", mentioned.ticket_id) {
+            missing.push(label);
+        }
+    }
+
+    let mentioned = save_issue(
+        session,
+        0,
+        "mention-patch-target",
+        json!({ "project_id": 1, "title": "Patch target" }),
+    );
+    let source = save_issue(
+        session,
+        0,
+        "mention-patch-source",
+        json!({ "project_id": 1, "title": "Patch source", "description": "Intro" }),
+    );
+    let before = read_issue(session, &mentioned.identifier);
+    sink.forget();
+    let patch = json!({
+        "find": "Intro",
+        "replace": format!("Intro [{}](https://example.test)", mentioned.identifier),
+    })
+    .to_string();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "mention-patch",
+        json!({ "identifier": source.identifier, "description_patch": patch }),
+    );
+    assert!(read_issue(session, &mentioned.identifier).version > before.version);
+    if !announced_for(sink.as_ref(), "ticket.edited", mentioned.ticket_id) {
+        missing.push("description-patch");
+    }
+    assert!(
+        missing.is_empty(),
+        "a new mention must name the related issue: {missing:?}"
+    );
+
+    let repeated = read_issue(session, &mentioned.identifier);
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "mention-repeat",
+        json!({
+            "identifier": source.identifier,
+            "description": read_issue(session, &source.identifier).description,
+        }),
+    );
+    let still = read_issue(session, &mentioned.identifier);
+    assert_eq!(
+        still.version, repeated.version,
+        "a repeated mention is a no-op"
+    );
+    assert!(
+        sink.announced().is_empty(),
+        "a repeated mention announces nothing: {:?}",
+        sink.announced()
+    );
+
+    let quiet = save_issue(
+        session,
+        0,
+        "mention-unknown-source",
+        json!({ "project_id": 1, "title": "Unknown mention" }),
+    );
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &quiet.identifier).version,
+        "mention-unknown",
+        json!({ "identifier": quiet.identifier, "description": "See CORE-999 later" }),
+    );
+    assert!(
+        read_issue(session, &quiet.identifier).relations.is_empty(),
+        "an unknown mention adds no relation"
+    );
+    assert!(
+        sink.announced()
+            .iter()
+            .all(|(name, payload)| name == "ticket.edited"
+                && payload["id"] == json!(quiet.ticket_id)),
+        "an unknown mention announces only the saved issue: {:?}",
+        sink.announced()
+    );
+}
+
+#[test]
+fn a_refused_save_does_not_leave_secondary_effects_for_the_next_write() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let mentioned = save_issue(
+        session,
+        0,
+        "drained-mention",
+        json!({ "project_id": 1, "title": "Mentioned" }),
+    );
+    let source = save_issue(
+        session,
+        0,
+        "drained-source",
+        json!({ "project_id": 1, "title": "Source" }),
+    );
+    let prose = format!("See {} now", mentioned.identifier);
+    sink.forget();
+    let refused = try_save(
+        session,
+        read_issue(session, &source.identifier).version,
+        "drained-refuse",
+        json!({
+            "identifier": source.identifier,
+            "description": prose,
+            "add_blocks": ["CORE-999"],
+        }),
+    );
+    assert!(refused.is_err(), "an unknown block refuses the save");
+    assert!(
+        sink.announced().is_empty(),
+        "a refused save announces nothing: {:?}",
+        sink.announced()
+    );
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "drained-next",
+        json!({ "identifier": source.identifier, "title": "Source renamed" }),
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", source.ticket_id),
+        "the later title change is announced: {:?}",
+        sink.announced()
+    );
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.edited", mentioned.ticket_id),
+        "a refused save must not leave the mentioned issue for the next write: {:?}",
+        sink.announced()
+    );
+}
+
+fn enable_auto_close(session: &OperatorSession) {
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({ "project_id": 1, "auto_close_sub_issues": true }),
+        )
+        .expect("auto-close is enabled");
+}
+
+fn chain(session: &OperatorSession, prefix: &str, depth: usize) -> Vec<IssueSaveResponse> {
+    let mut issues: Vec<IssueSaveResponse> = Vec::with_capacity(depth);
+    for index in 0..depth {
+        let mut body = json!({ "project_id": 1, "title": format!("{prefix} {index}") });
+        if let Some(parent) = issues.last() {
+            body["parent_id"] = json!(parent.identifier);
+        }
+        issues.push(save_issue(session, 0, &format!("{prefix}-{index}"), body));
+    }
+    issues
+}
+
+fn assert_each_ancestor_closed(
+    session: &OperatorSession,
+    sink: &RecordingSink,
+    ancestors: &[IssueSaveResponse],
+    label: &str,
+) {
+    for ancestor in ancestors {
+        assert_eq!(
+            read_issue(session, &ancestor.identifier).state,
+            "Done",
+            "{label} closes {}",
+            ancestor.identifier
+        );
+        assert!(
+            announced_for(sink, "ticket.state.changed", ancestor.ticket_id),
+            "{label} names {} as ticket.state.changed: {:?}",
+            ancestor.identifier,
+            sink.announced()
+        );
+    }
+}
+
+#[test]
+fn closing_a_child_announces_each_auto_closed_ancestor() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    enable_auto_close(session);
+    let issues = chain(session, "cascade", 4);
+    let child = issues.last().expect("child").clone();
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &child.identifier).version,
+        "cascade-close",
+        json!({ "identifier": child.identifier, "state": "Done" }),
+    );
+    assert_each_ancestor_closed(session, sink.as_ref(), &issues[..3], "a state change");
+
+    let created = chain(session, "created-closed", 3);
+    sink.forget();
+    save_issue(
+        session,
+        0,
+        "created-closed-child",
+        json!({
+            "project_id": 1,
+            "title": "Born closed",
+            "state": "Done",
+            "parent_id": created[2].identifier,
+        }),
+    );
+    assert_each_ancestor_closed(session, sink.as_ref(), &created, "creating a closed child");
+
+    let destination = chain(session, "attach", 3);
+    let moving = save_issue(
+        session,
+        0,
+        "attach-child",
+        json!({ "project_id": 1, "title": "Moving child", "state": "Done" }),
+    );
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &moving.identifier).version,
+        "attach-done",
+        json!({ "identifier": moving.identifier, "parent_id": destination[2].identifier }),
+    );
+    assert_each_ancestor_closed(
+        session,
+        sink.as_ref(),
+        &destination,
+        "attaching a closed child",
+    );
+
+    let guarded = chain(session, "executing-chain", 3);
+    plant_executing_run(&h.database, guarded[0].ticket_id as i64);
+    let open_child = save_issue(
+        session,
+        0,
+        "executing-chain-child",
+        json!({
+            "project_id": 1,
+            "title": "Child of a guarded chain",
+            "parent_id": guarded[2].identifier,
+        }),
+    );
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &open_child.identifier).version,
+        "executing-chain-close",
+        json!({ "identifier": open_child.identifier, "state": "Done" }),
+    );
+    assert_eq!(read_issue(session, &guarded[2].identifier).state, "Done");
+    assert_eq!(read_issue(session, &guarded[1].identifier).state, "Done");
+    assert_eq!(
+        read_issue(session, &guarded[0].identifier).state,
+        "Draft",
+        "an executing ancestor stays open"
+    );
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.state.changed",
+        guarded[2].ticket_id
+    ));
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.state.changed",
+        guarded[1].ticket_id
+    ));
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.state.changed", guarded[0].ticket_id),
+        "an ancestor left open is not announced closed: {:?}",
+        sink.announced()
+    );
+}

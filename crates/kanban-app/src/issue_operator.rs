@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
-use crate::issue::{IssuePageQuery, IssueStore};
+use crate::issue::{IssuePageQuery, IssueStore, SecondaryEffect};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
@@ -570,6 +570,7 @@ fn create_issue(
     let ticket_id = value["id"]
         .as_u64()
         .ok_or_else(|| ApiError::internal("ticket id missing"))?;
+    let mut secondary = SecondaryGuard::begin(ctx.issues.as_ref());
     if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id as i64, description)?;
     }
@@ -601,14 +602,14 @@ fn create_issue(
                 .set_milestone(ticket_id as i64, Some(milestone_id))?;
         }
     }
-    let watched = watch_affected(ctx, ticket_id as i64, request)?;
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues
             .set_assignee(ticket_id as i64, assignee.as_deref())?;
     }
-    announce_changed_issues(ctx, effects, &watched, ticket_id)?;
+    let recorded = secondary.take();
+    announce_changed_issues(ctx, effects, &effects_as_snapshots(&recorded), ticket_id)?;
     finish_save_response(ctx, ticket_id)
 }
 
@@ -649,7 +650,7 @@ fn update_issue(
             "archived is terminal; the Project accepts no further changes",
         ));
     }
-    let watched = watch_affected(ctx, ticket_id, request)?;
+    let mut secondary = SecondaryGuard::begin(ctx.issues.as_ref());
     if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id, description)?;
     } else if let Some(patch) = request.description_patch.as_deref() {
@@ -682,6 +683,7 @@ fn update_issue(
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues.set_assignee(ticket_id, assignee.as_deref())?;
     }
+    let recorded = secondary.take();
     let after = ctx
         .tickets
         .find(TicketId::new(ticket_id as u64))?
@@ -694,7 +696,12 @@ fn update_issue(
         &project_code,
         request,
     );
-    announce_changed_issues(ctx, effects, &watched, ticket_id as u64)?;
+    announce_changed_issues(
+        ctx,
+        effects,
+        &effects_as_snapshots(&recorded),
+        ticket_id as u64,
+    )?;
     finish_save_response(ctx, ticket_id as u64)
 }
 
@@ -749,81 +756,40 @@ struct IssueSnapshot {
     state: kanban_domain::TicketState,
 }
 
-fn snapshot_issue(ctx: &IssueContext, id: u64) -> Result<Option<IssueSnapshot>, ApiError> {
-    Ok(ctx
-        .tickets
-        .find(TicketId::new(id))?
-        .map(|ticket| IssueSnapshot {
-            id,
-            version: ticket.version(),
-            state: ticket.state(),
-        }))
+struct SecondaryGuard<'a> {
+    issues: &'a dyn IssueStore,
+    open: bool,
 }
 
-fn watch_reference(ctx: &IssueContext, raw: &str) -> Result<Option<IssueSnapshot>, ApiError> {
-    match resolve_parent_reference(ctx, raw) {
-        Ok(id) => snapshot_issue(ctx, id),
-        Err(error) if error.code == kanban_dto::ErrorCode::NotFound => Ok(None),
-        Err(error) => Err(error),
+impl<'a> SecondaryGuard<'a> {
+    fn begin(issues: &'a dyn IssueStore) -> Self {
+        issues.begin_secondary_effects();
+        Self { issues, open: true }
+    }
+
+    fn take(&mut self) -> Vec<SecondaryEffect> {
+        self.open = false;
+        self.issues.take_secondary_effects()
     }
 }
 
-fn watch_affected(
-    ctx: &IssueContext,
-    ticket_id: i64,
-    request: &IssueSaveRequest,
-) -> Result<Vec<IssueSnapshot>, ApiError> {
-    let mut watched = Vec::new();
-    if let Some(parent) = ctx.issues.issue_fields(ticket_id)?.parent_ticket_id
-        && let Some(snap) = snapshot_issue(ctx, parent as u64)?
-    {
-        watched.push(snap);
-    }
-    if request
-        .duplicate_of
-        .as_ref()
-        .is_some_and(|value| value.is_some())
-    {
-        for relation in ctx.issues.list_relations(ticket_id)? {
-            if let Some(snap) = watch_reference(ctx, &relation.identifier)? {
-                watched.push(snap);
-            }
+impl Drop for SecondaryGuard<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.issues.take_secondary_effects();
         }
     }
-    for list in [
-        request.add_blocks.as_deref(),
-        request.remove_blocks.as_deref(),
-        request.add_related.as_deref(),
-        request.remove_related.as_deref(),
-        request.add_blocked_by.as_deref(),
-        request.remove_blocked_by.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        for target in list {
-            if let Some(snap) = watch_reference(ctx, target)? {
-                watched.push(snap);
-            }
-        }
-    }
-    if let Some(parent) = request
-        .parent_id
-        .as_ref()
-        .and_then(|value| value.as_deref())
-        && let Some(snap) = watch_reference(ctx, parent)?
-    {
-        watched.push(snap);
-    }
-    if let Some(target) = request
-        .duplicate_of
-        .as_ref()
-        .and_then(|value| value.as_deref())
-        && let Some(snap) = watch_reference(ctx, target)?
-    {
-        watched.push(snap);
-    }
-    Ok(watched)
+}
+
+fn effects_as_snapshots(effects: &[SecondaryEffect]) -> Vec<IssueSnapshot> {
+    effects
+        .iter()
+        .map(|effect| IssueSnapshot {
+            id: effect.ticket_id as u64,
+            version: effect.version,
+            state: effect.state,
+        })
+        .collect()
 }
 
 fn announce_changed_issues(

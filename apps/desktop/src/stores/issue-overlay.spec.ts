@@ -125,6 +125,21 @@ describe('issue overlay refreshes', () => {
     expect(overlay.issueFor(7)?.version).toBe(6)
   })
 
+  it('takes the newer answer to a drawer refresh issued before an older issue was put', async () => {
+    const { transport, pending } = wire()
+    const overlay = useIssueOverlayStore()
+
+    const drawer = refreshDrawer(transport)
+    await settle()
+    overlay.put(issue({ version: 4, description: 'Earlier text' }))
+    pending[0].resolve(issue({ version: 5, description: 'Saved text' }))
+    const refreshed = await drawer
+
+    expect(refreshed?.version).toBe(5)
+    expect(refreshed?.description).toBe('Saved text')
+    expect(overlay.issueFor(7)?.version).toBe(5)
+  })
+
   it('keeps the later-issued answer when an earlier one of the same version arrives after it', async () => {
     const { transport, pending } = wire()
     const overlay = useIssueOverlayStore()

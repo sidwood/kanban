@@ -63,8 +63,9 @@ function cacheAnswer(
   issue: IssueRecord,
   generation: number,
 ): void {
-  const supersededAt = Math.max(cache.clearedAt, cache.cachedAt[ticketId] ?? 0)
-  if (generation <= supersededAt || olderThanCached(cache, ticketId, issue)) return
+  if (generation <= cache.clearedAt || olderThanCached(cache, ticketId, issue)) return
+  const cached = cache.byTicketId[ticketId]
+  if (cached?.version === issue.version && generation <= (cache.cachedAt[ticketId] ?? 0)) return
   cache.byTicketId[ticketId] = issue
   cache.cachedAt[ticketId] = generation
 }

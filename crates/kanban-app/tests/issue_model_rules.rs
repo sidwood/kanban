@@ -4476,3 +4476,57 @@ fn a_checkbox_does_not_hide_a_following_link() {
     assert_eq!(record.relations.len(), 1);
     assert_eq!(record.relations[0].identifier, mentioned.identifier);
 }
+
+#[test]
+fn a_legacy_dependency_write_stamps_both_endpoints() {
+    let h = legacy_harness();
+    let session = &h.session;
+    let blocker = save_issue(
+        session,
+        0,
+        "legacy-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    );
+    let waiting = save_issue(
+        session,
+        0,
+        "legacy-waiting",
+        json!({ "project_id": 1, "title": "Waiting" }),
+    );
+    let before = read_issue(session, &blocker.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    h.core
+        .command(
+            "ticket.dependency.add",
+            &json!({
+                "to_ticket": waiting.ticket_id,
+                "from_ticket": blocker.ticket_id,
+                "mutation": {
+                    "optimistic_version": read_issue(session, &waiting.identifier).version,
+                    "idempotency_key": "legacy-dependency-add",
+                },
+            }),
+        )
+        .expect("the legacy add lands");
+    let after = read_issue(session, &blocker.identifier);
+    assert!(after.version > before.version);
+    assert_ne!(after.updated_at, before.updated_at);
+    let before_remove = read_issue(session, &blocker.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    h.core
+        .command(
+            "ticket.dependency.remove",
+            &json!({
+                "to_ticket": waiting.ticket_id,
+                "from_ticket": blocker.ticket_id,
+                "mutation": {
+                    "optimistic_version": read_issue(session, &waiting.identifier).version,
+                    "idempotency_key": "legacy-dependency-remove",
+                },
+            }),
+        )
+        .expect("the legacy removal lands");
+    let after_remove = read_issue(session, &blocker.identifier);
+    assert!(after_remove.version > before_remove.version);
+    assert_ne!(after_remove.updated_at, before_remove.updated_at);
+}

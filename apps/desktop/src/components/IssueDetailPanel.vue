@@ -40,6 +40,7 @@ const descriptionLocal = ref('')
 const descriptionSaving = ref(false)
 const descriptionError = ref<string | null>(null)
 const editingDescription = ref(false)
+const descriptionUnread = ref(false)
 
 watch(
   () => props.issue,
@@ -128,7 +129,7 @@ async function toggleResolve(comment: CommentListItem): Promise<void> {
   }
 }
 async function saveDescription(): Promise<void> {
-  if (!transport) return
+  if (!transport || descriptionUnread.value) return
   descriptionSaving.value = true
   descriptionError.value = null
   try {
@@ -140,21 +141,35 @@ async function saveDescription(): Promise<void> {
       identifier: props.issue.identifier,
       description: descriptionLocal.value,
     })
-    emit('saved', props.issue.ticket_id)
-    const refreshed = await overlay.refreshOne(
-      transport,
-      props.projectId,
-      props.projectCode,
-      props.issue.ticket_id,
-      Number(props.issue.identifier.split('-').pop()),
-    )
-    if (refreshed) emit('refreshed', refreshed)
-    editingDescription.value = false
   } catch (failure) {
     descriptionError.value = asApiError(failure).message
-  } finally {
     descriptionSaving.value = false
+    return
   }
+  descriptionUnread.value = true
+  emit('saved', props.issue.ticket_id)
+  await readSavedIssue()
+}
+
+async function readSavedIssue(): Promise<void> {
+  if (!transport) return
+  descriptionSaving.value = true
+  descriptionError.value = null
+  const refreshed = await overlay.refreshOne(
+    transport,
+    props.projectId,
+    props.projectCode,
+    props.issue.ticket_id,
+    Number(props.issue.identifier.split('-').pop()),
+  )
+  descriptionSaving.value = false
+  if (!refreshed) {
+    descriptionError.value = 'The description was saved, but the issue could not be read again.'
+    return
+  }
+  descriptionUnread.value = false
+  emit('refreshed', refreshed)
+  editingDescription.value = false
 }
 
 function editIssue(): void {
@@ -230,6 +245,14 @@ function editIssue(): void {
       <InlineAlert v-if="descriptionError">
         {{ descriptionError }}
       </InlineAlert>
+      <AppButton
+        v-if="descriptionUnread && !descriptionSaving"
+        variant="secondary"
+        data-testid="issue-description-reread"
+        @click="readSavedIssue()"
+      >
+        Read the issue again
+      </AppButton>
       <textarea
         v-if="editingDescription"
         v-model="descriptionLocal"
@@ -248,7 +271,7 @@ function editIssue(): void {
         v-if="editingDescription"
         variant="primary"
         data-testid="issue-description-save"
-        :disabled="descriptionSaving"
+        :disabled="descriptionSaving || descriptionUnread"
         @click="saveDescription()"
       >
         Save description

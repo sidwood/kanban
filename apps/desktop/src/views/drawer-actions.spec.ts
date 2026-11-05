@@ -189,6 +189,11 @@ async function submitForm(testid: string): Promise<void> {
   await flushPromises()
 }
 
+const descriptionDraft = (): string | null => {
+  const field = document.querySelector('[data-testid="issue-description-input"]')
+  return field instanceof HTMLTextAreaElement ? field.value : null
+}
+
 const versionsSent = (state: ReturnType<typeof harness>, name: string): number[] =>
   issued(state, name).map(
     (request) => (request as { mutation: { optimistic_version: number } }).mutation.optimistic_version,
@@ -650,6 +655,53 @@ describe('the drawer footer while a saved description is read again', () => {
       expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain(to)
     },
   )
+
+  it('keeps the footer and the description save shut when the saved description cannot be read, until it is read again', async () => {
+    const state = harness({ tickets: [implementation({ state: 'ready' })] })
+    await openDrawer(state)
+    const reads = holdReads(state, 'issue.get', 2)
+    const shut = async (): Promise<void> => {
+      expect(
+        document.querySelector('[data-testid="issue-detail-description"] [role="alert"]')?.textContent,
+      ).toContain('could not be read again')
+      expect(descriptionDraft()).toBe('The commands are served over the socket.')
+      expect(submitButton('drawer-park').disabled).toBe(true)
+      expect(submitButton('issue-description-save').disabled).toBe(true)
+      await click('drawer-park')
+      await forceClick('drawer-park')
+      await forceClick('issue-description-save')
+      expect(issued(state, 'ticket.park')).toEqual([])
+      expect(versionsSent(state, 'issue.save')).toEqual([5])
+    }
+
+    await saveDescription('The commands are served over the socket.')
+    expect(reads).toHaveLength(1)
+    reads[0]!.fail()
+    await flushPromises()
+    await shut()
+
+    await click('issue-description-reread')
+    expect(reads).toHaveLength(2)
+    expect(document.querySelector('[data-testid="issue-description-reread"]')).toBeNull()
+    expect(submitButton('drawer-park').disabled).toBe(true)
+    reads[1]!.fail()
+    await flushPromises()
+    await shut()
+
+    await click('issue-description-reread')
+    expect(document.querySelector('[data-testid="issue-description-reread"]')).toBeNull()
+    expect(document.querySelector('[data-testid="issue-detail-description"] [role="alert"]')).toBeNull()
+    expect(descriptionDraft()).toBeNull()
+    await click('drawer-park')
+
+    expect(issued(state, 'ticket.park')).toEqual([
+      { mutation: { optimistic_version: 6, idempotency_key: expect.any(String) }, ticket_id: 8 },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+    await saveDescription('The commands are served over the socket and the pipe.')
+    expect(versionsSent(state, 'issue.save')).toEqual([5, 7])
+  })
 
   it('keeps the footer shut when an issue read from before the save answers while the save is read again', async () => {
     const state = harness({ tickets: [implementation({ state: 'ready' })] })

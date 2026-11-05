@@ -4,22 +4,23 @@
 //! sub-issue ranks, history rows for a new issue's first state, and
 //! no-op saves that change nothing.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kanban_app::{
-    CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+    CommentIssueTargets, CommentStore, Core, EventSink, IssueStore, IssueStoreCommentTargets,
+    OperatorSession,
 };
 use kanban_dto::{ApiError, ErrorCode, IssueGetQuery, IssueRecord, IssueSaveResponse};
 use kanban_storage::SqliteCommentStore;
 use kanban_storage::{
-    Database, SqliteDependencyStore, SqliteEvidenceStore, SqliteIssueStore, SqlitePlanStore,
-    SqliteProjectStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
+    AllowAllMigrations, Database, SqliteDependencyStore, SqliteEvidenceStore, SqliteIssueStore,
+    SqlitePlanStore, SqliteProjectStore, SqliteScheduleStore, SqliteSpecStore, SqliteTicketStore,
 };
 use serde_json::{Value, json};
 
 mod common;
 
-use common::{harness, mutation};
+use common::{core_over_with_events, harness, mutation, seed_project_profile};
 
 fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
     let projects = Arc::new(SqliteProjectStore::new(database));
@@ -4142,5 +4143,117 @@ fn plant_executing_run(database: &Database, ticket_id: i64) {
         [ticket_id, request_id],
     )
     .expect("the executing run lands");
+}
+
+
+#[derive(Default)]
+struct RecordingSink {
+    events: Mutex<Vec<(String, Value)>>,
+}
+
+impl RecordingSink {
+    fn announced(&self) -> Vec<(String, Value)> {
+        self.events
+            .lock()
+            .expect("the recorder lock is sound")
+            .clone()
+    }
+
+    fn forget(&self) {
+        self.events
+            .lock()
+            .expect("the recorder lock is sound")
+            .clear();
+    }
+}
+
+impl EventSink for RecordingSink {
+    fn emit(&self, event_type: &str, payload: Value) {
+        self.events
+            .lock()
+            .expect("the recorder lock is sound")
+            .push((event_type.to_owned(), payload));
+    }
+}
+
+fn rules_harness_with_events() -> (RulesHarness, Arc<RecordingSink>) {
+    let dir = tempfile::TempDir::new().expect("a scratch directory");
+    let path = dir.path().join("kanban.sqlite");
+    let mut database = Database::open(&path).expect("a scratch database opens");
+    database
+        .migrate(&AllowAllMigrations)
+        .expect("the migrations apply");
+    seed_project_profile(&database);
+    let sink = Arc::new(RecordingSink::default());
+    let (mut core, _) = core_over_with_events(&database, sink.clone());
+    let attachments = dir.path().join("attachments");
+    register_issue_stack(&mut core, &database, &attachments);
+    let core = Arc::new(core);
+    (
+        RulesHarness {
+            session: OperatorSession::new(core.clone()),
+            core,
+            database,
+            _dir: dir,
+        },
+        sink,
+    )
+}
+
+
+#[test]
+fn an_issue_save_announces_the_same_live_events_as_a_legacy_edit() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "announce-create",
+        json!({ "project_id": 1, "title": "Announced" }),
+    );
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &saved.identifier).version,
+        "announce-title",
+        json!({ "identifier": saved.identifier, "title": "Renamed" }),
+    );
+    let edited = sink
+        .announced()
+        .into_iter()
+        .filter(|(name, _)| name == "ticket.edited")
+        .collect::<Vec<_>>();
+    assert_eq!(edited.len(), 1, "a title change announces ticket.edited");
+    assert_eq!(edited[0].1["id"], json!(saved.ticket_id));
+    assert_eq!(edited[0].1["title"], json!("Renamed"));
+
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &saved.identifier).version,
+        "announce-state",
+        json!({ "identifier": saved.identifier, "state": "Done" }),
+    );
+    let names = sink
+        .announced()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    assert!(
+        names.iter().any(|name| name == "ticket.state.changed"),
+        "a state move announces ticket.state.changed, saw {names:?}"
+    );
+
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &saved.identifier).version,
+        "announce-noop",
+        json!({ "identifier": saved.identifier, "title": "Renamed" }),
+    );
+    assert!(
+        sink.announced().is_empty(),
+        "a save that changes nothing announces nothing"
+    );
 }
 

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use kanban_domain::{ProjectId, Ticket, TicketId};
+use kanban_dto::LiveEventName;
 use kanban_dto::{
     ApiError, IssueCreateLabelRequest, IssueCreateMilestoneRequest, IssueGetQuery,
     IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
@@ -17,13 +18,14 @@ use serde_json::{Value, json};
 
 use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
+use crate::events::emit_catalogued;
 use crate::issue::{IssuePageQuery, IssueStore};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
 use crate::project::{ProjectStore, resolve_project};
 use crate::spec::SpecStore;
-use crate::ticket::{TicketStore, create_ticket, transition};
+use crate::ticket::{TicketStore, create_ticket, record_of, transition};
 
 /// MCP operations granted to installation-authenticated operator clients.
 pub const OPERATOR_MCP_OPERATIONS: &[&str] = &[
@@ -626,6 +628,9 @@ fn update_issue(
         .projects
         .find(ticket.project())?
         .ok_or_else(|| ApiError::not_found(identifier))?;
+    let before_state = ticket.state();
+    let before_version = ticket.version();
+    let project_code = project.code().clone();
     if project.is_archived() {
         return Err(ApiError::invalid_request_field(
             "project_id",
@@ -664,7 +669,65 @@ fn update_issue(
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues.set_assignee(ticket_id, assignee.as_deref())?;
     }
+    let after = ctx
+        .tickets
+        .find(TicketId::new(ticket_id as u64))?
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    announce_saved_issue(
+        effects,
+        before_state,
+        before_version,
+        &after,
+        &project_code,
+        request,
+    );
     finish_save_response(ctx, ticket_id as u64)
+}
+
+fn announce_saved_issue(
+    effects: &dyn CommandEffects,
+    before_state: kanban_domain::TicketState,
+    before_version: u64,
+    after: &Ticket,
+    code: &kanban_domain::ProjectCode,
+    request: &IssueSaveRequest,
+) {
+    if after.version() == before_version && after.state() == before_state {
+        return;
+    }
+    let state_changed = after.state() != before_state;
+    if state_changed {
+        emit_catalogued(
+            effects,
+            LiveEventName::TicketStateChanged,
+            &record_of(after, code),
+        );
+    }
+    let other_fields = request.title.is_some()
+        || request.description.is_some()
+        || request.description_patch.is_some()
+        || request.priority.is_some()
+        || request.due_date.is_some()
+        || request.milestone_id.is_some()
+        || request.add_labels.is_some()
+        || request.remove_labels.is_some()
+        || request.parent_id.is_some()
+        || request.duplicate_of.is_some()
+        || request.sort_order.is_some()
+        || request.add_blocks.is_some()
+        || request.remove_blocks.is_some()
+        || request.add_related.is_some()
+        || request.remove_related.is_some()
+        || request.add_blocked_by.is_some()
+        || request.remove_blocked_by.is_some()
+        || request.assignee.is_some();
+    if after.version() != before_version && (!state_changed || other_fields) {
+        emit_catalogued(
+            effects,
+            LiveEventName::TicketEdited,
+            &record_of(after, code),
+        );
+    }
 }
 
 fn apply_issue_extensions(
@@ -679,10 +742,11 @@ fn apply_issue_extensions(
         };
         let before = ctx.issues.issue_fields(ticket_id)?.parent_ticket_id;
         ctx.issues.set_parent(ticket_id, parent_id)?;
-        if request.sort_order.is_none() && before != parent_id {
-            if let Some(parent_id) = parent_id {
-                ctx.issues.append_sub_issue_sort(ticket_id, parent_id)?;
-            }
+        if request.sort_order.is_none()
+            && before != parent_id
+            && let Some(parent_id) = parent_id
+        {
+            ctx.issues.append_sub_issue_sort(ticket_id, parent_id)?;
         }
     }
     if let Some(duplicate) = request.duplicate_of.as_ref() {

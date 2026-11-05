@@ -2150,6 +2150,10 @@ mod tests {
                     version: 66,
                     name: "label milestone name case",
                 },
+                PendingMigration {
+                    version: 67,
+                    name: "issue creator",
+                },
             ]]
         );
     }

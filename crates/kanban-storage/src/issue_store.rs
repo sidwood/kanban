@@ -767,7 +767,7 @@ impl SqliteIssueStore {
     pub fn issue_fields(&self, ticket_id: i64) -> Result<kanban_app::IssueTicketFields, ApiError> {
         let conn = self.lock();
         conn.query_row(
-            "SELECT description, linear_priority, due_date, milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id, started_at, completed_at, canceled_at, assignee
+            "SELECT description, linear_priority, due_date, milestone_id, updated_at, created_at, version, parent_ticket_id, duplicate_of_ticket_id, started_at, completed_at, canceled_at, assignee, creator
              FROM tickets WHERE id = ?1",
             [ticket_id],
             |row| {
@@ -788,6 +788,7 @@ impl SqliteIssueStore {
                     completed_at: row.get(10)?,
                     canceled_at: row.get(11)?,
                     assignee: row.get(12)?,
+                    creator: row.get(13)?,
                 })
             },
         )
@@ -1554,6 +1555,16 @@ impl SqliteIssueStore {
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
              WHERE id = ?1",
             params![ticket_id, stored],
+        )
+        .map_err(internal)?;
+        Ok(())
+    }
+
+    pub fn set_creator(&self, ticket_id: i64, creator: &str) -> Result<(), ApiError> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE tickets SET creator = ?2 WHERE id = ?1",
+            params![ticket_id, creator],
         )
         .map_err(internal)?;
         Ok(())
@@ -2377,6 +2388,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
 
     fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError> {
         SqliteIssueStore::set_assignee(self, ticket_id, assignee)
+    }
+
+    fn set_creator(&self, ticket_id: i64, creator: &str) -> Result<(), ApiError> {
+        SqliteIssueStore::set_creator(self, ticket_id, creator)
     }
 
     fn begin_secondary_effects(&self) {

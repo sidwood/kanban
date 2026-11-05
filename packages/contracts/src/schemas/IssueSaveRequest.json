@@ -66,6 +66,13 @@
         "null"
       ]
     },
+    "creator": {
+      "description": "Who created the issue. The operator session fills this from the configured operator name when it is omitted on create.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "description": {
       "type": [
         "string",

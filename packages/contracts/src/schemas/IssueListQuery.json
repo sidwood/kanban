@@ -15,6 +15,16 @@
         "null"
       ]
     },
+    "fields": {
+      "description": "Extra record fields to include. `description` and `history` are omitted unless named here. Unrecognised names are ignored.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "label": {
       "type": [
         "string",

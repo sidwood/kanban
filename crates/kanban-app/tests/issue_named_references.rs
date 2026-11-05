@@ -197,3 +197,69 @@ fn save_comment_accepts_an_issue_key_and_body() {
         "the result carries the issue URL: {posted}"
     );
 }
+
+#[test]
+fn get_issue_shows_team_project_milestone_and_creator() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::with_operator_name(Arc::new(h.core), "Ada");
+    call(
+        &session,
+        "issue.create_label",
+        "readable-web",
+        json!({
+            "project_id": 1,
+            "name": "Web",
+            "color": "#336699",
+            "group": "Project",
+            "group_single_select": true
+        }),
+    );
+    call(
+        &session,
+        "issue.create_milestone",
+        "readable-m1",
+        json!({ "project_id": 1, "name": "M1 Foundations" }),
+    );
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "readable-create",
+        json!({
+            "team": "CORE",
+            "project": "Web",
+            "milestone": "M1 Foundations",
+            "title": "Readable",
+            "description": "Full text"
+        }),
+    ))
+    .expect("save shape");
+    let read = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get");
+    assert_eq!(read["team"], json!("CORE"));
+    assert_eq!(read["project"], json!("Web"));
+    assert_eq!(read["milestone"], json!("M1 Foundations"));
+    assert_eq!(read["creator"], json!("Ada"));
+
+    let compact = session
+        .call("issue.list", &json!({ "project": "Web" }))
+        .expect("issue.list");
+    let row = &compact["issues"][0];
+    assert!(
+        row.get("description").is_none(),
+        "default rows omit description: {row}"
+    );
+    assert!(
+        row.get("state_history").is_none(),
+        "default rows omit history: {row}"
+    );
+    let detailed = session
+        .call(
+            "issue.list",
+            &json!({ "project": "Web", "fields": ["description"] }),
+        )
+        .expect("issue.list");
+    assert_eq!(detailed["issues"][0]["description"], json!("Full text"));
+}

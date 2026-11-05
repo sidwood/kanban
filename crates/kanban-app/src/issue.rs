@@ -51,6 +51,7 @@ pub struct IssueTicketFields {
     pub completed_at: Option<String>,
     pub canceled_at: Option<String>,
     pub assignee: String,
+    pub creator: String,
 }
 
 /// Loads and mutates Linear-shaped issue fields beside the Ticket port.
@@ -151,6 +152,7 @@ pub trait IssueStore: Send + Sync {
     ) -> Result<IssueLabelRow, ApiError>;
     fn retire_label(&self, project_id: i64, name: &str) -> Result<IssueLabelRow, ApiError>;
     fn set_assignee(&self, ticket_id: i64, assignee: Option<&str>) -> Result<(), ApiError>;
+    fn set_creator(&self, ticket_id: i64, creator: &str) -> Result<(), ApiError>;
     /// The project that owns one issue, or `None` when no such issue
     /// exists, so comment streams can be tied to their owner.
     fn issue_project(&self, ticket_id: i64) -> Result<Option<u64>, ApiError>;

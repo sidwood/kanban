@@ -40668,6 +40668,13 @@
             "null"
           ]
         },
+        "creator": {
+          "description": "Who created the issue. The operator session fills this from the configured operator name when it is omitted on create.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "description": {
           "type": [
             "string",
@@ -40981,7 +40988,15 @@
         "created_at": {
           "type": "string"
         },
+        "creator": {
+          "description": "Who created the issue, when that was recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "description": {
+          "default": "",
           "type": "string"
         },
         "due_date": {
@@ -41014,6 +41029,13 @@
           },
           "type": "array"
         },
+        "milestone": {
+          "description": "Milestone name within the team.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "milestone_id": {
           "format": "uint64",
           "minimum": 0.0,
@@ -41032,6 +41054,13 @@
           "format": "uint8",
           "minimum": 0.0,
           "type": "integer"
+        },
+        "project": {
+          "description": "The issue's label in the single-select Project group.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "format": "uint64",
@@ -41054,6 +41083,7 @@
           "type": "string"
         },
         "state_history": {
+          "default": [],
           "items": {
             "$ref": "#/definitions/IssueStateHistoryRecord"
           },
@@ -41070,6 +41100,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "team": {
+          "description": "Kanban project code, the Linear team.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "ticket_id": {
@@ -41094,14 +41131,12 @@
       },
       "required": [
         "created_at",
-        "description",
         "identifier",
         "labels",
         "priority",
         "project_id",
         "relations",
         "state",
-        "state_history",
         "state_type",
         "ticket_id",
         "title",
@@ -41129,6 +41164,16 @@
           "description": "Opaque page boundary. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "description": "Extra record fields to include. `description` and `history` are omitted unless named here. Unrecognised names are ignored.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -41275,7 +41320,15 @@
             "created_at": {
               "type": "string"
             },
+            "creator": {
+              "description": "Who created the issue, when that was recorded.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "description": {
+              "default": "",
               "type": "string"
             },
             "due_date": {
@@ -41308,6 +41361,13 @@
               },
               "type": "array"
             },
+            "milestone": {
+              "description": "Milestone name within the team.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "milestone_id": {
               "format": "uint64",
               "minimum": 0.0,
@@ -41326,6 +41386,13 @@
               "format": "uint8",
               "minimum": 0.0,
               "type": "integer"
+            },
+            "project": {
+              "description": "The issue's label in the single-select Project group.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "project_id": {
               "format": "uint64",
@@ -41348,6 +41415,7 @@
               "type": "string"
             },
             "state_history": {
+              "default": [],
               "items": {
                 "$ref": "#/definitions/IssueStateHistoryRecord"
               },
@@ -41364,6 +41432,13 @@
                 {
                   "type": "null"
                 }
+              ]
+            },
+            "team": {
+              "description": "Kanban project code, the Linear team.",
+              "type": [
+                "string",
+                "null"
               ]
             },
             "ticket_id": {
@@ -41388,14 +41463,12 @@
           },
           "required": [
             "created_at",
-            "description",
             "identifier",
             "labels",
             "priority",
             "project_id",
             "relations",
             "state",
-            "state_history",
             "state_type",
             "ticket_id",
             "title",

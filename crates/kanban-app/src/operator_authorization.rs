@@ -69,6 +69,18 @@ impl OperatorSession {
                 record["author"] = json!(operator);
             }
         }
+        if name == "issue.save" && payload.get("identifier").is_none() {
+            let creator = payload
+                .get("creator")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if creator.trim().is_empty()
+                && let Some(operator) = self.operator_name.as_deref()
+            {
+                let record = resolved.get_or_insert_with(|| payload.clone());
+                record["creator"] = json!(operator);
+            }
+        }
         resolved
     }
 

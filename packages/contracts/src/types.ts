@@ -624,6 +624,7 @@ export type IssueLabelsResponse = {
 export type IssueListQuery = {
   assignee?: string | null;
   cursor?: string | null;
+  fields?: string[] | null;
   label?: string | null;
   limit?: number;
   milestone_id?: number | null;
@@ -675,22 +676,26 @@ export type IssueRecord = {
   children?: IssueChildRecord[] | null;
   completed_at?: string | null;
   created_at: string;
-  description: string;
+  creator?: string | null;
+  description?: string;
   due_date?: string | null;
   duplicate_of?: string | null;
   duplicates?: string[] | null;
   identifier: string;
   labels: string[];
+  milestone?: string | null;
   milestone_id?: number | null;
   parent?: string | null;
   priority: number;
+  project?: string | null;
   project_id: number;
   relations: IssueRelationRecord[];
   started_at?: string | null;
   state: string;
-  state_history: IssueStateHistoryRecord[];
+  state_history?: IssueStateHistoryRecord[];
   state_type: string;
   sub_issues?: IssueSubIssueProgress | null;
+  team?: string | null;
   ticket_id: number;
   title: string;
   updated_at: string;
@@ -712,6 +717,7 @@ export type IssueSaveRequest = {
   add_labels?: string[] | null;
   add_related?: string[] | null;
   assignee?: string | null;
+  creator?: string | null;
   description?: string | null;
   description_patch?: string | null;
   due_date?: string | null;

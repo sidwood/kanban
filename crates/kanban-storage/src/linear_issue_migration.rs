@@ -1258,6 +1258,20 @@ pub(crate) fn apply_issue_assignee_column_in_span(span: &WriteSpan<'_>) -> rusql
     apply_issue_assignee_column(span)
 }
 
+pub(crate) fn apply_issue_creator_column(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "tickets",
+        "creator",
+        "creator TEXT NOT NULL DEFAULT ''",
+    )
+}
+
+pub(crate) fn apply_issue_creator_column_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    apply_issue_creator_column(span)
+}
+
+
 /// Repairs the linear issue migration on databases that applied an
 /// earlier build of migrations 53 through 59.
 ///

@@ -384,6 +384,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "label milestone name case",
         sql: include_str!("../migrations/0066_label_milestone_name_case.sql"),
     },
+    Migration {
+        version: 67,
+        name: "issue creator",
+        sql: include_str!("../migrations/0067_issue_creator.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -606,6 +611,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
                 name: migration.name,
                 source,
             })?;
+    } else if migration.version == 67 {
+        crate::linear_issue_migration::apply_issue_creator_column_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
     } else {
         span.execute_batch(migration.sql)
             .map_err(|source| StorageError::Migration {

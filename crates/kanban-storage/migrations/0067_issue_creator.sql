@@ -1,0 +1,4 @@
+-- 0067 issue creator
+--
+-- Applied idempotently from the migration runner so a repeated upgrade
+-- does not fail when the column is already present.

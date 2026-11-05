@@ -47,7 +47,7 @@ watch(
   () => props.issue,
   (issue, previous) => {
     if (editingDescription.value && issue.ticket_id === previous?.ticket_id) return
-    descriptionLocal.value = issue.description
+    descriptionLocal.value = issue.description ?? ''
     editingDescription.value = false
   },
   { immediate: true },

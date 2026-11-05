@@ -82,6 +82,10 @@ pub struct IssueSaveRequest {
     pub add_related: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_related: Option<Vec<String>>,
+    /// Who created the issue. The operator session fills this from the
+    /// configured operator name when it is omitted on create.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_blocked_by: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,6 +205,7 @@ pub struct IssueRecord {
     pub ticket_id: u64,
     pub project_id: u64,
     pub title: String,
+    #[serde(default)]
     pub description: String,
     pub state: String,
     pub state_type: String,
@@ -211,6 +216,7 @@ pub struct IssueRecord {
     pub milestone_id: Option<u64>,
     pub labels: Vec<String>,
     pub relations: Vec<IssueRelationRecord>,
+    #[serde(default)]
     pub state_history: Vec<IssueStateHistoryRecord>,
     pub version: u64,
     pub created_at: String,
@@ -233,6 +239,18 @@ pub struct IssueRecord {
     pub children: Option<Vec<IssueChildRecord>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee: Option<String>,
+    /// Kanban project code, the Linear team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// The issue's label in the single-select Project group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Milestone name within the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone: Option<String>,
+    /// Who created the issue, when that was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -269,6 +287,10 @@ pub struct IssueListQuery {
     /// Project-group label name. This is not the Kanban project id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    /// Extra record fields to include. `description` and `history`
+    /// are omitted unless named here. Unrecognised names are ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
     #[serde(default)]
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]

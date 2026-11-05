@@ -185,7 +185,7 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
       heldLabels.value = [...issue.labels]
       issueDraft.value = {
         title: issue.title,
-        description: issue.description,
+        description: issue.description ?? '',
         priority: issue.priority,
         dueDate: issue.due_date?.slice(0, 10) ?? '',
         labels: [...issue.labels],

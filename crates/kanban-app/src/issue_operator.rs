@@ -224,9 +224,38 @@ impl QueryHandler for ListIssues {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let request: IssueListQuery = parse_issue_payload(payload)?;
         let response = list_issues(&self.0, &request)?;
-        serde_json::to_value(response).map_err(|_| ApiError::internal("issue list invalid"))
+        let mut value =
+            serde_json::to_value(response).map_err(|_| ApiError::internal("issue list invalid"))?;
+        compact_list_rows(&mut value, request.fields.as_deref());
+        Ok(value)
     }
 }
+
+fn compact_list_rows(value: &mut Value, fields: Option<&[String]>) {
+    let requested = fields.unwrap_or(&[]);
+    let want_description = requested.iter().any(|field| field == "description");
+    let want_history = requested
+        .iter()
+        .any(|field| field == "history" || field == "state_history");
+    let Some(issues) = value
+        .get_mut("issues")
+        .and_then(|issues| issues.as_array_mut())
+    else {
+        return;
+    };
+    for issue in issues {
+        let Some(object) = issue.as_object_mut() else {
+            continue;
+        };
+        if !want_description {
+            object.remove("description");
+        }
+        if !want_history {
+            object.remove("state_history");
+        }
+    }
+}
+
 
 struct ListWorkflowStates(IssueContext);
 
@@ -807,6 +836,9 @@ fn create_issue(
         ctx.issues
             .set_assignee(ticket_id as i64, assignee.as_deref())?;
     }
+    if let Some(creator) = request.creator.as_deref() {
+        ctx.issues.set_creator(ticket_id as i64, creator)?;
+    }
     let recorded = secondary.take();
     announce_changed_issues(ctx, effects, &effects_as_snapshots(&recorded), ticket_id)?;
     finish_save_response(ctx, ticket_id)
@@ -1361,6 +1393,12 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     };
     let duplicates = ctx.issues.list_duplicate_identifiers(ticket_id)?;
     let (sub_done, sub_total) = ctx.issues.sub_issue_progress(ticket_id)?;
+    let team = ctx
+        .projects
+        .find(ticket.project())?
+        .map(|project| project.code().as_str().to_owned());
+    let project_label = project_label_on_issue(ctx, ticket.project().value(), &labels)?;
+    let milestone = milestone_name(ctx, ticket.project().value(), fields.milestone_id)?;
     Ok(IssueRecord {
         identifier: key.display(),
         url: key.deep_link(),
@@ -1391,7 +1429,43 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
         duplicates: (!duplicates.is_empty()).then_some(duplicates),
         children: (!children.is_empty()).then_some(children),
         assignee: (!fields.assignee.is_empty()).then_some(fields.assignee),
+        team,
+        project: project_label,
+        milestone,
+        creator: (!fields.creator.is_empty()).then_some(fields.creator),
     })
+}
+
+fn project_label_on_issue(
+    ctx: &IssueContext,
+    project_id: u64,
+    labels: &[String],
+) -> Result<Option<String>, ApiError> {
+    let stored = ctx.issues.list_project_labels(project_id as i64)?;
+    Ok(labels.iter().find_map(|label| {
+        stored.iter().find(|row| {
+            row.name == *label
+                && row
+                    .group
+                    .as_deref()
+                    .is_some_and(|group| same_name(group, "Project"))
+        }).map(|row| row.name.clone())
+    }))
+}
+
+fn milestone_name(
+    ctx: &IssueContext,
+    project_id: u64,
+    milestone_id: Option<i64>,
+) -> Result<Option<String>, ApiError> {
+    let Some(milestone_id) = milestone_id else {
+        return Ok(None);
+    };
+    let stored = ctx.issues.list_project_milestones(project_id as i64)?;
+    Ok(stored
+        .into_iter()
+        .find(|row| row.id as i64 == milestone_id)
+        .map(|row| row.name))
 }
 
 fn list_issues(

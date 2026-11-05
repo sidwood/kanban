@@ -1057,7 +1057,7 @@ fn task_checklist_markdown(conn: &Connection, ticket_id: i64) -> rusqlite::Resul
 }
 
 fn append_checklist(description: &str, checklist: &str) -> String {
-    if description.contains(checklist) {
+    if description.contains(checklist) || checklist_already_present(description, checklist) {
         return description.to_owned();
     }
     let mut document = description.to_owned();
@@ -1074,6 +1074,28 @@ fn append_checklist(description: &str, checklist: &str) -> String {
         document.push('\n');
     }
     document
+}
+fn checklist_already_present(description: &str, checklist: &str) -> bool {
+    let criteria: Vec<&str> = checklist.lines().filter_map(checkbox_criterion).collect();
+    if criteria.is_empty() {
+        return false;
+    }
+    criteria.iter().any(|criterion| {
+        description
+            .lines()
+            .any(|line| checkbox_criterion(line) == Some(*criterion))
+    })
+}
+
+fn checkbox_criterion(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix("- [")?;
+    let mut chars = rest.chars();
+    chars.next()?;
+    if chars.next() != Some(']') {
+        return None;
+    }
+    let criterion = chars.as_str().trim_start();
+    (!criterion.is_empty()).then_some(criterion)
 }
 
 pub(crate) fn apply_task_checklist_repair_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
@@ -2736,6 +2758,17 @@ mod tests {
             "appending must not rewrite the existing text: {appended:?}"
         );
         assert!(appended.contains(checklist));
+    }
+    #[test]
+    fn a_user_checked_item_is_not_replaced_by_an_unchecked_copy() {
+        let description =
+            "Existing prose  \n\n- [x] Issue tracked\n\nOperator checked this item.\n";
+        let checklist = "- [ ] Issue tracked";
+        assert_eq!(
+            append_checklist(description, checklist),
+            description,
+            "an edited mark is still the checklist, so repair must not append"
+        );
     }
     #[test]
     fn stray_block_edges_join_the_dependency_graph_and_related_links_stay() {

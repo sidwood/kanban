@@ -2278,13 +2278,22 @@ fn create_project_label(session: &OperatorSession, key: &str, name: &str) {
         )
         .expect("the label is created");
 }
+fn plant_label_spelling(database: &Database, name: &str) {
+    database
+        .connection()
+        .execute(
+            "INSERT INTO issue_labels (project_id, name, color) VALUES (1, ?1, '#336699')",
+            [name],
+        )
+        .expect("the stored spelling lands");
+}
 
 #[test]
 fn adding_a_label_by_exact_spelling_beats_its_case_variants() {
     let h = rules_harness();
     let session = &h.session;
     create_project_label(session, "exact-add-lower", "web");
-    create_project_label(session, "exact-add-upper", "WEB");
+    plant_label_spelling(&h.database, "WEB");
     let saved = save_issue(
         session,
         0,
@@ -2317,7 +2326,7 @@ fn removing_a_held_label_by_exact_spelling_removes_it() {
         "exact-remove-host",
         json!({ "project_id": 1, "title": "Exact removal host", "add_labels": ["web"] }),
     );
-    create_project_label(session, "exact-remove-upper", "WEB");
+    plant_label_spelling(&h.database, "WEB");
 
     save_issue(
         session,
@@ -2344,7 +2353,7 @@ fn re_adding_a_held_label_by_exact_spelling_touches_nothing() {
         "exact-noop-host",
         json!({ "project_id": 1, "title": "Exact no-op host", "add_labels": ["web"] }),
     );
-    create_project_label(session, "exact-noop-upper", "WEB");
+    plant_label_spelling(&h.database, "WEB");
     let before = read_issue(session, &saved.identifier);
     wait_for_clock_past(&h, &before.updated_at);
 
@@ -2369,7 +2378,7 @@ fn two_case_folded_label_spellings_refuse_by_their_field() {
     let h = rules_harness();
     let session = &h.session;
     create_project_label(session, "folded-refuse-mixed", "Web");
-    create_project_label(session, "folded-refuse-upper", "WEB");
+    plant_label_spelling(&h.database, "WEB");
     let saved = save_issue(
         session,
         0,

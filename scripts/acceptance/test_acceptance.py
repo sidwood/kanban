@@ -1793,6 +1793,86 @@ class LinkedStoreFingerprintTests(unittest.TestCase):
                 ("symlink", "../payload", "unreadable", "PermissionError"),
             )
 
+    def test_terminal_directory_components_reject_file_targets(self):
+        for suffix in ("/", "/.", "/./"):
+            for chained in (False, True):
+                for absolute in (False, True):
+                    with self.subTest(suffix=suffix, chained=chained, absolute=absolute):
+                        with tempfile.TemporaryDirectory() as tmp:
+                            root = Path(tmp).resolve()
+                            store = root / "store"
+                            outside = root / "outside"
+                            store.mkdir()
+                            outside.mkdir()
+                            target = outside / "payload"
+                            target.write_bytes(b"unchanged bytes")
+                            raw = (str(target) if absolute else "../outside/payload") + suffix
+                            if chained:
+                                os.symlink((str(target) if absolute else "payload") + suffix, outside / "entry")
+                                raw = "../outside/entry"
+                            link = store / "link"
+                            os.symlink(raw, link)
+                            with self.assertRaises(NotADirectoryError):
+                                os.stat(link)
+                            self.assertEqual(
+                                harness.store_fingerprint(store)["link"],
+                                ("symlink", raw, "dangling"),
+                            )
+
+    def test_an_external_link_becoming_valid_changes_the_store_identity(self):
+        for suffix in ("/", "/.", "/./"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                store = root / "store"
+                outside = root / "outside"
+                store.mkdir()
+                outside.mkdir()
+                (outside / "database").write_bytes(b"unchanged database")
+                entry = outside / "entry"
+                os.symlink("database" + suffix, entry)
+                link = store / "kanban.sqlite"
+                link.symlink_to("../outside/entry")
+                before = harness.store_fingerprint(store)
+                entry.unlink()
+                entry.symlink_to("database")
+                after = harness.store_fingerprint(store)
+                self.assertEqual(os.readlink(link), "../outside/entry")
+                self.assertEqual(
+                    harness.store_changes(before, after),
+                    ["kanban.sqlite", "kanban.sqlite-journal", "kanban.sqlite-shm", "kanban.sqlite-wal"],
+                )
+                self.assertEqual(before["kanban.sqlite"], ("symlink", "../outside/entry", "dangling"))
+                self.assertEqual(
+                    after["kanban.sqlite"],
+                    ("symlink", "../outside/entry", "file", self.digest(b"unchanged database"),
+                     (("wal", ("absent",)), ("shm", ("absent",)), ("journal", ("absent",)))),
+                )
+
+    def test_terminal_directory_components_accept_directory_targets(self):
+        for suffix in ("/", "/.", "/./"):
+            for chained in (False, True):
+                for absolute in (False, True):
+                    with self.subTest(suffix=suffix, chained=chained, absolute=absolute):
+                        with tempfile.TemporaryDirectory() as tmp:
+                            root = Path(tmp).resolve()
+                            store = root / "store"
+                            outside = root / "outside"
+                            store.mkdir()
+                            outside.mkdir()
+                            target = outside / "directory"
+                            target.mkdir()
+                            raw = (str(target) if absolute else "../outside/directory") + suffix
+                            if chained:
+                                os.symlink((str(target) if absolute else "directory") + suffix, outside / "entry")
+                                raw = "../outside/entry"
+                            link = store / "link"
+                            os.symlink(raw, link)
+                            self.assertTrue(link.is_dir())
+                            before = harness.store_fingerprint(store)
+                            self.assertEqual(before["link"], ("symlink", raw, "dir"))
+                            (target / "child").write_bytes(b"not traversed")
+                            self.assertEqual(harness.store_changes(before, harness.store_fingerprint(store)), [])
+
 
 class TextQueryTests(unittest.TestCase):
     def context(self, title_only):

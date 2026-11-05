@@ -645,12 +645,10 @@ def _walk_components(directory, parts, hops, seen):
                 return "loop", None
             seen.add(token)
             hops -= 1
-            target = Path(os.readlink(child))
-            if target.is_absolute():
-                directory, followed = _path_origin(target)
-                parts = followed + parts
-            else:
-                parts = list(target.parts) + parts
+            target = os.readlink(child)
+            if os.path.isabs(target):
+                directory = Path(Path(target).anchor)
+            parts = target.split(os.sep) + parts
             continue
         if parts:
             if not stat.S_ISDIR(info.st_mode):

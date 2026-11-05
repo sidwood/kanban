@@ -3035,6 +3035,78 @@ fn comments_and_replies_advance_the_issue_update_time() {
 }
 
 #[test]
+fn project_id_on_an_update_is_refused() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "project-refusal-create",
+        json!({ "project_id": 1, "title": "Stays put" }),
+    );
+    let refusal = try_save(
+        session,
+        read_issue(session, &saved.identifier).version,
+        "project-refusal-move",
+        json!({ "identifier": saved.identifier, "project_id": 2, "title": "Moved" }),
+    )
+    .expect_err("moving an issue between projects is refused");
+    assert_eq!(
+        (refusal.code, refusal.field.as_deref()),
+        (ErrorCode::InvalidRequest, Some("project_id"))
+    );
+    assert!(
+        refusal
+            .message
+            .contains("moving issues between projects is not supported"),
+        "the refusal says why: {}",
+        refusal.message
+    );
+    let after = read_issue(session, &saved.identifier);
+    assert_eq!(after.project_id, 1, "the issue stays in its project");
+    assert_eq!(after.title, "Stays put", "the refused save applied nothing");
+}
+
+#[test]
+fn create_label_reports_the_stored_group_flag() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "label-flag-first"),
+                "project_id": 1,
+                "name": "first",
+                "color": "#111111",
+                "group": "Pick one",
+                "group_single_select": true,
+            }),
+        )
+        .expect("the first label lands");
+    assert_eq!(first["group_single_select"], json!(true));
+
+    let second = session
+        .call(
+            "issue.create_label",
+            &json!({
+                "mutation": mutation(0, "label-flag-second"),
+                "project_id": 1,
+                "name": "second",
+                "color": "#222222",
+                "group": "Pick one",
+                "group_single_select": false,
+            }),
+        )
+        .expect("the second label lands");
+    assert_eq!(
+        second["group_single_select"],
+        json!(true),
+        "an existing group answers with its stored flag, not the request's"
+    );
+}
+
+#[test]
 fn relation_lists_take_ticket_ids_and_name_their_field() {
     let h = rules_harness();
     let session = &h.session;

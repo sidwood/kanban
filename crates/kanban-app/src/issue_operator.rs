@@ -620,12 +620,27 @@ fn update_issue(
         .issues
         .resolve_identifier(identifier)?
         .ok_or_else(|| ApiError::not_found(identifier))?;
-    let project_id = ctx
+    let ticket = ctx
         .tickets
         .find(TicketId::new(ticket_id as u64))?
-        .ok_or_else(|| ApiError::not_found(identifier))?
-        .project()
-        .value();
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    let project_id = ticket.project().value();
+    if request.project_id.is_some() {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            "moving issues between projects is not supported; project_id is only read when creating",
+        ));
+    }
+    let project = ctx
+        .projects
+        .find(ticket.project())?
+        .ok_or_else(|| ApiError::not_found(identifier))?;
+    if project.is_archived() {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            "archived is terminal; the Project accepts no further changes",
+        ));
+    }
     if let Some(description) = request.description.as_deref() {
         ctx.issues.set_description(ticket_id, description)?;
     } else if let Some(patch) = request.description_patch.as_deref() {

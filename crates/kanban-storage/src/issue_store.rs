@@ -1638,11 +1638,22 @@ impl SqliteIssueStore {
             }
             internal(error)
         })?;
+        let stored_single_select = if let Some(group_id) = group_id {
+            conn.query_row(
+                "SELECT COALESCE(single_select, 0) FROM issue_label_groups WHERE id = ?1",
+                [group_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(internal)?
+                != 0
+        } else {
+            group_single_select
+        };
         Ok(kanban_app::IssueLabelRow {
             name: name.to_owned(),
             color: color.to_owned(),
             group: group.map(str::to_owned),
-            group_single_select,
+            group_single_select: stored_single_select,
             retired: false,
         })
     }

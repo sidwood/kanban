@@ -1896,6 +1896,95 @@ fn issue_creation_in_an_archived_project_names_the_project() {
 }
 
 #[test]
+fn archived_projects_refuse_issue_updates_as_creation() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    std::fs::create_dir_all(&attachments).expect("attachments dir");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let core = Arc::new(h.core);
+    let session = OperatorSession::new(core.clone());
+    let projects = SqliteProjectStore::new(&h.database);
+    let closing = ProjectRegistration::new(
+        "CLS",
+        "Closing tooling",
+        "/repositories/closing",
+        "/workspaces/closing.seed",
+        "main",
+        "closing.seed",
+        Some("closing-main"),
+        None,
+    )
+    .expect("the closing registration validates");
+    let mut project = projects
+        .create(&closing, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the closing project lands");
+    let project_id = project.id().value();
+    let saved = save_issue(
+        &session,
+        0,
+        "archived-update-create",
+        json!({ "project_id": project_id, "title": "Frozen in place" }),
+    );
+    let mut project = projects
+        .find(project.id())
+        .expect("the project reloads")
+        .expect("the project exists");
+    project.archive().expect("the project archives");
+    projects
+        .save(
+            &project,
+            TimelineEnvelope::project(
+                project_id,
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: project_id.to_string(),
+                }),
+                json!({ "action": "archived" }),
+            ),
+        )
+        .expect("the archive lands");
+
+    let refusal = session
+        .call(
+            "issue.save",
+            &save_payload(
+                issue_version(&session, &saved.identifier),
+                "archived-update-edit",
+                json!({ "identifier": saved.identifier, "title": "Rewritten" }),
+            ),
+        )
+        .expect_err("an archived project accepts no edits");
+    assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+    assert_eq!(refusal.field.as_deref(), Some("project_id"));
+    assert!(
+        refusal.message.contains("archived is terminal"),
+        "the refusal keeps its wording: {}",
+        refusal.message
+    );
+    let read: IssueRecord = serde_json::from_value(
+        session
+            .call("issue.get", &json!({ "identifier": saved.identifier }))
+            .expect("the issue still reads"),
+    )
+    .expect("issue shape");
+    assert_eq!(
+        read.title, "Frozen in place",
+        "the refused edit stored nothing"
+    );
+}
+
+#[test]
 fn blank_comment_text_names_the_text_field_on_create_and_edit() {
     let session = session();
     let host = save_issue(

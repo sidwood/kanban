@@ -724,10 +724,15 @@ mod tests {
             .expect("the graph records");
         // The gate captured its Ticket aggregates; Ticket 2 then moved
         // on its own, past the version the approval pins from.
-        let captured = [waiting, ticket(&tickets, 2)];
+        let blocker = ticket(&tickets, 2);
+        let moved = blocker.version() + 1;
+        let captured = [waiting, blocker];
         database
             .connection()
-            .execute("UPDATE tickets SET version = 2 WHERE id = 2", [])
+            .execute(
+                "UPDATE tickets SET version = ?1 WHERE id = 2",
+                [moved as i64],
+            )
             .expect("the row moves on its own");
 
         let error = approved_over(&store, &captured, &proposal)

@@ -2960,6 +2960,81 @@ fn updated_since_accepts_iso_8601_durations_relative_to_now() {
 }
 
 #[test]
+fn comments_and_replies_advance_the_issue_update_time() {
+    let h = rules_harness();
+    let session = &h.session;
+    let saved = save_issue(
+        session,
+        0,
+        "comment-stamp-create",
+        json!({ "project_id": 1, "title": "Commented issue" }),
+    );
+    let before = read_issue(session, &saved.identifier);
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?1",
+            [saved.ticket_id as i64],
+        )
+        .unwrap();
+    let target = json!({
+        "kind": "ticket",
+        "id": saved.ticket_id.to_string(),
+    });
+    let root = session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "comment-stamp-root"),
+                "project_id": 1,
+                "target": target,
+                "text": "A fresh observation",
+                "author": "lin",
+            }),
+        )
+        .expect("the comment lands");
+    session
+        .call(
+            "comment.create",
+            &json!({
+                "mutation": mutation(0, "comment-stamp-reply"),
+                "project_id": 1,
+                "target": target,
+                "text": "A reply",
+                "author": "lin",
+                "parent_comment_id": root["id"],
+            }),
+        )
+        .expect("the reply lands");
+
+    let after = read_issue(session, &saved.identifier);
+    assert_ne!(
+        after.updated_at, "2020-01-01T00:00:00.000Z",
+        "a comment moves the issue's update time"
+    );
+    assert_eq!(
+        after.version, before.version,
+        "a comment is not an issue edit and moves no version"
+    );
+    let visible: Vec<String> = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "updated_since": "-P1D" }),
+        )
+        .expect("the listing serves")["issues"]
+        .as_array()
+        .expect("an issues array")
+        .iter()
+        .map(|record| record["identifier"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        visible,
+        vec![saved.identifier.clone()],
+        "updated_since picks the issue a comment just touched"
+    );
+}
+
+#[test]
 fn relation_lists_take_ticket_ids_and_name_their_field() {
     let h = rules_harness();
     let session = &h.session;

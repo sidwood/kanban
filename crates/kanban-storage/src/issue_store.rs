@@ -1911,6 +1911,10 @@ impl kanban_app::IssueStore for SqliteIssueStore {
         SqliteIssueStore::validate_label_adds(self, project_id, names)
     }
 
+    fn touch_updated_at(&self, ticket_id: i64) -> Result<(), ApiError> {
+        SqliteIssueStore::touch_updated_at(self, ticket_id)
+    }
+
     fn create_milestone(
         &self,
         project_id: i64,

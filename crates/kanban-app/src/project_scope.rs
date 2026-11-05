@@ -338,6 +338,10 @@ impl crate::comment::CommentIssueTargets for NumericIssueTargets {
         Ok(Some(1))
     }
 
+    fn touch_issue(&self, _ticket_id: u64) -> Result<(), ApiError> {
+        Ok(())
+    }
+
     fn comment_target_exists(&self, _kind: &str, _id: &str) -> Result<bool, ApiError> {
         Ok(true)
     }

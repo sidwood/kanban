@@ -43,6 +43,10 @@ pub trait CommentIssueTargets: Send + Sync {
     /// outside the issue model keep their raw ids, so ownership
     /// follows the target's own stored project reference.
     fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError>;
+
+    /// Advance the issue's update stamp without an edit, so a
+    /// comment or reply keeps the issue current for incremental sync.
+    fn touch_issue(&self, ticket_id: u64) -> Result<(), ApiError>;
 }
 
 /// [`CommentIssueTargets`] over the Linear issue store.
@@ -89,6 +93,10 @@ impl CommentIssueTargets for IssueStoreCommentTargets {
 
     fn comment_target_project(&self, kind: &str, id: &str) -> Result<Option<u64>, ApiError> {
         self.issues.comment_target_project(kind, id)
+    }
+
+    fn touch_issue(&self, ticket_id: u64) -> Result<(), ApiError> {
+        self.issues.touch_updated_at(ticket_id as i64)
     }
 }
 
@@ -260,6 +268,12 @@ impl CommandHandler for CreateComment {
             author,
             parent_comment_id,
         )?;
+        if target.kind() == TimelineEntityKind::Ticket.as_str() {
+            let ticket_id: u64 = target.id().parse().map_err(|_| {
+                ApiError::internal("a resolved ticket target carries its numeric id")
+            })?;
+            self.targets.touch_issue(ticket_id)?;
+        }
         announce(effects, LiveEventName::CommentCreated, &comment);
         encode_record(&comment)
     }
@@ -795,6 +809,9 @@ mod comments {
     struct MemoryIssueTargets;
 
     impl CommentIssueTargets for MemoryIssueTargets {
+        fn touch_issue(&self, _ticket_id: u64) -> Result<(), kanban_dto::ApiError> {
+            Ok(())
+        }
         fn resolve_issue_reference(
             &self,
             reference: &str,

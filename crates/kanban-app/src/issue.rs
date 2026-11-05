@@ -155,4 +155,7 @@ pub trait IssueStore: Send + Sync {
     /// retired label, or two distinct labels from one single-select
     /// group.
     fn validate_label_adds(&self, project_id: i64, names: &[String]) -> Result<(), ApiError>;
+    /// Advance one issue's update stamp without an edit, the way a
+    /// comment or reply keeps the issue current for incremental sync.
+    fn touch_updated_at(&self, ticket_id: i64) -> Result<(), ApiError>;
 }

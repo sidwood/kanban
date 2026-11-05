@@ -243,6 +243,31 @@ describe('the Ticket editor dialog', () => {
     })
   })
 
+  it('an edit opened under another Project offers no picker and saves to the record identifier', async () => {
+    const { transport, requests } = editorHarness({
+      projects: [editorProject, otherProject],
+      tickets: [implementationTicket()],
+    })
+    const wrapper = open(transport)
+    // CORE-17 opened from EDGE: the record names the issue, not the
+    // entry point.
+    useTicketDialogStore().openEdit({ projectId: 5, ticketId: 1 })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-project"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ticket-edit-key"]').text()).toBe('CORE-17')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('A sharper title')
+    await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
+    await flushPromises()
+
+    expect(requests('issue.get')).toEqual([{ identifier: 'CORE-17' }])
+    expect(requests('issue.save')).toEqual([
+      expect.objectContaining({ identifier: 'CORE-17', title: 'A sharper title' }),
+    ])
+    expect(requests('issue.save')[0]).not.toHaveProperty('project_id')
+    expect(useTicketDialogStore().editorOpen).toBe(false)
+  })
+
   it('a title-only edit sends every other issue field as the record holds it', async () => {
     const { transport, requests } = editorHarness({
       tickets: [implementationTicket({ version: 3 })],

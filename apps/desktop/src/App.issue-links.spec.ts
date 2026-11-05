@@ -6,13 +6,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord, TicketRecord } from '@kanban/contracts'
+import type { CommentListItem, IssueRecord, TicketRecord } from '@kanban/contracts'
 import router from './router'
 import { issueLinkSourceKey } from './core/issue-links'
 import type { IssueLinkOpened, IssueLinkSource } from './core/issue-links'
 import { kanbanTransportKey } from './core/transport'
 import type { ShellTransport } from './core/transport'
-import { harness, ticket } from './test/shell-harness'
+import { coreProject, edgeProject, harness, ticket } from './test/shell-harness'
 import type { HarnessOptions } from './test/shell-harness'
 import App from './App.vue'
 
@@ -92,6 +92,37 @@ function unknownKey(name: string, request: unknown): Promise<unknown> | undefine
     : undefined
 }
 
+// The core's Project register, answered only once the test lets it:
+// every other read answers at once.
+function heldRegister(answer: 'projects' | 'refusal' = 'projects') {
+  const waiting: Array<() => void> = []
+  let held = true
+  return {
+    read(): Promise<unknown> {
+      return new Promise((resolve, reject) => {
+        const settle = () =>
+          answer === 'projects'
+            ? resolve({ projects: [coreProject, edgeProject] })
+            : reject({ code: 'unavailable', message: 'the Project register could not be read' })
+        if (held) waiting.push(settle)
+        else settle()
+      })
+    },
+    release() {
+      held = false
+      for (const settle of waiting.splice(0)) settle()
+    },
+  }
+}
+
+const COMMENT: CommentListItem = {
+  id: 1,
+  author: 'lin',
+  body: 'Archive the March exports first.',
+  created_at: '2026-01-01T00:00:00.000000Z',
+  version: 1,
+}
+
 beforeEach(() => {
   localStorage.clear()
 })
@@ -136,6 +167,76 @@ describe('issue links', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/projects/1/board?ticket=7')
     expect(drawerHeading()).toContain('CORE-12')
+  })
+
+  it("shows a cold link's issue once the Project register answers", async () => {
+    const register = heldRegister()
+    const shell = running({
+      override: (name) => {
+        if (name === 'project.list') return register.read()
+        if (name === 'comment.list') return Promise.resolve({ comments: [COMMENT], next_cursor: null })
+        return undefined
+      },
+    })
+    await mountApp(shell.transport, shellLinks('CORE-12').source)
+    const beforeTheRegister = router.currentRoute.value.fullPath
+
+    register.release()
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/projects/1/board?ticket=7')
+    expect(drawerHeading()).toContain('CORE-12')
+    const panel = document.querySelector('[data-testid="issue-detail-panel"]')
+    expect(panel, "the drawer shows the issue's panel").not.toBeNull()
+    expect(
+      panel?.querySelector('[data-testid="issue-description-body"]')?.textContent?.trim(),
+    ).toBe('Archive the old exports')
+    expect(panel?.querySelector('[data-testid="issue-detail-priority"]')?.textContent?.trim()).toBe(
+      '3',
+    )
+    expect(panel?.querySelector('[data-testid="issue-comment-1"]')?.textContent).toContain(
+      'Archive the March exports first.',
+    )
+    expect(beforeTheRegister, 'the link waits for the register').toBe('/board')
+  })
+
+  it('opens only the newest link once the Project register answers', async () => {
+    const register = heldRegister()
+    const shell = running({
+      override: (name) => (name === 'project.list' ? register.read() : undefined),
+    })
+    const links = shellLinks()
+    const wrapper = await mountApp(shell.transport, links.source)
+
+    links.announce('EDGE-3')
+    await flushPromises()
+    links.announce('CORE-12')
+    await flushPromises()
+    register.release()
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/projects/1/board?ticket=7')
+    expect(drawerHeading()).toContain('CORE-12')
+    expect(issueReads(shell.query, 'EDGE-3'), 'the older link is never resolved').toBe(0)
+    expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
+  })
+
+  it("reports a Project register that cannot be read as the board's error", async () => {
+    const register = heldRegister('refusal')
+    const shell = running({
+      override: (name) => (name === 'project.list' ? register.read() : undefined),
+    })
+    const wrapper = await mountApp(shell.transport, shellLinks('CORE-12').source)
+
+    register.release()
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/board')
+    expect(wrapper.get('[data-testid="board-error"]').text()).toContain(
+      'the Project register could not be read',
+    )
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(issueReads(shell.query, 'CORE-12'), 'no issue opens without its Project').toBe(0)
   })
 
   it('moves the running app to the Project and drawer each link names', async () => {

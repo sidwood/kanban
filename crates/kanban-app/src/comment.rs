@@ -569,6 +569,30 @@ mod comments {
         }
     }
 
+    fn same_stored_address(stored: &str, requested: &str, kind: &str) -> bool {
+        if stored == requested {
+            return true;
+        }
+        if kind != "ticket" {
+            return false;
+        }
+        fn numeric(raw: &str) -> Option<i64> {
+            let unsigned = raw.trim_start_matches('+');
+            if !unsigned.is_empty() && unsigned.chars().all(|c| c.is_ascii_digit()) {
+                return unsigned.parse().ok();
+            }
+            let (_, number) = raw.rsplit_once('-')?;
+            if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
+                return number.parse().ok();
+            }
+            None
+        }
+        matches!(
+            (numeric(stored), numeric(requested)),
+            (Some(left), Some(right)) if left == right
+        )
+    }
+
     impl CommentStore for MemoryCommentStore {
         fn create(
             &self,
@@ -639,8 +663,8 @@ mod comments {
                     break;
                 }
                 if comment.target().kind() != target.kind()
-                    || comment.target().id() != target.id()
                     || comment.id().value() <= after
+                    || !same_stored_address(comment.target().id(), target.id(), target.kind())
                 {
                     continue;
                 }

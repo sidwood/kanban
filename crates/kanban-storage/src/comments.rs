@@ -254,9 +254,24 @@ impl CommentStore for SqliteCommentStore {
     ) -> Result<(Vec<CommentListItem>, Option<String>), ApiError> {
         let conn = self.lock();
         let after = cursor.unwrap_or(0) as i64;
-        // Rows carry the canonical address of the entity they speak
-        // for, so the target itself filters in SQL: the page reads
-        // only its own stream, in id order past the cursor.
+        let ticket_id = (target.kind() == "ticket")
+            .then(|| target.id().parse::<i64>().ok())
+            .flatten();
+        let project_code = ticket_id
+            .and_then(|id| {
+                conn.query_row(
+                    "SELECT p.code FROM tickets AS t
+                     JOIN projects AS p ON p.id = t.project_id
+                     WHERE t.id = ?1",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .ok()
+                .flatten()
+            })
+            .unwrap_or_default();
+        let ticket_stream = i64::from(ticket_id.is_some());
         let mut statement = conn
             .prepare(
                 "SELECT c.id, c.version, c.created_at,
@@ -270,13 +285,35 @@ impl CommentStore for SqliteCommentStore {
                         c.parent_comment_id,
                         c.resolved_at
                  FROM comments AS c
-                 WHERE c.entity_kind = ?1 AND c.entity_id = ?2 AND c.id > ?3
+                 WHERE c.entity_kind = ?1 AND c.id > ?3 AND (
+                     c.entity_id = ?2
+                     OR (
+                       ?4 = 1 AND (
+                         (
+                           (c.entity_id GLOB '+[0-9]*' OR c.entity_id GLOB '[0-9]*')
+                           AND CAST(c.entity_id AS INTEGER) = CAST(?2 AS INTEGER)
+                         )
+                         OR (
+                           ?5 != ''
+                           AND UPPER(substr(c.entity_id, 1, length(?5) + 1)) = UPPER(?5 || '-')
+                           AND substr(c.entity_id, length(?5) + 2) GLOB '[0-9]*'
+                           AND CAST(substr(c.entity_id, length(?5) + 2) AS INTEGER) = CAST(?2 AS INTEGER)
+                         )
+                       )
+                     )
+                 )
                  ORDER BY c.id ASC",
             )
             .map_err(|error| ApiError::internal(&error.to_string()))?;
         let rows = statement
             .query_map(
-                rusqlite::params![target.kind(), target.id(), after],
+                rusqlite::params![
+                    target.kind(),
+                    target.id(),
+                    after,
+                    ticket_stream,
+                    project_code
+                ],
                 |row| {
                     let id: i64 = row.get(0)?;
                     let version: i64 = row.get(1)?;

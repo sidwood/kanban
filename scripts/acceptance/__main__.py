@@ -223,7 +223,7 @@ def connect(host, port, data_dir, environ, redact):
     """An initialised MCP client, trying each account that holds a secret
     until the core accepts one."""
     refused = []
-    for account, bearer in bearer_candidates(data_dir, environ):
+    for account, bearer in bearer_candidates(data_dir, environ, redact=redact):
         redact.add(bearer)
         mcp = McpClient(host, port, bearer)
         try:

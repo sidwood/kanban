@@ -77,10 +77,18 @@ class Recorder:
         self._emit("")
         self._emit(self._redact(f"== Test {number}: {title}"))
 
+    def _shown(self, value):
+        """Redact a value before it is shortened or compared for display."""
+        text = value if isinstance(value, str) else repr(value)
+        return self._redact(text)
+
     def _record(self, outcome, description, reason):
         test = self.current
         if test is None:
             raise RuntimeError("record a check inside a test")
+        description = self._redact(description)
+        if reason:
+            reason = self._redact(str(reason))
         identifier = f"{test.number}.{len(test.results) + 1:02d}"
         test.results.append((identifier, outcome, description, reason))
         line = f"{outcome:<5} {identifier} {description}"
@@ -96,12 +104,16 @@ class Recorder:
 
     def equal(self, description, actual, expected):
         """PASS when `actual == expected`; the reason shows both."""
+        shown_actual = self._shown(actual)
+        shown_expected = self._shown(expected)
         if actual == expected:
-            return self.check(description, True, short(actual))
+            return self.check(description, True, short(shown_actual))
         if isinstance(actual, str) and isinstance(expected, str):
-            reason = first_difference(actual, expected)
+            reason = first_difference(shown_actual, shown_expected)
+            if reason == "identical":
+                reason = "values differ"
         else:
-            reason = f"expected {short(expected)}, got {short(actual)}"
+            reason = f"expected {short(shown_expected)}, got {short(shown_actual)}"
         return self.check(description, False, reason)
 
     def xfail(self, description, ok, reason=""):
@@ -114,7 +126,7 @@ class Recorder:
 
     def abort(self, error):
         """A test stopped early; whatever it had not checked is a FAIL."""
-        self._record(FAIL, "test stopped early", short(str(error), 300))
+        self._record(FAIL, "test stopped early", short(self._shown(str(error)), 300))
 
     def totals(self):
         totals = {outcome: 0 for outcome in OUTCOMES}

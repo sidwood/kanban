@@ -150,6 +150,18 @@ class InstallationSecretTests(unittest.TestCase):
         self.assertEqual([account for account, _ in harness.bearer_candidates(self.data, environ, "linux")],
                          [hashed])
 
+    def test_bearer_candidates_register_the_installation_secret(self):
+        secret = b"\x11" * 32
+        self.store_file("installation", secret)
+        environ = {"HOME": str(self.root / "home"), "XDG_DATA_HOME": str(self.root)}
+        redact = harness.Redactor()
+        found = list(harness.bearer_candidates(self.data, environ, "linux", redact=redact))
+        self.assertEqual([account for account, _bearer in found], ["installation"])
+        rendered = redact("hex " + secret.hex() + " bearer " + harness.derive_bearer(secret))
+        self.assertNotIn(secret.hex(), rendered)
+        self.assertNotIn(harness.derive_bearer(secret), rendered)
+
+
 
 class BearerTests(unittest.TestCase):
     def test_bearer_is_prefixed_unpadded_base64url(self):
@@ -170,6 +182,45 @@ class BearerTests(unittest.TestCase):
                          "Bearer [redacted] leaked [redacted]")
         self.assertEqual(redact("nothing here"), "nothing here")
 
+    def test_a_truncated_bearer_leaves_no_fragment(self):
+        """A secret that begins inside the shortened line must not survive as a prefix."""
+        redact = harness.Redactor()
+        secret = harness.derive_bearer(bytes(range(32)))
+        redact.add(secret)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        recorder.equal("equal boundary", "x" * 130 + secret, "x" * 130 + secret)
+        recorder.abort("x" * 270 + secret)
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn(secret[:20], rendered)
+        self.assertNotIn(secret[-12:], rendered)
+
+    def test_a_truncated_difference_leaves_no_secret_fragment(self):
+        redact = harness.Redactor()
+        secret = harness.derive_bearer(bytes(range(32)))
+        redact.add(secret)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        recorder.equal("wrapped", {"token": "x" * 130 + secret + "A"}, {"token": "other"})
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertNotIn(secret[:16], rendered)
+        self.assertNotIn(secret[-12:], rendered)
+
+    def test_a_truncated_installation_secret_leaves_no_fragment(self):
+        redact = harness.Redactor()
+        secret = bytes(range(32))
+        redact.add(secret)
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        recorder.equal("hex boundary", "y" * 140 + secret.hex(), "y" * 140 + secret.hex())
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertNotIn(secret.hex(), rendered)
+        self.assertNotIn(secret.hex()[:16], rendered)
+        self.assertNotIn(harness.derive_bearer(secret), rendered)
 
 class CoreProcessTests(unittest.TestCase):
     def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):

@@ -153,29 +153,53 @@ def read_installation_secret(data_dir, account, platform=None, keychain=None):
     return secret
 
 
-def bearer_candidates(data_dir, environ=None, platform=None, keychain=None):
+def bearer_candidates(data_dir, environ=None, platform=None, keychain=None, redact=None):
     """Yield (account, bearer) for each account that holds a secret."""
     for account in credential_accounts(data_dir, environ, platform):
         secret = read_installation_secret(data_dir, account, platform, keychain)
         if secret is not None:
+            if redact is not None:
+                redact.add(secret)
             yield account, derive_bearer(secret)
 
 
 class Redactor:
-    """Strip known secrets from any text before it leaves the process."""
+    """Strip known secrets from any text before it leaves the process.
+
+    Complete values are removed, including every printable form of an
+    installation secret, so a later shortening cannot leave a fragment.
+    """
 
     def __init__(self):
         self._secrets = []
 
     def add(self, secret):
-        if secret:
-            self._secrets.append(secret)
+        if isinstance(secret, (bytes, bytearray)):
+            for rendering in secret_renderings(bytes(secret)):
+                self._remember(rendering)
+            return
+        self._remember(secret)
+
+    def _remember(self, secret):
+        if not isinstance(secret, str) or len(secret) < 8 or secret in self._secrets:
+            return
+        self._secrets.append(secret)
 
     def __call__(self, text):
         text = str(text)
-        for secret in self._secrets:
+        for secret in sorted(self._secrets, key=len, reverse=True):
             text = text.replace(secret, "[redacted]")
         return text
+
+
+def secret_renderings(secret):
+    """Printable forms of an installation secret that must never appear."""
+    standard = base64.b64encode(secret).decode("ascii")
+    url = base64.urlsafe_b64encode(secret).decode("ascii")
+    renderings = [secret.hex(), standard, standard.rstrip("="), url, url.rstrip("=")]
+    if len(secret) == SECRET_LENGTH:
+        renderings.append(derive_bearer(secret))
+    return [rendering for rendering in renderings if len(rendering) >= 8]
 
 
 def parse_rpc_body(content_type, body, request_id):

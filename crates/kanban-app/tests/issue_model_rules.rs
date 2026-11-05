@@ -4344,3 +4344,55 @@ fn an_omitted_mutation_does_not_reuse_a_recorded_counter_key() {
         "synthesized keys are not the restarting counter: {keys:?}"
     );
 }
+
+#[test]
+fn merging_a_duplicate_does_not_close_a_dependency_cycle() {
+    let h = rules_harness();
+    let session = &h.session;
+    let blocker = save_issue(
+        session,
+        0,
+        "cycle-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    );
+    let middle = save_issue(
+        session,
+        0,
+        "cycle-middle",
+        json!({ "project_id": 1, "title": "Middle" }),
+    );
+    let duplicate = save_issue(
+        session,
+        0,
+        "cycle-duplicate",
+        json!({ "project_id": 1, "title": "Duplicate" }),
+    );
+    let later = save_issue(
+        session,
+        0,
+        "cycle-later",
+        json!({ "project_id": 1, "title": "Later" }),
+    );
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": blocker.identifier, "add_blocks": [middle.identifier] }),
+        )
+        .expect("the first block lands");
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": middle.identifier, "add_blocks": [duplicate.identifier] }),
+        )
+        .expect("the second block lands");
+    let _merge = session.call(
+        "issue.save",
+        &json!({ "identifier": duplicate.identifier, "duplicate_of": blocker.identifier }),
+    );
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": blocker.identifier, "add_blocks": [later.identifier] }),
+        )
+        .expect("a duplicate merge must leave later unrelated blocks possible");
+}

@@ -1253,6 +1253,27 @@ impl SqliteIssueStore {
                 affected.insert(target_id);
             }
         }
+        let remaining = {
+            let mut remaining_query = conn
+                .prepare("SELECT from_ticket, to_ticket FROM ticket_dependencies")
+                .map_err(internal)?;
+            remaining_query
+                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+                .map_err(internal)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(internal)?
+        };
+        let mut graph = kanban_domain::TicketDependencyGraph::restore(
+            remaining
+                .into_iter()
+                .map(|(from, to)| {
+                    kanban_domain::TicketDependency::new(
+                        kanban_domain::TicketId::new(from.unsigned_abs()),
+                        kanban_domain::TicketId::new(to.unsigned_abs()),
+                    )
+                })
+                .collect(),
+        );
         for (from, to) in dependencies {
             let other = if from == ticket_id { to } else { from };
             if other == ticket_id {
@@ -1271,16 +1292,22 @@ impl SqliteIssueStore {
             if new_from == new_to {
                 continue;
             }
-            let inserted = conn
-                .execute(
-                    "INSERT OR IGNORE INTO ticket_dependencies (from_ticket, to_ticket)
-                     VALUES (?1, ?2)",
-                    params![new_from, new_to],
-                )
-                .map_err(internal)?;
-            if inserted > 0 {
-                affected.insert(target_id);
+            let from_id = kanban_domain::TicketId::new(new_from.unsigned_abs());
+            let to_id = kanban_domain::TicketId::new(new_to.unsigned_abs());
+            match graph.add(from_id, to_id) {
+                Ok(()) => {}
+                Err(kanban_domain::DependencyError::Cycle { .. })
+                | Err(kanban_domain::DependencyError::DuplicateEdge)
+                | Err(kanban_domain::DependencyError::SelfEdge) => continue,
+                Err(error) => return Err(ApiError::internal(&error.to_string())),
             }
+            conn.execute(
+                "INSERT OR IGNORE INTO ticket_dependencies (from_ticket, to_ticket)
+                 VALUES (?1, ?2)",
+                params![new_from, new_to],
+            )
+            .map_err(internal)?;
+            affected.insert(target_id);
         }
         drop(conn);
         affected.remove(&ticket_id);

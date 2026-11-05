@@ -62,8 +62,22 @@
   "description": "Request payload for the `comment.create` command.",
   "properties": {
     "author": {
-      "description": "The author the comment speaks for; required, because the core holds no operator identity to default from. `Unknown author` is reserved for comments whose author was never recorded.",
+      "description": "The author the comment speaks for; required unless the operator session supplies the configured name. `Unknown author` is reserved for comments whose author was never recorded.",
       "type": "string"
+    },
+    "body": {
+      "description": "The initial text when the caller uses the comment-call name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "issue": {
+      "description": "Issue key (`CODE-123`) this comment attaches to.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "mutation": {
       "$ref": "#/definitions/MutationContext"
@@ -77,30 +91,33 @@
       ]
     },
     "project_id": {
-      "description": "The owning Project, resolved before any write.",
+      "description": "The owning Project. Omitted when `issue` names the issue, whose project is then used.",
       "format": "uint64",
       "minimum": 0.0,
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "target": {
-      "allOf": [
+      "anyOf": [
         {
           "$ref": "#/definitions/TimelineEntityRef"
+        },
+        {
+          "type": "null"
         }
       ],
-      "description": "The entity this Comment attaches to."
+      "description": "The entity this Comment attaches to. Omitted when `issue` names it."
     },
     "text": {
-      "description": "The initial text; blank text is refused.",
+      "description": "The initial text; blank text is refused. `body` is the same text.",
       "type": "string"
     }
   },
   "required": [
     "author",
-    "mutation",
-    "project_id",
-    "target",
-    "text"
+    "mutation"
   ],
   "title": "CommentCreateRequest",
   "type": "object"

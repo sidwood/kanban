@@ -33,6 +33,12 @@ pub struct CommentRecord {
     pub text: String,
     /// The aggregate version, for optimistic mutation checks.
     pub version: u64,
+    /// The issue key when this comment is on an issue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    /// The issue URL when this comment is on an issue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Request payload for the `comment.create` command.
@@ -40,18 +46,28 @@ pub struct CommentRecord {
 #[serde(deny_unknown_fields)]
 pub struct CommentCreateRequest {
     pub mutation: super::MutationContext,
-    /// The owning Project, resolved before any write.
-    pub project_id: u64,
-    /// The entity this Comment attaches to.
-    pub target: TimelineEntityRef,
-    /// The initial text; blank text is refused.
+    /// The owning Project. Omitted when `issue` names the issue, whose
+    /// project is then used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<u64>,
+    /// The entity this Comment attaches to. Omitted when `issue` names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<TimelineEntityRef>,
+    /// Issue key (`CODE-123`) this comment attaches to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<String>,
+    /// The initial text; blank text is refused. `body` is the same text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
-    /// The author the comment speaks for; required, because the core
-    /// holds no operator identity to default from. `Unknown author` is
+    /// The initial text when the caller uses the comment-call name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// The author the comment speaks for; required unless the operator
+    /// session supplies the configured name. `Unknown author` is
     /// reserved for comments whose author was never recorded.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub author: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "parentId")]
     pub parent_comment_id: Option<u64>,
 }
 
@@ -180,6 +196,8 @@ mod tests {
             target: target(),
             text: "Ship it".to_owned(),
             version: 2,
+            identifier: None,
+            url: None,
         };
 
         let encoded = serde_json::to_value(&record).expect("the record serialises");
@@ -202,9 +220,11 @@ mod tests {
     fn create_and_edit_requests_reject_unknown_fields() {
         let create = CommentCreateRequest {
             mutation: context(),
-            project_id: 1,
-            target: target(),
+            project_id: Some(1),
+            target: Some(target()),
+            issue: None,
             text: "First".to_owned(),
+            body: None,
             author: "tester".to_owned(),
             parent_comment_id: None,
         };
@@ -293,6 +313,8 @@ mod tests {
                 target: target(),
                 text: "Latest".to_owned(),
                 version: 2,
+                identifier: None,
+                url: None,
             },
             revisions: vec![
                 CommentRevisionRecord {

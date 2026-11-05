@@ -107,6 +107,8 @@ impl CommentStore for RecordingComments {
                 },
                 text: comment.current_text().as_str().to_owned(),
                 version: comment.version(),
+                identifier: None,
+                url: None,
             },
             Vec::new(),
         ))

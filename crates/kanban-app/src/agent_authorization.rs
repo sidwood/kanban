@@ -127,10 +127,18 @@ impl RunAuthority {
                     .tickets
                     .find(grant.scope().ticket())?
                     .ok_or_else(denied)?;
-                if request.project_id != ticket.project().value()
-                    || request.target.kind != kanban_dto::TimelineEntityKind::Ticket
-                    || request.target.id != ticket.id().to_string()
-                {
+                let project_matches = request
+                    .project_id
+                    .is_none_or(|id| id == ticket.project().value());
+                let target_matches = request.target.as_ref().is_some_and(|target| {
+                    target.kind == kanban_dto::TimelineEntityKind::Ticket
+                        && target.id == ticket.id().to_string()
+                });
+                let issue_matches = request
+                    .issue
+                    .as_deref()
+                    .is_some_and(|issue| issue == ticket.id().to_string());
+                if !project_matches || !(target_matches || issue_matches) {
                     return Err(denied());
                 }
             }

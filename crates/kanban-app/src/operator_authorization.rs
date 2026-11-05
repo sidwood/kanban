@@ -38,10 +38,11 @@ impl OperatorSession {
     }
 
     pub fn call(&self, name: &str, payload: &Value) -> Result<Value, ApiError> {
+        let name = canonical_operator_call(name);
         if !OPERATOR_MCP_OPERATIONS.contains(&name) {
             return Err(denied());
         }
-        let rewritten = self.rewrite_assignee_me(payload);
+        let rewritten = self.prepare_operator_payload(name, payload);
         let payload = rewritten.as_ref().unwrap_or(payload);
         let kind = exposed_operations()
             .iter()
@@ -54,6 +55,23 @@ impl OperatorSession {
         }
     }
 
+    fn prepare_operator_payload(&self, name: &str, payload: &Value) -> Option<Value> {
+        let mut resolved = self.rewrite_assignee_me(payload);
+        if name == "comment.create" {
+            let author = payload
+                .get("author")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if author.trim().is_empty()
+                && let Some(operator) = self.operator_name.as_deref()
+            {
+                let record = resolved.get_or_insert_with(|| payload.clone());
+                record["author"] = json!(operator);
+            }
+        }
+        resolved
+    }
+
     fn rewrite_assignee_me(&self, payload: &Value) -> Option<Value> {
         let name = self.operator_name.as_deref()?;
         let assignee = payload.get("assignee")?.as_str()?;
@@ -63,6 +81,12 @@ impl OperatorSession {
         let mut resolved = payload.clone();
         resolved["assignee"] = json!(name);
         Some(resolved)
+    }
+}
+fn canonical_operator_call(name: &str) -> &str {
+    match name {
+        "save_comment" => "comment.create",
+        other => other,
     }
 }
 

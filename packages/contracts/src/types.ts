@@ -188,11 +188,13 @@ export type CloneRemovedRecord = {
 };
 export type CommentCreateRequest = {
   author: string;
+  body?: string | null;
+  issue?: string | null;
   mutation: MutationContext;
   parent_comment_id?: number | null;
-  project_id: number;
-  target: TimelineEntityRef;
-  text: string;
+  project_id?: number | null;
+  target?: TimelineEntityRef | null;
+  text?: string;
 };
 export type CommentEditRequest = {
   comment_id: number;
@@ -220,9 +222,11 @@ export type CommentListResponse = {
 };
 export type CommentRecord = {
   id: number;
+  identifier?: string | null;
   project_id: number;
   target: TimelineEntityRef;
   text: string;
+  url?: string | null;
   version: number;
 };
 export type CommentResolveRequest = {

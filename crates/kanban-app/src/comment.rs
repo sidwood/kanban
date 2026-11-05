@@ -215,46 +215,12 @@ impl CommandHandler for CreateComment {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
-        let project = resolve_project(self.projects.as_ref(), request.project_id)
-            .map_err(|error| name_missing(error, "project_id"))?;
-        let text = parse_stored_text(&request.text)?;
+        let (project_id, target, issue_key) =
+            resolve_comment_address(self.projects.as_ref(), self.targets.as_ref(), &request)?;
+        let text = comment_text(&request)?;
         let author = require_author(&request.author)?;
-        let target = resolve_target(self.targets.as_ref(), &request.target)?;
-        if target.kind() == TimelineEntityKind::Ticket.as_str() {
-            let ticket_id: u64 = target.id().parse().map_err(|_| {
-                ApiError::internal("a resolved ticket target carries its numeric id")
-            })?;
-            let owner = self.targets.issue_project(ticket_id)?.ok_or_else(|| {
-                ApiError::not_found_field("target", &format!("issue {}", target.id()))
-            })?;
-            if owner != project.id().value() {
-                return Err(ApiError::invalid_request_field(
-                    "project_id",
-                    "project_id does not own the target issue",
-                ));
-            }
-        } else if !self
-            .targets
-            .comment_target_exists(target.kind(), target.id())?
-        {
-            return Err(ApiError::not_found_field(
-                "target",
-                &format!("{} {}", target.kind(), target.id()),
-            ));
-        } else if let Some(owner) = self
-            .targets
-            .comment_target_project(target.kind(), target.id())?
-            && owner != project.id().value()
-        {
-            return Err(ApiError::invalid_request_field(
-                "project_id",
-                &format!(
-                    "project_id does not own the target {} {}",
-                    target.kind(),
-                    target.id()
-                ),
-            ));
-        }
+        let project = resolve_project(self.projects.as_ref(), project_id)
+            .map_err(|error| name_missing(error, "project_id"))?;
         let parent_comment_id = validate_parent(
             self.store.as_ref(),
             self.targets.as_ref(),
@@ -275,8 +241,105 @@ impl CommandHandler for CreateComment {
             self.targets.touch_issue(ticket_id)?;
         }
         announce(effects, LiveEventName::CommentCreated, &comment);
-        encode_record(&comment)
+        let mut record = record_of(&comment);
+        if let Some(key) = issue_key {
+            record.identifier = Some(key.display());
+            record.url = Some(key.deep_link());
+        }
+        serde_json::to_value(record).map_err(|error| ApiError::internal(&error.to_string()))
     }
+}
+
+fn comment_text(request: &CommentCreateRequest) -> Result<CommentText, ApiError> {
+    let text = if request.text.trim().is_empty() {
+        request.body.as_deref().unwrap_or("")
+    } else {
+        request.text.as_str()
+    };
+    parse_stored_text(text)
+}
+
+fn resolve_comment_address(
+    projects: &dyn ProjectStore,
+    targets: &dyn CommentIssueTargets,
+    request: &CommentCreateRequest,
+) -> Result<(u64, CommentTarget, Option<IssueKey>), ApiError> {
+    if let Some(project_id) = request.project_id {
+        resolve_project(projects, project_id).map_err(|error| name_missing(error, "project_id"))?;
+    }
+    if let Some(issue) = request.issue.as_deref() {
+        let (key, ticket_id) = targets.resolve_issue_reference(issue)?.ok_or_else(|| {
+            ApiError::not_found_field("issue", &format!("issue {issue}"))
+        })?;
+        let owner = targets
+            .issue_project(ticket_id)?
+            .ok_or_else(|| ApiError::not_found_field("issue", &format!("issue {issue}")))?;
+        if let Some(project_id) = request.project_id
+            && project_id != owner
+        {
+            return Err(ApiError::invalid_request_field(
+                "project_id",
+                "project_id does not own the target issue",
+            ));
+        }
+        let target =
+            CommentTarget::new(TimelineEntityKind::Ticket.as_str(), &ticket_id.to_string())
+                .map_err(|error| ApiError::invalid_request_field("issue", &error.to_string()))?;
+        return Ok((owner, target, Some(key)));
+    }
+    let Some(raw) = request.target.as_ref() else {
+        return Err(ApiError::invalid_request_field(
+            "issue",
+            "issue or target is required",
+        ));
+    };
+    let target = resolve_target(targets, raw)?;
+    if target.kind() == TimelineEntityKind::Ticket.as_str() {
+        let ticket_id: u64 = target
+            .id()
+            .parse()
+            .map_err(|_| ApiError::internal("a resolved ticket target carries its numeric id"))?;
+        let owner = targets.issue_project(ticket_id)?.ok_or_else(|| {
+            ApiError::not_found_field("target", &format!("issue {}", target.id()))
+        })?;
+        if let Some(given) = request.project_id
+            && given != owner
+        {
+            return Err(ApiError::invalid_request_field(
+                "project_id",
+                "project_id does not own the target issue",
+            ));
+        }
+        let key = targets
+            .resolve_issue_reference(target.id())?
+            .map(|(key, _)| key);
+        return Ok((owner, target, key));
+    }
+    let Some(given) = request.project_id else {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            "project_id is required when the target is not an issue",
+        ));
+    };
+    if !targets.comment_target_exists(target.kind(), target.id())? {
+        return Err(ApiError::not_found_field(
+            "target",
+            &format!("{} {}", target.kind(), target.id()),
+        ));
+    }
+    if let Some(owner) = targets.comment_target_project(target.kind(), target.id())?
+        && owner != given
+    {
+        return Err(ApiError::invalid_request_field(
+            "project_id",
+            &format!(
+                "project_id does not own the target {} {}",
+                target.kind(),
+                target.id()
+            ),
+        ));
+    }
+    Ok((given, target, None))
 }
 
 /// Serves `comment.edit`.
@@ -552,6 +615,8 @@ fn record_of(comment: &Comment) -> CommentRecord {
         },
         text: comment.current_text().as_str().to_owned(),
         version: comment.version(),
+        identifier: None,
+        url: None,
     }
 }
 
@@ -942,6 +1007,8 @@ mod comments {
                 "target": target(),
                 "text": "First thought",
                 "version": 1,
+                "identifier": "TUS-11",
+                "url": "kanban://issue/TUS-11",
             })
         );
         assert_eq!(store.snapshot()[0].project_id(), 1);

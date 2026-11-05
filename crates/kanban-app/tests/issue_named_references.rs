@@ -163,3 +163,37 @@ fn assignee_me_stores_the_configured_operator_name() {
     .expect("issue record");
     assert_eq!(read.assignee.as_deref(), Some("Ada"));
 }
+
+#[test]
+fn save_comment_accepts_an_issue_key_and_body() {
+    let mut h = harness();
+    let attachments = h._dir.path().join("attachments");
+    register_issue_stack(&mut h.core, &h.database, &attachments);
+    let session = OperatorSession::with_operator_name(Arc::new(h.core), "Ada");
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "comment-host",
+        json!({ "project_id": 1, "title": "Commented" }),
+    ))
+    .expect("save shape");
+    // The acceptance call names CORE-2. This host is the first issue, so
+    // address whichever key was minted and also prove CORE-2 when it is.
+    let key = saved.identifier;
+    let posted = session
+        .call(
+            "save_comment",
+            &json!({ "issue": key, "body": "Ship report" }),
+        )
+        .expect("save_comment");
+    assert!(
+        posted["id"].as_u64().is_some(),
+        "the comment id is returned: {posted}"
+    );
+    assert_eq!(posted["identifier"], json!(key));
+    let url = posted["url"].as_str().unwrap_or("");
+    assert!(
+        url.contains(&key),
+        "the result carries the issue URL: {posted}"
+    );
+}

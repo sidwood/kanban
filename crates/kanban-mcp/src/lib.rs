@@ -81,14 +81,25 @@ impl Adapter {
             "../../../packages/contracts/src/mcp-tools.json"
         ))
         .map_err(|_| McpError::internal_error("generated tools are invalid", None))?;
-        Ok(generated
+        let mut tools: Vec<Tool> = generated
             .into_iter()
             .filter(|tool| {
                 exposed_operations().iter().any(|op| {
                     op.mcp_tool_name == tool.name && permitted.iter().any(|name| name == op.name)
                 })
             })
-            .collect())
+            .collect();
+        if matches!(self.backend.as_ref(), Backend::Operator(_))
+            && let Some(create) = tools
+                .iter()
+                .find(|tool| tool.name == "comment_create")
+                .cloned()
+        {
+            let mut alias = create;
+            alias.name = "save_comment".into();
+            tools.push(alias);
+        }
+        Ok(tools)
     }
 }
 impl ServerHandler for Adapter {
@@ -128,9 +139,14 @@ impl ServerHandler for Adapter {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        let requested = if request.name == "save_comment" {
+            "comment_create"
+        } else {
+            request.name.as_ref()
+        };
         let Some(operation) = exposed_operations()
             .iter()
-            .find(|op| op.mcp_tool_name == request.name)
+            .find(|op| op.mcp_tool_name == requested)
         else {
             return Ok(CallToolResult::structured_error(
                 serde_json::json!({"code":"not_found","message":"tool is unavailable"}),

@@ -79,13 +79,13 @@ fn domain_decision(decision: TicketReviewDecision) -> ReviewDecision {
 /// Owns the secondary-effect record for one legacy save. Drop discards
 /// it, so a save that does not commit cannot announce issues the write
 /// did not keep.
-struct CascadeNotes<'a> {
+pub(crate) struct CascadeNotes<'a> {
     tickets: &'a dyn TicketStore,
     open: bool,
 }
 
 impl<'a> CascadeNotes<'a> {
-    fn begin(tickets: &'a dyn TicketStore) -> Self {
+    pub(crate) fn begin(tickets: &'a dyn TicketStore) -> Self {
         tickets.begin_secondary_effects();
         Self {
             tickets,
@@ -93,7 +93,7 @@ impl<'a> CascadeNotes<'a> {
         }
     }
 
-    fn take(&mut self) -> Vec<crate::issue::SecondaryEffect> {
+    pub(crate) fn take(&mut self) -> Vec<crate::issue::SecondaryEffect> {
         self.open = false;
         self.tickets.take_secondary_effects()
     }

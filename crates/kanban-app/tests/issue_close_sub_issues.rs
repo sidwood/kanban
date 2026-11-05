@@ -62,6 +62,8 @@ fn register_stack(core: &mut Core, database: &Database, attachments: &std::path:
         None,
     )
     .expect("lifecycle registers");
+    core.register_reassignment(tickets.clone(), projects.clone(), specs.clone())
+        .expect("reassignment registers");
     core.register_issue_operator(
         tickets,
         projects.clone(),
@@ -630,6 +632,16 @@ impl RecordingEvents {
         self.events.lock().expect("the event log is sound").clear();
     }
 
+    fn named(&self, kind: &str) -> Vec<Value> {
+        self.events
+            .lock()
+            .expect("the event log is sound")
+            .iter()
+            .filter(|(event_kind, _)| event_kind == kind)
+            .map(|(_, payload)| payload.clone())
+            .collect()
+    }
+
     fn state_changes(&self) -> Vec<(u64, Value)> {
         self.events
             .lock()
@@ -940,4 +952,197 @@ fn a_refused_legacy_cancel_publishes_no_state_change() {
         )
         .expect("the later cancel lands");
     assert_cancelled_ids_announced(&events, &[parent.ticket_id, child.ticket_id], &[]);
+}
+
+fn reassignment_of(ticket_id: u64, version: u64, key: &str) -> Value {
+    json!({
+        "mutation": mutation(version, key),
+        "ticket_id": ticket_id,
+        "kind": "task",
+        "priority": "normal",
+        "title": "Replacement task",
+        "subtype": "operational",
+        "mode": "human",
+        "completion": ["Checked"],
+    })
+}
+
+fn closed_by_reassignment(tree: &CascadeTree) -> Vec<u64> {
+    vec![
+        tree.quiet.ticket_id,
+        tree.quiet_child.ticket_id,
+        tree.edge.ticket_id,
+    ]
+}
+
+fn assert_reassignment_announces_closed_children(
+    events: &RecordingEvents,
+    parent_id: u64,
+    closed: &[u64],
+    open: &[u64],
+) {
+    let changes = events.state_changes();
+    for id in closed {
+        let states: Vec<_> = changes
+            .iter()
+            .filter(|(changed, _)| changed == id)
+            .map(|(_, state)| state.clone())
+            .collect();
+        assert_eq!(
+            states,
+            vec![json!("cancelled")],
+            "issue {id} is announced once as cancelled, saw {changes:?}"
+        );
+    }
+    for id in open {
+        assert!(
+            !changes.iter().any(|(changed, _)| changed == id),
+            "issue {id} must not be announced, saw {changes:?}"
+        );
+    }
+    let parent_states: Vec<_> = changes
+        .iter()
+        .filter(|(id, _)| *id == parent_id)
+        .map(|(_, state)| state.clone())
+        .collect();
+    assert_eq!(
+        parent_states,
+        vec![json!("superseded")],
+        "the original is announced once as superseded, saw {changes:?}"
+    );
+    let extras: Vec<_> = changes
+        .iter()
+        .filter(|(id, _)| *id != parent_id && !closed.contains(id))
+        .cloned()
+        .collect();
+    assert!(
+        extras.is_empty(),
+        "only the superseded original and closed children are announced, saw {changes:?}"
+    );
+}
+
+#[test]
+fn a_legacy_reassignment_announces_every_child_the_cascade_closes() {
+    let (h, events) = recording_stack();
+    let session = &h.session;
+    let tree = cascade_tree(session, "reassign");
+    plant_executing_run(&h.database_path, tree.busy.ticket_id as i64);
+    let busy_before = read(session, &tree.busy.identifier);
+    let already_before = read(session, &tree.already.identifier);
+    let edge_child_before = read(session, &tree.edge_child.identifier);
+    let parent_before = read(session, &tree.parent.identifier);
+
+    events.clear();
+    let replacement = h
+        .core
+        .command(
+            "ticket.reassign",
+            &reassignment_of(
+                tree.parent.ticket_id,
+                parent_before.version,
+                "legacy-reassign-announce",
+            ),
+        )
+        .expect("the legacy reassignment lands");
+    let replacement_id = replacement["id"]
+        .as_u64()
+        .expect("the reassignment returns the replacement");
+
+    assert_eq!(read(session, &tree.parent.identifier).state, "Superseded");
+    assert_eq!(read(session, &tree.quiet.identifier).state, "Cancelled");
+    assert_eq!(
+        read(session, &tree.quiet_child.identifier).state,
+        "Cancelled"
+    );
+    assert_eq!(read(session, &tree.edge.identifier).state, "Cancelled");
+    assert_eq!(read(session, &tree.busy.identifier), busy_before);
+    assert_eq!(read(session, &tree.busy_child.identifier).state, "Ready");
+    assert_eq!(read(session, &tree.already.identifier), already_before);
+    assert_eq!(
+        read(session, &tree.edge_child.identifier),
+        edge_child_before
+    );
+    let replacement_key = format!("CORE-{}", replacement["number"].as_u64().expect("a number"));
+    assert_eq!(
+        read(session, &replacement_key).state,
+        "Draft",
+        "the replacement is a new draft, not a closed child"
+    );
+    assert_reassignment_announces_closed_children(
+        &events,
+        tree.parent.ticket_id,
+        &closed_by_reassignment(&tree),
+        &left_open_by_cancel(&tree),
+    );
+    let created = events.named("ticket.created");
+    assert_eq!(
+        created.len(),
+        1,
+        "only the replacement is created, saw {created:?}"
+    );
+    assert_eq!(created[0]["id"], json!(replacement_id));
+    assert_eq!(created[0]["predecessor_id"], json!(tree.parent.ticket_id));
+    assert!(
+        !events
+            .state_changes()
+            .iter()
+            .any(|(id, _)| *id == replacement_id),
+        "the replacement is not announced as a state change"
+    );
+}
+
+#[test]
+fn a_refused_legacy_reassignment_publishes_no_child_state_change() {
+    let (h, events) = recording_stack();
+    let session = &h.session;
+    close_with_parent(session);
+    let parent = save(
+        session,
+        "refused-reassign-parent",
+        json!({ "project_id": CORE, "title": "Parent", "state": "Ready" }),
+    );
+    let child = child_of(session, &parent, "refused-reassign-child", "Ready");
+    let parent_before = read(session, &parent.identifier);
+    let child_before = read(session, &child.identifier);
+
+    events.clear();
+    let error = h
+        .core
+        .command(
+            "ticket.reassign",
+            &reassignment_of(parent.ticket_id, 0, "legacy-reassign-stale"),
+        )
+        .expect_err("a stale reassignment is refused");
+
+    assert_eq!(error.code, kanban_dto::ErrorCode::StaleVersion);
+    assert_eq!(read(session, &parent.identifier), parent_before);
+    assert_eq!(read(session, &child.identifier), child_before);
+    assert!(
+        events.state_changes().is_empty(),
+        "a refused reassignment publishes no state change, saw {:?}",
+        events.state_changes()
+    );
+    assert!(
+        events.named("ticket.created").is_empty(),
+        "a refused reassignment creates no replacement"
+    );
+
+    h.core
+        .command(
+            "ticket.reassign",
+            &reassignment_of(
+                parent.ticket_id,
+                parent_before.version,
+                "legacy-reassign-after-refusal",
+            ),
+        )
+        .expect("the later reassignment lands");
+    assert_eq!(read(session, &parent.identifier).state, "Superseded");
+    assert_eq!(read(session, &child.identifier).state, "Cancelled");
+    assert_reassignment_announces_closed_children(
+        &events,
+        parent.ticket_id,
+        &[child.ticket_id],
+        &[],
+    );
 }

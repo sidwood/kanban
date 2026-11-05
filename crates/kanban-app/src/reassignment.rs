@@ -133,6 +133,7 @@ impl CommandHandler for ReassignTicket {
         let identity = project.id();
         let kind = body.kind().wire_name().to_owned();
         let minted = number.value();
+        let mut notes = crate::lifecycle::CascadeNotes::begin(self.0.tickets.as_ref());
         let replacement =
             self.0
                 .tickets
@@ -161,6 +162,7 @@ impl CommandHandler for ReassignTicket {
                         ),
                     )
                 })?;
+        let recorded = notes.take();
         let code = project.code();
         emit_catalogued(
             effects,
@@ -172,6 +174,13 @@ impl CommandHandler for ReassignTicket {
             LiveEventName::TicketCreated,
             &record_of(&replacement, code),
         );
+        crate::issue_operator::announce_secondary_effects(
+            self.0.tickets.as_ref(),
+            self.0.projects.as_ref(),
+            effects,
+            &recorded,
+            predecessor.value(),
+        )?;
         serde_json::to_value(record_of(&replacement, code))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }

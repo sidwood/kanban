@@ -1,20 +1,26 @@
 //! Issue deep links. The operating system hands the shell
-//! `kanban://issue/KEY` links through the deep-link plugin: macOS as
-//! an open-URL event, Linux as the argument of a launch or of a
-//! relaunch the single-instance plugin forwards here. The domain
-//! decides what a link names ([`IssueKey::from_deep_link`]); the shell
-//! only announces that issue to the WebView as a typed event carrying
-//! its key, holding it until the WebView says it listens, so the link
-//! that launched the shell is not lost. A link naming no issue changes
-//! nothing. The WebView never receives a link itself, never navigates
-//! to one, and holds no deep-link capability.
+//! `kanban://issue/KEY` links three ways, and the shell takes each
+//! itself, through no deep-link plugin: macOS as Tauri's own open-URL
+//! run event, Linux as the one argument of a launch (read by `main`,
+//! see [`crate::launch`]) or of a relaunch the single-instance plugin
+//! forwards here. Where the shell receives text, it judges exactly the
+//! text it received, before anything parses it as a URL; macOS hands
+//! Tauri a URL it has already parsed, so there the shell judges that
+//! URL's text. The domain decides what a link names
+//! ([`IssueKey::from_deep_link`]); the shell only announces that issue
+//! to the WebView as a typed event carrying its key, holding it until
+//! the WebView says it listens, so the link that launched the shell is
+//! not lost. A link naming no issue changes nothing. No event carries a
+//! link itself, so the WebView never receives one, never navigates to
+//! one, and holds no deep-link capability.
 
 use std::sync::{Mutex, MutexGuard};
 
 use kanban_domain::IssueKey;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tauri_plugin_deep_link::DeepLinkExt;
+use tauri::plugin::TauriPlugin;
+use tauri::webview::PageLoadEvent;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime};
 
 /// The shell announces an issue a link names under this name.
 pub const ISSUE_LINK_EVENT: &str = "shell://issue-link";
@@ -91,22 +97,53 @@ impl IssueLinks {
     }
 }
 
-/// Start taking the links the deep-link plugin hands the shell: every
-/// one it announces from now on, and one it took before anything
-/// listened — a Linux launch's argument, or a macOS open-URL event
-/// that came while the app was still starting.
-pub fn attach<R: Runtime>(app: &AppHandle<R>) {
-    let deep_link = app.deep_link();
-    let handle = app.clone();
-    deep_link.on_open_url(move |event| {
-        for link in event.urls() {
-            open(&handle, link.as_str());
+/// The shell's own issue-link plugin, which `run` builds the shell
+/// with (see [`crate::shell_builder`]). It holds the link a launch
+/// carried until the WebView listens, makes links wait again while a
+/// page loads, and takes the links macOS's open-URL run events carry.
+/// It has no commands, and emits nothing but [`ISSUE_LINK_EVENT`].
+pub fn plugin<R: Runtime>(launch_link: Option<String>) -> TauriPlugin<R> {
+    tauri::plugin::Builder::new("issue-link")
+        .setup(move |app, _api| {
+            app.manage(IssueLinks::default());
+            if let Some(link) = launch_link {
+                open(app, &link);
+            }
+            Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                page_started(webview);
+            }
+        })
+        .on_event(on_run_event)
+        .build()
+}
+
+/// Take the links a run event carries: macOS's open-URL event, for a
+/// link opened while the shell runs or the one that started it. The
+/// URLs come already parsed, so their text is what the shell judges.
+pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
+    #[cfg(target_os = "macos")]
+    if let RunEvent::Opened { urls } = event {
+        for url in urls {
+            open(app, url.as_str());
         }
-    });
-    if let Ok(Some(links)) = deep_link.get_current() {
-        for link in links {
-            open(app, link.as_str());
-        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, event);
+}
+
+/// A second launch handed the running shell its arguments, the
+/// executable first, through the single-instance plugin: on Linux,
+/// how a link reaches a shell that already runs. Its one argument is
+/// judged as exactly the text it arrived as; a launch with no argument
+/// only brings the window forward.
+pub fn relaunched<R: Runtime>(app: &AppHandle<R>, arguments: Vec<String>, _directory: String) {
+    match arguments.as_slice() {
+        [] | [_] => reveal(app),
+        [_, link] => open(app, link),
+        _ => {}
     }
 }
 
@@ -149,8 +186,7 @@ const LINK_SCHEME: &str = "kanban:";
 
 /// Whether a launch argument is a `kanban:` link, which Linux hands
 /// the shell as its one argument. This only tells a link launch from
-/// a mistyped flag: the deep-link plugin reads the link itself, and
-/// the domain decides what it names.
+/// a mistyped flag: the domain decides what the link names.
 pub fn is_link_argument(argument: &std::ffi::OsStr) -> bool {
     argument
         .to_str()
@@ -169,18 +205,33 @@ pub fn reveal<R: Runtime>(app: &AppHandle<R>) {
 
 /// Make this executable the `kanban` scheme's handler where that
 /// happens at runtime: on Linux, where only an installed package's
-/// desktop entry would otherwise declare it. The desktop database and
-/// `xdg-mime` are updated off the main thread, so the window does not
-/// wait for them. macOS reads the scheme from the bundle's
-/// `Info.plist` instead.
+/// desktop entry would otherwise declare it (see
+/// [`write_scheme_handler`]). It runs off the main thread, so the
+/// window does not wait for the desktop database. macOS reads the
+/// scheme from the bundle's `Info.plist` instead.
 pub fn register_scheme<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "linux")]
     {
-        let handle = app.clone();
+        let name = app.config().product_name.clone();
+        let appimage = app.env().appimage.map(std::path::PathBuf::from);
+        let applications = app.path().data_dir().map(|data| data.join("applications"));
         let spawned = std::thread::Builder::new()
             .name("kanban-scheme-registration".to_owned())
             .spawn(move || {
-                if let Err(failure) = handle.deep_link().register_all() {
+                let registered =
+                    applications
+                        .map_err(std::io::Error::other)
+                        .and_then(|applications| {
+                            let executable = tauri::utils::platform::current_exe()?;
+                            let launcher = appimage.unwrap_or_else(|| executable.clone());
+                            write_scheme_handler(
+                                &applications,
+                                &executable,
+                                &launcher,
+                                name.as_deref(),
+                            )
+                        });
+                if let Err(failure) = registered {
                     eprintln!("kanban shell: the kanban:// scheme was not registered: {failure}");
                 }
             });
@@ -190,6 +241,50 @@ pub fn register_scheme<R: Runtime>(app: &AppHandle<R>) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = app;
+}
+
+/// Write the desktop entry that makes `launcher` the `kanban` scheme's
+/// handler into `applications`, named after `executable`
+/// (`kanban-desktop-handler.desktop`), then refresh the desktop
+/// database there and make the entry `xdg-mime`'s default for the
+/// scheme. Either command missing or failing is reported.
+#[cfg(target_os = "linux")]
+pub fn write_scheme_handler(
+    applications: &std::path::Path,
+    executable: &std::path::Path,
+    launcher: &std::path::Path,
+    name: Option<&str>,
+) -> std::io::Result<()> {
+    let file_name = format!(
+        "{}-handler.desktop",
+        executable.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let mime_type = format!("x-scheme-handler/{}", LINK_SCHEME.trim_end_matches(':'));
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %u\nTerminal=false\nMimeType={mime_type};\nNoDisplay=true\n",
+        name.unwrap_or(&file_name),
+        launcher.to_string_lossy(),
+    );
+    std::fs::create_dir_all(applications)?;
+    let path = applications.join(&file_name);
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(entry.as_str()) {
+        std::fs::write(&path, entry)?;
+    }
+    let succeeded = |program: &str, arguments: &[&std::ffi::OsStr]| {
+        let status = std::process::Command::new(program)
+            .args(arguments)
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("{program} {status}")))
+        }
+    };
+    succeeded("update-desktop-database", &[applications.as_os_str()])?;
+    succeeded(
+        "xdg-mime",
+        &["default".as_ref(), file_name.as_ref(), mime_type.as_ref()],
+    )
 }
 
 #[cfg(test)]

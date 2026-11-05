@@ -84,6 +84,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub mod commands;
 pub mod core_link;
 pub mod issue_link;
+pub mod launch;
 pub mod package_smoke;
 mod shell_handlers;
 
@@ -2802,44 +2803,49 @@ shell_handlers::shell_handler_catalogue! {
     shell: issue_link_listen,
 }
 
-/// Build the window, start the core on demand, and supervise the
-/// connection for as long as this shell process lives. One shell runs
-/// at a time: a second launch hands its arguments, an issue link
-/// above all, to the running one and exits.
-pub fn run() -> tauri::Result<()> {
-    tauri::Builder::default()
-        // First, so a second launch is handed over before anything
-        // else of it starts. Its link reaches the deep-link plugin;
-        // a launch with no link only brings the window forward.
-        .plugin(tauri_plugin_single_instance::init(|app, arguments, _| {
-            if arguments.len() <= 1 {
-                issue_link::reveal(app);
-            }
-        }))
-        .plugin(tauri_plugin_deep_link::init())
-        .manage(issue_link::IssueLinks::default())
-        .on_page_load(|webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Started {
-                issue_link::page_started(webview);
-            }
-        })
-        .setup(|app| {
-            issue_link::attach(app.handle());
-            issue_link::register_scheme(app.handle());
-            let socket_path = managed_socket_path()?;
-            let shell = Arc::new(Shell::default());
-            app.manage(shell.clone());
-            let supervisor = app.handle().clone();
-            let spawn = std::thread::Builder::new()
-                .name("kanban-shell-supervisor".to_owned())
-                .spawn(move || supervise(socket_path, shell, supervisor));
-            match spawn {
-                Ok(_) => Ok(()),
-                Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
-            }
-        })
+/// The shell as `run` builds it, short of what only a real process
+/// may do: the issue-link plugin, which takes every link the operating
+/// system hands the shell and announces only the key it names, and
+/// every typed command. Generic over the runtime, so the tests drive
+/// this same wiring on Tauri's mock runtime.
+pub fn shell_builder<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+    launch_link: Option<String>,
+) -> tauri::Builder<R> {
+    builder
+        .plugin(issue_link::plugin(launch_link))
         .invoke_handler(catalogue_invoke_handler())
-        .run(tauri::generate_context!())
+}
+
+/// Build the window, start the core on demand, and supervise the
+/// connection for as long as this shell process lives, holding the
+/// link a link launch carried (see [`launch`]). One shell runs at a
+/// time: a second launch hands its arguments, an issue link above
+/// all, to the running one and exits.
+pub fn run(launch_link: Option<String>) -> tauri::Result<()> {
+    shell_builder(
+        // First, so a second launch is handed over before anything
+        // else of it starts. The plugin's own deep-link forwarding
+        // stays off: the shell judges the arguments itself.
+        tauri::Builder::default()
+            .plugin(tauri_plugin_single_instance::init(issue_link::relaunched)),
+        launch_link,
+    )
+    .setup(|app| {
+        issue_link::register_scheme(app.handle());
+        let socket_path = managed_socket_path()?;
+        let shell = Arc::new(Shell::default());
+        app.manage(shell.clone());
+        let supervisor = app.handle().clone();
+        let spawn = std::thread::Builder::new()
+            .name("kanban-shell-supervisor".to_owned())
+            .spawn(move || supervise(socket_path, shell, supervisor));
+        match spawn {
+            Ok(_) => Ok(()),
+            Err(failure) => Err(Box::new(failure) as Box<dyn std::error::Error>),
+        }
+    })
+    .run(tauri::generate_context!())
 }
 
 /// Keep the shell's view of the core honest: start it if it is not

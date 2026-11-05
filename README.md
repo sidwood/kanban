@@ -37,8 +37,11 @@ key the core cannot find shows as the board's error. Any other link, a
 lowercase key or one with a query among them, is ignored.
 
 On macOS the scheme is declared in the bundle's `Info.plist`, so links
-reach only the packaged app (`just package`), not `just dev`. Linux
-registration is described in [`docs/linux.md`](docs/linux.md#issue-links).
+reach only the packaged app (`just package`), not `just dev`. macOS hands
+the app each link already parsed as a URL, so there a link that parsing
+tidies, such as `kanban://issue/x/../CORE-12`, opens the issue it tidies
+to, while Linux judges a link exactly as written. Linux registration is
+described in [`docs/linux.md`](docs/linux.md#issue-links).
 
 ## Local MCP clients
 

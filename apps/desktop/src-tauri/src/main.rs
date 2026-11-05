@@ -4,18 +4,17 @@
 // Prevent an extra console window on Windows; a no-op on macOS.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use kanban_desktop_lib::launch::{self, Launch};
+
 fn main() {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    match arguments.as_slice() {
-        [] => kanban_desktop_lib::run().expect("the desktop shell should run"),
-        // Linux starts a link's handler with the link as its one
-        // argument; the shell's deep-link plugin reads it from there.
-        [link] if kanban_desktop_lib::issue_link::is_link_argument(link) => {
-            kanban_desktop_lib::run().expect("the desktop shell should run")
+    match launch::read(&arguments) {
+        Launch::Shell { link } => {
+            kanban_desktop_lib::run(link).expect("the desktop shell should run")
         }
-        [flag] if flag == "--version" => println!("{}", kanban_dto::build_identity::json()),
-        [flag, directory] if flag == "--package-smoke" => {
-            match kanban_desktop_lib::package_smoke::run(std::path::Path::new(directory)) {
+        Launch::Version => println!("{}", kanban_dto::build_identity::json()),
+        Launch::PackageSmoke(directory) => {
+            match kanban_desktop_lib::package_smoke::run(&directory) {
                 Ok(report) => println!("{report}"),
                 Err(error) => {
                     eprintln!("installed package probe failed: {error}");
@@ -23,7 +22,7 @@ fn main() {
                 }
             }
         }
-        _ => {
+        Launch::Usage => {
             eprintln!(
                 "usage: Kanban [--version | --package-smoke NEW_DATA_DIR | kanban://issue/KEY]"
             );

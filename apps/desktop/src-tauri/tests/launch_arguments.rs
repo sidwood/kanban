@@ -1,11 +1,67 @@
-//! The shell's launch arguments: one that is neither a flag the shell
-//! knows nor a `kanban:` link is refused with usage, before any window
-//! or core starts. A link launch itself cannot be driven here: it
+//! The shell's launch arguments. A `kanban:` link starts the shell
+//! holding the link's text exactly as the operating system passed it;
+//! a flag the shell knows does its one job; anything else is refused
+//! with usage, before any window or core starts. A link launch is read
+//! here the way `main` reads it rather than run, because running it
 //! starts the real shell, which would hand its link to a shell the
-//! developer already has open.
+//! developer already has open; `issue_links.rs` follows the link it
+//! yields through the shell to the WebView.
 
+use std::ffi::OsString;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use kanban_desktop_lib::launch::{self, Launch};
+
+fn read(arguments: &[&str]) -> Launch {
+    let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+    launch::read(&arguments)
+}
+
+#[test]
+fn a_link_argument_starts_the_shell_with_the_link_as_it_arrived() {
+    for link in [
+        "kanban://issue/CORE-12",
+        "kanban://issue/x/../CORE-12",
+        "kanban://issue/CORE-12 ",
+        "KANBAN://issue/CORE-12",
+        "kanban://board",
+    ] {
+        assert_eq!(
+            read(&[link]),
+            Launch::Shell {
+                link: Some(link.to_owned())
+            },
+            "{link:?} starts the shell holding exactly that text"
+        );
+    }
+}
+
+#[test]
+fn no_argument_starts_the_shell_without_a_link() {
+    assert_eq!(read(&[]), Launch::Shell { link: None });
+}
+
+#[test]
+fn the_shell_flags_do_their_own_jobs() {
+    assert_eq!(read(&["--version"]), Launch::Version);
+    assert_eq!(
+        read(&["--package-smoke", "/tmp/new-data"]),
+        Launch::PackageSmoke("/tmp/new-data".into())
+    );
+}
+
+#[test]
+fn an_argument_that_is_neither_a_flag_nor_a_link_is_read_as_a_refusal() {
+    for arguments in [
+        &["--bogus"][..],
+        &["issue/CORE-12"],
+        &["kanban://issue/CORE-12", "kanban://issue/EDGE-3"],
+        &["--version", "kanban://issue/CORE-12"],
+    ] {
+        assert_eq!(read(arguments), Launch::Usage, "{arguments:?}");
+    }
+}
 
 #[test]
 fn an_argument_that_is_neither_a_flag_nor_a_link_is_refused() {

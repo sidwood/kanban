@@ -1,44 +1,75 @@
-//! Issue deep links through the shell, on Tauri's mock runtime with the
-//! real deep-link plugin and the committed scheme configuration: a link
-//! reaches the WebView only as a typed event carrying the key it names,
-//! a link that arrives before the WebView listens waits for it, and a
-//! link naming no issue changes nothing.
+//! Issue deep links through the shell exactly as `run` builds it
+//! ([`kanban_desktop_lib::shell_builder`]), on Tauri's mock runtime with
+//! the committed configuration. However the operating system hands the
+//! shell a link (a launch's argument, a relaunch's arguments, or macOS's
+//! open-URL event), the WebView hears of it only as a typed event
+//! carrying the key it names. A link that arrives before the WebView
+//! listens waits for it, a link naming no issue changes nothing, and no
+//! other event carries a link at all.
 
+use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
 
-use kanban_desktop_lib::issue_link::{self, ISSUE_LINK_EVENT, IssueLinks};
+use kanban_desktop_lib::issue_link::{self, ISSUE_LINK_EVENT};
+use kanban_desktop_lib::launch::{self, Launch};
 use serde_json::{Value, json};
+use tauri::Listener;
 use tauri::test::MockRuntime;
-use tauri::{Emitter, Listener};
 
 const CONFIG: &str = include_str!("../tauri.conf.json");
+const LOCKFILE: &str = include_str!("../Cargo.lock");
 
-/// The deep-link plugin's own announcement of a link, which macOS's
-/// open-URL event and a Linux launch's argument both become.
+/// The event the deep-link plugin announces every incoming link on,
+/// raw, to anything that listens: a WebView holding the ordinary
+/// event-listening permission included.
 const PLUGIN_EVENT: &str = "deep-link://new-url";
+
+/// Links the domain refuses as they stand.
+const REFUSED: &[&str] = &[
+    "kanban://issue/CORE-12?x=1",
+    "kanban://issue/core-12",
+    "kanban://issue/CORE-12/edit",
+    "kanban://issue/CORE-12#comments",
+    "kanban://board/CORE-12",
+    "https://example.com/issue/CORE-12",
+];
+
+/// Text that names no issue as it arrives, but that URL parsing would
+/// rewrite into `kanban://issue/CORE-12`.
+const NORMALISED: &[&str] = &[
+    "kanban://issue/x/../CORE-12",
+    "kanban://issue/%2e/CORE-12",
+    "kanban://issue/CO\nRE-12",
+    "kanban://issue/CORE-12 ",
+];
 
 struct Shell {
     app: tauri::App<MockRuntime>,
     webview: tauri::WebviewWindow<MockRuntime>,
     announced: Arc<Mutex<Vec<Value>>>,
+    plugin_events: Arc<Mutex<Vec<String>>>,
 }
 
 fn config() -> Value {
     serde_json::from_str(CONFIG).expect("tauri.conf.json parses")
 }
 
-/// A shell with the deep-link plugin configured as `tauri.conf.json`
-/// configures it, recording every issue link it announces.
-fn shell() -> Shell {
+/// The shell `run` builds, holding the link it was launched with,
+/// configured by `tauri.conf.json`'s plugin section, and recording every
+/// issue link it announces and every plugin announcement of a link.
+fn shell(launch_link: Option<String>) -> Shell {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().plugins.0.insert(
-        "deep-link".to_owned(),
-        config()["plugins"]["deep-link"].clone(),
-    );
-    let app = tauri::test::mock_builder()
-        .plugin(tauri_plugin_deep_link::init())
-        .manage(IssueLinks::default())
-        .invoke_handler(kanban_desktop_lib::catalogue_invoke_handler())
+    for (name, section) in config()["plugins"]
+        .as_object()
+        .expect("tauri.conf.json configures plugins")
+    {
+        context
+            .config_mut()
+            .plugins
+            .0
+            .insert(name.clone(), section.clone());
+    }
+    let app = kanban_desktop_lib::shell_builder(tauri::test::mock_builder(), launch_link)
         .build(context)
         .expect("the mock shell app builds");
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -46,14 +77,31 @@ fn shell() -> Shell {
         .expect("the mock webview builds");
     let announced = Arc::new(Mutex::new(Vec::new()));
     let sink = announced.clone();
-    app.listen(ISSUE_LINK_EVENT, move |event| {
+    app.listen_any(ISSUE_LINK_EVENT, move |event| {
         let payload = serde_json::from_str(event.payload()).expect("the announcement is JSON");
         sink.lock().expect("the sink is not poisoned").push(payload);
+    });
+    let plugin_events = Arc::new(Mutex::new(Vec::new()));
+    let sink = plugin_events.clone();
+    app.listen_any(PLUGIN_EVENT, move |event| {
+        sink.lock()
+            .expect("the sink is not poisoned")
+            .push(event.payload().to_owned());
     });
     Shell {
         app,
         webview,
         announced,
+        plugin_events,
+    }
+}
+
+/// The link a launch with this one argument hands the shell, read the
+/// way `main` reads it.
+fn launched_with(argument: &str) -> Option<String> {
+    match launch::read(&[OsString::from(argument)]) {
+        Launch::Shell { link } => link,
+        other => panic!("`{argument}` must start the shell, not {other:?}"),
     }
 }
 
@@ -65,11 +113,11 @@ impl Shell {
             .clone()
     }
 
-    /// The deep-link plugin hands the shell links.
-    fn open(&self, links: &[&str]) {
-        self.app
-            .emit(PLUGIN_EVENT, links)
-            .expect("the plugin event emits");
+    fn plugin_events(&self) -> Vec<String> {
+        self.plugin_events
+            .lock()
+            .expect("the sink is not poisoned")
+            .clone()
     }
 
     /// The WebView's one call: it is listening now.
@@ -86,6 +134,29 @@ impl Shell {
         tauri::test::get_ipc_response(&self.webview, message)
             .expect("the WebView may say it listens");
     }
+
+    /// A second launch hands the running shell its arguments, as the
+    /// single-instance plugin passes them on: the executable first.
+    fn relaunch(&self, arguments: &[&str]) {
+        issue_link::relaunched(
+            self.app.handle(),
+            arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+            String::new(),
+        );
+    }
+
+    /// macOS hands the running shell links as an open-URL run event.
+    #[cfg(target_os = "macos")]
+    fn open_urls(&self, links: &[&str]) {
+        let urls = links
+            .iter()
+            .map(|link| tauri::Url::parse(link).expect("the operating system hands over URLs"))
+            .collect();
+        issue_link::on_run_event(self.app.handle(), &tauri::RunEvent::Opened { urls });
+    }
 }
 
 fn opened(identifier: &str) -> Value {
@@ -93,20 +164,17 @@ fn opened(identifier: &str) -> Value {
 }
 
 #[test]
-fn the_desktop_shell_registers_the_kanban_scheme() {
+fn the_bundle_declares_the_kanban_scheme() {
     assert_eq!(
         config()["plugins"]["deep-link"],
         json!({ "desktop": { "schemes": ["kanban"] } }),
-        "the shell claims exactly the scheme the core mints links under"
+        "the bundler declares exactly the scheme the core mints links under"
     );
 }
 
 #[test]
-fn a_link_before_the_webview_listens_is_announced_once_it_does() {
-    let shell = shell();
-    issue_link::attach(shell.app.handle());
-
-    shell.open(&["kanban://issue/CORE-12"]);
+fn a_link_a_launch_carries_is_announced_once_the_webview_listens() {
+    let shell = shell(launched_with("kanban://issue/CORE-12"));
     assert!(shell.announced().is_empty(), "nothing listens yet");
 
     shell.listen();
@@ -117,89 +185,124 @@ fn a_link_before_the_webview_listens_is_announced_once_it_does() {
 }
 
 #[test]
-fn a_link_reaches_a_listening_webview_at_once() {
-    let shell = shell();
-    issue_link::attach(shell.app.handle());
+fn a_shell_launched_without_a_link_announces_nothing() {
+    let shell = shell(None);
+
     shell.listen();
 
-    shell.open(&["kanban://issue/CORE-12"]);
-    shell.open(&["kanban://issue/EDGE-3"]);
+    assert!(shell.announced().is_empty());
+}
+
+#[test]
+fn a_relaunch_link_reaches_a_listening_webview_at_once() {
+    let shell = shell(None);
+    shell.listen();
+
+    shell.relaunch(&["kanban", "kanban://issue/CORE-12"]);
+    shell.relaunch(&["kanban", "kanban://issue/EDGE-3"]);
 
     assert_eq!(shell.announced(), vec![opened("CORE-12"), opened("EDGE-3")]);
 }
 
 #[test]
-fn a_link_naming_no_issue_announces_nothing() {
-    let shell = shell();
-    issue_link::attach(shell.app.handle());
+fn a_relaunch_link_before_the_webview_listens_waits_for_it() {
+    let shell = shell(None);
 
-    shell.open(&[
-        "kanban://issue/core-12",
-        "kanban://issue/CORE-12/edit",
-        "kanban://issue/CORE-12?token=secret",
-        "kanban://board/CORE-12",
-        "https://example.com/issue/CORE-12",
-    ]);
-    shell.listen();
-    shell.open(&["kanban://issue/", "kanban://issue/CORE-12#comments"]);
-
-    assert!(
-        shell.announced().is_empty(),
-        "a link naming no issue is neither held nor announced"
-    );
-}
-
-#[test]
-fn the_webview_hears_only_the_key_of_a_valid_link() {
-    let shell = shell();
-    issue_link::attach(shell.app.handle());
-    shell.listen();
-
-    shell.open(&["https://example.com", "kanban://issue/CORE-12"]);
-
-    assert_eq!(shell.announced(), vec![opened("CORE-12")]);
-}
-
-/// On Linux a link launches the shell as its one argument, which the
-/// plugin reads as it starts, before anything listens.
-#[cfg(target_os = "linux")]
-#[test]
-fn the_link_a_linux_launch_carries_waits_for_the_webview() {
-    use tauri_plugin_deep_link::DeepLinkExt;
-
-    let shell = shell();
-    shell
-        .app
-        .deep_link()
-        .handle_cli_arguments(["kanban", "kanban://issue/CORE-12"].into_iter());
-    issue_link::attach(shell.app.handle());
+    shell.relaunch(&["kanban", "kanban://issue/EDGE-3"]);
+    shell.relaunch(&["kanban"]);
     assert!(shell.announced().is_empty(), "nothing listens yet");
 
     shell.listen();
-
-    assert_eq!(shell.announced(), vec![opened("CORE-12")]);
+    assert_eq!(shell.announced(), vec![opened("EDGE-3")]);
 }
 
-/// A second launch hands its arguments to the running shell through
-/// the single-instance plugin, which passes them to the deep-link
-/// plugin exactly like this.
-#[cfg(target_os = "linux")]
 #[test]
-fn a_linux_relaunch_with_a_link_reaches_the_running_shell() {
-    use tauri_plugin_deep_link::DeepLinkExt;
+fn a_link_naming_no_issue_announces_nothing() {
+    for link in REFUSED {
+        // `main` refuses an argument of another scheme before the
+        // shell starts; the shell refuses whatever it is handed.
+        let shell = shell(Some((*link).to_owned()));
+        shell.listen();
+        shell.relaunch(&["kanban", link]);
 
-    let shell = shell();
-    issue_link::attach(shell.app.handle());
+        assert!(
+            shell.announced().is_empty(),
+            "`{link}` is neither held nor announced"
+        );
+    }
+}
+
+#[test]
+fn a_link_is_judged_as_the_text_it_arrived_as() {
+    for link in NORMALISED {
+        assert_eq!(
+            tauri::Url::parse(link)
+                .expect("URL parsing accepts the text")
+                .as_str(),
+            "kanban://issue/CORE-12",
+            "URL parsing rewrites {link:?} into a valid link"
+        );
+
+        let shell = shell(launched_with(link));
+        shell.listen();
+        assert!(
+            shell.announced().is_empty(),
+            "a launch with {link:?} announces nothing"
+        );
+
+        shell.relaunch(&["kanban", link]);
+        assert!(
+            shell.announced().is_empty(),
+            "a relaunch with {link:?} announces nothing"
+        );
+    }
+}
+
+#[test]
+fn only_the_key_of_a_valid_link_ever_reaches_the_webview() {
+    let shell = shell(launched_with("kanban://issue/CORE-12?x=1"));
+    shell.relaunch(&["kanban", "kanban://issue/x/../CORE-12"]);
+    shell.relaunch(&["kanban", "kanban://issue/EDGE-3"]);
     shell.listen();
+    shell.relaunch(&["kanban", "kanban://issue/CORE-12?token=secret"]);
+    shell.relaunch(&["kanban", "kanban://issue/CORE-12"]);
+    #[cfg(target_os = "macos")]
+    shell.open_urls(&["kanban://issue/CORE-12?x=1", "kanban://issue/AB-1"]);
 
-    shell
-        .app
-        .deep_link()
-        .handle_cli_arguments(["kanban", "kanban://issue/EDGE-3"].into_iter());
-    shell
-        .app
-        .deep_link()
-        .handle_cli_arguments(["kanban", "kanban://issue/edge-3"].into_iter());
+    let mut expected = vec![opened("EDGE-3"), opened("CORE-12")];
+    if cfg!(target_os = "macos") {
+        expected.push(opened("AB-1"));
+    }
+    assert_eq!(
+        shell.announced(),
+        expected,
+        "each valid link is announced as its key alone"
+    );
+    assert_eq!(
+        shell.plugin_events(),
+        Vec::<String>::new(),
+        "no plugin announces an incoming link"
+    );
+    assert!(
+        !LOCKFILE.contains("name = \"tauri-plugin-deep-link\""),
+        "the shell links no plugin that announces incoming links to the WebView"
+    );
+}
 
-    assert_eq!(shell.announced(), vec![opened("EDGE-3")]);
+/// macOS hands Tauri links already parsed, so the shell judges the
+/// text of the URL it was given.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_macos_open_url_event_announces_the_key_it_names() {
+    let shell = shell(None);
+    shell.open_urls(&["kanban://issue/CORE-12"]);
+    assert!(shell.announced().is_empty(), "nothing listens yet");
+
+    shell.listen();
+    shell.open_urls(&[
+        "kanban://issue/CORE-12?tab=history",
+        "kanban://issue/EDGE-3",
+    ]);
+
+    assert_eq!(shell.announced(), vec![opened("CORE-12"), opened("EDGE-3")]);
 }

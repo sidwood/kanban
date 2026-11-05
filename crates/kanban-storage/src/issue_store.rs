@@ -1176,8 +1176,10 @@ impl SqliteIssueStore {
         {
             return Ok(());
         }
+        let mut target_relations_changed = false;
         if let Some(target_id) = target_id {
-            self.relink_relations_for_duplicate_merge(ticket_id, target_id)?;
+            target_relations_changed =
+                self.relink_relations_for_duplicate_merge(ticket_id, target_id)?;
             let conn = self.lock();
             conn.execute(
                 "UPDATE tickets SET duplicate_of_ticket_id = ?2,
@@ -1221,6 +1223,8 @@ impl SqliteIssueStore {
             if let Some(next) = target_id {
                 self.bump_version(next)?;
             }
+        } else if target_relations_changed && let Some(next) = target_id {
+            self.bump_version(next)?;
         }
         Ok(())
     }
@@ -1235,7 +1239,7 @@ impl SqliteIssueStore {
         &self,
         ticket_id: i64,
         target_id: i64,
-    ) -> Result<(), ApiError> {
+    ) -> Result<bool, ApiError> {
         let conn = self.lock();
         let mut relation_query = conn
             .prepare(
@@ -1384,12 +1388,13 @@ impl SqliteIssueStore {
             affected.insert(target_id);
         }
         drop(conn);
+        let target_relations_changed = affected.contains(&target_id);
         affected.remove(&ticket_id);
         affected.remove(&target_id);
         for id in affected {
             self.bump_version(id)?;
         }
-        Ok(())
+        Ok(target_relations_changed)
     }
 
     pub fn list_duplicate_identifiers(&self, ticket_id: i64) -> Result<Vec<String>, ApiError> {

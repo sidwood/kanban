@@ -5453,3 +5453,222 @@ fn marking_a_duplicate_stamps_and_announces_its_target() {
         other.ticket_id
     ));
 }
+
+fn relation_names(record: &IssueRecord, kind: &str) -> Vec<String> {
+    let mut names = record
+        .relations
+        .iter()
+        .filter(|relation| relation.kind == kind)
+        .map(|relation| relation.identifier.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn assert_stamped(before: &IssueRecord, after: &IssueRecord, label: &str) {
+    assert!(
+        after.version > before.version,
+        "{label} must advance the version from {}, stayed {}",
+        before.version,
+        after.version
+    );
+    assert_ne!(
+        after.updated_at, before.updated_at,
+        "{label} must advance updated_at"
+    );
+}
+
+fn assert_still(before: &IssueRecord, after: &IssueRecord, label: &str) {
+    assert_eq!(
+        after.version, before.version,
+        "{label} must keep the version"
+    );
+    assert_eq!(
+        after.updated_at, before.updated_at,
+        "{label} must keep updated_at"
+    );
+}
+
+#[test]
+fn marking_the_same_duplicate_target_again_stamps_moved_edges() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let source = save_issue(
+        session,
+        0,
+        "same-target-source",
+        json!({ "project_id": 1, "title": "Source" }),
+    );
+    let target = save_issue(
+        session,
+        0,
+        "same-target-canonical",
+        json!({ "project_id": 1, "title": "Target" }),
+    );
+    let neighbour = save_issue(
+        session,
+        0,
+        "same-target-neighbour",
+        json!({ "project_id": 1, "title": "Neighbour" }),
+    );
+    let bystander = save_issue(
+        session,
+        0,
+        "same-target-bystander",
+        json!({ "project_id": 1, "title": "Bystander" }),
+    );
+
+    let target_before_first = read_issue(session, &target.identifier);
+    let neighbour_before_first = read_issue(session, &neighbour.identifier);
+    let bystander_before_first = read_issue(session, &bystander.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-first",
+        json!({ "identifier": source.identifier, "duplicate_of": target.identifier }),
+    );
+    let target_after_first = read_issue(session, &target.identifier);
+    assert_eq!(
+        target_after_first.duplicates.as_deref(),
+        Some(&[source.identifier.clone()][..])
+    );
+    assert_stamped(
+        &target_before_first,
+        &target_after_first,
+        "the first duplicate mark",
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", target.ticket_id),
+        "the first duplicate mark names the target: {:?}",
+        sink.announced()
+    );
+    assert_still(
+        &neighbour_before_first,
+        &read_issue(session, &neighbour.identifier),
+        "a first mark with no edges",
+    );
+    assert_still(
+        &bystander_before_first,
+        &read_issue(session, &bystander.identifier),
+        "an unrelated issue",
+    );
+
+    let repeated = read_issue(session, &target.identifier);
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-repeat",
+        json!({ "identifier": source.identifier, "duplicate_of": target.identifier }),
+    );
+    assert_still(
+        &repeated,
+        &read_issue(session, &target.identifier),
+        "repeating the same target while it is still a duplicate",
+    );
+    assert!(
+        sink.announced().is_empty(),
+        "repeating the same target announces nothing: {:?}",
+        sink.announced()
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-reopen-plain",
+        json!({ "identifier": source.identifier, "state": "Draft" }),
+    );
+    let target_before_plain = read_issue(session, &target.identifier);
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-remark-plain",
+        json!({ "identifier": source.identifier, "duplicate_of": target.identifier }),
+    );
+    assert_eq!(read_issue(session, &source.identifier).state, "Duplicate");
+    assert_still(
+        &target_before_plain,
+        &read_issue(session, &target.identifier),
+        "re-marking the same target with no new edges",
+    );
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.edited", target.ticket_id),
+        "a target whose relations did not change is not named: {:?}",
+        sink.announced()
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-reopen-link",
+        json!({
+            "identifier": source.identifier,
+            "state": "Draft",
+            "add_related": [neighbour.identifier],
+        }),
+    );
+    let target_before = read_issue(session, &target.identifier);
+    let neighbour_before = read_issue(session, &neighbour.identifier);
+    let source_before = read_issue(session, &source.identifier);
+    let bystander_before = read_issue(session, &bystander.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &source.identifier).version,
+        "same-target-remark-link",
+        json!({ "identifier": source.identifier, "duplicate_of": target.identifier }),
+    );
+    let target_after = read_issue(session, &target.identifier);
+    let neighbour_after = read_issue(session, &neighbour.identifier);
+    let source_after = read_issue(session, &source.identifier);
+    assert_eq!(
+        relation_names(&target_after, "related"),
+        vec![neighbour.identifier.clone()]
+    );
+    assert_ne!(
+        target_before.relations, target_after.relations,
+        "the merge must move the new edge onto the target"
+    );
+    assert_stamped(
+        &target_before,
+        &target_after,
+        "a target that gains an edge on a same-target re-mark",
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", target.ticket_id),
+        "the changed target is named: {:?}",
+        sink.announced()
+    );
+    assert_stamped(
+        &neighbour_before,
+        &neighbour_after,
+        "a neighbour whose edge moved",
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", neighbour.ticket_id),
+        "the moved neighbour is named: {:?}",
+        sink.announced()
+    );
+    assert_stamped(&source_before, &source_after, "the re-marked source");
+    assert_eq!(source_after.state, "Duplicate");
+    assert!(
+        announced_for(sink.as_ref(), "ticket.state.changed", source.ticket_id),
+        "the source state move is named: {:?}",
+        sink.announced()
+    );
+    assert_still(
+        &bystander_before,
+        &read_issue(session, &bystander.identifier),
+        "an issue outside the merge",
+    );
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.edited", bystander.ticket_id)
+            && !announced_for(sink.as_ref(), "ticket.state.changed", bystander.ticket_id),
+        "an unrelated issue is not named: {:?}",
+        sink.announced()
+    );
+}

@@ -44,11 +44,11 @@ A fresh run takes a few seconds. It starts the core with
 core socket (no MCP tool registers projects), creates milestones and labels
 with the MCP tools, runs the tests, and stops the core with `service.stop`.
 
-In `--read-only` mode the runner attaches to a core already serving the data
-directory, or starts one and stops it afterwards. Only query tools are allowed
-past the client, and the run ends by checking that no issue's version or
-`updated_at` moved. Stopping a core the runner started records one
-`service.stop` idempotency row; start the core yourself to avoid even that.
+In `--read-only` mode the runner never starts or stops a core on the store
+it inspects. It attaches to a core already serving that store, or copies the
+store and runs against the copy. Only query tools are allowed past the
+client. The run ends by checking that every file in the inspected store is
+unchanged.
 
 ## Output
 

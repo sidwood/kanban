@@ -611,6 +611,137 @@ class StartupFailureTests(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIsNotNone(spawned["process"].poll())
 
+class ReadOnlyStoreTests(unittest.TestCase):
+    def files(self, root):
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in Path(root).rglob("*")
+            if path.is_file()
+        }
+
+    def inside(self, path, root):
+        path = Path(path).resolve()
+        root = Path(root).resolve()
+        return path == root or root in path.parents
+
+    def test_read_only_runs_a_core_only_against_a_snapshot(self):
+        from scripts.acceptance import __main__ as cli
+
+        class FakeCore:
+            started = []
+
+            def __init__(self, binary, data_dir, port, log_path, host="127.0.0.1"):
+                self.data_dir = Path(data_dir)
+                self.log_path = Path(log_path)
+                self.socket_path = self.data_dir / "core.sock"
+                self.process = None
+                self.host = host
+                self.port = port
+                FakeCore.started.append(self)
+
+            def environment(self):
+                return {}
+
+            def start(self):
+                self.process = object()
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                self.log_path.write_text("core log")
+                (self.data_dir / "kanban.sqlite").write_bytes(b"mutated-by-core")
+
+            def stop(self):
+                return None
+
+            def reap(self):
+                return None
+
+        class FakeMcp:
+            def unauthorised_initialize_status(self):
+                return 401
+
+            def call(self, name, arguments):
+                payloads = {
+                    "list_projects": {"projects": [{"code": "LIN", "id": 1, "name": "Linear"}]},
+                    "list_issues": {"issues": []},
+                    "list_issue_statuses": {"states": []},
+                    "list_issue_labels": {"labels": []},
+                    "list_milestones": {"milestones": []},
+                }
+                return harness.ToolResult(True, payloads.get(name, {}))
+
+        FakeCore.started = []
+        with tempfile.TemporaryDirectory() as root:
+            inspected = Path(root) / "store"
+            data = inspected / "Kanban"
+            data.mkdir(parents=True)
+            (data / "kanban.sqlite").write_bytes(b"original-database")
+            (data / "sidecar.txt").write_text("keep")
+            before = self.files(inspected)
+            with patch("scripts.acceptance.__main__.CoreProcess", FakeCore), \
+                    patch("scripts.acceptance.__main__.socket_answers", return_value=False), \
+                    patch("scripts.acceptance.__main__.connect", return_value=(FakeMcp(), "installation")), \
+                    patch("scripts.acceptance.harness.keychain_secret",
+                          side_effect=AssertionError("keychain")):
+                cli.main([
+                    "--read-only", "--project", "LIN", "--data-dir", str(inspected),
+                    "--binary", "/nonexistent", "--tests", "2",
+                ])
+            self.assertEqual(self.files(inspected), before)
+            self.assertTrue(FakeCore.started)
+            for core in FakeCore.started:
+                self.assertFalse(self.inside(core.data_dir, inspected))
+                self.assertFalse(self.inside(core.log_path, inspected))
+
+    def test_read_only_guard_notices_a_change_outside_issue_rows(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from scripts.acceptance import __main__ as cli
+
+        class FakeMcp:
+            def __init__(self, mutate):
+                self.mutate = mutate
+
+            def unauthorised_initialize_status(self):
+                return 401
+
+            def call(self, name, arguments):
+                if name == "list_issues":
+                    self.mutate()
+                payloads = {
+                    "list_projects": {"projects": [{"code": "LIN", "id": 1, "name": "Linear"}]},
+                    "list_issues": {"issues": []},
+                    "list_issue_statuses": {"states": []},
+                    "list_issue_labels": {"labels": []},
+                    "list_milestones": {"milestones": []},
+                }
+                return harness.ToolResult(True, payloads.get(name, {}))
+
+        with tempfile.TemporaryDirectory() as root:
+            inspected = Path(root)
+            (inspected / "kanban.sqlite").write_bytes(b"original-database")
+            captured = StringIO()
+
+            def mutate():
+                (inspected / "sidecar.txt").write_text("written during the run")
+
+            with redirect_stdout(captured), \
+                    patch("scripts.acceptance.__main__.socket_answers", return_value=True), \
+                    patch("scripts.acceptance.__main__.port_in_use", return_value=True), \
+                    patch("scripts.acceptance.__main__.connect",
+                          return_value=(FakeMcp(mutate), "installation")), \
+                    patch("scripts.acceptance.harness.keychain_secret",
+                          side_effect=AssertionError("keychain")):
+                cli.main([
+                    "--read-only", "--project", "LIN", "--data-dir", str(inspected),
+                    "--binary", "/nonexistent", "--tests", "2",
+                ])
+            failed = [
+                line for line in captured.getvalue().splitlines()
+                if line.startswith("FAIL") and "inspected store" in line
+            ]
+            self.assertTrue(failed)
+
+
 
 if __name__ == "__main__":
     unittest.main()

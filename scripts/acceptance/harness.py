@@ -13,10 +13,12 @@ import hashlib
 import http.client
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -422,6 +424,64 @@ def socket_answers(path):
         return True
     except (OSError, HarnessError, CoreError, ValueError):
         return False
+
+
+def store_fingerprint(root):
+    """Content identity of every file under `root`. Reads only."""
+    root = Path(root)
+    found = {}
+    if not root.exists():
+        return found
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        try:
+            if path.is_symlink():
+                found[relative] = ("symlink", os.readlink(path))
+            elif path.is_dir():
+                found[relative] = ("dir",)
+            elif path.is_file():
+                found[relative] = ("file", hashlib.sha256(path.read_bytes()).hexdigest())
+            else:
+                found[relative] = ("other", path.stat().st_mode)
+        except OSError as error:
+            found[relative] = ("unreadable", type(error).__name__)
+    return found
+
+
+def store_changes(before, after):
+    """Relative paths added, removed, or changed between two fingerprints."""
+    return sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+
+
+def copy_store(source, destination):
+    """Copy a store's files without preserving links back into it."""
+    source = Path(source)
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.rglob("*")):
+        target = destination / path.relative_to(source)
+        if path.is_dir() and not path.is_symlink():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if not path.is_file():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target, follow_symlinks=True)
+
+
+def disposable_directory(inspected):
+    """A temporary directory that is not inside the inspected store."""
+    inspected = Path(inspected).resolve()
+    system_temp = Path(tempfile.gettempdir()).resolve()
+    parent = None
+    if inspected == system_temp or inspected in system_temp.parents:
+        parent = inspected.parent
+    path = Path(tempfile.mkdtemp(prefix="kanban-acceptance-", dir=None if parent is None else str(parent)))
+    resolved = path.resolve()
+    if resolved == inspected or inspected in resolved.parents:
+        shutil.rmtree(path, ignore_errors=True)
+        raise HarnessError("the snapshot would sit inside the inspected store")
+    return path
 
 
 class CoreProcess:

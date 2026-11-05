@@ -55,15 +55,17 @@ export const useIssueLinkStore = defineStore('issue-link', {
     /** The route that refusal was reported on; leaving it lets the
      * refusal go. */
     errorRoute: null as string | null,
-    // The links taken up so far, so only the newest one navigates or
+    // The links received so far, so only the newest one navigates or
     // reports.
     issued: 0,
   }),
   actions: {
     /** Hold one key the shell announced until it can be opened; a
-     * newer key replaces one still waiting. */
+     * newer key replaces one still waiting, and an older link still
+     * waiting on the core opens and reports nothing from now on. */
     receive(identifier: string): void {
       this.pending = identifier
+      this.issued += 1
     },
     /** Open the waiting key once the Project register has answered:
      * its issue's board with the drawer open, or the core's refusal

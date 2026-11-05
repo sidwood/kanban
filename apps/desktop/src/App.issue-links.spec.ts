@@ -12,6 +12,7 @@ import { issueLinkSourceKey } from './core/issue-links'
 import type { IssueLinkOpened, IssueLinkSource } from './core/issue-links'
 import { kanbanTransportKey } from './core/transport'
 import type { ShellTransport } from './core/transport'
+import { useConnectionStore } from './stores/connection'
 import { coreProject, edgeProject, harness, ticket } from './test/shell-harness'
 import type { HarnessOptions } from './test/shell-harness'
 import App from './App.vue'
@@ -85,6 +86,30 @@ function issueReads(query: ReturnType<typeof harness>['query'], identifier: stri
 }
 
 const NOT_FOUND = { code: 'not_found', message: 'CORE-999 was not found' }
+
+// A connection the shell re-announces while the app runs: the app
+// checks the core's health again, and stays connecting until the test
+// lets that check answer. The first check, at boot, answers at once.
+function recheckedHealth() {
+  let checking = false
+  let answer: (() => void) | undefined
+  return {
+    read(): Promise<unknown> | undefined {
+      if (!checking) return undefined
+      return new Promise((resolve) => {
+        answer = () => resolve({ service_version: 'test' })
+      })
+    },
+    start(shell: ReturnType<typeof harness>) {
+      checking = true
+      shell.connection('connected')
+    },
+    answer() {
+      checking = false
+      answer?.()
+    },
+  }
+}
 
 function unknownKey(name: string, request: unknown): Promise<unknown> | undefined {
   return name === 'issue.get' && (request as { identifier: string }).identifier === 'CORE-999'
@@ -220,6 +245,58 @@ describe('issue links', () => {
     expect(issueReads(shell.query, 'EDGE-3'), 'the older link is never resolved').toBe(0)
     expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
   })
+
+  for (const answer of ['projects', 'refusal'] as const) {
+    it(`opens only the newest link when an older one's register ${answer} comes while reconnecting`, async () => {
+      // The register reads the older link waits for are held back and
+      // then give this answer; every read after them answers at once.
+      const held = heldRegister(answer)
+      let holding = true
+      const health = recheckedHealth()
+      const shell = running({
+        override: (name) => {
+          if (name === 'health.get') return health.read()
+          if (name === 'comment.list') {
+            return Promise.resolve({ comments: [COMMENT], next_cursor: null })
+          }
+          return name === 'project.list' && holding ? held.read() : undefined
+        },
+      })
+      const links = shellLinks()
+      const wrapper = await mountApp(shell.transport, links.source)
+
+      links.announce('EDGE-3')
+      await flushPromises()
+      health.start(shell)
+      await flushPromises()
+      expect(useConnectionStore().phase, 'the app checks the core again').toBe('connecting')
+      links.announce('CORE-12')
+      await flushPromises()
+      holding = false
+      held.release()
+      await flushPromises()
+
+      expect(router.currentRoute.value.fullPath, 'the older link opens nothing').toBe('/board')
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
+      expect(issueReads(shell.query, 'EDGE-3'), 'the older link is never resolved').toBe(0)
+
+      health.answer()
+      await flushPromises()
+
+      expect(router.currentRoute.value.fullPath).toBe('/projects/1/board?ticket=7')
+      expect(drawerHeading()).toContain('CORE-12')
+      const panel = document.querySelector('[data-testid="issue-detail-panel"]')
+      expect(panel, "the drawer shows the newest link's issue").not.toBeNull()
+      expect(
+        panel?.querySelector('[data-testid="issue-description-body"]')?.textContent?.trim(),
+      ).toBe('Archive the old exports')
+      expect(panel?.querySelector('[data-testid="issue-comment-1"]')?.textContent).toContain(
+        'Archive the March exports first.',
+      )
+      expect(wrapper.find('[data-testid="board-error"]').exists()).toBe(false)
+    })
+  }
 
   it("reports a Project register that cannot be read as the board's error", async () => {
     const register = heldRegister('refusal')

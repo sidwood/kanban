@@ -457,6 +457,35 @@ describe('the drawer issue a footer command reads again', () => {
     ])
     expect(document.querySelector('[data-testid="issue-description-input"]')).toBeNull()
   })
+
+  it('keeps the description being written while the issue is read again', async () => {
+    const state = harness({ tickets: [implementation({ state: 'ready' })] })
+    await openDrawer(state)
+    const reads = holdReads(state, 'issue.get')
+    const draft = (): string | null => {
+      const field = document.querySelector('[data-testid="issue-description-input"]')
+      return field instanceof HTMLTextAreaElement ? field.value : null
+    }
+
+    await click('issue-description-edit')
+    await type('issue-description-input', 'The commands are served over the socket.')
+    await click('drawer-park')
+    expect(reads).toHaveLength(1)
+    expect(draft()).toBe('The commands are served over the socket.')
+    reads[0]!.answer()
+    await flushPromises()
+    expect(draft()).toBe('The commands are served over the socket.')
+    await click('issue-description-save')
+
+    expect(issued(state, 'issue.save')).toEqual([
+      {
+        mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+        identifier: 'CORE-13',
+        description: 'The commands are served over the socket.',
+      },
+    ])
+    expect(draft()).toBeNull()
+  })
 })
 
 describe('the human review decision in the drawer', () => {

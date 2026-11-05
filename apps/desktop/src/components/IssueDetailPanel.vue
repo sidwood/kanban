@@ -42,7 +42,8 @@ const editingDescription = ref(false)
 
 watch(
   () => props.issue,
-  (issue) => {
+  (issue, previous) => {
+    if (editingDescription.value && issue.ticket_id === previous?.ticket_id) return
     descriptionLocal.value = issue.description
     editingDescription.value = false
   },

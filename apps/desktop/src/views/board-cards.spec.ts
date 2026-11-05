@@ -9,7 +9,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord, TicketRecord } from '@kanban/contracts'
+import type { IssueMilestoneRecord, IssueRecord, TicketRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import { harness, ticket } from '../test/shell-harness'
@@ -213,6 +213,52 @@ describe('board card assignee', () => {
     })
 
     expect(chip(wrapper, 'executor', 7).text()).toBe('AssigneeMorgan')
+  })
+})
+
+const beta: IssueMilestoneRecord = { id: 9, name: 'Beta', issues_done: 0, issues_total: 1 }
+
+// The issue record the card reads, beside the milestones its Project
+// lists.
+function answeringIssueIn(
+  record: IssueRecord,
+  milestones: readonly IssueMilestoneRecord[],
+): HarnessOptions['override'] {
+  const issue = answeringIssue(() => Promise.resolve(record))
+  return (name, request) =>
+    name === 'issue.list_milestones'
+      ? Promise.resolve({ milestones: [...milestones] })
+      : issue?.(name, request)
+}
+
+describe('board card priority and milestone chips', () => {
+  it('wears the issue priority, not the legacy ticket priority', async () => {
+    const { wrapper } = await mounted({
+      tickets: [ticket({ id: 7, number: 12, priority: 'high' })],
+      override: answeringIssue(() => Promise.resolve(issueRecord({ priority: 4 }))),
+    })
+
+    expect(chip(wrapper, 'priority', 7).text()).toBe('PriorityLow')
+  })
+
+  it('names the milestone the issue sits in when its Project lists it', async () => {
+    const { wrapper } = await mounted({
+      tickets: [ticket({ id: 7, number: 12 })],
+      override: answeringIssueIn(issueRecord({ milestone_id: 9 }), [beta]),
+    })
+
+    expect(chip(wrapper, 'spec', 7).text()).toBe('MilestoneBeta')
+  })
+
+  it('wears no milestone chip when the milestone does not resolve', async () => {
+    const { wrapper } = await mounted({
+      tickets: [ticket({ id: 7, number: 12 })],
+      override: answeringIssueIn(issueRecord({ milestone_id: 11 }), [beta]),
+    })
+
+    expect(chip(wrapper, 'priority', 7).exists()).toBe(true)
+    expect(chip(wrapper, 'spec', 7).exists()).toBe(false)
+    expect(wrapper.get('[data-testid="kanban-card-7"]').text()).not.toContain('Milestone')
   })
 })
 

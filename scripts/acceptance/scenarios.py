@@ -43,7 +43,7 @@ REQUIRED_FIELDS = {
 OPTIONAL_FIELDS = {
     "due_date": str, "milestone_id": int, "started_at": str, "completed_at": str,
     "canceled_at": str, "parent": str, "sub_issues": dict, "duplicate_of": str,
-    "duplicates": list, "children": list, "assignee": str,
+    "duplicates": list, "children": list, "assignee": str, "team": str, "milestone": str,
 }
 
 
@@ -436,16 +436,26 @@ def test_read(ctx):
                   len(one["issues"]) == 1 and bool(one.get("next_cursor")),
                   f"{len(one['issues'])} issue, cursor {one.get('next_cursor')!r}")
 
+    for field in ("description", "state_history"):
+        check_every(rec, f"default list rows omit {field}", issues,
+                    lambda row: [f"unexpected {field}"] if field in row else [])
+
+    listed = issues
+    issues = [ctx.get(issue["identifier"]) for issue in listed]
     check_every(rec, "every issue record carries every field with its type", issues, record_problems)
-    sample = issues[:400]
+    sample = list(zip(listed, issues))[:400]
     mismatched = None
-    for issue in sample:
-        got = ctx.get(issue["identifier"])
-        if got != issue:
-            mismatched = f"{issue['identifier']}: {', '.join(changed_fields(issue, got))}"
+    for row, got in sample:
+        differences = [name for name, value in row.items() if name not in got or got[name] != value]
+        if differences:
+            mismatched = f"{row['identifier']}: {', '.join(differences)}"
             break
-    rec.check("get_issue by key returns the same record list_issues does", mismatched is None,
+    rec.check("get_issue by key matches the fields returned by list_issues", mismatched is None,
               mismatched or f"{len(sample)} issues compared")
+    expanded = ctx.list_all(limit=100, project_id=project, fields=["description", "state_history"])
+    expected = [dict(row, description=got["description"], state_history=got["state_history"])
+                for row, got in zip(listed, issues)]
+    rec.equal("fields adds description and state_history to list rows", expanded, expected)
     check_every(rec, "state history is a contiguous audit ending in the current state",
                 issues, history_problems)
     check_every(rec, "started/completed/canceled stamps match each state type",
@@ -989,7 +999,7 @@ def test_split(ctx):
     rec.equal("the original is retitled", after["title"], "T7 Big piece of work (split)")
     rec.equal("the original is re-homed to the other milestone", after.get("milestone_id"), pl2)
     ctx.only_changed("the split leaves the original's other fields alone", before, after,
-                     ["title", "milestone_id", "relations"])
+                     ["title", "milestone_id", "milestone", "relations"])
     rec.equal("retitling and re-homing add no state history", after["state_history"], before["state_history"])
     in_pl2 = ids(ctx.list_all(project_id=ctx.project_id, milestone_id=pl2))
     in_pl1 = ids(ctx.list_all(project_id=ctx.project_id, milestone_id=pl1))

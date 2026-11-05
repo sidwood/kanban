@@ -1026,6 +1026,13 @@ class RecordRuleTests(unittest.TestCase):
         self.assertEqual(scenarios.history_problems(record), [])
         self.assertEqual(scenarios.lifecycle_problems(record), [])
 
+    def test_display_names_are_optional_strings(self):
+        self.assertEqual(scenarios.record_problems(self.record(team="LIN", milestone="Release")), [])
+        for field in ("team", "milestone"):
+            with self.subTest(field=field):
+                self.assertEqual(scenarios.record_problems(self.record(**{field: 7})),
+                                 [f"{field} is int"])
+
     def test_a_gap_in_the_history_is_found(self):
         record = self.record()
         record["state_history"][0]["ended_at"] = "2026-11-04T10:00:01.000Z"
@@ -1872,6 +1879,170 @@ class LinkedStoreFingerprintTests(unittest.TestCase):
                             self.assertEqual(before["link"], ("symlink", raw, "dir"))
                             (target / "child").write_bytes(b"not traversed")
                             self.assertEqual(harness.store_changes(before, harness.store_fingerprint(store)), [])
+
+
+class ReadRecordTests(unittest.TestCase):
+    def context(self, default_fields=(), omit_requested=(), listing_changes=None, expanded_changes=None):
+        first = {
+            "identifier": "LIN-1", "url": "kanban://issue/LIN-1", "ticket_id": 1, "project_id": 1,
+            "team": "LIN", "title": "First heading", "description": "Second in **Markdown**.\r\n",
+            "state": "Draft", "state_type": "backlog", "priority": 0, "labels": [], "relations": [],
+            "version": 1, "created_at": "2026-11-04T10:00:00.000Z",
+            "updated_at": "2026-11-04T10:00:00.000Z",
+            "state_history": [{"state": "Draft", "state_type": "backlog",
+                               "started_at": "2026-11-04T10:00:00.000Z"}],
+        }
+        second = dict(first, identifier="LIN-2", url="kanban://issue/LIN-2", ticket_id=2,
+                      title="Second heading", description="")
+
+        class MemoryMcp:
+            def call(self, name, arguments):
+                if name == "get_issue":
+                    return harness.ToolResult(True, next(
+                        row for row in (first, second) if row["identifier"] == arguments["identifier"]))
+                if name == "list_issue_statuses":
+                    return harness.ToolResult(True, {"states": [{"name": "Draft", "state_type": "backlog"}]})
+                if name == "list_issues":
+                    rows = [first, second]
+                    query = arguments.get("query", "").casefold()
+                    rows = [row for row in rows if query in row["title"].casefold()
+                            or query in row["description"].casefold()]
+                    if arguments.get("limit") == 1:
+                        rows = rows[:1]
+                    fields = set(arguments.get("fields", default_fields)) - set(omit_requested)
+                    listed = [{key: value for key, value in row.items()
+                               if key not in ("description", "state_history") or key in fields} for row in rows]
+                    if listing_changes:
+                        for row in listed:
+                            row.update(listing_changes)
+                    if arguments.get("fields") and expanded_changes:
+                        for row in listed:
+                            row.update(expanded_changes)
+                    return harness.ToolResult(True, {"issues": listed, **(
+                        {"next_cursor": "more"} if arguments.get("limit") == 1 else {})})
+                raise AssertionError(name)
+
+        ctx = context.Context(MemoryMcp(), None, checks.Recorder(emit=lambda line: None),
+                              "read", read_only=True, pause=0)
+        ctx.projects = {"LIN": 1}
+        ctx.project_code = "LIN"
+        ctx.rec.begin(2, "Read")
+        return ctx
+
+    def test_compact_rows_are_compared_with_full_issue_reads(self):
+        ctx = self.context()
+        scenarios.test_read(ctx)
+        self.assertEqual(ctx.rec.exit_code(), 0, ctx.rec.tests[-1].results)
+
+    def test_default_rows_omit_description_and_state_history(self):
+        ctx = self.context()
+        scenarios.test_read(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        for field in ("description", "state_history"):
+            self.assertEqual(results[f"default list rows omit {field}"], checks.PASS)
+
+    def test_a_default_row_with_a_detail_field_is_rejected(self):
+        for field in ("description", "state_history"):
+            with self.subTest(field=field):
+                ctx = self.context(default_fields=(field,))
+                scenarios.test_read(ctx)
+                results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+                self.assertEqual(results[f"default list rows omit {field}"], checks.FAIL)
+
+    def test_requested_detail_fields_match_full_issue_reads(self):
+        ctx = self.context()
+        scenarios.test_read(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        self.assertEqual(results["fields adds description and state_history to list rows"], checks.PASS)
+
+    def test_each_requested_detail_field_must_be_returned(self):
+        for field in ("description", "state_history"):
+            with self.subTest(field=field):
+                ctx = self.context(omit_requested=(field,))
+                scenarios.test_read(ctx)
+                results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+                self.assertEqual(results["fields adds description and state_history to list rows"], checks.FAIL)
+
+    def test_requested_details_must_keep_the_full_values(self):
+        for changes in ({"description": "Second in **Markdown**.\n"}, {"state_history": []}):
+            with self.subTest(changes=changes):
+                ctx = self.context(expanded_changes=changes)
+                scenarios.test_read(ctx)
+                results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+                self.assertEqual(results["fields adds description and state_history to list rows"], checks.FAIL)
+
+    def test_a_changed_compact_field_is_not_ignored(self):
+        ctx = self.context(listing_changes={"priority": 4})
+        scenarios.test_read(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        self.assertEqual(results["get_issue by key matches the fields returned by list_issues"], checks.FAIL)
+
+
+class SplitRecordTests(unittest.TestCase):
+    def context(self, changes=None):
+        class MemoryMcp:
+            def __init__(self):
+                self.issues = {}
+
+            def call(self, name, arguments):
+                if name == "save_issue":
+                    key = arguments.get("identifier")
+                    if key:
+                        row = self.issues[key]
+                        row.update(title=arguments["title"], milestone_id=arguments["milestone_id"],
+                                   milestone="Second release", version=row["version"] + 1)
+                        row.update(changes or {})
+                    else:
+                        key = f"LIN-{len(self.issues) + 1}"
+                        self.issues[key] = {
+                            "identifier": key, "title": arguments["title"], "version": 1,
+                            "description": arguments["description"], "priority": 0,
+                            "milestone_id": arguments["milestone_id"], "milestone": "First release",
+                            "state_history": [], "relations": [],
+                        }
+                        for field, kind, mirror in (("add_related", "related", "related"),
+                                                    ("add_blocked_by", "blocked-by", "blocks")):
+                            for target in arguments.get(field, []):
+                                self.issues[key]["relations"].append({"kind": kind, "identifier": target})
+                                self.issues[target]["relations"].append({"kind": mirror, "identifier": key})
+                    return harness.ToolResult(True, {"identifier": key})
+                if name == "get_issue":
+                    return harness.ToolResult(True, json.loads(json.dumps(self.issues[arguments["identifier"]])))
+                if name == "list_issues":
+                    return harness.ToolResult(True, {"issues": [row for row in self.issues.values()
+                                                               if row["milestone_id"] == arguments["milestone_id"]]})
+                if name == "list_milestones":
+                    return harness.ToolResult(True, {"milestones": [
+                        {"id": number, "issues_total": sum(row["milestone_id"] == number
+                                                          for row in self.issues.values())}
+                        for number in (1, 2)
+                    ]})
+                raise AssertionError(name)
+
+        ctx = context.Context(MemoryMcp(), None, checks.Recorder(emit=lambda line: None),
+                              "split", read_only=False, pause=0)
+        ctx.projects = {"LIN": 1}
+        ctx.project_code = "LIN"
+        ctx.milestones = {"M1": 1, "M2": 2}
+        ctx.rec.begin(7, "Split")
+        return ctx
+
+    def test_re_homing_moves_the_display_name_with_the_id(self):
+        ctx = self.context()
+        scenarios.test_split(ctx)
+        self.assertEqual(ctx.rec.exit_code(), 0, ctx.rec.tests[-1].results)
+
+    def test_re_homing_still_rejects_unrelated_field_changes(self):
+        ctx = self.context(changes={"priority": 4})
+        scenarios.test_split(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        self.assertEqual(results["the split leaves the original's other fields alone"], checks.FAIL)
+
+    def test_re_homing_still_rejects_state_history_changes(self):
+        ctx = self.context(changes={"state_history": [{"state": "Done"}]})
+        scenarios.test_split(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        self.assertEqual(results["retitling and re-homing add no state history"], checks.FAIL)
 
 
 class TextQueryTests(unittest.TestCase):

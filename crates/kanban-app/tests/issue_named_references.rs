@@ -379,5 +379,64 @@ fn an_issue_tag_adds_one_related_link() {
         .iter()
         .filter(|row| row["kind"] == "related" && row["identifier"] == mentioned.identifier)
         .count();
-    assert_eq!(related_again, 1, "a repeated mention does not add a second link");
+    assert_eq!(
+        related_again, 1,
+        "a repeated mention does not add a second link"
+    );
+}
+
+#[test]
+fn an_unknown_state_names_the_kanban_states() {
+    let session = session();
+    let error = session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(0, "unknown-state"),
+                "project_id": 1,
+                "title": "Unknown state",
+                "state": "Todo"
+            }),
+        )
+        .expect_err("an unknown state is refused");
+    for name in [
+        "Draft",
+        "Parked",
+        "Blocked",
+        "Scheduled",
+        "Ready",
+        "Active",
+        "In Review",
+        "Approved",
+        "Landing",
+        "Done",
+        "Cancelled",
+        "Superseded",
+        "Duplicate",
+    ] {
+        assert!(
+            error.message.contains(name),
+            "the refusal names {name}: {}",
+            error.message
+        );
+    }
+    let tools = std::fs::read_to_string(format!(
+        "{}/../../packages/contracts/src/mcp-tools.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("published tools");
+    let tools: serde_json::Value = serde_json::from_str(&tools).expect("tools json");
+    let save = tools
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|tool| tool["name"] == "save_issue")
+        .expect("save_issue");
+    let described = save["inputSchema"]["properties"]["state"]["description"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        described.contains("Draft") && described.contains("Duplicate"),
+        "tools/list describes state with the Kanban names: {described}"
+    );
 }

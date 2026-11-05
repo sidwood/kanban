@@ -2140,7 +2140,6 @@ fn attribute_value<'a>(opening: &'a str, name: &str) -> Option<&'a str> {
     rest.split('"').next()
 }
 
-
 fn map_workflow_state(record: WorkflowStateRecord) -> kanban_app::IssueWorkflowState {
     kanban_app::IssueWorkflowState {
         id: record.id,
@@ -2923,7 +2922,17 @@ pub fn resolve_state_by_name(
                 .find(|state| matches(state.state_type.wire_name()))
         })
         .cloned()
-        .ok_or_else(|| ApiError::invalid_request_field("state", &format!("unknown state `{name}`")))
+        .ok_or_else(|| {
+            let names = states
+                .iter()
+                .map(|state| state.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            ApiError::invalid_request_field(
+                "state",
+                &format!("unknown state `{name}`; valid states: {names}"),
+            )
+        })
 }
 
 /// Answer a label or milestone insert the database refused as a taken

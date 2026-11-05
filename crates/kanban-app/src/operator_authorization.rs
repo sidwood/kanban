@@ -98,6 +98,8 @@ impl OperatorSession {
 fn canonical_operator_call(name: &str) -> &str {
     match name {
         "save_comment" => "comment.create",
+        "create_issue_label" => "issue.create_label",
+        "save_milestone" => "issue.create_milestone",
         other => other,
     }
 }

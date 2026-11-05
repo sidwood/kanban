@@ -158,7 +158,7 @@
       ]
     },
     "identifier": {
-      "description": "Existing issue key (`CODE-123`) when updating.",
+      "description": "Existing issue key (`CODE-123`) when updating. Also accepted as `id`.",
       "type": [
         "string",
         "null"
@@ -257,6 +257,7 @@
       ]
     },
     "state": {
+      "description": "Kanban workflow state. Valid names: Draft, Parked, Blocked, Scheduled, Ready, Active, In Review, Approved, Landing, Done, Cancelled, Superseded, and Duplicate. Linear names such as Todo are refused.",
       "type": [
         "string",
         "null"

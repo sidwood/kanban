@@ -89,15 +89,18 @@ impl Adapter {
                 })
             })
             .collect();
-        if matches!(self.backend.as_ref(), Backend::Operator(_))
-            && let Some(create) = tools
-                .iter()
-                .find(|tool| tool.name == "comment_create")
-                .cloned()
-        {
-            let mut alias = create;
-            alias.name = "save_comment".into();
-            tools.push(alias);
+        if matches!(self.backend.as_ref(), Backend::Operator(_)) {
+            for (alias, source) in [
+                ("save_comment", "comment_create"),
+                ("create_issue_label", "create_label"),
+                ("save_milestone", "create_milestone"),
+            ] {
+                if let Some(tool) = tools.iter().find(|tool| tool.name == source).cloned() {
+                    let mut alias_tool = tool;
+                    alias_tool.name = alias.into();
+                    tools.push(alias_tool);
+                }
+            }
         }
         Ok(tools)
     }
@@ -139,10 +142,11 @@ impl ServerHandler for Adapter {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let requested = if request.name == "save_comment" {
-            "comment_create"
-        } else {
-            request.name.as_ref()
+        let requested = match request.name.as_ref() {
+            "save_comment" => "comment_create",
+            "create_issue_label" => "create_label",
+            "save_milestone" => "create_milestone",
+            other => other,
         };
         let Some(operation) = exposed_operations()
             .iter()

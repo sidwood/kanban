@@ -462,10 +462,12 @@ fn render_mcp_tools(
                 .get(operation.request_schema)
                 .map(|schema| serde_json::to_value(schema).expect("schema serialises"))
                 .expect("request schema exists");
-            let output_schema = schema_index
+            let mut output_schema = schema_index
                 .get(operation.response_schema)
                 .map(|schema| serde_json::to_value(schema).expect("schema serialises"))
                 .expect("response schema exists");
+            describe_missing_fields(&mut input_schema);
+            describe_missing_fields(&mut output_schema);
             let mut description = operation.description.to_owned();
             if operation.kind == OperationKind::Command
                 && crate::issue_operator::OPERATOR_MCP_OPERATIONS.contains(&operation.name)
@@ -504,6 +506,51 @@ fn render_mcp_tools(
         "{}\n",
         serde_json::to_string_pretty(&tools).map_err(io::Error::other)?
     ))
+}
+
+fn describe_missing_fields(schema: &mut serde_json::Value) {
+    if let Some(properties) = schema
+        .get_mut("properties")
+        .and_then(|value| value.as_object_mut())
+    {
+        let names = properties.keys().cloned().collect::<Vec<_>>();
+        for name in names {
+            let Some(field) = properties.get_mut(&name) else {
+                continue;
+            };
+            let missing = field
+                .get("description")
+                .and_then(|value| value.as_str())
+                .is_none_or(|text| text.is_empty());
+            if missing && let Some(object) = field.as_object_mut() {
+                object.insert(
+                    "description".to_owned(),
+                    serde_json::Value::String(format!("The `{name}` value.")),
+                );
+            }
+            if let Some(field) = properties.get_mut(&name) {
+                describe_missing_fields(field);
+            }
+        }
+    }
+    if let Some(items) = schema.get_mut("items") {
+        describe_missing_fields(items);
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(options) = schema.get_mut(key).and_then(|value| value.as_array_mut()) {
+            for option in options {
+                describe_missing_fields(option);
+            }
+        }
+    }
+    if let Some(definitions) = schema
+        .get_mut("definitions")
+        .and_then(|value| value.as_object_mut())
+    {
+        for definition in definitions.values_mut() {
+            describe_missing_fields(definition);
+        }
+    }
 }
 
 pub fn default_output_root() -> PathBuf {

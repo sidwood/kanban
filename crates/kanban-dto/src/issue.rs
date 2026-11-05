@@ -28,8 +28,8 @@ pub struct IssueSaveRequest {
     pub milestone: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description_edits: Option<Vec<DescriptionEdit>>,
-    /// Existing issue key (`CODE-123`) when updating.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Existing issue key (`CODE-123`) when updating. Also accepted as `id`.
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "id")]
     pub identifier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -38,6 +38,10 @@ pub struct IssueSaveRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "description_patch_schema")]
     pub description_patch: Option<String>,
+    /// Kanban workflow state. Valid names: Draft, Parked, Blocked,
+    /// Scheduled, Ready, Active, In Review, Approved, Landing, Done,
+    /// Cancelled, Superseded, and Duplicate. Linear names such as Todo
+    /// are refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +49,7 @@ pub struct IssueSaveRequest {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        alias = "dueDate",
         deserialize_with = "crate::nullable_patch::deserialize_string_patch"
     )]
     pub due_date: Option<Option<String>>,
@@ -65,6 +70,7 @@ pub struct IssueSaveRequest {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        alias = "parentId",
         deserialize_with = "crate::nullable_patch::deserialize_parent_patch"
     )]
     pub parent_id: Option<Option<String>>,
@@ -88,7 +94,7 @@ pub struct IssueSaveRequest {
     /// configured operator name when it is omitted on create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "blockedBy")]
     pub add_blocked_by: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_blocked_by: Option<Vec<String>>,
@@ -121,7 +127,6 @@ pub struct DescriptionEdit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 }
-
 
 /// The runtime accepts `description_patch` as a JSON-encoded object
 /// with string `find` and `replace` fields, not free text: the first
@@ -186,6 +191,7 @@ pub struct IssueSaveResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueGetQuery {
+    #[serde(alias = "id")]
     pub identifier: String,
 }
 
@@ -296,6 +302,7 @@ pub struct IssueListQuery {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
+        alias = "parentId",
         deserialize_with = "crate::nullable_patch::deserialize_optional_parent_filter"
     )]
     #[schemars(schema_with = "parent_filter_schema")]

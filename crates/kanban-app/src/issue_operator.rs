@@ -313,7 +313,12 @@ fn required_edit_field<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str
 }
 
 fn unique_anchor(text: &str, anchor: &str) -> Result<usize, ApiError> {
-    let count = text.matches(anchor).count();
+    let count = text
+        .char_indices()
+        .map(|(offset, _)| offset)
+        .chain(std::iter::once(text.len()))
+        .filter(|&offset| text[offset..].starts_with(anchor))
+        .count();
     if count != 1 {
         return Err(ApiError::invalid_request_field(
             "description_edits",

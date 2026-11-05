@@ -955,3 +955,75 @@ fn resolve_ref<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
     }
     Some(node)
 }
+
+#[test]
+fn overlapping_description_anchors_leave_the_issue_unchanged() {
+    let session = session();
+    let mentioned = session
+        .call("issue.save", &json!({"team":"CORE", "title":"Mentioned"}))
+        .unwrap();
+    for (description, anchor) in [("banana", "ana"), ("🍌🍎🍌🍎🍌", "🍌🍎🍌")] {
+        let saved = session
+            .call(
+                "issue.save",
+                &json!({
+                    "team":"CORE", "title":"Overlapping text", "description":description
+                }),
+            )
+            .unwrap();
+        let before = session
+            .call("issue.get", &json!({"id":saved["identifier"]}))
+            .unwrap();
+        for edit in [
+            json!({"type":"replace", "find":anchor, "replace":"X"}),
+            json!({"type":"insert_before", "anchor":anchor, "text":"X"}),
+            json!({"type":"insert_after", "anchor":anchor, "text":"X"}),
+            json!({"type":"replace_range", "start":anchor, "end":"!", "text":"X"}),
+            json!({"type":"replace_range", "start":"<issue", "end":anchor, "text":"X"}),
+        ] {
+            let result = session.call("issue.save", &json!({
+                "id":saved["identifier"],
+                "description_edits":[
+                    {"type":"append", "text":format!("! <issue id=\"{}\">Related</issue>", mentioned["identifier"].as_str().unwrap())},
+                    edit
+                ]
+            }));
+            let error = result.expect_err("overlapping anchors must be refused");
+            assert!(error.message.contains("matched 2 times"), "{error:?}");
+            assert_eq!(
+                session
+                    .call("issue.get", &json!({"id":saved["identifier"]}))
+                    .unwrap(),
+                before
+            );
+            assert!(
+                session
+                    .call("issue.get", &json!({"id":mentioned["identifier"]}))
+                    .unwrap()["relations"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        session
+            .call(
+                "issue.save",
+                &json!({
+                    "id":saved["identifier"],
+                    "description_patch":json!({"find":anchor,"replace":"X"}).to_string()
+                }),
+            )
+            .unwrap();
+        let expected = if description == "banana" {
+            "bXna"
+        } else {
+            "X🍎🍌"
+        };
+        assert_eq!(
+            session
+                .call("issue.get", &json!({"id":saved["identifier"]}))
+                .unwrap()["description"],
+            expected
+        );
+    }
+}

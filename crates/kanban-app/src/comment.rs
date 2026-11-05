@@ -212,7 +212,8 @@ impl CommandHandler for CreateComment {
         effects: &dyn CommandEffects,
     ) -> Result<Value, ApiError> {
         let request: CommentCreateRequest = parse_payload(&command.payload)?;
-        let project = resolve_project(self.projects.as_ref(), request.project_id)?;
+        let project = resolve_project(self.projects.as_ref(), request.project_id)
+            .map_err(|error| name_missing(error, "project_id"))?;
         let text = parse_stored_text(&request.text)?;
         let author = require_author(&request.author)?;
         let target = resolve_target(self.targets.as_ref(), &request.target)?;
@@ -220,10 +221,9 @@ impl CommandHandler for CreateComment {
             let ticket_id: u64 = target.id().parse().map_err(|_| {
                 ApiError::internal("a resolved ticket target carries its numeric id")
             })?;
-            let owner = self
-                .targets
-                .issue_project(ticket_id)?
-                .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
+            let owner = self.targets.issue_project(ticket_id)?.ok_or_else(|| {
+                ApiError::not_found_field("target", &format!("issue {}", target.id()))
+            })?;
             if owner != project.id().value() {
                 return Err(ApiError::invalid_request_field(
                     "project_id",
@@ -234,11 +234,10 @@ impl CommandHandler for CreateComment {
             .targets
             .comment_target_exists(target.kind(), target.id())?
         {
-            return Err(ApiError::not_found(&format!(
-                "{} {}",
-                target.kind(),
-                target.id()
-            )));
+            return Err(ApiError::not_found_field(
+                "target",
+                &format!("{} {}", target.kind(), target.id()),
+            ));
         } else if let Some(owner) = self
             .targets
             .comment_target_project(target.kind(), target.id())?
@@ -290,7 +289,7 @@ impl CommandHandler for EditComment {
 
     fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
         let request: CommentEditRequest = parse_payload(&command.payload)?;
-        let comment = load(&self.store, request.comment_id)?;
+        let comment = load(&self.store, request.comment_id, "comment_id")?;
         Ok(comment.version())
     }
 
@@ -301,7 +300,7 @@ impl CommandHandler for EditComment {
     ) -> Result<Value, ApiError> {
         let request: CommentEditRequest = parse_payload(&command.payload)?;
         let text = parse_stored_text(&request.text)?;
-        let mut comment = load(&self.store, request.comment_id)?;
+        let mut comment = load(&self.store, request.comment_id, "comment_id")?;
         comment
             .edit(text)
             .map_err(|error| ApiError::invalid_request_field("text", &error.to_string()))?;
@@ -319,7 +318,10 @@ struct RevisionsQuery {
 impl QueryHandler for RevisionsQuery {
     fn handle(&self, payload: &Value) -> Result<Value, ApiError> {
         let query: CommentRevisionsQuery = parse_issue_payload(payload)?;
-        let (comment, revisions) = self.store.revisions(CommentId::new(query.comment_id))?;
+        let (comment, revisions) = self
+            .store
+            .revisions(CommentId::new(query.comment_id))
+            .map_err(|error| name_missing(error, "comment_id"))?;
         let response = CommentRevisionsResponse { comment, revisions };
         serde_json::to_value(response).map_err(|error| ApiError::internal(&error.to_string()))
     }
@@ -340,11 +342,10 @@ impl QueryHandler for ListCommentsQuery {
                 .targets
                 .comment_target_exists(target.kind(), target.id())?
         {
-            return Err(ApiError::not_found(&format!(
-                "{} {}",
-                target.kind(),
-                target.id()
-            )));
+            return Err(ApiError::not_found_field(
+                "target",
+                &format!("{} {}", target.kind(), target.id()),
+            ));
         }
         let limit = if query.limit == 0 {
             50
@@ -380,7 +381,7 @@ impl CommandHandler for ResolveComment {
 
     fn current_version(&self, command: &ParsedCommand) -> Result<u64, ApiError> {
         let request: CommentResolveRequest = parse_payload(&command.payload)?;
-        let comment = load(&self.store, request.comment_id)?;
+        let comment = load(&self.store, request.comment_id, "comment_id")?;
         Ok(comment.version())
     }
 
@@ -392,7 +393,8 @@ impl CommandHandler for ResolveComment {
         let request: CommentResolveRequest = parse_payload(&command.payload)?;
         let version = self
             .store
-            .set_resolved(CommentId::new(request.comment_id), request.resolved)?;
+            .set_resolved(CommentId::new(request.comment_id), request.resolved)
+            .map_err(|error| name_missing(error, "comment_id"))?;
         let response = CommentResolveResponse {
             comment_id: request.comment_id,
             resolved: request.resolved,
@@ -402,10 +404,21 @@ impl CommandHandler for ResolveComment {
     }
 }
 
-fn load(store: &Arc<dyn CommentStore>, id: u64) -> Result<Comment, ApiError> {
+fn load(store: &Arc<dyn CommentStore>, id: u64, field: &str) -> Result<Comment, ApiError> {
     store
         .find(CommentId::new(id))?
-        .ok_or_else(|| ApiError::not_found(&format!("comment {id}")))
+        .ok_or_else(|| ApiError::not_found_field(field, &format!("comment {id}")))
+}
+
+fn name_missing(error: ApiError, field: &str) -> ApiError {
+    if error.code == ErrorCode::NotFound && error.field.is_none() {
+        let subject = error
+            .message
+            .strip_suffix(" was not found")
+            .unwrap_or(error.message.as_str());
+        return ApiError::not_found_field(field, subject);
+    }
+    error
 }
 
 /// Every comment carries the identity it speaks for. The core holds
@@ -444,7 +457,7 @@ fn resolve_target(
     }
     let (_, ticket_id) = targets
         .resolve_issue_reference(target.id())?
-        .ok_or_else(|| ApiError::not_found(&format!("issue {}", target.id())))?;
+        .ok_or_else(|| ApiError::not_found_field("target", &format!("issue {}", target.id())))?;
     let canonical = ticket_id.to_string();
     CommentTarget::new(target.kind(), &canonical)
         .map_err(|error| ApiError::invalid_request_field("target", &error.to_string()))
@@ -462,9 +475,12 @@ fn validate_parent(
     let Some(parent_id) = parent_comment_id else {
         return Ok(None);
     };
-    let (parent_target, grandparent) = store
-        .thread_anchor(CommentId::new(parent_id))?
-        .ok_or_else(|| ApiError::not_found(&format!("comment {parent_id}")))?;
+    let (parent_target, grandparent) =
+        store
+            .thread_anchor(CommentId::new(parent_id))?
+            .ok_or_else(|| {
+                ApiError::not_found_field("parent_comment_id", &format!("comment {parent_id}"))
+            })?;
     if !same_stream(targets, &parent_target, target)? {
         return Err(ApiError::invalid_request_field(
             "parent_comment_id",

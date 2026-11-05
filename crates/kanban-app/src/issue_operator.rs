@@ -426,7 +426,17 @@ impl CommandHandler for RetireLabel {
         let row = self
             .0
             .issues
-            .retire_label(request.project_id as i64, &request.name)?;
+            .retire_label(request.project_id as i64, &request.name)
+            .map_err(|error| {
+                if error.code == kanban_dto::ErrorCode::NotFound && error.field.is_none() {
+                    let subject = error
+                        .message
+                        .strip_suffix(" was not found")
+                        .unwrap_or(error.message.as_str());
+                    return ApiError::not_found_field("name", subject);
+                }
+                error
+            })?;
         serde_json::to_value(IssueLabelRecord {
             name: row.name,
             color: row.color,

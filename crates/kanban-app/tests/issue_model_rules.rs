@@ -4794,3 +4794,172 @@ fn an_auto_closed_parent_is_announced() {
         sink.announced()
     );
 }
+#[test]
+fn missing_named_references_carry_the_supplied_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let existing = save_issue(
+        session,
+        0,
+        "named-field-host",
+        json!({ "project_id": 1, "title": "Existing" }),
+    );
+    let milestone = session
+        .call(
+            "issue.save",
+            &json!({ "identifier": existing.identifier, "milestone_id": 999 }),
+        )
+        .expect_err("an unknown milestone stays a request error");
+    assert_eq!(
+        (milestone.code, milestone.field.as_deref()),
+        (ErrorCode::InvalidRequest, Some("milestone_id"))
+    );
+
+    let mut missing = Vec::new();
+    for (operation, payload, field) in [
+        (
+            "issue.save",
+            json!({ "identifier": "CORE-999", "title": "Missing" }),
+            "identifier",
+        ),
+        (
+            "issue.get",
+            json!({ "identifier": "CORE-999" }),
+            "identifier",
+        ),
+        (
+            "issue.list",
+            json!({ "parent_id": "CORE-999" }),
+            "parent_id",
+        ),
+        ("issue.list", json!({ "team_id": 999 }), "team_id"),
+        (
+            "issue.save",
+            json!({ "project_id": 1, "title": "Child", "parent_id": "CORE-999" }),
+            "parent_id",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "duplicate_of": "CORE-999" }),
+            "duplicate_of",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "add_blocks": ["CORE-999"] }),
+            "add_blocks",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "add_related": ["CORE-999"] }),
+            "add_related",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "add_blocked_by": ["CORE-999"] }),
+            "add_blocked_by",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "remove_blocks": ["CORE-999"] }),
+            "remove_blocks",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "remove_related": ["CORE-999"] }),
+            "remove_related",
+        ),
+        (
+            "issue.save",
+            json!({ "identifier": existing.identifier, "remove_blocked_by": ["CORE-999"] }),
+            "remove_blocked_by",
+        ),
+        (
+            "issue.retire_label",
+            json!({ "project_id": 1, "name": "absent" }),
+            "name",
+        ),
+        (
+            "issue.retire_label",
+            json!({ "project_id": 999, "name": "absent" }),
+            "project_id",
+        ),
+        (
+            "comment.resolve",
+            json!({ "comment_id": 999, "resolved": false }),
+            "comment_id",
+        ),
+        (
+            "comment.edit",
+            json!({ "comment_id": 999, "text": "text" }),
+            "comment_id",
+        ),
+        (
+            "comment.revisions",
+            json!({ "comment_id": 999 }),
+            "comment_id",
+        ),
+        (
+            "comment.create",
+            json!({
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": existing.identifier },
+                "text": "reply",
+                "author": "Operator",
+                "parent_comment_id": 999,
+            }),
+            "parent_comment_id",
+        ),
+        (
+            "comment.create",
+            json!({
+                "project_id": 1,
+                "target": { "kind": "ticket", "id": "CORE-999" },
+                "text": "note",
+                "author": "Operator",
+            }),
+            "target",
+        ),
+        (
+            "comment.list",
+            json!({ "target": { "kind": "ticket", "id": "CORE-999" } }),
+            "target",
+        ),
+        (
+            "comment.create",
+            json!({
+                "project_id": 1,
+                "target": { "kind": "project", "id": "999" },
+                "text": "note",
+                "author": "Operator",
+            }),
+            "target",
+        ),
+        (
+            "comment.list",
+            json!({ "target": { "kind": "project", "id": "999" } }),
+            "target",
+        ),
+        (
+            "comment.create",
+            json!({
+                "project_id": 999,
+                "target": { "kind": "ticket", "id": existing.identifier },
+                "text": "note",
+                "author": "Operator",
+            }),
+            "project_id",
+        ),
+    ] {
+        let error = session
+            .call(operation, &payload)
+            .expect_err("the missing reference is refused");
+
+        if error.code != ErrorCode::NotFound || error.field.as_deref() != Some(field) {
+            missing.push((operation, field, error.code, error.field));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "a missing named reference must carry its input field: {missing:?}"
+    );
+}

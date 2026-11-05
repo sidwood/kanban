@@ -4074,3 +4074,73 @@ fn a_duplicate_merge_keeps_edges_the_target_already_has() {
     );
 }
 
+
+#[test]
+fn a_parent_with_an_executing_run_stays_open_when_its_children_close() {
+    let h = rules_harness();
+    let session = &h.session;
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({
+                "mutation": mutation(0, "executing-settings"),
+                "project_id": 1,
+                "auto_close_sub_issues": true,
+            }),
+        )
+        .expect("auto-close turns on");
+    let parent = save_issue(
+        session,
+        0,
+        "executing-parent",
+        json!({ "project_id": 1, "title": "Parent with a run" }),
+    );
+    plant_executing_run(&h.database, parent.ticket_id as i64);
+    let child = save_issue(
+        session,
+        0,
+        "executing-child",
+        json!({
+            "project_id": 1,
+            "title": "Closed child",
+            "state": "Done",
+            "parent_id": parent.identifier.clone(),
+        }),
+    );
+    assert_eq!(read_issue(session, &child.identifier).state, "Done");
+    assert_eq!(
+        read_issue(session, &parent.identifier).state,
+        "Draft",
+        "a parent with its own executing run stays open"
+    );
+}
+
+
+fn plant_executing_run(database: &Database, ticket_id: i64) {
+    let conn = database.connection();
+    conn.execute(
+        "INSERT INTO dispatch_requests (
+             project_id, ticket_id, status, priority, ready, harness, model, usage_pool,
+             created_at, version
+         ) VALUES (1, ?1, 'claimed', 'normal', 1, 'claude', 'opus', 'default', 0, 1)",
+        [ticket_id],
+    )
+    .expect("the dispatch request lands");
+    let request_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO runs (
+             project_id, ticket_id, dispatch_request_id, status,
+             requested_name, requested_harness, requested_model, requested_effort,
+             requested_usage_pool, effective_name, effective_harness, effective_model,
+             effective_effort, effective_usage_pool, fallback, created_at, version
+         ) VALUES (
+             1, ?1, ?2, 'executing',
+             'standard', 'claude', 'opus', 'high',
+             'default', 'standard', 'claude', 'opus',
+             'high', 'default', 0, 0, 1
+         )",
+        [ticket_id, request_id],
+    )
+    .expect("the executing run lands");
+}
+

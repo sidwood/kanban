@@ -32,6 +32,19 @@ fn drain_secondary_effects() -> Vec<kanban_app::SecondaryEffect> {
     SECONDARY_EFFECTS.with(|slot| slot.borrow_mut().take().unwrap_or_default())
 }
 
+/// Open the thread-local record a legacy Ticket write shares with an
+/// operator save. A cascade notes each issue it is about to move only
+/// while this record is open.
+pub(crate) fn begin_secondary_effect_recording() {
+    open_secondary_effects();
+}
+
+/// Take and clear the record [`begin_secondary_effect_recording`]
+/// opened. Empty when nothing was recording.
+pub(crate) fn take_secondary_effect_recording() -> Vec<kanban_app::SecondaryEffect> {
+    drain_secondary_effects()
+}
+
 fn note_secondary_effect(conn: &rusqlite::Connection, ticket_id: i64) {
     let recording = SECONDARY_EFFECTS.with(|slot| slot.borrow().is_some());
     if !recording {

@@ -871,19 +871,54 @@ fn announce_changed_issues(
     watched: &[IssueSnapshot],
     skip: u64,
 ) -> Result<(), ApiError> {
+    announce_watched_issues(
+        ctx.tickets.as_ref(),
+        ctx.projects.as_ref(),
+        effects,
+        watched,
+        skip,
+    )
+}
+
+/// Announce issues a write changed besides `skip`, using the snapshots
+/// taken before each change. An issue whose state and version are
+/// unchanged — a refused close, or a write that rolled back — stays
+/// quiet. The caller emits `skip` itself, so it is not announced twice.
+pub(crate) fn announce_secondary_effects(
+    tickets: &dyn TicketStore,
+    projects: &dyn ProjectStore,
+    effects: &dyn CommandEffects,
+    recorded: &[SecondaryEffect],
+    skip: u64,
+) -> Result<(), ApiError> {
+    announce_watched_issues(
+        tickets,
+        projects,
+        effects,
+        &effects_as_snapshots(recorded),
+        skip,
+    )
+}
+
+fn announce_watched_issues(
+    tickets: &dyn TicketStore,
+    projects: &dyn ProjectStore,
+    effects: &dyn CommandEffects,
+    watched: &[IssueSnapshot],
+    skip: u64,
+) -> Result<(), ApiError> {
     let mut seen = std::collections::BTreeSet::new();
     for before in watched {
         if before.id == skip || !seen.insert(before.id) {
             continue;
         }
-        let Some(after) = ctx.tickets.find(TicketId::new(before.id))? else {
+        let Some(after) = tickets.find(TicketId::new(before.id))? else {
             continue;
         };
         if after.version() == before.version && after.state() == before.state {
             continue;
         }
-        let project = ctx
-            .projects
+        let project = projects
             .find(after.project())?
             .ok_or_else(|| ApiError::internal("the project for a changed issue is missing"))?;
         if after.state() != before.state {

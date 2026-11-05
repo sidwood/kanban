@@ -285,6 +285,14 @@ impl TicketStore for SqliteTicketStore {
         }
         Ok(tickets)
     }
+
+    fn begin_secondary_effects(&self) {
+        crate::issue_store::begin_secondary_effect_recording();
+    }
+
+    fn take_secondary_effects(&self) -> Vec<kanban_app::SecondaryEffect> {
+        crate::issue_store::take_secondary_effect_recording()
+    }
 }
 
 /// Move the Ticket row under the version the aggregate moved from,

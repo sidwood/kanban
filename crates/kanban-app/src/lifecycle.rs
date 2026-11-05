@@ -76,6 +76,37 @@ fn domain_decision(decision: TicketReviewDecision) -> ReviewDecision {
     }
 }
 
+/// Owns the secondary-effect record for one legacy save. Drop discards
+/// it, so a save that does not commit cannot announce issues the write
+/// did not keep.
+struct CascadeNotes<'a> {
+    tickets: &'a dyn TicketStore,
+    open: bool,
+}
+
+impl<'a> CascadeNotes<'a> {
+    fn begin(tickets: &'a dyn TicketStore) -> Self {
+        tickets.begin_secondary_effects();
+        Self {
+            tickets,
+            open: true,
+        }
+    }
+
+    fn take(&mut self) -> Vec<crate::issue::SecondaryEffect> {
+        self.open = false;
+        self.tickets.take_secondary_effects()
+    }
+}
+
+impl Drop for CascadeNotes<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.tickets.take_secondary_effects();
+        }
+    }
+}
+
 /// The stores every lifecycle command reads and writes through.
 #[derive(Clone)]
 struct LifecycleContext {
@@ -156,7 +187,9 @@ impl LifecycleContext {
     /// together: the domain move, the Ticket row under its version
     /// guard, the timeline row naming the action and both states, and
     /// the live announcement of the record the command returns. A
-    /// refused movement writes nothing.
+    /// cascade that closes other issues in that write announces each
+    /// of them after the save commits. A refused movement writes
+    /// nothing and announces nothing.
     fn land<E: std::fmt::Display>(
         &self,
         project: &Project,
@@ -177,23 +210,33 @@ impl LifecycleContext {
         object.insert("id".to_owned(), Value::from(ticket.id().value()));
         object.insert("from".to_owned(), Value::from(from));
         object.insert("to".to_owned(), Value::from(to));
-        self.tickets.save(
-            ticket,
-            TimelineEnvelope::project(
-                project.id().value(),
-                TimelineEventKind::Transition,
-                Some(TimelineEntityRef {
-                    kind: TimelineEntityKind::Ticket,
-                    id: ticket.id().value().to_string(),
-                }),
-                detail,
-            ),
-        )?;
+        let envelope = TimelineEnvelope::project(
+            project.id().value(),
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: ticket.id().value().to_string(),
+            }),
+            detail,
+        );
+        // Children closed inside this save are recorded only while the
+        // collector is open. Announce them after the save commits, and
+        // drop the record if the save is refused.
+        let mut notes = CascadeNotes::begin(self.tickets.as_ref());
+        self.tickets.save(ticket, envelope)?;
+        let recorded = notes.take();
         emit_catalogued(
             effects,
             landing.announced,
             &record_of(ticket, project.code()),
         );
+        crate::issue_operator::announce_secondary_effects(
+            self.tickets.as_ref(),
+            self.projects.as_ref(),
+            effects,
+            &recorded,
+            ticket.id().value(),
+        )?;
         serde_json::to_value(record_of(ticket, project.code()))
             .map_err(|error| ApiError::internal(&error.to_string()))
     }

@@ -5,14 +5,17 @@
 //! moves each child as any state move does and never loops with the
 //! parent auto-close rule.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kanban_app::{
-    CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets, OperatorSession,
+    CommentIssueTargets, CommentStore, Core, EventSink, IssueStore, IssueStoreCommentTargets,
+    OperatorSession, ProjectStore, TimelineEnvelope,
 };
+use kanban_domain::ProjectRegistration;
 use kanban_dto::{
     ApiError, IssueGetQuery, IssueProjectRecord, IssueProjectSettingsResponse,
-    IssueProjectsResponse, IssueRecord, IssueSaveResponse,
+    IssueProjectsResponse, IssueRecord, IssueSaveResponse, TimelineEntityKind, TimelineEntityRef,
+    TimelineEventKind,
 };
 use kanban_storage::{
     Database, SqliteCommentStore, SqliteDependencyStore, SqliteEvidenceStore, SqliteIssueStore,
@@ -22,9 +25,10 @@ use serde_json::{Value, json};
 
 mod common;
 
-use common::{harness, mutation};
+use common::{core_over_with_events, harness, mutation, seed_project_profile};
 
 const CORE: u64 = 1;
+const EDGE: u64 = 2;
 
 /// The operator issue tools beside the legacy Ticket lifecycle, so a
 /// parent can close either way.
@@ -613,4 +617,327 @@ fn an_executing_child_stays_open_when_its_parent_closes() {
         "Active",
         "descent stops at the child that stayed open"
     );
+}
+
+/// Live announcements captured from the core the test built.
+#[derive(Default)]
+struct RecordingEvents {
+    events: Mutex<Vec<(String, Value)>>,
+}
+
+impl RecordingEvents {
+    fn clear(&self) {
+        self.events.lock().expect("the event log is sound").clear();
+    }
+
+    fn state_changes(&self) -> Vec<(u64, Value)> {
+        self.events
+            .lock()
+            .expect("the event log is sound")
+            .iter()
+            .filter(|(kind, _)| kind == "ticket.state.changed")
+            .map(|(_, payload)| {
+                (
+                    payload["id"]
+                        .as_u64()
+                        .expect("a state change names an issue"),
+                    payload["state"].clone(),
+                )
+            })
+            .collect()
+    }
+}
+
+impl EventSink for RecordingEvents {
+    fn emit(&self, event_type: &str, payload: Value) {
+        self.events
+            .lock()
+            .expect("the event log is sound")
+            .push((event_type.to_owned(), payload));
+    }
+}
+
+fn seed_edge_project(database: &Database) {
+    let projects = SqliteProjectStore::new(database);
+    let registration = ProjectRegistration::new(
+        "EDGE",
+        "Edge",
+        "/repositories/edge",
+        "/workspaces/edge.seed",
+        "main",
+        "edge.seed",
+        Some("edge-main"),
+        None,
+    )
+    .expect("the edge registration validates");
+    projects
+        .create(&registration, &|id| {
+            TimelineEnvelope::project(
+                id.value(),
+                TimelineEventKind::Transition,
+                Some(TimelineEntityRef {
+                    kind: TimelineEntityKind::Project,
+                    id: id.value().to_string(),
+                }),
+                json!({ "action": "registered" }),
+            )
+        })
+        .expect("the edge project lands");
+}
+
+fn recording_stack() -> (Harness, Arc<RecordingEvents>) {
+    let dir = tempfile::TempDir::new().expect("a scratch directory is available");
+    let database_path = dir.path().join("kanban.sqlite");
+    let mut database = Database::open(&database_path).expect("a scratch database opens");
+    database
+        .migrate(&kanban_storage::AllowAllMigrations)
+        .expect("the migrations apply");
+    seed_project_profile(&database);
+    seed_edge_project(&database);
+    let events = Arc::new(RecordingEvents::default());
+    let (mut core, _wake) = core_over_with_events(&database, events.clone());
+    let attachments = dir.path().join("attachments");
+    register_stack(&mut core, &database, &attachments);
+    let core = Arc::new(core);
+    (
+        Harness {
+            session: OperatorSession::new(core.clone()),
+            core,
+            database_path,
+            _dir: dir,
+        },
+        events,
+    )
+}
+
+fn child_in_project(
+    session: &OperatorSession,
+    parent: &IssueSaveResponse,
+    key: &str,
+    project_id: u64,
+    state: &str,
+) -> IssueSaveResponse {
+    save(
+        session,
+        key,
+        json!({
+            "project_id": project_id,
+            "title": format!("Sub-issue {key}"),
+            "state": state,
+            "parent_id": parent.identifier,
+        }),
+    )
+}
+
+struct CascadeTree {
+    parent: IssueSaveResponse,
+    busy: IssueSaveResponse,
+    busy_child: IssueSaveResponse,
+    quiet: IssueSaveResponse,
+    quiet_child: IssueSaveResponse,
+    edge: IssueSaveResponse,
+    edge_child: IssueSaveResponse,
+    already: IssueSaveResponse,
+}
+
+fn cascade_tree(session: &OperatorSession, prefix: &str) -> CascadeTree {
+    close_with_parent(session);
+    let parent = save(
+        session,
+        &format!("{prefix}-parent"),
+        json!({ "project_id": CORE, "title": "Parent", "state": "Ready" }),
+    );
+    let busy = child_of(session, &parent, &format!("{prefix}-busy"), "Ready");
+    let busy_child = child_of(session, &busy, &format!("{prefix}-busy-child"), "Ready");
+    let quiet = child_of(session, &parent, &format!("{prefix}-quiet"), "Ready");
+    let quiet_child = child_of(session, &quiet, &format!("{prefix}-quiet-child"), "Ready");
+    let edge = child_in_project(session, &parent, &format!("{prefix}-edge"), EDGE, "Ready");
+    let edge_child = child_in_project(
+        session,
+        &edge,
+        &format!("{prefix}-edge-child"),
+        EDGE,
+        "Ready",
+    );
+    let already = child_of(session, &parent, &format!("{prefix}-already"), "Done");
+    CascadeTree {
+        parent,
+        busy,
+        busy_child,
+        quiet,
+        quiet_child,
+        edge,
+        edge_child,
+        already,
+    }
+}
+
+fn assert_cancelled_ids_announced(events: &RecordingEvents, closed: &[u64], open: &[u64]) {
+    let changes = events.state_changes();
+    let announced: Vec<u64> = changes.iter().map(|(id, _)| *id).collect();
+    for id in closed {
+        let states: Vec<_> = changes
+            .iter()
+            .filter(|(changed, _)| changed == id)
+            .map(|(_, state)| state.clone())
+            .collect();
+        assert_eq!(
+            states,
+            vec![json!("cancelled")],
+            "issue {id} is announced once as cancelled, saw {changes:?}"
+        );
+    }
+    for id in open {
+        assert!(
+            !announced.contains(id),
+            "issue {id} must not be announced, saw {changes:?}"
+        );
+    }
+    assert_eq!(
+        announced.len(),
+        closed.len(),
+        "only the closed issues are announced, saw {changes:?}"
+    );
+}
+
+fn closed_by_cancel(tree: &CascadeTree) -> Vec<u64> {
+    vec![
+        tree.parent.ticket_id,
+        tree.quiet.ticket_id,
+        tree.quiet_child.ticket_id,
+        tree.edge.ticket_id,
+    ]
+}
+
+fn left_open_by_cancel(tree: &CascadeTree) -> Vec<u64> {
+    vec![
+        tree.busy.ticket_id,
+        tree.busy_child.ticket_id,
+        tree.edge_child.ticket_id,
+        tree.already.ticket_id,
+    ]
+}
+
+fn assert_cancel_tree(session: &OperatorSession, tree: &CascadeTree) {
+    assert_eq!(read(session, &tree.parent.identifier).state, "Cancelled");
+    assert_eq!(read(session, &tree.quiet.identifier).state, "Cancelled");
+    assert_eq!(
+        read(session, &tree.quiet_child.identifier).state,
+        "Cancelled"
+    );
+    assert_eq!(read(session, &tree.edge.identifier).state, "Cancelled");
+    assert_eq!(read(session, &tree.busy.identifier).state, "Ready");
+    assert_eq!(read(session, &tree.busy_child.identifier).state, "Ready");
+    assert_eq!(read(session, &tree.edge_child.identifier).state, "Ready");
+    assert_eq!(read(session, &tree.already.identifier).state, "Done");
+}
+
+#[test]
+fn a_legacy_cancel_announces_every_child_the_cascade_closes() {
+    let (h, events) = recording_stack();
+    let session = &h.session;
+    let tree = cascade_tree(session, "legacy");
+    plant_executing_run(&h.database_path, tree.busy.ticket_id as i64);
+    let busy_before = read(session, &tree.busy.identifier);
+    let already_before = read(session, &tree.already.identifier);
+    let edge_child_before = read(session, &tree.edge_child.identifier);
+
+    events.clear();
+    h.core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(
+                    read(session, &tree.parent.identifier).version,
+                    "legacy-cancel-announce"
+                ),
+                "ticket_id": tree.parent.ticket_id,
+            }),
+        )
+        .expect("the legacy cancel lands");
+
+    assert_cancel_tree(session, &tree);
+    assert_eq!(read(session, &tree.busy.identifier), busy_before);
+    assert_eq!(read(session, &tree.already.identifier), already_before);
+    assert_eq!(
+        read(session, &tree.edge_child.identifier),
+        edge_child_before
+    );
+    assert_cancelled_ids_announced(
+        &events,
+        &closed_by_cancel(&tree),
+        &left_open_by_cancel(&tree),
+    );
+}
+
+#[test]
+fn an_operator_close_announces_every_child_the_cascade_closes() {
+    let (h, events) = recording_stack();
+    let session = &h.session;
+    let tree = cascade_tree(session, "operator");
+    plant_executing_run(&h.database_path, tree.busy.ticket_id as i64);
+    let busy_before = read(session, &tree.busy.identifier);
+
+    events.clear();
+    move_to(
+        session,
+        &tree.parent.identifier,
+        "operator-cancel",
+        "Cancelled",
+    );
+
+    assert_cancel_tree(session, &tree);
+    assert_eq!(read(session, &tree.busy.identifier), busy_before);
+    assert_cancelled_ids_announced(
+        &events,
+        &closed_by_cancel(&tree),
+        &left_open_by_cancel(&tree),
+    );
+}
+
+#[test]
+fn a_refused_legacy_cancel_publishes_no_state_change() {
+    let (h, events) = recording_stack();
+    let session = &h.session;
+    close_with_parent(session);
+    let parent = save(
+        session,
+        "refused-parent",
+        json!({ "project_id": CORE, "title": "Parent", "state": "Ready" }),
+    );
+    let child = child_of(session, &parent, "refused-child", "Ready");
+    let parent_before = read(session, &parent.identifier);
+    let child_before = read(session, &child.identifier);
+
+    events.clear();
+    let error = h
+        .core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(0, "legacy-cancel-stale"),
+                "ticket_id": parent.ticket_id,
+            }),
+        )
+        .expect_err("a stale cancel is refused");
+
+    assert_eq!(error.code, kanban_dto::ErrorCode::StaleVersion);
+    assert_eq!(read(session, &parent.identifier), parent_before);
+    assert_eq!(read(session, &child.identifier), child_before);
+    assert!(
+        events.state_changes().is_empty(),
+        "a refused cancel publishes no state change, saw {:?}",
+        events.state_changes()
+    );
+
+    h.core
+        .command(
+            "ticket.cancel",
+            &json!({
+                "mutation": mutation(parent_before.version, "legacy-cancel-after-refusal"),
+                "ticket_id": parent.ticket_id,
+            }),
+        )
+        .expect("the later cancel lands");
+    assert_cancelled_ids_announced(&events, &[parent.ticket_id, child.ticket_id], &[]);
 }

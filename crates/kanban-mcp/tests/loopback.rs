@@ -634,6 +634,54 @@ fn wait_for_live_event(
     }
     panic!("no {want} for ticket {ticket_id}; saw {seen:?}");
 }
+fn collect_issue_events(
+    reader: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+    event_type: &str,
+    ids: &[u64],
+) -> Vec<Value> {
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut remaining: Vec<u64> = ids.to_vec();
+    let mut found = Vec::new();
+    let mut line = String::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !remaining.is_empty() && std::time::Instant::now() < deadline {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let Ok(frame) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if frame["kind"] != "event" || frame["event"]["event_type"] != event_type {
+                    continue;
+                }
+                let Some(id) = frame["event"]["payload"]["id"].as_u64() else {
+                    continue;
+                };
+                if let Some(position) = remaining.iter().position(|wanted| *wanted == id) {
+                    remaining.swap_remove(position);
+                    found.push(frame["event"].clone());
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break;
+            }
+            Err(error) => panic!("the event stream stopped: {error}"),
+        }
+    }
+    assert!(
+        remaining.is_empty(),
+        "missing {event_type} for {remaining:?}; saw {found:?}"
+    );
+    found
+}
+
 fn collect_ticket_edits(
     reader: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
     ids: &[u64],
@@ -868,6 +916,163 @@ async fn operator_route_applies_an_omitted_mutation_and_publishes_the_edit() {
             .iter()
             .any(|event| event["payload"]["id"] == json!(ticket_id)),
         "the writer is still named: {edits:?}"
+    );
+
+    client.cancel().await.unwrap();
+    service.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_route_names_every_issue_a_save_changes() {
+    let h = common::harness();
+    let secret = Arc::new(InstallationSecret::from_key(&[53; 32]));
+    let service = kanban_service::serve_with_http(
+        h._dir.path(),
+        kanban_service::ServiceRuntime {
+            mcp_executable: env!("CARGO_BIN_EXE_kanban-mcp").into(),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let mut events = subscribe_live_events(&service);
+    let client = operator_client(&service, &secret).await;
+
+    let mentioned = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Mentioned over HTTP" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!mentioned.is_error.unwrap_or(false), "{mentioned:?}");
+    let mentioned = mentioned.structured_content.unwrap();
+    let mentioned_id = mentioned["ticket_id"].as_u64().unwrap();
+    let mentioned_key = mentioned["identifier"].as_str().unwrap();
+    let saved = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "project_id": 1,
+                "title": "Source over HTTP",
+                "description": format!("See {mentioned_key} now"),
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!saved.is_error.unwrap_or(false), "{saved:?}");
+    collect_issue_events(&mut events, "ticket.edited", &[mentioned_id]);
+
+    client
+        .call_tool(call(
+            "update_project_settings",
+            json!({ "project_id": 1, "auto_close_sub_issues": true }),
+        ))
+        .await
+        .unwrap();
+    let grandparent = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Grandparent over HTTP" }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let parent = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "project_id": 1,
+                "title": "Parent over HTTP",
+                "parent_id": grandparent["identifier"],
+            }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let child = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "project_id": 1,
+                "title": "Child over HTTP",
+                "parent_id": parent["identifier"],
+            }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let closed = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "identifier": child["identifier"], "state": "Done" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!closed.is_error.unwrap_or(false), "{closed:?}");
+    collect_issue_events(
+        &mut events,
+        "ticket.state.changed",
+        &[
+            parent["ticket_id"].as_u64().unwrap(),
+            grandparent["ticket_id"].as_u64().unwrap(),
+        ],
+    );
+
+    let target = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Canonical over HTTP" }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let duplicate = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Duplicate over HTTP" }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let marked = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "identifier": duplicate["identifier"],
+                "duplicate_of": target["identifier"],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!marked.is_error.unwrap_or(false), "{marked:?}");
+    let target_id = target["ticket_id"].as_u64().unwrap();
+    collect_issue_events(&mut events, "ticket.edited", &[target_id]);
+    let read = client
+        .call_tool(call(
+            "get_issue",
+            json!({ "identifier": target["identifier"] }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(
+        read["duplicates"],
+        json!([duplicate["identifier"]]),
+        "the target lists the duplicate"
+    );
+    assert!(
+        read["version"].as_u64().unwrap() > 1,
+        "the target membership change is visible over HTTP"
     );
 
     client.cancel().await.unwrap();

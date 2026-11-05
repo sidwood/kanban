@@ -67,13 +67,17 @@ function flushLocalsToDraft(): void {
   }
 }
 
-async function loadPickers(forProject: number): Promise<void> {
+// The pickers belong to the opening and Project they were read for:
+// an answer that lands once the editor has moved to another opening or
+// Project never offers that Project's labels or milestones here.
+async function loadPickers(attempt: number, forProject: number): Promise<void> {
   if (!transport) return
   const client = new KanbanClient(transport)
   const [labels, milestones] = await Promise.all([
     client.queryIssueList_labels({ project_id: forProject }),
     client.queryIssueList_milestones({ project_id: forProject }),
   ])
+  if (attempt !== opening || projectId.value !== forProject) return
   availableLabels.value = labels.labels
   availableMilestones.value = milestones.milestones
 }
@@ -140,6 +144,8 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
   issueSeeded.value = false
   coverLanded.value = null
   heldLabels.value = []
+  availableLabels.value = []
+  availableMilestones.value = []
   readError.value = null
   editor.error = null
   if (!request || !transport) return
@@ -158,22 +164,18 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
       await projects.refresh(transport)
     }
     if (attempt !== opening) return
-    if (projectId.value === null) {
-      const first =
-        projects.projects.find((entry) => !entry.archived) ?? projects.projects[0]
-      projectId.value = first?.id ?? null
-    }
-    if (projectId.value !== null) {
-      await editor.refresh(transport, projectId.value)
-      await loadPickers(projectId.value)
-    }
     if (request.mode === 'edit' && request.ticketId !== null) {
+      // The record names the issue's Project, whatever Project the
+      // entry point named, so the pickers wait for it.
       const held = await new KanbanClient(transport).queryTicketGet({
         ticket_id: request.ticketId,
       })
       if (attempt !== opening) return
       record.value = held
       projectId.value = held.project_id
+      await editor.refresh(transport, held.project_id)
+      await loadPickers(attempt, held.project_id)
+      if (attempt !== opening) return
       const heldProject = projects.projects.find((entry) => entry.id === held.project_id)
       const identifier = heldProject
         ? issueDisplayKey(heldProject.code, held.number)
@@ -192,6 +194,15 @@ async function adopt(request: TicketEditorRequest | null): Promise<void> {
       syncLocalsFromDraft()
       issueSeeded.value = true
     } else {
+      if (projectId.value === null) {
+        const first =
+          projects.projects.find((entry) => !entry.archived) ?? projects.projects[0]
+        projectId.value = first?.id ?? null
+      }
+      if (projectId.value !== null) {
+        await editor.refresh(transport, projectId.value)
+        await loadPickers(attempt, projectId.value)
+      }
       syncLocalsFromDraft()
     }
   } catch (failure) {

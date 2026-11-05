@@ -5,7 +5,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { IssueRecord } from '@kanban/contracts'
+import type { IssueMilestoneRecord, IssueRecord } from '@kanban/contracts'
 import router from '../router'
 import { kanbanTransportKey } from '../core/transport'
 import type { ShellTransport } from '../core/transport'
@@ -32,6 +32,44 @@ function open(transport: ShellTransport) {
   })
   mounted.push(wrapper)
   return wrapper
+}
+
+// Each Project lists only its own milestones: CORE (4) has Beta, EDGE
+// (5) has Edge launch.
+const coreMilestone: IssueMilestoneRecord = { id: 9, name: 'Beta', issues_done: 0, issues_total: 1 }
+const edgeMilestone: IssueMilestoneRecord = {
+  id: 31,
+  name: 'Edge launch',
+  issues_done: 0,
+  issues_total: 2,
+}
+
+function pickerAnswer(name: string, request: unknown): unknown {
+  const { project_id } = request as { project_id: number }
+  return name === 'issue.list_labels'
+    ? { labels: [] }
+    : { milestones: [project_id === 4 ? coreMilestone : edgeMilestone] }
+}
+
+const isPicker = (name: string): boolean =>
+  name === 'issue.list_labels' || name === 'issue.list_milestones'
+
+const pickerProject = (request: unknown): number => (request as { project_id: number }).project_id
+
+const edgeTicket = () =>
+  implementationTicket({ id: 2, project_id: 5, number: 18, title: 'Edge issue' })
+
+function milestoneChoices(wrapper: VueWrapper): string[] {
+  return wrapper.findAll('[data-testid="ticket-milestone"] option').map((option) => option.text())
+}
+
+// The operator picks the last milestone the dialog offers and saves.
+async function saveWithLastMilestone(wrapper: VueWrapper): Promise<void> {
+  const offered = wrapper.findAll('[data-testid="ticket-milestone"] option')
+  const last = offered[offered.length - 1]!.element as HTMLOptionElement
+  await wrapper.find('[data-testid="ticket-milestone"]').setValue(last.value)
+  await wrapper.find('[data-testid="ticket-save-issue"]').trigger('submit')
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -266,6 +304,91 @@ describe('the Ticket editor dialog', () => {
     ])
     expect(requests('issue.save')[0]).not.toHaveProperty('project_id')
     expect(useTicketDialogStore().editorOpen).toBe(false)
+  })
+
+  it('an edit opened under another Project offers only the issue Project milestones', async () => {
+    const { transport, requests } = editorHarness({
+      projects: [editorProject, otherProject],
+      tickets: [implementationTicket()],
+      answer: (name, request) =>
+        isPicker(name) ? Promise.resolve(pickerAnswer(name, request)) : undefined,
+    })
+    const wrapper = open(transport)
+    // CORE-17 opened from EDGE.
+    useTicketDialogStore().openEdit({ projectId: 5, ticketId: 1 })
+    await flushPromises()
+
+    expect(milestoneChoices(wrapper)).toEqual(['None', 'Beta'])
+    expect(requests('issue.list_milestones')).toEqual([{ project_id: 4 }])
+    expect(requests('issue.list_labels')).toEqual([{ project_id: 4 }])
+    await saveWithLastMilestone(wrapper)
+
+    expect(requests('issue.save')).toEqual([
+      expect.objectContaining({ identifier: 'CORE-17', milestone_id: 9 }),
+    ])
+  })
+
+  it('a picker answer for a closed edit never reaches the next one', async () => {
+    const delayed: Array<() => void> = []
+    const { transport, requests } = editorHarness({
+      projects: [editorProject, otherProject],
+      tickets: [implementationTicket(), edgeTicket()],
+      answer: (name, request) => {
+        if (!isPicker(name)) return undefined
+        const answer = pickerAnswer(name, request)
+        if (pickerProject(request) !== 4) return Promise.resolve(answer)
+        return new Promise((resolve) => delayed.push(() => resolve(answer)))
+      },
+    })
+    const wrapper = open(transport)
+    const dialog = useTicketDialogStore()
+    dialog.openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+    expect(delayed).toHaveLength(2)
+
+    dialog.closeEditor()
+    await flushPromises()
+    dialog.openEdit({ projectId: 5, ticketId: 2 })
+    await flushPromises()
+    expect(milestoneChoices(wrapper)).toEqual(['None', 'Edge launch'])
+
+    for (const release of delayed.splice(0)) release()
+    await flushPromises()
+
+    expect(milestoneChoices(wrapper)).toEqual(['None', 'Edge launch'])
+    await saveWithLastMilestone(wrapper)
+    expect(requests('issue.save')).toEqual([
+      expect.objectContaining({ identifier: 'EDGE-18', milestone_id: 31 }),
+    ])
+  })
+
+  it('a new edit offers no milestone from the last one while its own load', async () => {
+    const delayed: Array<() => void> = []
+    const { transport } = editorHarness({
+      projects: [editorProject, otherProject],
+      tickets: [implementationTicket(), edgeTicket()],
+      answer: (name, request) => {
+        if (!isPicker(name)) return undefined
+        const answer = pickerAnswer(name, request)
+        if (pickerProject(request) !== 5) return Promise.resolve(answer)
+        return new Promise((resolve) => delayed.push(() => resolve(answer)))
+      },
+    })
+    const wrapper = open(transport)
+    const dialog = useTicketDialogStore()
+    dialog.openEdit({ projectId: 4, ticketId: 1 })
+    await flushPromises()
+    expect(milestoneChoices(wrapper)).toEqual(['None', 'Beta'])
+
+    dialog.closeEditor()
+    await flushPromises()
+    dialog.openEdit({ projectId: 5, ticketId: 2 })
+    await flushPromises()
+    expect(milestoneChoices(wrapper)).toEqual(['None'])
+
+    for (const release of delayed.splice(0)) release()
+    await flushPromises()
+    expect(milestoneChoices(wrapper)).toEqual(['None', 'Edge launch'])
   })
 
   it('a title-only edit sends every other issue field as the record holds it', async () => {

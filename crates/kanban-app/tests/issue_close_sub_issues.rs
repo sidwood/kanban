@@ -554,7 +554,7 @@ fn plant_executing_run(database_path: &std::path::Path, ticket_id: i64) {
         "INSERT INTO dispatch_requests (
              project_id, ticket_id, status, priority, ready, harness, model, usage_pool,
              created_at, version
-         ) VALUES (1, ?1, 'claimed', 'normal', 1, 'claude', 'opus', 'default', 0, 1)",
+         ) VALUES (1, ?1, 'claimed', 'normal', 1, 'sample', 'sample', 'default', 0, 1)",
         [ticket_id],
     )
     .expect("the dispatch request lands");
@@ -567,8 +567,8 @@ fn plant_executing_run(database_path: &std::path::Path, ticket_id: i64) {
              effective_effort, effective_usage_pool, fallback, created_at, version
          ) VALUES (
              1, ?1, ?2, 'executing',
-             'standard', 'claude', 'opus', 'high',
-             'default', 'standard', 'claude', 'opus',
+             'standard', 'sample', 'sample', 'high',
+             'default', 'standard', 'sample', 'sample',
              'high', 'default', 0, 0, 1
          )",
         [ticket_id, request_id],

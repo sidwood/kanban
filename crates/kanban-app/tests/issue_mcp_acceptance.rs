@@ -302,7 +302,7 @@ fn acceptance_add_labels_persist_on_create_and_update() {
         .call(
             "issue.save",
             &save_payload(
-                1,
+                read.version,
                 "acceptance-label-switch-type",
                 json!({
                     "identifier": created.identifier,

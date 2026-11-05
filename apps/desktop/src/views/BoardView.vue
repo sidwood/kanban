@@ -1633,7 +1633,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :ticket="drawerTicket"
           :project-code="drawerProjectCode"
           :legal-targets="board.workflowTargetsFor(drawerTicket.id)"
-          :locked="drawerUnread === drawerTicket.id"
+          :locked="drawerLoading || drawerUnread === drawerTicket.id"
           @acted="drawerActed"
           @reviewed="drawerReviewed"
         />

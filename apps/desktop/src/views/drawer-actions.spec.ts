@@ -994,6 +994,64 @@ describe('the drawer footer while a saved description is read again', () => {
     expect(document.querySelector('[data-testid="issue-detail-description"] [role="alert"]')).toBeNull()
     expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Ready')
   })
+
+  it.each([
+    { save: 'is answered after the card is clicked', hold: 'issue.save' as const },
+    { save: 'was answered and is still read when the card is clicked', hold: 'issue.get' as const },
+  ])(
+    'sends nothing from the footer while the open Ticket clicked again is read after its save $save, then acts at the version read',
+    async ({ hold }) => {
+      const state = harness({
+        tickets: [
+          implementation({ state: 'ready' }),
+          implementation({
+            id: 9,
+            number: 14,
+            state: 'ready',
+            title: 'Edge review',
+            slice: 'Guard the edge review',
+            version: 2,
+          }),
+        ],
+      })
+      await openDrawer(state)
+      const held = hold === 'issue.save' ? holdCommands(state, hold) : holdReads(state, hold)
+
+      await saveDescription('The commands are served over the socket.')
+      expect(held).toHaveLength(1)
+      const ticketReads = holdReads(state, 'ticket.get')
+      await click('open-ticket-8')
+      if (hold === 'issue.save') held[0]!.answer()
+      await flushPromises()
+      expect(ticketReads).toHaveLength(1)
+
+      await click('drawer-park')
+      expect(issued(state, 'ticket.park')).toEqual([])
+      await forceClick('drawer-park')
+      expect(issued(state, 'ticket.park')).toEqual([])
+
+      ticketReads[0]!.answer()
+      await flushPromises()
+      expect(submitButton('drawer-park').disabled).toBe(false)
+      await click('drawer-park')
+      expect(issued(state, 'ticket.park')).toEqual([
+        { mutation: { optimistic_version: 6, idempotency_key: expect.any(String) }, ticket_id: 8 },
+      ])
+      expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+      expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+
+      await click('open-ticket-9')
+      expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+      expect(submitButton('drawer-park').disabled).toBe(false)
+      await click('drawer-park')
+      expect(issued(state, 'ticket.park')).toEqual([
+        { mutation: { optimistic_version: 6, idempotency_key: expect.any(String) }, ticket_id: 8 },
+        { mutation: { optimistic_version: 2, idempotency_key: expect.any(String) }, ticket_id: 9 },
+      ])
+      expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+      expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    },
+  )
 })
 
 describe('the human review decision in the drawer', () => {

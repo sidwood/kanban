@@ -2787,7 +2787,7 @@ mod tests {
         let upgraded = tasks.clone();
         eprintln!("upgraded fixture tasks: {upgraded:?}");
         let conn = database.connection();
-        conn.execute("DELETE FROM schema_migrations WHERE version = 64", [])
+        conn.execute("DELETE FROM schema_migrations WHERE version >= 64", [])
             .unwrap();
         for (id, _, description) in &upgraded {
             let stripped = description
@@ -2893,7 +2893,7 @@ mod tests {
                 [stripped],
             )
             .unwrap();
-            conn.execute("DELETE FROM schema_migrations WHERE version = 64", [])
+            conn.execute("DELETE FROM schema_migrations WHERE version >= 64", [])
                 .unwrap();
         }
         database.migrate(&AllowAllMigrations).expect(

@@ -3,8 +3,8 @@
 Tests 1-10 are the scenarios in docs/mcp-acceptance-tests.md. Test 11
 covers sub-issues as docs/sub-issues.md and the Linear issue model
 describe them. Each check asserts what Linear does, not merely that a
-call succeeded. Checks marked XFAIL encode known gaps; they turn into
-XPASS once the gap closes.
+call succeeded. A waiver must name the exact failure it still expects;
+any other failure fails the run.
 """
 
 from pathlib import Path
@@ -326,11 +326,11 @@ def test_create(ctx):
               all(record["title"] == f"T1 Legacy {priority}" for priority, record in legacy.items()),
               ", ".join(record["identifier"] for record in legacy.values()))
     rows = legacy["urgent"]["state_history"]
-    rec.xfail("legacy ticket.create writes the initial state history row",
+    rec.check("legacy ticket.create writes the initial state history row",
               len(rows) == 1 and rows[0]["state"] == legacy["urgent"]["state"],
               f"{len(rows)} rows")
     mapped = {priority: record["priority"] for priority, record in legacy.items()}
-    rec.xfail("legacy ticket.create maps priority (urgent 1, high 2, normal 3, low 4)",
+    rec.check("legacy ticket.create maps priority (urgent 1, high 2, normal 3, low 4)",
               mapped == LEGACY_PRIORITY, f"got {mapped}")
 
 
@@ -666,21 +666,21 @@ def test_update(ctx):
     ctx.only_changed("the combined write moved only what it named", before, after,
                      ["title", "priority", "labels", "due_date"])
 
-    # Known gaps: label and state names should match as Linear's do.
+    # Label and state names match as Linear's do.
     scratch = ctx.create("T3 Case-insensitive label", "LIN")
     result = ctx.save(scratch, add_labels=["FRONTEND"])
     labels = ctx.get(scratch)["labels"]
-    rec.xfail("add_labels matches a label name ignoring case (FRONTEND -> frontend)",
+    rec.check("add_labels matches a label name ignoring case (FRONTEND -> frontend)",
               result.ok and labels == ["frontend"], result.describe() if not result.ok else str(labels))
     scratch = ctx.create("T3 Lowercase state name", "LIN")
     result = ctx.save(scratch, state="done")
     state = ctx.get(scratch)["state"]
-    rec.xfail("state matches a state name ignoring case (done -> Done)",
+    rec.check("state matches a state name ignoring case (done -> Done)",
               result.ok and state == "Done", result.describe() if not result.ok else state)
     scratch = ctx.create("T3 State by type", "LIN")
     result = ctx.save(scratch, state="completed")
     record = ctx.get(scratch)
-    rec.xfail("state accepts a state type (completed -> a completed state)",
+    rec.check("state accepts a state type (completed -> a completed state)",
               result.ok and record["state_type"] == "completed",
               result.describe() if not result.ok else record["state"])
 
@@ -688,17 +688,17 @@ def test_update(ctx):
     before = ctx.get(scratch)
     ctx.save_must(scratch, add_labels=["frontend"])
     after = ctx.get(scratch)
-    rec.xfail("adding a label the issue already holds moves nothing (updated_at, version)",
+    rec.check("adding a label the issue already holds moves nothing (updated_at, version)",
               (after["updated_at"], after["version"]) == (before["updated_at"], before["version"]),
               f"updated_at {before['updated_at']} -> {after['updated_at']}")
     before = after
     ctx.save_must(scratch, remove_labels=["storage"])
     after = ctx.get(scratch)
-    rec.xfail("removing a label the issue does not hold moves nothing (updated_at, version)",
+    rec.check("removing a label the issue does not hold moves nothing (updated_at, version)",
               (after["updated_at"], after["version"]) == (before["updated_at"], before["version"]),
               f"updated_at {before['updated_at']} -> {after['updated_at']}")
 
-    # Known gaps: legacy socket edits should keep the issue model in step.
+    # Legacy socket edits keep the issue model in step.
     legacy = ctx.legacy("ticket.create", {
         "mutation": ctx.mutation(0, "legacy-create"), "project_id": ctx.other_project_id,
         "kind": "task", "priority": "low", "title": "T3 Legacy edits", "subtype": "operational",
@@ -709,14 +709,14 @@ def test_update(ctx):
     ctx.legacy("ticket.prioritise", {"mutation": ctx.mutation(before["version"], "legacy-priority"),
                                      "ticket_id": legacy["id"], "priority": "high"})
     after = ctx.get(legacy_key)
-    rec.xfail("legacy ticket.prioritise sets the issue priority (high -> 2)",
+    rec.check("legacy ticket.prioritise sets the issue priority (high -> 2)",
               after["priority"] == 2, f"priority {after['priority']}")
     before = after
     ctx.legacy("ticket.edit", {"mutation": ctx.mutation(before["version"], "legacy-edit"),
                                "ticket_id": legacy["id"], "title": "T3 Legacy edits, renamed"})
     after = ctx.get(legacy_key)
     rec.equal("legacy ticket.edit changes the issue title", after["title"], "T3 Legacy edits, renamed")
-    rec.xfail("legacy ticket.edit advances updated_at",
+    rec.check("legacy ticket.edit advances updated_at",
               parse_timestamp(after["updated_at"]) > parse_timestamp(before["updated_at"]),
               f"{before['updated_at']} -> {after['updated_at']}")
 
@@ -1298,11 +1298,11 @@ def test_errors(ctx):
 
     before = ctx.get(key)
     result = ctx.save(key, remove_labels=["no-such-label"])
-    rec.xfail("removing an unknown label is not found, naming remove_labels",
+    rec.check("removing an unknown label is not found, naming remove_labels",
               not result.ok and result.code == "not_found" and result.field == "remove_labels",
               result.describe())
     after = ctx.get(key)
-    rec.xfail("...and changes nothing", not changed_fields(before, after),
+    rec.check("...and changes nothing", not changed_fields(before, after),
               "changed: " + ", ".join(changed_fields(before, after)) if changed_fields(before, after) else "unchanged")
 
 

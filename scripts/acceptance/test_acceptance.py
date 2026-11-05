@@ -310,16 +310,55 @@ class RecorderTests(unittest.TestCase):
         lines = []
         return checks.Recorder(emit=lines.append), lines
 
-    def test_xfail_and_xpass_never_fail_the_run(self):
+    def test_a_matching_waiver_does_not_fail_the_run(self):
         recorder, lines = self.recorder()
         recorder.begin(1, "Create")
         recorder.check("passes", True)
-        recorder.xfail("still open", False, "gap")
-        recorder.xfail("now closed", True)
+        expected = "invalid_request field=state 'unknown state'"
+        recorder.xfail("still open", False, expected, expected=expected)
+        recorder.xfail("now closed", True, expected=expected)
         self.assertEqual(recorder.exit_code(), 0)
         self.assertEqual(recorder.tests[0].verdict, "pass")
-        self.assertTrue(lines[-2].startswith("XFAIL 1.02 still open -- gap"))
+        self.assertTrue(lines[-2].startswith("XFAIL 1.02 still open -- " + expected))
         self.assertTrue(lines[-1].startswith("XPASS 1.03 now closed"))
+
+    def test_an_unrelated_failure_is_not_waived(self):
+        recorder, lines = self.recorder()
+        recorder.begin(3, "Update")
+        recorder.xfail(
+            "add_labels matches a label name ignoring case",
+            False,
+            "internal 'synthetic unrelated backend failure'",
+            expected="invalid_request field=add_labels 'label case differs'",
+        )
+        self.assertEqual(recorder.exit_code(), 1)
+        self.assertTrue(lines[-1].startswith("FAIL "))
+        self.assertNotIn("XFAIL", "\n".join(lines))
+
+    def test_a_prefix_of_the_expected_failure_is_not_waived(self):
+        recorder, lines = self.recorder()
+        recorder.begin(1, "Create")
+        recorder.xfail("gap", False, "internal 'other'", expected="internal")
+        self.assertEqual(recorder.exit_code(), 1)
+        self.assertTrue(lines[-1].startswith("FAIL "))
+
+    def test_a_waiver_without_a_signature_is_refused(self):
+        recorder, _lines = self.recorder()
+        recorder.begin(3, "Update")
+        with self.assertRaises(TypeError):
+            recorder.xfail("gap", False, "anything")
+
+    def test_an_empty_waiver_signature_is_not_a_waiver(self):
+        recorder, lines = self.recorder()
+        recorder.begin(3, "Update")
+        recorder.xfail("gap", False, "internal error", expected="")
+        self.assertEqual(recorder.exit_code(), 1)
+        self.assertTrue(lines[-1].startswith("FAIL "))
+
+    def test_closed_linear_behaviours_are_ordinary_checks(self):
+        source = Path(scenarios.__file__).read_text()
+        self.assertNotIn("rec.xfail(", source)
+
 
     def test_any_fail_fails_the_run_and_marks_the_test_partial(self):
         recorder, _ = self.recorder()

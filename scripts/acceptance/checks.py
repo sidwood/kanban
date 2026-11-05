@@ -4,9 +4,10 @@ Outcomes:
 
 - PASS: the behaviour matches Linear.
 - FAIL: it does not. Any FAIL makes the run exit non-zero.
-- XFAIL: a known gap, still open. Expected; does not fail the run.
-- XPASS: a known gap that now behaves like Linear. Does not fail the
-  run; the gap's check can be promoted to an ordinary one.
+- XFAIL: a waived failure whose text is exactly the signature the
+  waiver named. Any other failure is FAIL.
+- XPASS: a waived check that now passes. It does not fail the run;
+  the waiver can be removed.
 - SKIP: the check cannot run here (for example, a write in read-only
   mode, or data the attached database does not hold).
 """
@@ -116,10 +117,23 @@ class Recorder:
             reason = f"expected {short(shown_expected)}, got {short(shown_actual)}"
         return self.check(description, False, reason)
 
-    def xfail(self, description, ok, reason=""):
-        """XFAIL while a known gap stays open; XPASS once it closes."""
-        self._record(XPASS if ok else XFAIL, description, reason)
-        return bool(ok)
+    def xfail(self, description, ok, reason="", *, expected):
+        """Waive only a failure whose reason is exactly `expected`.
+
+        A pass is XPASS. A missing or empty signature does not waive,
+        and neither does any other failure text.
+        """
+        if not isinstance(expected, str) or expected == "":
+            self._record(FAIL, description, reason or "a waiver needs the expected failure")
+            return False
+        if ok:
+            self._record(XPASS, description, reason)
+            return True
+        if reason == expected:
+            self._record(XFAIL, description, reason)
+            return False
+        self._record(FAIL, description, reason)
+        return False
 
     def skip(self, description, reason):
         self._record(SKIP, description, reason)

@@ -55,12 +55,13 @@ One line per check, then a per-test summary:
 
 ```text
 PASS  3.15 add_labels adds without replacing the set -- ['frontend', 'size-small', 'storage']
-XFAIL 3.29 add_labels matches a label name ignoring case (FRONTEND -> frontend) -- invalid_request ...
+XFAIL 3.29 label names match ignoring case -- invalid_request field=add_labels 'label case differs'
 ```
 
 - `PASS`: matches Linear. `FAIL`: does not.
-- `XFAIL`: a known gap, still open. `XPASS`: a known gap that now behaves
-  like Linear; turn its `rec.xfail` into `rec.check`.
+- `XFAIL`: the failure text is exactly the signature the waiver named.
+  Any other failure is `FAIL`. `XPASS`: a waived check that now passes;
+  turn its `rec.xfail` into `rec.check`.
 - `SKIP`: cannot run here (a write in read-only mode, or data the database
   does not hold).
 
@@ -68,17 +69,11 @@ A test's verdict is `pass` (no FAIL), `partial` (some FAIL) or `fail` (only
 FAIL). The exit code is 0 only when nothing FAILs; 2 means the runner could
 not drive the core.
 
-## Known gaps encoded as XFAIL
+## Waivers
 
-- Legacy `ticket.create` writes no state history row and does not map
-  priority (urgent 1, high 2, normal 3, low 4).
-- Legacy `ticket.prioritise` does not change the issue's priority.
-- Legacy `ticket.edit` does not advance `updated_at`.
-- A no-op label add or remove moves `updated_at`.
-- Removing an unknown label is accepted instead of `not_found` with
-  `field: "remove_labels"`.
-- `save_issue` refuses `add_labels: ["FRONTEND"]` for label `frontend`, and
-  `state: "done"` or `state: "completed"`.
+A future waiver must name the exact failure it still expects. A different
+error from the same check is not waived, and neither is a prefix of the
+expected text. There are no open waivers.
 
 ## Secrets
 

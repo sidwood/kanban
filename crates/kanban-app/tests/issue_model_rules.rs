@@ -5672,3 +5672,402 @@ fn marking_the_same_duplicate_target_again_stamps_moved_edges() {
         sink.announced()
     );
 }
+
+fn child_identifiers(record: &IssueRecord) -> Vec<String> {
+    record
+        .children
+        .as_ref()
+        .map(|children| {
+            children
+                .iter()
+                .map(|child| child.identifier.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn membership_was_announced(
+    session: &OperatorSession,
+    sink: &RecordingSink,
+    before: &IssueRecord,
+    event: &str,
+) -> bool {
+    let after = read_issue(session, &before.identifier);
+    after.version > before.version
+        && after.updated_at != before.updated_at
+        && announced_for(sink, event, before.ticket_id)
+}
+
+#[test]
+fn changing_child_parent_membership_stamps_and_announces_each_parent() {
+    let (h, sink) = rules_harness_with_events();
+    let session = &h.session;
+    let bystander = save_issue(
+        session,
+        0,
+        "parent-membership-bystander",
+        json!({ "project_id": 1, "title": "Bystander" }),
+    );
+    let join_parent = save_issue(
+        session,
+        0,
+        "parent-membership-join",
+        json!({ "project_id": 1, "title": "Join parent" }),
+    );
+    let old_parent = save_issue(
+        session,
+        0,
+        "parent-membership-old",
+        json!({ "project_id": 1, "title": "Old parent" }),
+    );
+    let next_parent = save_issue(
+        session,
+        0,
+        "parent-membership-next",
+        json!({ "project_id": 1, "title": "New parent" }),
+    );
+    let child = save_issue(
+        session,
+        0,
+        "parent-membership-child",
+        json!({ "project_id": 1, "title": "Child" }),
+    );
+    let bystander_before = read_issue(session, &bystander.identifier);
+    let mut missing = Vec::new();
+
+    let join_before = read_issue(session, &join_parent.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    let born = save_issue(
+        session,
+        0,
+        "parent-membership-born",
+        json!({
+            "project_id": 1,
+            "title": "Born under a parent",
+            "parent_id": join_parent.identifier,
+        }),
+    );
+    let join_after = read_issue(session, &join_parent.identifier);
+    assert_eq!(
+        child_identifiers(&join_after),
+        vec![born.identifier.clone()]
+    );
+    assert_eq!(
+        join_after
+            .sub_issues
+            .as_ref()
+            .map(|progress| (progress.done, progress.total)),
+        Some((0, 1))
+    );
+    if !membership_was_announced(session, sink.as_ref(), &join_before, "ticket.edited") {
+        missing.push(format!(
+            "join on create stayed at version {}",
+            join_after.version
+        ));
+    }
+
+    let old_before_join = read_issue(session, &old_parent.identifier);
+    let child_before_join = read_issue(session, &child.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        child_before_join.version,
+        "parent-membership-assign",
+        json!({ "identifier": child.identifier, "parent_id": old_parent.identifier }),
+    );
+    let old_after_join = read_issue(session, &old_parent.identifier);
+    let child_after_join = read_issue(session, &child.identifier);
+    assert_eq!(
+        child_after_join.parent.as_deref(),
+        Some(old_parent.identifier.as_str())
+    );
+    assert_eq!(
+        child_identifiers(&old_after_join),
+        vec![child.identifier.clone()]
+    );
+    assert_stamped(
+        &child_before_join,
+        &child_after_join,
+        "the child that joined",
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", child.ticket_id),
+        "the child that joined is named: {:?}",
+        sink.announced()
+    );
+    if !membership_was_announced(session, sink.as_ref(), &old_before_join, "ticket.edited") {
+        missing.push(format!(
+            "join on update stayed at version {}",
+            old_after_join.version
+        ));
+    }
+
+    let old_before_repeat = read_issue(session, &old_parent.identifier);
+    let child_before_repeat = read_issue(session, &child.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        child_before_repeat.version,
+        "parent-membership-same",
+        json!({ "identifier": child.identifier, "parent_id": old_parent.identifier }),
+    );
+    assert_still(
+        &old_before_repeat,
+        &read_issue(session, &old_parent.identifier),
+        "saving the same parent",
+    );
+    assert_still(
+        &child_before_repeat,
+        &read_issue(session, &child.identifier),
+        "saving the same parent",
+    );
+    assert!(
+        sink.announced().is_empty(),
+        "saving the same parent announces nothing: {:?}",
+        sink.announced()
+    );
+
+    let old_before_title = read_issue(session, &old_parent.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &child.identifier).version,
+        "parent-membership-title",
+        json!({
+            "identifier": child.identifier,
+            "parent_id": old_parent.identifier,
+            "title": "Child renamed",
+        }),
+    );
+    assert_still(
+        &old_before_title,
+        &read_issue(session, &old_parent.identifier),
+        "a title change under the same parent",
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.edited", child.ticket_id),
+        "the renamed child is named: {:?}",
+        sink.announced()
+    );
+    assert!(
+        !announced_for(sink.as_ref(), "ticket.edited", old_parent.ticket_id),
+        "the unchanged parent is not named: {:?}",
+        sink.announced()
+    );
+
+    let old_before_move = read_issue(session, &old_parent.identifier);
+    let next_before_move = read_issue(session, &next_parent.identifier);
+    let child_before_move = read_issue(session, &child.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        child_before_move.version,
+        "parent-membership-move",
+        json!({ "identifier": child.identifier, "parent_id": next_parent.identifier }),
+    );
+    let old_after_move = read_issue(session, &old_parent.identifier);
+    let next_after_move = read_issue(session, &next_parent.identifier);
+    assert!(old_after_move.children.is_none());
+    assert_eq!(
+        child_identifiers(&next_after_move),
+        vec![child.identifier.clone()]
+    );
+    assert_eq!(
+        next_after_move
+            .sub_issues
+            .as_ref()
+            .map(|progress| (progress.done, progress.total)),
+        Some((0, 1))
+    );
+    assert_eq!(old_after_move.state, "Draft");
+    assert_eq!(next_after_move.state, "Draft");
+    assert_stamped(
+        &child_before_move,
+        &read_issue(session, &child.identifier),
+        "the moved child",
+    );
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.edited",
+        child.ticket_id
+    ));
+    if !membership_was_announced(session, sink.as_ref(), &old_before_move, "ticket.edited") {
+        missing.push(format!(
+            "move away stayed at version {}",
+            old_after_move.version
+        ));
+    }
+    if !membership_was_announced(session, sink.as_ref(), &next_before_move, "ticket.edited") {
+        missing.push(format!(
+            "move onto stayed at version {}",
+            next_after_move.version
+        ));
+    }
+
+    let next_before_leave = read_issue(session, &next_parent.identifier);
+    let old_before_leave = read_issue(session, &old_parent.identifier);
+    let child_before_leave = read_issue(session, &child.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        child_before_leave.version,
+        "parent-membership-leave",
+        json!({ "identifier": child.identifier, "parent_id": null }),
+    );
+    let next_after_leave = read_issue(session, &next_parent.identifier);
+    let left = read_issue(session, &child.identifier);
+    assert!(left.parent.is_none());
+    assert!(next_after_leave.children.is_none());
+    assert!(next_after_leave.sub_issues.is_none());
+    assert_stamped(&child_before_leave, &left, "the child that left");
+    assert!(announced_for(
+        sink.as_ref(),
+        "ticket.edited",
+        child.ticket_id
+    ));
+    assert_still(
+        &old_before_leave,
+        &read_issue(session, &old_parent.identifier),
+        "a parent already left behind",
+    );
+    if !membership_was_announced(session, sink.as_ref(), &next_before_leave, "ticket.edited") {
+        missing.push(format!(
+            "leave stayed at version {}",
+            next_after_leave.version
+        ));
+    }
+
+    let next_before_clear = read_issue(session, &next_parent.identifier);
+    let child_before_clear = read_issue(session, &child.identifier);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        child_before_clear.version,
+        "parent-membership-clear-again",
+        json!({ "identifier": child.identifier, "parent_id": null }),
+    );
+    assert_still(
+        &next_before_clear,
+        &read_issue(session, &next_parent.identifier),
+        "clearing an empty parent",
+    );
+    assert_still(
+        &child_before_clear,
+        &read_issue(session, &child.identifier),
+        "clearing an empty parent",
+    );
+    assert!(
+        sink.announced().is_empty(),
+        "clearing an empty parent announces nothing: {:?}",
+        sink.announced()
+    );
+
+    enable_auto_close(session);
+    let grandparent = save_issue(
+        session,
+        0,
+        "parent-membership-grand",
+        json!({ "project_id": 1, "title": "Grandparent" }),
+    );
+    let parent = save_issue(
+        session,
+        0,
+        "parent-membership-mid",
+        json!({
+            "project_id": 1,
+            "title": "Middle parent",
+            "parent_id": grandparent.identifier,
+        }),
+    );
+    let holder = save_issue(
+        session,
+        0,
+        "parent-membership-holder",
+        json!({ "project_id": 1, "title": "Holder" }),
+    );
+    let sibling = save_issue(
+        session,
+        0,
+        "parent-membership-sibling",
+        json!({
+            "project_id": 1,
+            "title": "Open sibling",
+            "parent_id": holder.identifier,
+        }),
+    );
+    let done_child = save_issue(
+        session,
+        0,
+        "parent-membership-done",
+        json!({
+            "project_id": 1,
+            "title": "Done child",
+            "state": "Done",
+            "parent_id": holder.identifier,
+        }),
+    );
+    let holder_before = read_issue(session, &holder.identifier);
+    let parent_before = read_issue(session, &parent.identifier);
+    let grand_before = read_issue(session, &grandparent.identifier);
+    let sibling_before = read_issue(session, &sibling.identifier);
+    assert_eq!(holder_before.state, "Draft");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    sink.forget();
+    save_issue(
+        session,
+        read_issue(session, &done_child.identifier).version,
+        "parent-membership-attach-done",
+        json!({ "identifier": done_child.identifier, "parent_id": parent.identifier }),
+    );
+    let parent_after = read_issue(session, &parent.identifier);
+    let grand_after = read_issue(session, &grandparent.identifier);
+    let holder_after = read_issue(session, &holder.identifier);
+    assert_eq!(parent_after.state, "Done");
+    assert_eq!(grand_after.state, "Done");
+    assert_eq!(holder_after.state, "Draft");
+    assert_eq!(
+        child_identifiers(&holder_after),
+        vec![sibling.identifier.clone()]
+    );
+    assert_stamped(&parent_before, &parent_after, "the auto-closed parent");
+    assert_stamped(&grand_before, &grand_after, "the auto-closed grandparent");
+    assert!(
+        announced_for(sink.as_ref(), "ticket.state.changed", parent.ticket_id),
+        "the auto-closed parent keeps its state event: {:?}",
+        sink.announced()
+    );
+    assert!(
+        announced_for(sink.as_ref(), "ticket.state.changed", grandparent.ticket_id),
+        "the auto-closed grandparent keeps its state event: {:?}",
+        sink.announced()
+    );
+    assert_still(
+        &sibling_before,
+        &read_issue(session, &sibling.identifier),
+        "the sibling that stayed",
+    );
+    if !membership_was_announced(session, sink.as_ref(), &holder_before, "ticket.edited") {
+        missing.push(format!(
+            "open parent that lost a child stayed at version {}",
+            holder_after.version
+        ));
+    }
+
+    assert_still(
+        &bystander_before,
+        &read_issue(session, &bystander.identifier),
+        "an issue outside the parent changes",
+    );
+    assert!(
+        missing.is_empty(),
+        "parent membership changes must stamp and announce {missing:?}: {:?}",
+        sink.announced()
+    );
+}

@@ -913,6 +913,12 @@ impl SqliteIssueStore {
         .map_err(internal)?;
         drop(conn);
         if let Some(old_parent) = previous {
+            self.bump_version(old_parent)?;
+        }
+        if let Some(new_parent) = parent_id {
+            self.bump_version(new_parent)?;
+        }
+        if let Some(old_parent) = previous {
             auto_close_parent_if_children_done(&self.lock(), old_parent)?;
         }
         if let Some(new_parent) = parent_id {

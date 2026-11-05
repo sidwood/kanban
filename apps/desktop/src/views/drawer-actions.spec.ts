@@ -167,6 +167,28 @@ function holdReads(state: ReturnType<typeof harness>, name: string, count = 1): 
   return held
 }
 
+function holdCommands(
+  state: ReturnType<typeof harness>,
+  name: string,
+  count = 1,
+): HeldRead[] {
+  const core = state.command.getMockImplementation() as (
+    command: string,
+    request: unknown,
+  ) => Promise<unknown>
+  const held: HeldRead[] = []
+  state.command.mockImplementation((command: string, request: unknown) => {
+    if (command !== name || held.length >= count) return core(command, request)
+    return new Promise((resolve, reject) => {
+      held.push({
+        answer: () => void core(command, request).then(resolve, reject),
+        fail: () => reject({ code: 'unavailable', message: `the ${name} command failed` }),
+      })
+    })
+  })
+  return held
+}
+
 async function saveDescription(text: string): Promise<void> {
   await click('issue-description-edit')
   await type('issue-description-input', text)
@@ -836,6 +858,141 @@ describe('the drawer footer while a saved description is read again', () => {
     expect(versionsSent(state, 'issue.save')).toEqual([5, 7])
     expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
     expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+  })
+
+  it.each([
+    {
+      route: 'closed and opened again',
+      close: true,
+      outcome: 'moves the version on',
+      unchanged: false,
+      settle: 'answer' as const,
+      park: 6,
+      next: 7,
+    },
+    {
+      route: 'closed and opened again',
+      close: true,
+      outcome: 'leaves the version where it was',
+      unchanged: true,
+      settle: 'answer' as const,
+      park: 5,
+      next: 6,
+    },
+    {
+      route: 'closed and opened again',
+      close: true,
+      outcome: 'fails',
+      unchanged: false,
+      settle: 'fail' as const,
+      park: 5,
+      next: 6,
+    },
+    {
+      route: 'opened again from its card',
+      close: false,
+      outcome: 'moves the version on',
+      unchanged: false,
+      settle: 'answer' as const,
+      park: 6,
+      next: 7,
+    },
+  ])(
+    'acts at the current version on the Ticket $route before its save was answered, when the save $outcome',
+    async ({ close, unchanged, settle, park, next }) => {
+      const state = harness({ tickets: [implementation({ state: 'ready' })] })
+      if (unchanged) {
+        const core = state.command.getMockImplementation() as (
+          name: string,
+          request: unknown,
+        ) => Promise<unknown>
+        state.command.mockImplementation((name: string, request: unknown) =>
+          name === 'issue.save'
+            ? Promise.resolve({ identifier: 'CORE-13', ticket_id: 8, url: 'kanban://issue/CORE-13' })
+            : core(name, request),
+        )
+      }
+      await openDrawer(state)
+      const saves = holdCommands(state, 'issue.save')
+
+      await saveDescription('The commands are served over the socket.')
+      expect(saves).toHaveLength(1)
+      if (close) {
+        ;(document.querySelector('[aria-label="Close panel"]') as HTMLElement).click()
+        await flushPromises()
+      }
+      await click('open-ticket-8')
+      saves[0]![settle]()
+      await flushPromises()
+
+      expect(submitButton('drawer-park').disabled).toBe(false)
+      await click('drawer-park')
+      expect(issued(state, 'ticket.park')).toEqual([
+        { mutation: { optimistic_version: park, idempotency_key: expect.any(String) }, ticket_id: 8 },
+      ])
+      expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+      expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+      await saveDescription('The commands are served over the socket and the pipe.')
+      expect(versionsSent(state, 'issue.save')).toEqual([5, next])
+      expect(document.querySelector('[data-testid="issue-detail-description"] [role="alert"]')).toBeNull()
+      expect(descriptionDraft()).toBeNull()
+    },
+  )
+
+  it('leaves the Ticket the drawer moved to before a save was answered open to commands and unwritten', async () => {
+    const state = harness({
+      tickets: [
+        implementation({ state: 'ready' }),
+        implementation({
+          id: 9,
+          number: 14,
+          state: 'ready',
+          title: 'Edge review',
+          slice: 'Guard the edge review',
+          version: 2,
+        }),
+      ],
+    })
+    await openDrawer(state)
+    const saves = holdCommands(state, 'issue.save')
+
+    await saveDescription('The commands are served over the socket.')
+    expect(saves).toHaveLength(1)
+    await click('open-ticket-9')
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(submitButton('drawer-park').disabled).toBe(false)
+    await click('drawer-park')
+    saves[0]!.answer()
+    await flushPromises()
+
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+    expect(submitButton('drawer-unpark').disabled).toBe(false)
+    await click('drawer-unpark')
+    await saveDescription('The edge review is guarded.')
+
+    expect(issued(state, 'ticket.park')).toEqual([
+      { mutation: { optimistic_version: 2, idempotency_key: expect.any(String) }, ticket_id: 9 },
+    ])
+    expect(issued(state, 'ticket.unpark')).toEqual([
+      { mutation: { optimistic_version: 3, idempotency_key: expect.any(String) }, ticket_id: 9 },
+    ])
+    expect(issued(state, 'issue.save')).toEqual([
+      {
+        mutation: { optimistic_version: 5, idempotency_key: expect.any(String) },
+        identifier: 'CORE-13',
+        description: 'The commands are served over the socket.',
+      },
+      {
+        mutation: { optimistic_version: 4, idempotency_key: expect.any(String) },
+        identifier: 'CORE-14',
+        description: 'The edge review is guarded.',
+      },
+    ])
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    expect(document.querySelector('[data-testid="issue-detail-description"] [role="alert"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Ready')
   })
 })
 

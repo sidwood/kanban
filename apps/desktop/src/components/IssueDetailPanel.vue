@@ -18,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   refreshed: [issue: IssueRecord]
   saved: [ticketId: number]
+  saving: [ticketId: number, answered: Promise<unknown>]
 }>()
 
 const transport = inject(kanbanTransportKey)
@@ -133,7 +134,7 @@ async function saveDescription(): Promise<void> {
   descriptionSaving.value = true
   descriptionError.value = null
   try {
-    await new KanbanClient(transport).commandIssueSave({
+    const answered = new KanbanClient(transport).commandIssueSave({
       mutation: {
         optimistic_version: props.issue.version,
         idempotency_key: crypto.randomUUID(),
@@ -141,6 +142,8 @@ async function saveDescription(): Promise<void> {
       identifier: props.issue.identifier,
       description: descriptionLocal.value,
     })
+    emit('saving', props.issue.ticket_id, answered)
+    await answered
   } catch (failure) {
     descriptionError.value = asApiError(failure).message
     descriptionSaving.value = false

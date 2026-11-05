@@ -637,6 +637,7 @@ const drawerIssue = ref<IssueRecord | null>(null)
 const drawerLoading = ref(false)
 const drawerError = ref<string | null>(null)
 const drawerUnread = ref<number | null>(null)
+const drawerSaves = new Map<number, Promise<unknown>>()
 
 const drawerCard = computed(() =>
   drawerTicket.value ? board.cardOf(drawerTicket.value.id) : undefined,
@@ -680,6 +681,8 @@ async function loadDrawer(ticketId: number): Promise<void> {
   drawerError.value = null
   drawerUnread.value = null
   try {
+    if (drawerSaves.has(ticketId)) await drawerSaves.get(ticketId)
+    if (attempt !== drawerRequest) return
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: ticketId })
     if (attempt !== drawerRequest) return
     drawerTicket.value = record
@@ -856,6 +859,14 @@ function showDrawerIssue(issue: IssueRecord): void {
   if (ticket?.id === issue.ticket_id && ticket.version < issue.version) {
     drawerTicket.value = { ...ticket, version: issue.version }
   }
+}
+
+function onDrawerIssueSaving(ticketId: number, answered: Promise<unknown>): void {
+  const settled = answered.catch(() => undefined)
+  drawerSaves.set(ticketId, settled)
+  void settled.then(() => {
+    if (drawerSaves.get(ticketId) === settled) drawerSaves.delete(ticketId)
+  })
 }
 
 function onDrawerIssueSaved(ticketId: number): void {
@@ -1602,6 +1613,7 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
           :project-code="drawerProjectCode"
           @refreshed="onDrawerIssueRefreshed"
           @saved="onDrawerIssueSaved"
+          @saving="onDrawerIssueSaving"
         />
 
         <AttemptHistory

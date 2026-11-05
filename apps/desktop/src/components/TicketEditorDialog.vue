@@ -48,10 +48,10 @@ const issueSeeded = ref(false)
 const parentKey = computed(() => {
   const parentId = dialog.editor?.parentTicketId
   if (parentId == null || projectId.value == null) return null
-  const project = projects.projects.find((entry) => entry.id === projectId.value)
-  if (!project) return null
   const parent = editor.tickets.find((entry) => entry.id === parentId)
-  return parent ? issueDisplayKey(project.code, parent.number) : `#${parentId}`
+  if (!parent) return `#${parentId}`
+  const project = projects.projects.find((entry) => entry.id === parent.project_id)
+  return project ? issueDisplayKey(project.code, parent.number) : `#${parentId}`
 })
 
 function syncLocalsFromDraft(): void {

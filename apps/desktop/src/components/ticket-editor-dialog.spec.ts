@@ -240,6 +240,32 @@ describe('the Ticket editor dialog', () => {
     expect(useTicketDialogStore().editorOpen).toBe(false)
   })
 
+  it('a sub-issue placed in another Project keeps naming its parent by its own key', async () => {
+    const { transport, requests } = editorHarness({
+      projects: [editorProject, otherProject],
+      tickets: [implementationTicket()],
+    })
+    const wrapper = open(transport)
+    useTicketDialogStore().openSubIssue({ projectId: 4, parentTicketId: 1 })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-parent"]').text()).toContain('CORE-17')
+    await wrapper.find('[data-testid="ticket-project"]').setValue('5')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="ticket-parent"]').text()).toContain('CORE-17')
+    await wrapper.find('[data-testid="ticket-title"]').setValue('Edge half of the parent')
+    await wrapper.find('[data-testid="ticket-create"]').trigger('submit')
+    await flushPromises()
+
+    expect(requests('issue.save')[0]).toMatchObject({
+      project_id: 5,
+      parent_id: '1',
+      title: 'Edge half of the parent',
+    })
+  })
+
+
   it('a refused creation reports the core message and keeps the dialog open', async () => {
     const { transport } = editorHarness({
       answer: (name) =>

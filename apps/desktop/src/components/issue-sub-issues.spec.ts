@@ -245,6 +245,30 @@ describe('IssueSubIssues keyboard access', () => {
   })
 })
 
+describe('IssueSubIssues across Projects', () => {
+  it('lists a child from another Project under its own key and opens it by that key', async () => {
+    const wrapper = mountWith(
+      issueRecord({
+        children: [
+          { identifier: 'CORE-2', title: 'Done here', state: 'Done', sort_order: 0 },
+          { identifier: 'EDGE-9', title: 'Open elsewhere', state: 'Active', sort_order: 1 },
+        ],
+      }),
+    )
+    await flushPromises()
+
+    expect(rowOrder(wrapper)).toEqual(['CORE-2', 'EDGE-9'])
+    expect(wrapper.find('[data-testid="drawer-sub-issue-open-EDGE-9"]').text()).toContain('EDGE-9')
+    expect(wrapper.find('[data-testid="drawer-sub-issue-progress"]').text()).toBe('1 of 2 done')
+
+    await wrapper.find('[data-testid="drawer-sub-issue-open-EDGE-9"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('openIssue')).toEqual([[9]])
+  })
+})
+
+
 describe('IssueSubIssues reads', () => {
   it('waits for a free issue read while four are on the wire', async () => {
     const pinia = createPinia()

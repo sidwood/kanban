@@ -19,6 +19,7 @@ it, and what still needs a product decision.
 | Fixed transition table | Domain enforces allowed transitions and actor ownership | Legacy `state` column kept; per-project `issue_workflow_states` with Linear **types** seeded from the default names **plus Duplicate**. Operator `issue.save` applies **free transitions** via `IssueStore::apply_free_state` with history rows; UI drag still uses lifecycle rules until product changes. | None for operator path. |
 | Board driven by `TicketState` | `board_group_for(TicketState)` | Workflow states carry `legacy_state`; board projection unchanged until UI reads types. **Remaining:** map by state **type** when custom names differ. | None. |
 | Superseded vs duplicate | Superseded is terminal; duplicate was mapped to superseded legacy | **Duplicate** has its own workflow state and legacy `duplicate` value. `duplicate_of` on save moves relations to the canonical issue and transitions the duplicate issue to Duplicate. | None. |
+| Linear state names | Linear teams name states such as Todo and In Progress | Only Kanban's own names, with Linear types stored beside them. No Linear name aliases. | Settled: no Linear aliases. |
 
 ## Priority and dates
 
@@ -34,6 +35,8 @@ it, and what still needs a product decision.
 |---|---|---|---|
 | `ticket_dependencies` only | Blocks edges + external blockers | `issue_relations` with `blocks`/`related`/`duplicate`; blocks copied from dependencies. `issue.get` lists blocks, blocked-by, and **related from both endpoints**. | None. |
 | No related/duplicate | — | Related and duplicate-of implemented on operator save/get. | — |
+| Sub-issue project | A child had to share its parent's project | A sub-issue may live in another project and keeps its own key, workflow, labels, and milestone. | Settled. |
+| Close children with parent | Closing a parent left its sub-issues open | `close_sub_issues_with_parent` is per project and default off. Done completes open children; Cancelled, Superseded, and Duplicate cancel them. `list_projects` reads both sub-issue settings. An executing child stays open. | Settled. |
 
 ## Comments
 
@@ -46,7 +49,7 @@ it, and what still needs a product decision.
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
-| Linear **Project** vs Kanban **Project** | Kanban Project = repo + seed | Kanban Project unchanged; Linear “project” maps to **Initiative** or nested naming **not done**. Milestones table is per Kanban project. | Sid: map Linear project to Initiative, Spec, or label? |
+| Linear **Project** vs Kanban **Project** | Kanban Project = repo + seed | A Kanban project stands for a Linear team. A Linear project is a label in a single-select **Project** group. Milestones stay per Kanban project. | Settled. |
 | Milestones | Absent | `issue_milestones` per project; optional FK on tickets. | None. |
 | Name letter case | Label, label group, and milestone names were unique by exact spelling, so `WEB` could sit beside `web` | Unique per project ignoring letter case (Unicode full case folding), judged in `kanban-app` (`issue_names`) with migration `0066` triggers as an ASCII backstop. By-name lookups take the exact spelling, then the one case-insensitive match. Pairs stored before `0066` are kept, stay assignable by exact spelling, and make any other spelling an `invalid_request` instead of a guess. See [mcp-operator.md](./mcp-operator.md#label-and-milestone-names). | A case variant is `invalid_request` on `name` while an exact repeat stays `conflict`. |
 
@@ -61,6 +64,7 @@ it, and what still needs a product decision.
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
 | Run-scoped tools only | Capability-bound agent session | Installation operator session on loopback `/mcp/operator` (Bearer only) exposes Linear parity tools (`save_issue`, …). Agent surface unchanged. | Confirm operator auth = installation credential only. |
+| Operator write version | Commands require `optimistic_version` | Operator writes may omit the mutation. The session supplies a version and retries when it is stale. | Settled: operator writes need no version. |
 | Full ticket command surface | Hundreds of operator commands | Issue operator commands + `comment.list`; acceptance in `issue_mcp_acceptance.rs` and `issue_stage2_review.rs`. | None. |
 
 ## UI
@@ -74,9 +78,32 @@ it, and what still needs a product decision.
 
 Dispatch, runs, lanes, landing, review, and graph approval still target tickets/issues by id. They observe new state fields; operator MCP bypasses lifecycle enforcement for state changes.
 
+## Settled product rulings
+
+These are decided and are no longer open questions:
+
+1. A sub-issue may be in a different project from its parent. It keeps its own
+   key, workflow, labels, and milestone. An omitted `project_id` inherits the
+   parent's project; an explicit one overrides it.
+2. Closing a parent closes its open sub-issues only when that parent's project
+   has `close_sub_issues_with_parent` on. The setting defaults off. Both
+   sub-issue settings are readable through `list_projects`. A child with an
+   executing run stays open.
+3. Label and milestone names are unique regardless of letter case.
+4. Comments with no recorded author show as `Unknown author`. Migration keeps
+   a timeline author where one existed, including a stored literal
+   `Unknown author`.
+5. Only Kanban's own state names are used. There are no Linear name aliases.
+   The names are Draft, Parked, Blocked, Scheduled, Ready, Active, In Review,
+   Approved, Landing, Done, Cancelled, Superseded, and Duplicate.
+6. Operator writes need no version. An omitted mutation is filled in and
+   retried when the version is stale.
+7. A Kanban project stands for a Linear team. Linear projects become labels
+   in a single-select Project group.
+
 ## Remaining work (product)
 
-1. Assignee/delegate field and filters.
+1. Assignee/delegate field and filters. A free-text assignee column exists;
+   whether it is a local profile name is still open.
 2. Comment threads and resolve in UI/MCP.
 3. Board projection by workflow state **type** when names diverge from legacy defaults.
-4. Linear “project” vs Kanban Project / Initiative mapping.

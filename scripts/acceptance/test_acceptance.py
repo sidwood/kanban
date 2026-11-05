@@ -1382,6 +1382,335 @@ class ReadOnlyStoreTests(unittest.TestCase):
 
 
 
+class LinkedStoreFingerprintTests(unittest.TestCase):
+    """A store symlink is identified by the file it resolves to."""
+
+    SIDECARS = ("-wal", "-shm", "-journal")
+
+    def digest(self, data):
+        return hashlib.sha256(data).hexdigest()
+
+    def unlinked_walk(self, root):
+        """The fingerprint of a store whose entries are not links."""
+        root = Path(root)
+        found = {}
+        if not root.exists():
+            return found
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root).as_posix()
+            try:
+                if path.is_symlink():
+                    found[relative] = ("symlink", os.readlink(path))
+                elif path.is_dir():
+                    found[relative] = ("dir",)
+                elif path.is_file():
+                    found[relative] = ("file", self.digest(path.read_bytes()))
+                else:
+                    found[relative] = ("other", path.stat().st_mode)
+            except OSError as error:
+                found[relative] = ("unreadable", type(error).__name__)
+        return found
+
+    def test_a_changed_linked_database_and_its_write_ahead_log_are_named(self):
+        import sqlite3
+        from contextlib import redirect_stdout
+        from scripts.acceptance import __main__ as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inspected = root / "inspected"
+            data = inspected / "Kanban"
+            data.mkdir(parents=True)
+            target = root / "linked.sqlite"
+            with sqlite3.connect(target) as database:
+                database.execute("create table attention_items (value integer)")
+                database.execute("insert into attention_items values (1)")
+            wal = Path(str(target) + "-wal")
+            wal.write_bytes(b"wal-before")
+            (data / "kanban.sqlite").symlink_to(target)
+
+            def mutate():
+                with sqlite3.connect(target) as database:
+                    database.execute("update attention_items set value = 2")
+                target.write_bytes(target.read_bytes() + b"changed")
+                wal.write_bytes(b"wal-after")
+
+            def selected(ctx):
+                mutate()
+                ctx.rec.check("controlled read scenario completes", True)
+
+            class Projects:
+                def call(self, name, arguments):
+                    return harness.ToolResult(True, {"projects": [{"code": "LIN", "id": 1}]})
+
+            captured = StringIO()
+            with redirect_stdout(captured), \
+                    patch.object(cli, "socket_answers", return_value=True), \
+                    patch.object(cli, "port_in_use", return_value=True), \
+                    patch.object(cli, "CoreProcess", side_effect=AssertionError("must not start a core")), \
+                    patch.object(cli, "connect", return_value=(Projects(), "synthetic")), \
+                    patch.object(cli.scenarios, "TESTS", [(9, "Lookups", selected, True)]), \
+                    patch("scripts.acceptance.harness.keychain_secret",
+                          side_effect=AssertionError("keychain")):
+                status = cli.main([
+                    "--read-only", "--project", "LIN", "--data-dir", str(inspected),
+                    "--binary", "/nonexistent", "--tests", "9",
+                ])
+            guard = [
+                line for line in captured.getvalue().splitlines()
+                if line.startswith(("PASS", "FAIL")) and "inspected store" in line
+            ]
+
+            self.assertEqual(len(guard), 1, captured.getvalue())
+            self.assertNotEqual(status, 0, captured.getvalue())
+            self.assertTrue(guard[0].startswith("FAIL"), guard[0])
+            names = [part.strip() for part in guard[0].split("changed: ", 1)[1].split(",")]
+            self.assertIn("Kanban/kanban.sqlite", names)
+            self.assertIn("Kanban/kanban.sqlite-wal", names)
+
+    def test_linked_database_sidecars_record_present_absent_and_changed_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            target = outside / "kanban.sqlite"
+            target.write_bytes(b"database-v1")
+            link = store / "kanban.sqlite"
+            link.symlink_to(target)
+            absent = harness.store_fingerprint(store)
+            self.assertEqual(absent["kanban.sqlite"][1], os.readlink(link))
+            self.assertEqual(absent["kanban.sqlite"][2], "file")
+            self.assertEqual(absent["kanban.sqlite"][3], self.digest(b"database-v1"))
+            for suffix in self.SIDECARS:
+                self.assertEqual(absent["kanban.sqlite" + suffix], ("absent",))
+            self.assertEqual(
+                absent["kanban.sqlite"][4],
+                tuple((suffix[1:], absent["kanban.sqlite" + suffix]) for suffix in self.SIDECARS),
+            )
+
+            for suffix in self.SIDECARS:
+                Path(str(target) + suffix).write_bytes(b"present" + suffix.encode())
+            present = harness.store_fingerprint(store)
+            for suffix in self.SIDECARS:
+                body = b"present" + suffix.encode()
+                self.assertEqual(present["kanban.sqlite" + suffix], ("file", self.digest(body)))
+            appeared = harness.store_changes(absent, present)
+            self.assertEqual(appeared, sorted(appeared))
+            self.assertEqual(
+                appeared,
+                ["kanban.sqlite", "kanban.sqlite-journal", "kanban.sqlite-shm", "kanban.sqlite-wal"],
+            )
+
+            target.write_bytes(b"database-v2")
+            self.assertEqual(
+                harness.store_changes(present, harness.store_fingerprint(store)),
+                ["kanban.sqlite"],
+            )
+            present = harness.store_fingerprint(store)
+            Path(str(target) + "-wal").write_bytes(b"wal-v2")
+            Path(str(target) + "-shm").unlink()
+            changed = harness.store_changes(present, harness.store_fingerprint(store))
+            self.assertEqual(changed, ["kanban.sqlite", "kanban.sqlite-shm", "kanban.sqlite-wal"])
+            after = harness.store_fingerprint(store)
+            self.assertEqual(after["kanban.sqlite-wal"], ("file", self.digest(b"wal-v2")))
+            self.assertEqual(after["kanban.sqlite-shm"], ("absent",))
+            self.assertEqual(after["kanban.sqlite-journal"], present["kanban.sqlite-journal"])
+
+    def test_a_sqlite_header_link_records_sidecars_beside_its_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            target = outside / "payload.bin"
+            target.write_bytes(b"SQLite format 3\x00" + b"page")
+            Path(str(target) + "-wal").write_bytes(b"header-wal")
+            (store / "payload.bin").symlink_to(target)
+            fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(fingerprint["payload.bin-wal"], ("file", self.digest(b"header-wal")))
+            self.assertEqual(fingerprint["payload.bin-shm"], ("absent",))
+            self.assertEqual(fingerprint["payload.bin-journal"], ("absent",))
+
+    def test_a_linked_text_file_keeps_its_raw_target_and_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            target = outside / "notes.txt"
+            target.write_bytes(b"hello")
+            Path(str(target) + "-wal").write_bytes(b"ignore-me")
+            link = store / "notes.txt"
+            link.symlink_to("../outside/../outside/notes.txt")
+            fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(os.readlink(link), "../outside/../outside/notes.txt")
+            self.assertEqual(fingerprint["notes.txt"][1], os.readlink(link))
+            self.assertEqual(
+                fingerprint["notes.txt"],
+                ("symlink", "../outside/../outside/notes.txt", "file", self.digest(b"hello")),
+            )
+            self.assertNotIn("notes.txt-wal", fingerprint)
+            before = fingerprint
+            Path(str(target) + "-wal").write_bytes(b"still-ignored")
+            self.assertEqual(harness.store_changes(before, harness.store_fingerprint(store)), [])
+            target.write_bytes(b"changed")
+            self.assertEqual(
+                harness.store_changes(before, harness.store_fingerprint(store)),
+                ["notes.txt"],
+            )
+
+    def test_an_in_store_link_records_the_target_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp)
+            (store / "attention.bin").write_bytes(b"initial")
+            (store / "link").symlink_to("attention.bin")
+            before = harness.store_fingerprint(store)
+            self.assertEqual(before["link"][1], "attention.bin")
+            self.assertEqual(before["link"][3], self.digest(b"initial"))
+            (store / "attention.bin").write_bytes(b"changed")
+            self.assertEqual(
+                harness.store_changes(before, harness.store_fingerprint(store)),
+                ["attention.bin", "link"],
+            )
+
+    def test_a_dangling_link_is_recorded_as_dangling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp)
+            link = store / "missing"
+            link.symlink_to("missing-target")
+            fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(fingerprint["missing"], ("symlink", "missing-target", "dangling"))
+            self.assertFalse(any(key.startswith("missing-") for key in fingerprint))
+            self.assertEqual(harness.store_changes(fingerprint, harness.store_fingerprint(store)), [])
+
+    def test_a_looping_link_stops_within_a_fixed_hop_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp)
+            (store / "self").symlink_to("self")
+            (store / "a").symlink_to("b")
+            (store / "b").symlink_to("a")
+            short = store / "short"
+            long = store / "long"
+            short.mkdir()
+            long.mkdir()
+            self.chain(short, 8, b"short-chain")
+            self.chain(long, 41, b"too-far")
+            fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(fingerprint["self"], ("symlink", "self", "loop"))
+            self.assertEqual(fingerprint["a"], ("symlink", "b", "loop"))
+            self.assertEqual(fingerprint["b"], ("symlink", "a", "loop"))
+            self.assertEqual(fingerprint["short/hop-7"][2], "file")
+            self.assertEqual(fingerprint["short/hop-7"][3], self.digest(b"short-chain"))
+            self.assertEqual(fingerprint["long/hop-40"][2], "loop")
+            self.assertNotIn(self.digest(b"too-far"), fingerprint["long/hop-40"])
+
+    def chain(self, directory, hops, content):
+        final = directory / "final.txt"
+        final.write_bytes(content)
+        current = final
+        for index in range(hops):
+            link = directory / f"hop-{index}"
+            link.symlink_to(current.name)
+            current = link
+        return current
+
+    def test_retargeting_a_link_records_the_new_text_and_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            (outside / "first.txt").write_bytes(b"one")
+            (outside / "second.txt").write_bytes(b"two")
+            link = store / "current"
+            link.symlink_to("../outside/first.txt")
+            before = harness.store_fingerprint(store)
+            link.unlink()
+            link.symlink_to("../outside/second.txt")
+            after = harness.store_fingerprint(store)
+            self.assertEqual(before["current"][1], "../outside/first.txt")
+            self.assertEqual(
+                after["current"],
+                ("symlink", "../outside/second.txt", "file", self.digest(b"two")),
+            )
+            self.assertEqual(harness.store_changes(before, after), ["current"])
+
+    def test_a_link_to_a_directory_is_not_walked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            external = root / "external"
+            store.mkdir()
+            external.mkdir()
+            (external / "secret.bin").write_bytes(b"secret")
+            link = store / "tree"
+            link.symlink_to(external)
+            before = harness.store_fingerprint(store)
+            self.assertEqual(before["tree"], ("symlink", os.readlink(link), "dir"))
+            self.assertNotIn("tree/secret.bin", before)
+            (external / "secret.bin").write_bytes(b"changed")
+            self.assertEqual(harness.store_changes(before, harness.store_fingerprint(store)), [])
+
+    def test_an_in_store_sidecar_keeps_its_own_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            target = outside / "db.sqlite"
+            target.write_bytes(b"database")
+            Path(str(target) + "-wal").write_bytes(b"external-wal")
+            (store / "kanban.sqlite-wal").write_bytes(b"local-wal")
+            (store / "kanban.sqlite").symlink_to(target)
+            before = harness.store_fingerprint(store)
+            self.assertEqual(before["kanban.sqlite-wal"], ("file", self.digest(b"local-wal")))
+            self.assertEqual(
+                before["kanban.sqlite"][4][0],
+                ("wal", ("file", self.digest(b"external-wal"))),
+            )
+            Path(str(target) + "-wal").write_bytes(b"external-wal-2")
+            changed = harness.store_changes(before, harness.store_fingerprint(store))
+            self.assertIn("kanban.sqlite", changed)
+            self.assertNotIn("kanban.sqlite-wal", changed)
+            self.assertEqual(
+                harness.store_fingerprint(store)["kanban.sqlite-wal"],
+                ("file", self.digest(b"local-wal")),
+            )
+
+    def test_an_unlinked_store_fingerprint_matches_the_file_walk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp)
+            nested = store / "nested"
+            nested.mkdir()
+            (store / "kanban.sqlite").write_bytes(b"database")
+            (store / "kanban.sqlite-wal").write_bytes(b"wal")
+            (store / "kanban.sqlite-shm").write_bytes(b"shm")
+            (store / "kanban.sqlite-journal").write_bytes(b"journal")
+            (nested / "note.txt").write_bytes(b"note")
+            (store / "empty").write_bytes(b"")
+            fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(fingerprint, self.unlinked_walk(store))
+            for relative in fingerprint:
+                self.assertTrue((store / relative).exists(), relative)
+            before = fingerprint
+            (store / "kanban.sqlite-wal").write_bytes(b"wal-changed")
+            self.assertEqual(
+                harness.store_changes(before, harness.store_fingerprint(store)),
+                ["kanban.sqlite-wal"],
+            )
+            (nested / "note.txt").write_bytes(b"changed")
+            self.assertEqual(
+                harness.store_changes(before, harness.store_fingerprint(store)),
+                ["kanban.sqlite-wal", "nested/note.txt"],
+            )
+
+
 class TextQueryTests(unittest.TestCase):
     def context(self, title_only):
         class MemoryMcp:

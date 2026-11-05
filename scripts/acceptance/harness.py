@@ -547,7 +547,14 @@ def socket_answers(path):
 
 
 def store_fingerprint(root):
-    """Content identity of every file under `root`. Reads only."""
+    """Content identity of every file under `root`. Reads only.
+
+    A symlink keeps its original text and also records the file it
+    resolves to. A database file also records the three SQLite sidecar
+    files beside that target, present or absent. A dangling or looping
+    link is recorded as such. Following stops after a fixed number of
+    hops and does not walk a directory.
+    """
     root = Path(root)
     found = {}
     if not root.exists():
@@ -556,7 +563,7 @@ def store_fingerprint(root):
         relative = path.relative_to(root).as_posix()
         try:
             if path.is_symlink():
-                found[relative] = ("symlink", os.readlink(path))
+                found[relative] = _linked_identity(path)
             elif path.is_dir():
                 found[relative] = ("dir",)
             elif path.is_file():
@@ -565,7 +572,142 @@ def store_fingerprint(root):
                 found[relative] = ("other", path.stat().st_mode)
         except OSError as error:
             found[relative] = ("unreadable", type(error).__name__)
+    _name_linked_sidecars(found)
     return found
+
+
+_SYMLINK_HOP_LIMIT = 40
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def _file_digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _linked_identity(path):
+    raw = os.readlink(path)
+    kind, detail = _follow_link(path)
+    if kind == "file":
+        resolved, digest = detail
+        identity = ("symlink", raw, "file", digest)
+        if _names_a_database(path, resolved):
+            return identity + (_sidecar_states(resolved),)
+        return identity
+    if kind == "other":
+        return ("symlink", raw, "other", detail)
+    if kind == "unreadable":
+        return ("symlink", raw, "unreadable", detail)
+    return ("symlink", raw, kind)
+
+
+def _follow_link(start):
+    """Follow `start` until a non-link, a loop, or the hop limit."""
+    current = Path(start)
+    seen = set()
+    for _hop in range(_SYMLINK_HOP_LIMIT):
+        try:
+            if not current.is_symlink():
+                return _classify_target(current)
+            token = _link_token(current)
+        except OSError as error:
+            return "unreadable", type(error).__name__
+        if token in seen:
+            return "loop", None
+        seen.add(token)
+        try:
+            raw = os.readlink(current)
+        except OSError as error:
+            return "unreadable", type(error).__name__
+        nxt = Path(raw)
+        if not nxt.is_absolute():
+            nxt = current.parent / nxt
+        current = nxt
+    try:
+        if not current.is_symlink():
+            return _classify_target(current)
+    except OSError as error:
+        return "unreadable", type(error).__name__
+    return "loop", None
+
+
+def _link_token(path):
+    stat = path.lstat()
+    return stat.st_dev, stat.st_ino
+
+
+def _classify_target(path):
+    try:
+        if path.is_symlink():
+            return "loop", None
+        if not path.exists():
+            return "dangling", None
+        if path.is_dir():
+            return "dir", None
+        if path.is_file():
+            return "file", (path, _file_digest(path))
+        return "other", path.stat().st_mode
+    except OSError as error:
+        return "unreadable", type(error).__name__
+
+
+def _names_a_database(link, resolved):
+    resolved = Path(resolved)
+    if _database_name(link.name) or _database_name(resolved.name):
+        return True
+    try:
+        with resolved.open("rb") as handle:
+            return handle.read(len(_SQLITE_HEADER)).startswith(_SQLITE_HEADER)
+    except OSError:
+        return False
+
+
+def _database_name(name):
+    return name == "kanban.sqlite" or name.endswith(".sqlite") or name.endswith(".sqlite3")
+
+
+def _sidecar_states(resolved):
+    resolved = Path(resolved)
+    return tuple(
+        (suffix[1:], _sidecar_state(Path(str(resolved) + suffix)))
+        for suffix in _SIDECAR_SUFFIXES
+    )
+
+
+def _sidecar_state(path):
+    try:
+        if path.is_symlink():
+            kind, detail = _follow_link(path)
+            if kind == "file":
+                return ("file", detail[1])
+            if kind == "other":
+                return ("other", detail)
+            if kind == "unreadable":
+                return ("unreadable", detail)
+            return (kind,)
+        if not path.exists():
+            return ("absent",)
+        if path.is_dir():
+            return ("dir",)
+        if path.is_file():
+            return ("file", _file_digest(path))
+        return ("other", path.stat().st_mode)
+    except OSError as error:
+        return ("unreadable", type(error).__name__)
+
+
+def _name_linked_sidecars(found):
+    """Name sidecar states on free paths so a change can be reported."""
+    named = {}
+    for relative, record in list(found.items()):
+        if len(record) < 5 or record[0] != "symlink" or record[2] != "file":
+            continue
+        for suffix, state in record[4]:
+            key = relative + "-" + suffix
+            if key not in found and key not in named:
+                named[key] = state
+    found.update(named)
+
 
 
 def store_changes(before, after):

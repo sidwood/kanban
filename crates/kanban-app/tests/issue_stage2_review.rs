@@ -144,9 +144,13 @@ fn list_issues_cursor_pages_without_skipping_rows() {
     .unwrap();
     assert_eq!(page1.issues.len(), 1);
     assert_eq!(page1.issues[0].ticket_id, third.ticket_id);
-    assert_eq!(
-        page1.next_cursor.as_deref(),
-        Some(third.ticket_id.to_string().as_str())
+    assert!(
+        page1.next_cursor.as_deref().is_some_and(|cursor| {
+            cursor
+                .rsplit_once('/')
+                .is_some_and(|(_, id)| id == third.ticket_id.to_string())
+        }),
+        "the issued cursor keeps the last row as its boundary"
     );
 
     let page2: IssueListResponse = serde_json::from_value(

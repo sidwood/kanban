@@ -160,8 +160,8 @@ pub trait IssueStore: Send + Sync {
     fn touch_updated_at(&self, ticket_id: i64) -> Result<(), ApiError>;
     /// One page of issue ids matching `query`, newest update first,
     /// paged before any record is built. `None` cursor starts at the
-    /// newest; a cursor resumes strictly after the row it names even
-    /// when that row no longer matches.
+    /// newest; a cursor resumes strictly after the boundary it carries
+    /// even when that issue no longer matches.
     fn page_issue_ids(&self, query: &IssuePageQuery<'_>) -> Result<IssuePage, ApiError>;
 }
 
@@ -180,14 +180,19 @@ pub struct IssuePageQuery<'a> {
     pub updated_since_floor: Option<&'a str>,
     pub updated_since_holds_at_floor: bool,
     pub query: Option<&'a str>,
-    /// The ticket id a cursor names; paging resumes after its row.
+    /// The ticket id a cursor names. When `cursor_updated_at` is set,
+    /// that stamp is the boundary; otherwise the id's current stamp is.
     pub cursor: Option<u64>,
+    pub cursor_updated_at: Option<&'a str>,
     pub limit: u32,
 }
 
-/// One page of issue ids and whether more matched rows follow.
+/// One page of issue ids, whether more matched rows follow, and the
+/// boundary of the last returned row.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IssuePage {
     pub ticket_ids: Vec<u64>,
     pub more: bool,
+    pub boundary_updated_at: Option<String>,
+    pub boundary_ticket_id: Option<u64>,
 }

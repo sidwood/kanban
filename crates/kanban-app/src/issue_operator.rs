@@ -855,6 +855,32 @@ fn announce_changed_issues(
     Ok(())
 }
 
+enum IssuedCursor {
+    Legacy(u64),
+    Boundary { updated_at: String, ticket_id: u64 },
+}
+
+fn parse_issued_cursor(raw: &str) -> Result<IssuedCursor, ApiError> {
+    if let Ok(id) = raw.parse::<u64>() {
+        return Ok(IssuedCursor::Legacy(id));
+    }
+    let Some((stamp, id)) = raw.rsplit_once('/') else {
+        return Err(cursor_refused());
+    };
+    let ticket_id = id.parse::<u64>().map_err(|_| cursor_refused())?;
+    if stamp.is_empty() {
+        return Err(cursor_refused());
+    }
+    Ok(IssuedCursor::Boundary {
+        updated_at: stamp.to_owned(),
+        ticket_id,
+    })
+}
+
+fn cursor_refused() -> ApiError {
+    ApiError::invalid_request_field("cursor", "cursor must be a ticket id or a page boundary")
+}
+
 fn resolve_listed_project(
     ctx: &IssueContext,
     project_id: u64,
@@ -869,6 +895,7 @@ fn resolve_listed_project(
     })?;
     Ok(())
 }
+
 fn apply_issue_extensions(
     ctx: &IssueContext,
     ticket_id: i64,
@@ -1196,15 +1223,19 @@ fn list_issues(
         .as_deref()
         .map(|parent| resolve_parent_filter(ctx, parent))
         .transpose()?;
-    let cursor = request
+    let parsed_cursor = request
         .cursor
         .as_deref()
-        .map(|raw| {
-            raw.parse::<u64>().map_err(|_| {
-                ApiError::invalid_request_field("cursor", "cursor must be a numeric ticket id")
-            })
-        })
+        .map(parse_issued_cursor)
         .transpose()?;
+    let (cursor, cursor_updated_at) = match &parsed_cursor {
+        Some(IssuedCursor::Legacy(id)) => (Some(*id), None),
+        Some(IssuedCursor::Boundary {
+            updated_at,
+            ticket_id,
+        }) => (Some(*ticket_id), Some(updated_at.as_str())),
+        None => (None, None),
+    };
     let page = ctx.issues.page_issue_ids(&IssuePageQuery {
         project_ids: &project_ids,
         state: request.state.as_deref(),
@@ -1216,6 +1247,7 @@ fn list_issues(
         updated_since_holds_at_floor: window.as_ref().is_some_and(|bound| bound.holds_at_floor),
         query: request.query.as_deref(),
         cursor,
+        cursor_updated_at,
         limit,
     })?;
     let issues = page
@@ -1225,7 +1257,11 @@ fn list_issues(
         .collect::<Result<Vec<_>, _>>()?;
     let next_cursor = page
         .more
-        .then(|| issues.last().map(|record| record.ticket_id.to_string()))
+        .then(|| {
+            page.boundary_updated_at
+                .as_ref()
+                .and_then(|stamp| page.boundary_ticket_id.map(|id| format!("{stamp}/{id}")))
+        })
         .flatten();
     Ok(IssueListResponse {
         issues,

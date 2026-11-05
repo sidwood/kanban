@@ -4478,6 +4478,144 @@ fn a_checkbox_does_not_hide_a_following_link() {
 }
 
 #[test]
+fn a_page_keeps_its_original_boundary_after_the_anchor_moves() {
+    let h = rules_harness();
+    let session = &h.session;
+    let oldest = save_issue(
+        session,
+        0,
+        "page-oldest",
+        json!({ "project_id": 1, "title": "Oldest" }),
+    );
+    let middle = save_issue(
+        session,
+        0,
+        "page-middle",
+        json!({ "project_id": 1, "title": "Middle" }),
+    );
+    let newest = save_issue(
+        session,
+        0,
+        "page-newest",
+        json!({ "project_id": 1, "title": "Newest" }),
+    );
+    h.database
+        .connection()
+        .execute(
+            "UPDATE tickets SET updated_at = '2000-01-01T00:00:00.000Z'",
+            [],
+        )
+        .unwrap();
+    let first = session
+        .call(
+            "issue.list",
+            &json!({ "project_id": 1, "state": "Draft", "limit": 2 }),
+        )
+        .expect("the first page serves");
+    assert_eq!(first["issues"][0]["identifier"], newest.identifier);
+    assert_eq!(first["issues"][1]["identifier"], middle.identifier);
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": middle.identifier, "state": "Done" }),
+        )
+        .expect("the anchor leaves the filter");
+    let next = session
+        .call(
+            "issue.list",
+            &json!({
+                "project_id": 1,
+                "state": "Draft",
+                "limit": 2,
+                "cursor": first["next_cursor"],
+            }),
+        )
+        .expect("the continuation serves");
+    let ids: Vec<_> = next["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|issue| issue["identifier"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, vec![oldest.identifier]);
+}
+
+#[test]
+fn a_numeric_cursor_still_pages() {
+    let h = rules_harness();
+    let session = &h.session;
+    let _oldest = save_issue(
+        session,
+        0,
+        "numeric-oldest",
+        json!({ "project_id": 1, "title": "Oldest" }),
+    );
+    let middle = save_issue(
+        session,
+        0,
+        "numeric-middle",
+        json!({ "project_id": 1, "title": "Middle" }),
+    );
+    let newest = save_issue(
+        session,
+        0,
+        "numeric-newest",
+        json!({ "project_id": 1, "title": "Newest" }),
+    );
+    let next = session
+        .call(
+            "issue.list",
+            &json!({
+                "project_id": 1,
+                "limit": 1,
+                "cursor": newest.ticket_id.to_string(),
+            }),
+        )
+        .expect("a numeric ticket id is still a cursor");
+    assert_eq!(next["issues"][0]["identifier"], middle.identifier);
+}
+
+#[test]
+fn a_missing_reference_names_the_supplied_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let cases = [
+        (
+            "issue.save",
+            json!({ "identifier": "CORE-999", "title": "Unknown" }),
+            "identifier",
+        ),
+        (
+            "issue.get",
+            json!({ "identifier": "CORE-999" }),
+            "identifier",
+        ),
+        (
+            "issue.list",
+            json!({ "parent_id": "CORE-999" }),
+            "parent_id",
+        ),
+        ("issue.list", json!({ "team_id": 999 }), "team_id"),
+        (
+            "issue.save",
+            json!({ "parent_id": "999", "title": "Child" }),
+            "parent_id",
+        ),
+    ];
+    for (name, body, field) in cases {
+        let error = session
+            .call(name, &body)
+            .expect_err("the missing reference is refused");
+        assert_eq!(error.code, ErrorCode::NotFound, "{name} {body:?}");
+        assert_eq!(
+            error.field.as_deref(),
+            Some(field),
+            "{name} {body:?} names {field}, got {error:?}"
+        );
+    }
+}
+
+#[test]
 fn a_legacy_dependency_write_stamps_both_endpoints() {
     let h = legacy_harness();
     let session = &h.session;
@@ -4529,46 +4667,6 @@ fn a_legacy_dependency_write_stamps_both_endpoints() {
     let after_remove = read_issue(session, &blocker.identifier);
     assert!(after_remove.version > before_remove.version);
     assert_ne!(after_remove.updated_at, before_remove.updated_at);
-}
-
-#[test]
-fn a_missing_reference_names_the_supplied_field() {
-    let h = rules_harness();
-    let session = &h.session;
-    let cases = [
-        (
-            "issue.save",
-            json!({ "identifier": "CORE-999", "title": "Unknown" }),
-            "identifier",
-        ),
-        (
-            "issue.get",
-            json!({ "identifier": "CORE-999" }),
-            "identifier",
-        ),
-        (
-            "issue.list",
-            json!({ "parent_id": "CORE-999" }),
-            "parent_id",
-        ),
-        ("issue.list", json!({ "team_id": 999 }), "team_id"),
-        (
-            "issue.save",
-            json!({ "parent_id": "999", "title": "Child" }),
-            "parent_id",
-        ),
-    ];
-    for (name, body, field) in cases {
-        let error = session
-            .call(name, &body)
-            .expect_err("the missing reference is refused");
-        assert_eq!(error.code, ErrorCode::NotFound, "{name} {body:?}");
-        assert_eq!(
-            error.field.as_deref(),
-            Some(field),
-            "{name} {body:?} names {field}, got {error:?}"
-        );
-    }
 }
 
 #[test]

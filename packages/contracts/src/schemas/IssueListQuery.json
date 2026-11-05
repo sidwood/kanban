@@ -9,6 +9,7 @@
       ]
     },
     "cursor": {
+      "description": "Opaque page boundary. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against.",
       "type": [
         "string",
         "null"

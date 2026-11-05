@@ -220,6 +220,9 @@ pub struct IssueListQuery {
     #[serde(default)]
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Opaque page boundary. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against."
+    )]
     pub cursor: Option<String>,
 }
 
@@ -228,6 +231,9 @@ pub struct IssueListQuery {
 pub struct IssueListResponse {
     pub issues: Vec<IssueRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Opaque page boundary for the next page. A numeric ticket id is still accepted. A newly issued cursor also carries the update stamp it was issued against."
+    )]
     pub next_cursor: Option<String>,
 }
 

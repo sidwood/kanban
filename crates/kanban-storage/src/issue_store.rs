@@ -2518,7 +2518,7 @@ fn page_issue_ids(
     query: &kanban_app::IssuePageQuery<'_>,
 ) -> Result<kanban_app::IssuePage, ApiError> {
     let mut sql = String::from(
-        "SELECT t.id FROM tickets AS t
+        "SELECT t.id, t.updated_at FROM tickets AS t
          JOIN projects AS p ON p.id = t.project_id
          LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
          LEFT JOIN issue_workflow_states AS ls
@@ -2590,19 +2590,24 @@ fn page_issue_ids(
         params.push(Box::new(needle.to_owned()));
     }
     if let Some(cursor) = query.cursor {
-        let anchor: Option<String> = conn
-            .query_row(
-                "SELECT updated_at FROM tickets WHERE id = ?1",
-                [cursor as i64],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(internal)?;
-        let Some(anchor_updated_at) = anchor else {
-            return Err(ApiError::invalid_request_field(
-                "cursor",
-                "cursor does not match any listed issue",
-            ));
+        let anchor_updated_at = if let Some(stamp) = query.cursor_updated_at {
+            stamp.to_owned()
+        } else {
+            let anchor: Option<String> = conn
+                .query_row(
+                    "SELECT updated_at FROM tickets WHERE id = ?1",
+                    [cursor as i64],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?;
+            let Some(anchor_updated_at) = anchor else {
+                return Err(ApiError::invalid_request_field(
+                    "cursor",
+                    "cursor does not match any listed issue",
+                ));
+            };
+            anchor_updated_at
         };
         let n = params.len() + 1;
         let m = params.len() + 2;
@@ -2618,19 +2623,19 @@ fn page_issue_ids(
     let rows = statement
         .query_map(
             rusqlite::params_from_iter(params.iter().map(|value| value.as_ref())),
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
         .map_err(internal)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(internal)?;
     let more = rows.len() > query.limit as usize;
+    let kept: Vec<(i64, String)> = rows.into_iter().take(query.limit as usize).collect();
+    let boundary = kept.last().cloned();
     Ok(kanban_app::IssuePage {
-        ticket_ids: rows
-            .into_iter()
-            .take(query.limit as usize)
-            .map(|id| id as u64)
-            .collect(),
+        ticket_ids: kept.iter().map(|(id, _)| *id as u64).collect(),
         more,
+        boundary_updated_at: boundary.as_ref().map(|(_, stamp)| stamp.clone()),
+        boundary_ticket_id: boundary.as_ref().map(|(id, _)| *id as u64),
     })
 }
 

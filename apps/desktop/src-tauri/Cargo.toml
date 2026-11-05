@@ -27,11 +27,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 dirs = "6.0.0"
+kanban-domain = { path = "../../../crates/kanban-domain" }
 kanban-dto = { path = "../../../crates/kanban-dto" }
 kanban-transport = { path = "../../../crates/kanban-transport" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tauri = { version = "2", features = [] }
+# The plugins' next minor lines need Tauri 2.12; these stay on the
+# lines the shell's Tauri 2.11 takes.
+tauri-plugin-deep-link = "~2.4.10"
+tauri-plugin-single-instance = { version = "~2.4.5", features = ["deep-link"] }
 
 [dev-dependencies]
 kanban-app = { path = "../../../crates/kanban-app", features = ["test-support"] }

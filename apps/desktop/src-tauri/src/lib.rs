@@ -83,6 +83,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub mod commands;
 pub mod core_link;
+pub mod issue_link;
 pub mod package_smoke;
 mod shell_handlers;
 
@@ -2613,6 +2614,13 @@ async fn service_login_launch_set(
     .await
 }
 
+/// The WebView listens for issue links now: the shell announces the
+/// one it held for it, if any (see [`issue_link`]).
+#[tauri::command]
+fn issue_link_listen<R: tauri::Runtime>(app: AppHandle<R>) {
+    issue_link::listen(&app);
+}
+
 shell_handlers::shell_handler_catalogue! {
     service_login_launch_set,
     service_login_launch_get,
@@ -2790,14 +2798,34 @@ shell_handlers::shell_handler_catalogue! {
     create_milestone,
     create_label,
     retire_label,
-    update_project_settings,
+    update_project_settings;
+    shell: issue_link_listen,
 }
 
 /// Build the window, start the core on demand, and supervise the
-/// connection for as long as this shell process lives.
+/// connection for as long as this shell process lives. One shell runs
+/// at a time: a second launch hands its arguments, an issue link
+/// above all, to the running one and exits.
 pub fn run() -> tauri::Result<()> {
     tauri::Builder::default()
+        // First, so a second launch is handed over before anything
+        // else of it starts. Its link reaches the deep-link plugin;
+        // a launch with no link only brings the window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, arguments, _| {
+            if arguments.len() <= 1 {
+                issue_link::reveal(app);
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .manage(issue_link::IssueLinks::default())
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                issue_link::page_started(webview);
+            }
+        })
         .setup(|app| {
+            issue_link::attach(app.handle());
+            issue_link::register_scheme(app.handle());
             let socket_path = managed_socket_path()?;
             let shell = Arc::new(Shell::default());
             app.manage(shell.clone());

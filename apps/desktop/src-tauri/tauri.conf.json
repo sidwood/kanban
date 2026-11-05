@@ -27,5 +27,12 @@
   "bundle": {
     "active": false,
     "icon": []
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["kanban"]
+      }
+    }
   }
 }

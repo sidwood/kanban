@@ -3222,6 +3222,360 @@ fn issue_filters_fold_non_ascii_matches() {
 }
 
 #[test]
+fn related_links_remove_from_either_end_and_never_duplicate() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = save_issue(
+        session,
+        0,
+        "undirected-first",
+        json!({ "project_id": 1, "title": "First" }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "undirected-second",
+        json!({ "project_id": 1, "title": "Second" }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &first.identifier).version,
+        "undirected-add-from-first",
+        json!({ "identifier": first.identifier, "add_related": [second.identifier.clone()] }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &second.identifier).version,
+        "undirected-add-from-second",
+        json!({ "identifier": second.identifier, "add_related": [first.identifier.clone()] }),
+    );
+    let from_first = read_issue(session, &first.identifier);
+    assert_eq!(
+        from_first
+            .relations
+            .iter()
+            .filter(|relation| relation.kind == "related")
+            .count(),
+        1,
+        "a link added from both ends lists once"
+    );
+    assert_eq!(
+        read_issue(session, &second.identifier)
+            .relations
+            .iter()
+            .filter(|relation| relation.kind == "related")
+            .count(),
+        1,
+        "the other end lists the same single link"
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &second.identifier).version,
+        "undirected-remove-from-second",
+        json!({ "identifier": second.identifier, "remove_related": [first.identifier.clone()] }),
+    );
+    assert_eq!(
+        read_issue(session, &first.identifier).relations,
+        Vec::<kanban_dto::IssueRelationRecord>::new(),
+        "removing from the end that never stored the row still clears the link"
+    );
+}
+
+#[test]
+fn label_and_relation_changes_move_both_versions() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = save_issue(
+        session,
+        0,
+        "versions-first",
+        json!({ "project_id": 1, "title": "First", "add_labels": ["task"] }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "versions-second",
+        json!({ "project_id": 1, "title": "Second" }),
+    );
+
+    let before = read_issue(session, &first.identifier);
+    save_issue(
+        session,
+        before.version,
+        "versions-add-label",
+        json!({ "identifier": first.identifier, "add_labels": ["bug"] }),
+    );
+    let after_label = read_issue(session, &first.identifier);
+    assert_eq!(
+        after_label.version,
+        before.version + 1,
+        "an added label moves the issue's version"
+    );
+    let stale = try_save(
+        session,
+        before.version,
+        "versions-stale-writer",
+        json!({ "identifier": first.identifier, "remove_labels": ["bug"] }),
+    );
+    assert!(
+        matches!(stale, Err(ref error) if error.code == ErrorCode::StaleVersion),
+        "a writer holding the pre-label version is refused"
+    );
+    save_issue(
+        session,
+        after_label.version,
+        "versions-remove-label",
+        json!({ "identifier": first.identifier, "remove_labels": ["bug"] }),
+    );
+    assert_eq!(
+        read_issue(session, &first.identifier).version,
+        after_label.version + 1,
+        "a removed label moves the issue's version"
+    );
+
+    let first_before = read_issue(session, &first.identifier);
+    let second_before = read_issue(session, &second.identifier);
+    save_issue(
+        session,
+        first_before.version,
+        "versions-block",
+        json!({
+            "identifier": first.identifier,
+            "add_blocks": [second.identifier.clone()],
+        }),
+    );
+    assert_eq!(
+        read_issue(session, &first.identifier).version,
+        first_before.version + 1,
+        "the blocking issue's version moves"
+    );
+    assert_eq!(
+        read_issue(session, &second.identifier).version,
+        second_before.version + 1,
+        "the blocked issue's version moves with the same edge"
+    );
+}
+
+#[test]
+fn a_child_moved_under_a_new_parent_joins_the_end() {
+    let h = rules_harness();
+    let session = &h.session;
+    let parent = save_issue(
+        session,
+        0,
+        "move-parent",
+        json!({ "project_id": 1, "title": "Parent" }),
+    );
+    let other_parent = save_issue(
+        session,
+        0,
+        "move-other",
+        json!({ "project_id": 1, "title": "Other parent" }),
+    );
+    let first_child = save_issue(
+        session,
+        0,
+        "move-first-child",
+        json!({
+            "project_id": 1,
+            "title": "Stays first",
+            "parent_id": parent.identifier.clone(),
+        }),
+    );
+    let second_child = save_issue(
+        session,
+        0,
+        "move-second-child",
+        json!({
+            "project_id": 1,
+            "title": "Stays second",
+            "parent_id": parent.identifier.clone(),
+        }),
+    );
+    let mover = save_issue(
+        session,
+        0,
+        "move-child",
+        json!({ "project_id": 1, "title": "Moves in" }),
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &mover.identifier).version,
+        "move-under",
+        json!({
+            "identifier": mover.identifier,
+            "parent_id": parent.identifier.clone(),
+        }),
+    );
+    let children = read_issue(session, &parent.identifier)
+        .children
+        .expect("the parent holds children");
+    assert_eq!(
+        children
+            .iter()
+            .map(|child| child.identifier.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            first_child.identifier.clone(),
+            second_child.identifier.clone(),
+            mover.identifier.clone(),
+        ],
+        "a child that moves in joins the end of the manual order"
+    );
+
+    save_issue(
+        session,
+        read_issue(session, &second_child.identifier).version,
+        "move-second-under",
+        json!({
+            "identifier": second_child.identifier,
+            "parent_id": other_parent.identifier,
+        }),
+    );
+    let remaining = read_issue(session, &parent.identifier)
+        .children
+        .expect("the parent holds children");
+    assert_eq!(
+        remaining
+            .iter()
+            .map(|child| child.identifier.clone())
+            .collect::<Vec<_>>(),
+        vec![first_child.identifier.clone(), mover.identifier.clone()],
+        "the moved child leaves its old parent's order"
+    );
+}
+
+#[test]
+fn markdown_link_and_deep_link_mentions_relate_issues() {
+    let h = rules_harness();
+    let session = &h.session;
+    let bare = save_issue(
+        session,
+        0,
+        "mention-bare",
+        json!({ "project_id": 1, "title": "Bare" }),
+    );
+    let linked = save_issue(
+        session,
+        0,
+        "mention-linked",
+        json!({ "project_id": 1, "title": "Linked" }),
+    );
+    let deep = save_issue(
+        session,
+        0,
+        "mention-deep",
+        json!({ "project_id": 1, "title": "Deep linked" }),
+    );
+
+    let host = save_issue(
+        session,
+        0,
+        "mention-host",
+        json!({
+            "project_id": 1,
+            "title": "Host",
+            "description": format!(
+                "See {bare}, or [the plan]({linked}), or the deep link kanban://issue/{deep}.",
+                bare = bare.identifier,
+                linked = linked.identifier,
+                deep = deep.identifier,
+            ),
+        }),
+    );
+
+    let relations = read_issue(session, &host.identifier).relations;
+    let mut related: Vec<String> = relations
+        .iter()
+        .filter(|relation| relation.kind == "related")
+        .map(|relation| relation.identifier.clone())
+        .collect();
+    related.sort();
+    let mut expected = vec![bare.identifier, linked.identifier, deep.identifier];
+    expected.sort();
+    assert_eq!(
+        related, expected,
+        "a bare key, a Markdown link, and a kanban deep link all relate their issues"
+    );
+}
+
+#[test]
+fn closed_children_close_their_parent_on_create_and_move() {
+    let h = rules_harness();
+    let session = &h.session;
+    session
+        .call(
+            "issue.update_project_settings",
+            &json!({
+                "mutation": mutation(0, "autoclose-settings"),
+                "project_id": 1,
+                "auto_close_sub_issues": true,
+            }),
+        )
+        .expect("auto-close turns on");
+    let parent = save_issue(
+        session,
+        0,
+        "autoclose-parent",
+        json!({ "project_id": 1, "title": "Parent" }),
+    );
+    let child = save_issue(
+        session,
+        0,
+        "autoclose-child",
+        json!({ "project_id": 1, "title": "Born done", "state": "Done" }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &child.identifier).version,
+        "autoclose-attach",
+        json!({
+            "identifier": child.identifier,
+            "parent_id": parent.identifier.clone(),
+        }),
+    );
+    assert_eq!(
+        read_issue(session, &parent.identifier).state,
+        "Done",
+        "attaching an already-closed child closes the parent"
+    );
+
+    let second_parent = save_issue(
+        session,
+        0,
+        "autoclose-second",
+        json!({ "project_id": 1, "title": "Second parent" }),
+    );
+    let open_child = save_issue(
+        session,
+        0,
+        "autoclose-open-child",
+        json!({
+            "project_id": 1,
+            "title": "Open child",
+            "parent_id": second_parent.identifier.clone(),
+        }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &open_child.identifier).version,
+        "autoclose-move-closed",
+        json!({
+            "identifier": open_child.identifier,
+            "parent_id": second_parent.identifier.clone(),
+            "state": "Done",
+        }),
+    );
+    assert_eq!(
+        read_issue(session, &second_parent.identifier).state,
+        "Done",
+        "a child that closes by moving states still closes its parent"
+    );
+}
+
+#[test]
 fn unknown_references_name_their_request_field() {
     let h = rules_harness();
     let session = &h.session;
@@ -3301,9 +3655,16 @@ fn relation_lists_take_ticket_ids_and_name_their_field() {
         session,
         0,
         "relations-second",
-        json!({ "project_id": 1, "title": "Related issue" }),
+        json!({ "project_id": 1, "title": "Blocked issue" }),
+    );
+    let third = save_issue(
+        session,
+        0,
+        "relations-third",
+        json!({ "project_id": 1, "title": "Blocking issue" }),
     );
     let second_id = second.ticket_id.to_string();
+    let third_id = third.ticket_id.to_string();
     let identifier = first.identifier.clone();
 
     save_issue(
@@ -3327,7 +3688,7 @@ fn relation_lists_take_ticket_ids_and_name_their_field() {
         session,
         blocked.version,
         "relations-blocked-by",
-        json!({ "identifier": identifier, "add_blocked_by": [second_id.clone()] }),
+        json!({ "identifier": identifier, "add_blocked_by": [third_id.clone()] }),
     );
     save_issue(
         session,
@@ -3345,7 +3706,7 @@ fn relation_lists_take_ticket_ids_and_name_their_field() {
         session,
         read_issue(session, &identifier).version,
         "relations-remove-blocked-by",
-        json!({ "identifier": identifier, "remove_blocked_by": [second_id.clone()] }),
+        json!({ "identifier": identifier, "remove_blocked_by": [third_id.clone()] }),
     );
     let last = save_issue(
         session,

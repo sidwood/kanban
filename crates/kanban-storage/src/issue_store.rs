@@ -1163,40 +1163,130 @@ impl SqliteIssueStore {
         target_id: i64,
     ) -> Result<(), ApiError> {
         let conn = self.lock();
+        let mut relation_query = conn
+            .prepare(
+                "SELECT from_ticket_id, to_ticket_id, kind
+                 FROM issue_relations
+                 WHERE from_ticket_id = ?1 OR to_ticket_id = ?1",
+            )
+            .map_err(internal)?;
+        let relations = relation_query
+            .query_map([ticket_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)?;
+        drop(relation_query);
+        let mut dependency_query = conn
+            .prepare(
+                "SELECT from_ticket, to_ticket
+                 FROM ticket_dependencies
+                 WHERE from_ticket = ?1 OR to_ticket = ?1",
+            )
+            .map_err(internal)?;
+        let dependencies = dependency_query
+            .query_map([ticket_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)?;
+        drop(dependency_query);
         conn.execute(
             "DELETE FROM issue_relations
-             WHERE from_ticket_id = ?1 AND to_ticket_id = ?1",
+             WHERE from_ticket_id = ?1 OR to_ticket_id = ?1",
             [ticket_id],
         )
         .map_err(internal)?;
         conn.execute(
-            "DELETE FROM issue_relations
-             WHERE (from_ticket_id = ?1 AND to_ticket_id = ?2)
-                OR (from_ticket_id = ?2 AND to_ticket_id = ?1)",
-            params![ticket_id, target_id],
+            "DELETE FROM ticket_dependencies
+             WHERE from_ticket = ?1 OR to_ticket = ?1",
+            [ticket_id],
         )
         .map_err(internal)?;
-        conn.execute(
-            "UPDATE issue_relations SET from_ticket_id = ?2
-             WHERE from_ticket_id = ?1 AND to_ticket_id != ?2",
-            params![ticket_id, target_id],
-        )
-        .map_err(internal)?;
-        conn.execute(
-            "UPDATE issue_relations SET to_ticket_id = ?2
-             WHERE to_ticket_id = ?1 AND from_ticket_id != ?2",
-            params![ticket_id, target_id],
-        )
-        .map_err(internal)?;
-        conn.execute(
-            "DELETE FROM issue_relations
-             WHERE rowid NOT IN (
-                 SELECT MIN(rowid) FROM issue_relations
-                 GROUP BY from_ticket_id, to_ticket_id, kind
-             )",
-            [],
-        )
-        .map_err(internal)?;
+        let mut affected = std::collections::BTreeSet::new();
+        for (from, to, kind) in relations {
+            let other = if from == ticket_id { to } else { from };
+            if other == ticket_id {
+                continue;
+            }
+            affected.insert(other);
+            if other == target_id {
+                affected.insert(target_id);
+                continue;
+            }
+            let inserted = if kind == "related" {
+                let (low, high) = if target_id < other {
+                    (target_id, other)
+                } else {
+                    (other, target_id)
+                };
+                conn.execute(
+                    "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+                     VALUES (?1, ?2, 'related')",
+                    params![low, high],
+                )
+                .map_err(internal)?
+            } else {
+                let (new_from, new_to) = if from == ticket_id {
+                    (target_id, other)
+                } else {
+                    (other, target_id)
+                };
+                if new_from == new_to {
+                    0
+                } else {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO issue_relations (from_ticket_id, to_ticket_id, kind)
+                         VALUES (?1, ?2, ?3)",
+                        params![new_from, new_to, kind],
+                    )
+                    .map_err(internal)?
+                }
+            };
+            if inserted > 0 {
+                affected.insert(target_id);
+            }
+        }
+        for (from, to) in dependencies {
+            let other = if from == ticket_id { to } else { from };
+            if other == ticket_id {
+                continue;
+            }
+            affected.insert(other);
+            if other == target_id {
+                affected.insert(target_id);
+                continue;
+            }
+            let (new_from, new_to) = if from == ticket_id {
+                (target_id, other)
+            } else {
+                (other, target_id)
+            };
+            if new_from == new_to {
+                continue;
+            }
+            let inserted = conn
+                .execute(
+                    "INSERT OR IGNORE INTO ticket_dependencies (from_ticket, to_ticket)
+                     VALUES (?1, ?2)",
+                    params![new_from, new_to],
+                )
+                .map_err(internal)?;
+            if inserted > 0 {
+                affected.insert(target_id);
+            }
+        }
+        drop(conn);
+        affected.remove(&ticket_id);
+        for id in affected {
+            self.bump_version(id)?;
+        }
         Ok(())
     }
 
@@ -1401,7 +1491,6 @@ impl SqliteIssueStore {
         let key = self.load_issue_key(ticket_id)?;
         self.remove_relation(blocker_id, &key.display(), "blocks")
     }
-
 
     pub fn sync_description_mentions(
         &self,

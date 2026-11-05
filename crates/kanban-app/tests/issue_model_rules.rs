@@ -3990,3 +3990,87 @@ fn a_cycle_closing_block_is_refused_by_its_field() {
     );
 }
 
+
+#[test]
+fn a_duplicate_merge_keeps_edges_the_target_already_has() {
+    let h = rules_harness();
+    let session = &h.session;
+    let duplicate = save_issue(
+        session,
+        0,
+        "merge-duplicate",
+        json!({ "project_id": 1, "title": "Duplicate" }),
+    );
+    let target = save_issue(
+        session,
+        0,
+        "merge-target",
+        json!({ "project_id": 1, "title": "Target" }),
+    );
+    let neighbour = save_issue(
+        session,
+        0,
+        "merge-neighbour",
+        json!({ "project_id": 1, "title": "Neighbour" }),
+    );
+    let blocker = save_issue(
+        session,
+        0,
+        "merge-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    );
+    for issue in [&duplicate, &target] {
+        save_issue(
+            session,
+            read_issue(session, &issue.identifier).version,
+            &format!("merge-relate-{}", issue.ticket_id),
+            json!({ "identifier": issue.identifier, "add_related": [neighbour.identifier.clone()] }),
+        );
+        save_issue(
+            session,
+            read_issue(session, &issue.identifier).version,
+            &format!("merge-block-{}", issue.ticket_id),
+            json!({ "identifier": issue.identifier, "add_blocked_by": [blocker.identifier.clone()] }),
+        );
+    }
+    let neighbour_before = read_issue(session, &neighbour.identifier).version;
+    let blocker_before = read_issue(session, &blocker.identifier).version;
+    save_issue(
+        session,
+        read_issue(session, &duplicate.identifier).version,
+        "merge-mark",
+        json!({ "identifier": duplicate.identifier, "duplicate_of": target.identifier.clone() }),
+    );
+    let merged = read_issue(session, &duplicate.identifier);
+    assert_eq!(merged.state, "Duplicate");
+    assert_eq!(
+        merged.duplicate_of.as_deref(),
+        Some(target.identifier.as_str())
+    );
+    let kept = read_issue(session, &target.identifier);
+    assert_eq!(
+        kept.relations
+            .iter()
+            .filter(|relation| relation.kind == "related")
+            .count(),
+        1,
+        "the shared related neighbour is kept once"
+    );
+    assert_eq!(
+        kept.relations
+            .iter()
+            .filter(|relation| relation.kind == "blocked-by")
+            .count(),
+        1,
+        "the shared blocker is kept once"
+    );
+    assert!(
+        read_issue(session, &neighbour.identifier).version > neighbour_before,
+        "a neighbour whose edge moved gets a new version"
+    );
+    assert!(
+        read_issue(session, &blocker.identifier).version > blocker_before,
+        "a blocker whose edge moved gets a new version"
+    );
+}
+

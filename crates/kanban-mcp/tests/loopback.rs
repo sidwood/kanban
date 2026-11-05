@@ -9,6 +9,7 @@ use rmcp::{
     },
 };
 use serde_json::{Value, json};
+use std::io::{BufRead, Write};
 use std::{sync::Arc, time::Duration};
 #[path = "../../kanban-app/tests/common/mod.rs"]
 mod common;
@@ -588,6 +589,226 @@ async fn operator_route_serves_one_comment_stream_per_issue() {
         required.contains(&"author"),
         "the live input schema must require author: {required:?}"
     );
+
+    client.cancel().await.unwrap();
+    service.shutdown();
+}
+
+fn wait_for_live_event(
+    reader: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+    want: &str,
+    ticket_id: u64,
+) -> Value {
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut line = String::new();
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let Ok(frame) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if frame["kind"] != "event" {
+                    continue;
+                }
+                let event = frame["event"].clone();
+                seen.push(event["event_type"].clone());
+                if event["event_type"] == want && event["payload"]["id"] == json!(ticket_id) {
+                    return event;
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break;
+            }
+            Err(error) => panic!("the event stream stopped: {error}"),
+        }
+    }
+    panic!("no {want} for ticket {ticket_id}; saw {seen:?}");
+}
+
+fn subscribe_live_events(
+    service: &kanban_service::CoreProcess,
+) -> std::io::BufReader<std::os::unix::net::UnixStream> {
+    let mut stream = std::os::unix::net::UnixStream::connect(service.socket_path()).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    writeln!(stream, "{{\"kind\":\"subscribe\"}}").unwrap();
+    stream.flush().unwrap();
+    let mut reader = std::io::BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(
+        line.contains("\"kind\":\"subscribed\""),
+        "the socket subscribed: {line}"
+    );
+    reader
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operator_route_applies_an_omitted_mutation_and_publishes_the_edit() {
+    let h = common::harness();
+    let secret = Arc::new(InstallationSecret::from_key(&[47; 32]));
+    let service = kanban_service::serve_with_http(
+        h._dir.path(),
+        kanban_service::ServiceRuntime {
+            mcp_executable: env!("CARGO_BIN_EXE_kanban-mcp").into(),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let mut events = subscribe_live_events(&service);
+    let client = operator_client(&service, &secret).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let save_tool = tools
+        .iter()
+        .find(|tool| tool.name == "save_issue")
+        .expect("save_issue is listed");
+    let save_schema = serde_json::to_value(&save_tool.input_schema).unwrap();
+    let required = save_schema["required"].as_array();
+    assert!(
+        required.is_none_or(|fields| !fields.iter().any(|field| field == "mutation")),
+        "the live operator schema must not require mutation: {save_schema}"
+    );
+
+    let created = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Written without a mutation" }),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        !created.is_error.unwrap_or(false),
+        "an omitted mutation still creates: {created:?}"
+    );
+    let created = created.structured_content.unwrap();
+    let identifier = created["identifier"].as_str().unwrap().to_owned();
+    let ticket_id = created["ticket_id"].as_u64().unwrap();
+    let created_event = wait_for_live_event(&mut events, "ticket.created", ticket_id);
+    assert_eq!(
+        created_event["payload"]["title"],
+        json!("Written without a mutation")
+    );
+
+    let renamed = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "identifier": identifier, "title": "Renamed without a mutation" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!renamed.is_error.unwrap_or(false), "{renamed:?}");
+    let edited = wait_for_live_event(&mut events, "ticket.edited", ticket_id);
+    assert_eq!(
+        edited["payload"]["title"],
+        json!("Renamed without a mutation")
+    );
+
+    let stale = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "mutation": common::mutation(0, "stale-operator-write"),
+                "identifier": identifier,
+                "title": "Stale writer",
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        stale.is_error.unwrap_or(false),
+        "a sent stale version is refused"
+    );
+    assert_eq!(
+        stale.structured_content.unwrap()["code"],
+        json!("stale_version")
+    );
+    let kept = client
+        .call_tool(call("get_issue", json!({ "identifier": identifier })))
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.structured_content.unwrap()["title"],
+        json!("Renamed without a mutation")
+    );
+
+    let other = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Blocked neighbour" }),
+        ))
+        .await
+        .unwrap();
+    let other = other.structured_content.unwrap();
+    let other_key = other["identifier"].as_str().unwrap().to_owned();
+    let other_before = client
+        .call_tool(call("get_issue", json!({ "identifier": other_key })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap()["version"]
+        .clone();
+    let blocked = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "identifier": identifier, "add_blocks": [other_key] }),
+        ))
+        .await
+        .unwrap();
+    assert!(!blocked.is_error.unwrap_or(false), "{blocked:?}");
+    let host = client
+        .call_tool(call("get_issue", json!({ "identifier": identifier })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(
+        host["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|relation| relation["kind"] == "blocks" && relation["identifier"] == other_key),
+        "the block is visible on the writer: {}",
+        host["relations"]
+    );
+    let neighbour = client
+        .call_tool(call("get_issue", json!({ "identifier": other_key })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(
+        neighbour["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|relation| {
+                relation["kind"] == "blocked-by" && relation["identifier"] == identifier
+            }),
+        "the other end lists the same edge: {}",
+        neighbour["relations"]
+    );
+    assert!(
+        neighbour["version"].as_u64().unwrap() > other_before.as_u64().unwrap(),
+        "the other end of the block is versioned"
+    );
+    let relation_event = wait_for_live_event(&mut events, "ticket.edited", ticket_id);
+    assert_eq!(relation_event["payload"]["id"], json!(ticket_id));
 
     client.cancel().await.unwrap();
     service.shutdown();

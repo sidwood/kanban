@@ -13,7 +13,7 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | --- | --- | --- |
 | `save_issue` | `issue.save` | Create or update title, description, state, priority, due date, milestone, labels, parent (in any project), duplicate-of, relations, and blocked-by |
 | `get_issue` | `issue.get` | Read one issue by `TEAM-N` key with relations, sub-issue progress, state history, lifecycle timestamps, version, and timestamps |
-| `list_issues` | `issue.list` | Filter by project/team, state, label, milestone, text query, parent (children in every project unless a project filter narrows them), and `updated_since`; paginate with `cursor` and `limit` (default 50) |
+| `list_issues` | `issue.list` | Filter by project/team, state, label, milestone, assignee, text query, parent (children in every project unless a project filter narrows them), and `updated_since`; paginate with `cursor` and `limit` (default 50). `team` is a project code and `project` is a Project-group label name. Default rows omit description and history; `fields` asks for them |
 | `list_issue_statuses` | `issue.list_workflow_states` | Workflow states with Linear types for a project |
 | `list_issue_labels` | `issue.list_labels` | Labels and groups (including single-select groups), including retired labels |
 | `list_milestones` | `issue.list_milestones` | Milestones for a project with issue progress counts |
@@ -22,7 +22,7 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | `create_label` | `issue.create_label` | Create a label (and optional group) on a project |
 | `retire_label` | `issue.retire_label` | Retire (archive) a label on a project |
 | `update_project_settings` | `issue.update_project_settings` | Per-project sub-issue settings, both default off: `auto_close_sub_issues` closes a parent once its sub-issues close; `close_sub_issues_with_parent` closes open sub-issues when their parent closes. Returns both |
-| `comment_create` | `comment.create` | Post a comment (optional thread parent); body stored without trimming trailing newlines |
+| `comment_create` | `comment.create` | Post a comment by issue key and body (optional thread parent). Also offered as `save_comment`. The author defaults to the configured operator name |
 | `comment_edit` | `comment.edit` | Append a revision to an existing comment |
 | `comment_revisions` | `comment.revisions` | Read comment history |
 | `list_comments` | `comment.list` | List comments on an issue (oldest first, cursor paging), including resolve state |
@@ -79,8 +79,10 @@ cannot fail on them.
 
 ## Comment authors
 
-`comment_create` requires an `author`, because the core holds no operator
-identity to default from. Migration `0056` keeps a timeline author where one
+`comment_create` and `save_comment` take an issue key and body. On the
+operator session the author defaults to the configured operator name and
+can be overridden; the core still refuses a blank author when none is
+supplied. Migration `0056` keeps a timeline author where one
 was recorded. Only a comment with no recorded author — a blank or
 whitespace-only stored author — is shown as `Unknown author`.
 

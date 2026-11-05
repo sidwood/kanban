@@ -10,7 +10,7 @@ ticket row plus issue metadata (workflow state, labels, relations, sub-issues, d
   Ready, Active, In Review, Approved, Landing, Done, Cancelled, Superseded, Duplicate). There
   are no Linear name aliases. Operator `issue.save` applies **free transitions** by state name;
   history is recorded in `issue_state_history`.
-- **Priority:** Linear scale 1–4 (urgent → low).
+- **Priority:** Linear scale 0–4 (0 = no priority, then urgent → low). Linear state names such as Todo are refused; only the Kanban names above are accepted.
 - **Due date, milestone, parent, duplicate-of:** Optional. Send JSON `null` on update to clear
   due date, milestone, or parent.
 - **Relations:** `blocks`, `blocked-by`, and `related`. Related links are listed from both ends.

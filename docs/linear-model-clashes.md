@@ -10,14 +10,14 @@ it, and what still needs a product decision.
 |---|---|---|---|
 | Three ticket kinds with enforced fields | SQL CHECK and triggers require kind-specific columns | Migration `0053` adds labels and Linear fields; migration `0054` relaxes CHECK/triggers so kind fields are optional and merges task `due` into `due_date`. | None. |
 | Single issue type | `implementation`, `bug`, `task` | Per-project **Type** label group (single-select) seeded from existing `kind`. | None. |
-| Assignee / delegate | No assignee field | Not stored yet; MCP acceptance tests mention assignee filters. **Remaining:** assignee column or profile link. | Sid: is assignee a local profile name, free text, or omitted for v1? |
+| Assignee / delegate | Free-text assignee column | Stored on the issue and filterable on `list_issues`. `me` means the configured operator name. | Whether assignee is a local profile name is still open. |
 
 ## Workflow
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
 | Fixed transition table | Domain enforces allowed transitions and actor ownership | Legacy `state` column kept; per-project `issue_workflow_states` with Linear **types** seeded from the default names **plus Duplicate**. Operator `issue.save` applies **free transitions** via `IssueStore::apply_free_state` with history rows; UI drag still uses lifecycle rules until product changes. | None for operator path. |
-| Board driven by `TicketState` | `board_group_for(TicketState)` | Workflow states carry `legacy_state`; board projection unchanged until UI reads types. **Remaining:** map by state **type** when custom names differ. | None. |
+| Board driven by `TicketState` | `board_group_for(TicketState)` | Board projection by workflow state type no longer applies. The board keeps the legacy grouping. | None. |
 | Superseded vs duplicate | Superseded is terminal; duplicate was mapped to superseded legacy | **Duplicate** has its own workflow state and legacy `duplicate` value. `duplicate_of` on save moves relations to the canonical issue and transitions the duplicate issue to Duplicate. | None. |
 | Linear state names | Linear teams name states such as Todo and In Progress | Only Kanban's own names, with Linear types stored beside them. No Linear name aliases. | Settled: no Linear aliases. |
 
@@ -42,7 +42,7 @@ it, and what still needs a product decision.
 
 | Clash | Kanban today | Resolution | Product decision |
 |---|---|---|---|
-| Flat comments with revisions | No threads/resolution | `author` on `comments` (migration `0056`); `comment.list` returns author and timestamps. Thread columns exist; resolve UI not exposed. | None for list parity. |
+| Flat comments with revisions | Threads and resolve are on the operator MCP | `parent_comment_id` threads a reply. `resolve_comment` resolves or clears a thread. The desktop resolve UI is not exposed. | None for MCP parity. |
 | Unrecorded comment authors | The ticket model kept no comment author | Migration `0056` keeps a timeline author where one was recorded and stores an empty author only when none was. `comment.list` shows that empty author as `Unknown author` (`displayed_comment_author` in `kanban-domain`) without rewriting the row. A stored literal `Unknown author` from the timeline is kept. `comment.create` refuses that placeholder. Reply, edit, and resolve are unchanged. See [mcp-operator.md](./mcp-operator.md#comment-authors). | Placeholder reserved; only unrecorded authors use it. |
 
 ## Projects and milestones
@@ -103,7 +103,6 @@ These are decided and are no longer open questions:
 
 ## Remaining work (product)
 
-1. Assignee/delegate field and filters. A free-text assignee column exists;
-   whether it is a local profile name is still open.
-2. Comment threads and resolve in UI/MCP.
-3. Board projection by workflow state **type** when names diverge from legacy defaults.
+1. Whether assignee is a local profile name. The column is stored and filterable.
+2. Comment resolve in the desktop UI. Threads and resolve are already on the MCP.
+3. A single issue editor in the desktop UI.

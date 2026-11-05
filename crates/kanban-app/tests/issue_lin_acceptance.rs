@@ -2445,9 +2445,14 @@ fn issue_save_errors_carry_the_offending_field() {
             "issue.save",
             &json!({ "project_id": 1, "title": "No mutation context" }),
         )
-        .expect_err("a payload without a mutation context is refused");
-    assert_eq!(bare.code, ErrorCode::InvalidRequest);
-    assert_eq!(bare.field.as_deref(), Some("mutation"));
+        .expect("an omitted operator mutation still applies");
+    let bare_key = bare["identifier"]
+        .as_str()
+        .expect("the created issue has a key");
+    let stored = session
+        .call("issue.get", &json!({ "identifier": bare_key }))
+        .expect("the created issue reads back");
+    assert_eq!(stored["title"], json!("No mutation context"));
 
     let identified = session
         .call("issue.get", &json!({ "identifier": 9 }))

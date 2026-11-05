@@ -22,8 +22,6 @@ const { ticket, legalTargets, projectCode, locked } = defineProps<{
   legalTargets: readonly string[]
   projectCode: string
   locked: boolean
-  /** @deprecated unused; workflow names are shown directly */
-  stateLabels?: Record<string, string>
 }>()
 
 const emit = defineEmits<{

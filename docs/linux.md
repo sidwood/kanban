@@ -38,6 +38,16 @@ From the repository root:
 just bootstrap
 ```
 
+## Issue links
+
+Each start of the desktop shell makes the running executable the handler
+for `kanban://` links: it writes `kanban-desktop-handler.desktop` under
+`$XDG_DATA_HOME/applications` and runs `update-desktop-database` and
+`xdg-mime default`. If either command is missing, the shell logs that the
+scheme was not registered and starts anyway. A link opened while the app
+runs is handed to it over the D-Bus session bus, and the second launch
+exits without opening a window.
+
 ## Platform gaps on Linux
 
 Launch at login and native macOS notifications are **unavailable** on Linux;

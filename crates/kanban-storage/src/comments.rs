@@ -8,7 +8,7 @@ use kanban_dto::{
     ApiError, CommentListItem, CommentRecord, CommentRevisionRecord, TimelineEntityKind,
     TimelineEntityRef, TimelineEventKind,
 };
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde_json::json;
 
 use crate::db::{ConnectionHandle, Database, WriteSpan};
@@ -195,7 +195,9 @@ impl CommentStore for SqliteCommentStore {
     fn set_resolved(&self, id: CommentId, resolved: bool) -> Result<u64, ApiError> {
         let conn = self.lock();
         // Resolving and unresolving each advance the aggregate the
-        // way an edit does, so concurrent writers stay guarded.
+        // way an edit does, so concurrent writers stay guarded; an
+        // unresolve of a comment already unresolved changes nothing
+        // and answers with the version it found.
         let changed = if resolved {
             conn.execute(
                 "UPDATE comments
@@ -207,13 +209,32 @@ impl CommentStore for SqliteCommentStore {
             .map_err(internal)?
         } else {
             conn.execute(
-                "UPDATE comments SET resolved_at = NULL, version = version + 1 WHERE id = ?1",
+                "UPDATE comments SET resolved_at = NULL, version = version + 1
+                 WHERE id = ?1 AND resolved_at IS NOT NULL",
                 params![id.value() as i64],
             )
             .map_err(internal)?
         };
         if changed == 0 {
-            return Err(ApiError::not_found(&format!("comment {}", id.value())));
+            let resolved_at: Option<Option<String>> = conn
+                .query_row(
+                    "SELECT resolved_at FROM comments WHERE id = ?1",
+                    params![id.value() as i64],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(internal)?;
+            if resolved_at.is_none() {
+                return Err(ApiError::not_found(&format!("comment {}", id.value())));
+            }
+            let version: i64 = conn
+                .query_row(
+                    "SELECT version FROM comments WHERE id = ?1",
+                    params![id.value() as i64],
+                    |row| row.get(0),
+                )
+                .map_err(internal)?;
+            return Ok(version.unsigned_abs());
         }
         let version: i64 = conn
             .query_row(
@@ -776,6 +797,25 @@ mod revision_store {
         assert_eq!(items[0].version, 3);
         assert!(items[0].resolved_at.is_none());
     }
+    #[test]
+    fn unresolving_an_unresolved_comment_changes_nothing() {
+        let (_dir, _database, store) = store();
+        store
+            .create(1, &target(), &text("first thought"), "tester", None)
+            .expect("the create lands");
+
+        let version = store
+            .set_resolved(CommentId::new(1), false)
+            .expect("the no-op unresolve serves");
+        assert_eq!(version, 1, "an unresolved comment keeps its version");
+        let any_row = |_: &str| Ok(true);
+        let (items, _) = store
+            .list_for_target(&target(), &any_row, 10, None)
+            .expect("the list serves");
+        assert_eq!(items[0].version, 1);
+        assert!(items[0].resolved_at.is_none());
+    }
+
     #[test]
     fn resolution_changes_never_report_a_body_edit() {
         let (_dir, _database, store) = store();

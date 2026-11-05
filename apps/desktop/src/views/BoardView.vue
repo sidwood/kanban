@@ -37,6 +37,7 @@ import TicketDrawerActions from '../components/TicketDrawerActions.vue'
 import TicketReviewSections from '../components/TicketReviewSections.vue'
 import { kanbanTransportKey, asApiError } from '../core/transport'
 import { useBoardStore } from '../stores/board'
+import { useIssueLinkStore } from '../stores/issue-link'
 import { useIssueOverlayStore } from '../stores/issue-overlay'
 import { usePreferencesStore } from '../stores/preferences'
 import { useProjectRegisterStore } from '../stores/project-register'
@@ -115,6 +116,7 @@ const route = useRoute()
 const router = useRouter()
 const projects = useProjectRegisterStore()
 const board = useBoardStore()
+const issueLink = useIssueLinkStore()
 const issueOverlay = useIssueOverlayStore()
 const savedViews = useSavedViewsStore()
 const collapse = usePreferencesStore()
@@ -1210,10 +1212,10 @@ const columnWidthStyle = (collapsed: boolean): Record<string, string> =>
       </p>
 
       <InlineAlert
-        v-if="board.error || savedViews.error"
+        v-if="board.error || savedViews.error || issueLink.error"
         data-testid="board-error"
       >
-        {{ board.error ?? savedViews.error }}
+        {{ board.error ?? savedViews.error ?? issueLink.error }}
       </InlineAlert>
 
       <InlineAlert

@@ -5,15 +5,17 @@
 // domain rules never live in components, and the application talks
 // to the core through the generated client.
 import { inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppRail from './components/shell/AppRail.vue'
 import AppTopBar from './components/shell/AppTopBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import QuickBugDialog from './components/QuickBugDialog.vue'
 import TicketEditorDialog from './components/TicketEditorDialog.vue'
+import { issueLinkSourceKey } from './core/issue-links'
 import { applyTheme, loadTheme } from './core/theme'
 import { kanbanTransportKey } from './core/transport'
 import { useConnectionStore } from './stores/connection'
+import { useIssueLinkStore } from './stores/issue-link'
 import { usePaletteStore } from './stores/palette'
 import { usePreferencesStore } from './stores/preferences'
 import { useProjectRegisterStore } from './stores/project-register'
@@ -22,9 +24,12 @@ import { useTicketDialogStore } from './stores/ticket-dialog'
 import { ATTENTION_POLL_MS, NARROW_WIDTH_PX, useShellStore } from './stores/shell'
 
 const transport = inject(kanbanTransportKey)
+const issueLinks = inject(issueLinkSourceKey, null)
 const route = useRoute()
+const router = useRouter()
 const palette = usePaletteStore()
 const connection = useConnectionStore()
+const issueLink = useIssueLinkStore()
 const preferences = usePreferencesStore()
 const projects = useProjectRegisterStore()
 const scope = useScopeStore()
@@ -34,7 +39,15 @@ const root = ref<HTMLElement | null>(null)
 let observer: ResizeObserver | undefined
 let poll: ReturnType<typeof setInterval> | undefined
 let stopProjectEvents: (() => void) | undefined
+let stopIssueLinks: (() => void) | undefined
 let attentionInFlight = false
+
+// An issue link opens once the core can resolve its key: at once
+// while connected, otherwise on the next connection, which is how the
+// link that launched the application waits for the core.
+function openIssueLink(): void {
+  if (transport && connection.phase === 'connected') void issueLink.openPending(transport, router)
+}
 
 // The width the shell has to work with decides the rail and the
 // board's stacking; measured on the shell itself, the window as the
@@ -98,6 +111,10 @@ onMounted(() => {
         void projects.refresh(transport).then(() => scope.reconcile(projects.projects))
       }
     })
+    stopIssueLinks = issueLinks?.onIssueLink((link) => {
+      issueLink.receive(link.identifier)
+      openIssueLink()
+    })
   }
   // No live event announces an Attention item, so the badge re-reads
   // the inbox on the inbox's own cadence.
@@ -109,13 +126,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', measure)
   observer?.disconnect()
   stopProjectEvents?.()
+  stopIssueLinks?.()
   if (poll !== undefined) clearInterval(poll)
 })
 
 // A connection — the first and every one after — reads the register,
-// the inbox, and how the operator keeps the shell arranged; a scope
-// naming a Project the register no longer offers falls back to every
-// Project.
+// the inbox, and how the operator keeps the shell arranged, and opens
+// an issue link still waiting for the core; a scope naming a Project
+// the register no longer offers falls back to every Project.
 watch(
   () => connection.phase,
   (phase) => {
@@ -123,19 +141,22 @@ watch(
       void projects.refresh(transport).then(() => scope.reconcile(projects.projects))
       void preferences.refresh(transport)
       void refreshAttention()
+      openIssueLink()
     }
   },
   { immediate: true },
 )
 
 // Arriving on a board adopts its scope; every arrival refreshes the
-// inbox count.
+// inbox count and lets go of an issue link's refusal reported on
+// another route.
 watch(
   () => route.fullPath,
   () => {
     if (route.name === 'board' || route.name === 'global-board') {
       scope.adoptRoute(route.params as { projectId?: string | string[] })
     }
+    issueLink.follow(route.fullPath)
     void refreshAttention()
   },
   { immediate: true },

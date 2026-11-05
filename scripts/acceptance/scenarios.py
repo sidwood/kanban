@@ -745,9 +745,10 @@ def test_update(ctx):
 def stamp_problems(record):
     """How the stamps on one record differ from Linear's rules after a move.
 
-    Completed and canceled stamps mark the latest entry into that type.
-    The started stamp must mark an entry into a started state; the model
-    does not say whether a re-entry restamps it, so either is accepted.
+    Completed, canceled and duplicate stamps mark the latest entry into
+    that type. The started stamp must mark an entry into a started state;
+    the model does not say whether a re-entry restamps it, so either is
+    accepted.
     """
     kind = record["state_type"]
     rows = record["state_history"]
@@ -755,7 +756,7 @@ def stamp_problems(record):
     problems = lifecycle_problems(record)
     if kind == "completed" and record.get("completed_at") != entered:
         problems.append(f"completed_at {record.get('completed_at')} is not the entry {entered}")
-    if kind == "canceled" and record.get("canceled_at") != entered:
+    if kind in ("canceled", "duplicate") and record.get("canceled_at") != entered:
         problems.append(f"canceled_at {record.get('canceled_at')} is not the entry {entered}")
     starts = {row["started_at"] for row in rows if row["state_type"] == "started"}
     if kind == "started" and record.get("started_at") not in starts:

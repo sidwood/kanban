@@ -1071,6 +1071,21 @@ class StateMoveTests(unittest.TestCase):
             self.assertTrue(any("history" in line for line in related))
             self.assertTrue(any("stamp" in line for line in related))
 
+    def test_a_duplicate_cancellation_must_match_the_transition_entry(self):
+        entered = "2026-11-05T00:00:02.000Z"
+        history = [
+            {"state": "Ready", "state_type": "unstarted", "started_at": "2026-11-05T00:00:01.000Z"},
+            {"state": "Duplicate", "state_type": "duplicate", "started_at": entered},
+        ]
+        fresh = {
+            "state": "Duplicate", "state_type": "duplicate", "canceled_at": entered,
+            "state_history": history,
+        }
+        stale = dict(fresh, canceled_at="1999-01-01T00:00:00.000Z")
+        self.assertFalse(scenarios.stamp_problems(fresh))
+        problems = scenarios.stamp_problems(stale)
+        self.assertTrue(any(entered in problem for problem in problems))
+
 
 
 if __name__ == "__main__":

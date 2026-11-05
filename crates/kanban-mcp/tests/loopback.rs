@@ -1534,3 +1534,120 @@ async fn operator_comment_schemas_allow_the_default_author_only_for_operators() 
     operator.cancel().await.unwrap();
     run.cancel().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_aliases_validate_against_live_and_generated_schemas() {
+    let f = Fixture::new(true);
+    let client = operator_client(f.service(), &f.secret).await;
+    let live = serde_json::to_value(client.list_all_tools().await.unwrap()).unwrap();
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/contracts/src");
+    let generated: Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("mcp-tools.json")).unwrap())
+            .unwrap();
+    let mut cases = Vec::new();
+    for (name, dto, body, valid) in [
+        ("get_issue", "IssueGetQuery", json!({"id":"CORE-2"}), true),
+        (
+            "get_issue",
+            "IssueGetQuery",
+            json!({"identifier":"CORE-2"}),
+            true,
+        ),
+        ("get_issue", "IssueGetQuery", json!({}), false),
+        (
+            "save_issue",
+            "IssueSaveRequest",
+            json!({"id":"CORE-2","parentId":null,"dueDate":null,"blockedBy":["CORE-1"]}),
+            true,
+        ),
+        (
+            "save_issue",
+            "IssueSaveRequest",
+            json!({"identifier":"CORE-2","parent_id":12,"due_date":"2026-12-01","add_blocked_by":["CORE-1"]}),
+            true,
+        ),
+        (
+            "save_issue",
+            "IssueSaveRequest",
+            json!({"parentId":12,"title":"Child"}),
+            true,
+        ),
+        (
+            "save_issue",
+            "IssueSaveRequest",
+            json!({"parentId":"CORE-2","title":"Child","dueDate":"2026-12-01"}),
+            true,
+        ),
+        (
+            "list_issues",
+            "IssueListQuery",
+            json!({"parentId":12}),
+            true,
+        ),
+        (
+            "list_issues",
+            "IssueListQuery",
+            json!({"parentId":"CORE-2"}),
+            true,
+        ),
+        (
+            "list_issues",
+            "IssueListQuery",
+            json!({"parentId":null}),
+            true,
+        ),
+        (
+            "list_issues",
+            "IssueListQuery",
+            json!({"parent_id":12}),
+            true,
+        ),
+        (
+            "list_issues",
+            "IssueListQuery",
+            json!({"parent_id":null}),
+            true,
+        ),
+        (
+            "comment_create",
+            "CommentCreateRequest",
+            json!({"issue":"CORE-2","body":"Reply","author":"Ada","parentId":1}),
+            true,
+        ),
+        (
+            "comment_create",
+            "CommentCreateRequest",
+            json!({"issue":"CORE-2","body":"Reply","author":"Ada","parent_comment_id":1}),
+            true,
+        ),
+    ] {
+        for (surface, tools) in [("live", &live), ("generated", &generated)] {
+            let tool = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap();
+            cases.push(json!({"name":format!("{surface} {name} {body}"),"schema":tool["inputSchema"],"body":body,"valid":valid}));
+        }
+        let schema: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join(format!("schemas/{dto}.json"))).unwrap(),
+        )
+        .unwrap();
+        let mut canonical = body;
+        if name == "save_issue" || name == "comment_create" {
+            canonical["mutation"] = common::mutation(0, "schema-call");
+        }
+        cases.push(json!({"name":format!("{dto} {canonical}"),"schema":schema,"body":canonical,"valid":valid}));
+    }
+    let comment = live
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "save_comment")
+        .unwrap();
+    cases.push(json!({"name":"save_comment parentId","schema":comment["inputSchema"],"body":{"issue":"CORE-2","body":"Reply","parentId":1},"valid":true}));
+    validate_schemas(json!(cases));
+    client.cancel().await.unwrap();
+}

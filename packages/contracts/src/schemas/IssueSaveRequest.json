@@ -75,6 +75,7 @@
   "description": "Create or update one issue (`save_issue`).",
   "properties": {
     "add_blocked_by": {
+      "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
       "items": {
         "type": "string"
       },
@@ -116,6 +117,16 @@
         "null"
       ]
     },
+    "blockedBy": {
+      "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "creator": {
       "description": "Who created the issue. The operator session fills this from the configured operator name when it is omitted on create.",
       "type": [
@@ -145,13 +156,28 @@
         "null"
       ]
     },
+    "dueDate": {
+      "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "due_date": {
+      "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
       "type": [
         "string",
         "null"
       ]
     },
     "duplicate_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Existing issue key (`CODE-123`) when updating. Also accepted as `id`.",
       "type": [
         "string",
         "null"
@@ -182,10 +208,19 @@
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },
+    "parentId": {
+      "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
     "parent_id": {
       "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
       "type": [
         "string",
+        "integer",
         "null"
       ]
     },

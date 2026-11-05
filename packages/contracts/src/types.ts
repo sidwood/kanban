@@ -191,6 +191,7 @@ export type CommentCreateRequest = {
   body?: string | null;
   issue?: string | null;
   mutation: MutationContext;
+  parentId?: number | null;
   parent_comment_id?: number | null;
   project_id?: number | null;
   target?: TimelineEntityRef | null;
@@ -615,7 +616,11 @@ export type IssueCreateMilestoneRequest = {
   target_date?: string | null;
 };
 export type IssueGetQuery = {
+  id?: string;
   identifier: string;
+} | {
+  id: string;
+  identifier?: string;
 };
 export type IssueLabelRecord = {
   color: string;
@@ -637,6 +642,7 @@ export type IssueListQuery = {
   label?: string | null;
   limit?: number;
   milestone_id?: number | null;
+  parentId?: string | number | null;
   parent_id?: string | number | null;
   project?: string | null;
   project_id?: number | null;
@@ -726,17 +732,21 @@ export type IssueSaveRequest = {
   add_labels?: string[] | null;
   add_related?: string[] | null;
   assignee?: string | null;
+  blockedBy?: string[] | null;
   creator?: string | null;
   description?: string | null;
   description_edits?: DescriptionEdit[] | null;
   description_patch?: string | null;
+  dueDate?: string | null;
   due_date?: string | null;
   duplicate_of?: string | null;
+  id?: string | null;
   identifier?: string | null;
   milestone?: string | null;
   milestone_id?: number | null;
   mutation: MutationContext;
-  parent_id?: string | null;
+  parentId?: string | number | null;
+  parent_id?: string | number | null;
   priority?: number | null;
   project?: string | null;
   project_id?: number | null;

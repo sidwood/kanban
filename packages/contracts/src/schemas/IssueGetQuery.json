@@ -1,14 +1,54 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier"
+      ],
+      "title": "IssueGetQuery",
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "IssueGetQuery",
+      "type": "object"
+    }
+  ],
   "properties": {
+    "id": {
+      "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+      "type": "string"
+    },
     "identifier": {
+      "description": "Issue key (`CODE-123`). Also accepted as `id`.",
       "type": "string"
     }
   },
-  "required": [
-    "identifier"
-  ],
   "title": "IssueGetQuery",
   "type": "object"
 }

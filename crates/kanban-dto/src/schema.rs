@@ -180,6 +180,29 @@ fn comment_create_request_schema() -> RootSchema {
     if let Some(validation) = schema.schema.object.as_mut() {
         validation.required.insert("author".to_owned());
     }
+    with_field_aliases(schema, &[("parent_comment_id", "parentId")])
+}
+
+fn with_field_aliases(mut schema: RootSchema, aliases: &[(&str, &str)]) -> RootSchema {
+    let object = schema.schema.object.as_mut().expect("a request object");
+    for (canonical, alias) in aliases {
+        let field = object.properties[*canonical].clone();
+        object.properties.insert((*alias).to_owned(), field);
+    }
+    schema
+}
+
+fn issue_get_query_schema() -> RootSchema {
+    let mut schema = with_field_aliases(schema_for!(IssueGetQuery), &[("identifier", "id")]);
+    let mut by_id = schema.schema.clone();
+    by_id.object.as_mut().unwrap().required = ["id".to_owned()].into();
+    let variants = vec![schema.schema.clone().into(), by_id.into()];
+    schema
+        .schema
+        .subschemas
+        .get_or_insert_with(Default::default)
+        .any_of = Some(variants);
+    schema.schema.object.as_mut().unwrap().required.clear();
     schema
 }
 
@@ -455,11 +478,14 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
             "IssueCreateMilestoneRequest",
             schema_for!(IssueCreateMilestoneRequest),
         ),
-        ("IssueGetQuery", schema_for!(IssueGetQuery)),
+        ("IssueGetQuery", issue_get_query_schema()),
         ("IssueLabelRecord", schema_for!(IssueLabelRecord)),
         ("IssueLabelsQuery", schema_for!(IssueLabelsQuery)),
         ("IssueLabelsResponse", schema_for!(IssueLabelsResponse)),
-        ("IssueListQuery", schema_for!(IssueListQuery)),
+        (
+            "IssueListQuery",
+            with_field_aliases(schema_for!(IssueListQuery), &[("parent_id", "parentId")]),
+        ),
         ("IssueListResponse", schema_for!(IssueListResponse)),
         ("IssueMilestoneRecord", schema_for!(IssueMilestoneRecord)),
         ("IssueMilestonesQuery", schema_for!(IssueMilestonesQuery)),
@@ -477,7 +503,18 @@ pub fn schema_definitions() -> Vec<(&'static str, RootSchema)> {
         ("IssueRecord", schema_for!(IssueRecord)),
         ("IssueRelationRecord", schema_for!(IssueRelationRecord)),
         ("DescriptionEdit", schema_for!(DescriptionEdit)),
-        ("IssueSaveRequest", schema_for!(IssueSaveRequest)),
+        (
+            "IssueSaveRequest",
+            with_field_aliases(
+                schema_for!(IssueSaveRequest),
+                &[
+                    ("identifier", "id"),
+                    ("parent_id", "parentId"),
+                    ("due_date", "dueDate"),
+                    ("add_blocked_by", "blockedBy"),
+                ],
+            ),
+        ),
         ("IssueSaveResponse", schema_for!(IssueSaveResponse)),
         (
             "IssueStateHistoryRecord",

@@ -46,6 +46,7 @@ pub struct IssueSaveRequest {
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<u8>,
+    /// Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -73,6 +74,7 @@ pub struct IssueSaveRequest {
         alias = "parentId",
         deserialize_with = "crate::nullable_patch::deserialize_parent_patch"
     )]
+    #[schemars(schema_with = "parent_filter_schema")]
     pub parent_id: Option<Option<String>>,
     #[serde(
         default,
@@ -94,6 +96,7 @@ pub struct IssueSaveRequest {
     /// configured operator name when it is omitted on create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator: Option<String>,
+    /// Issue keys that block this issue. Also accepted as `blockedBy`.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "blockedBy")]
     pub add_blocked_by: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,6 +194,7 @@ pub struct IssueSaveResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueGetQuery {
+    /// Issue key (`CODE-123`). Also accepted as `id`.
     #[serde(alias = "id")]
     pub identifier: String,
 }

@@ -30037,8 +30037,17 @@
           "$ref": "#/definitions/MutationContext",
           "description": "The `mutation` value."
         },
+        "parentId": {
+          "description": "Parent comment id for a reply. Also accepted as `parentId`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "parent_comment_id": {
-          "description": "The `parent_comment_id` value.",
+          "description": "Parent comment id for a reply. Also accepted as `parentId`.",
           "format": "uint64",
           "minimum": 0.0,
           "type": [
@@ -41998,7 +42007,7 @@
       "description": "Create or update one issue (`save_issue`).",
       "properties": {
         "add_blocked_by": {
-          "description": "The `add_blocked_by` value.",
+          "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
           "items": {
             "type": "string"
           },
@@ -42044,6 +42053,16 @@
             "null"
           ]
         },
+        "blockedBy": {
+          "description": "Issue keys that block this issue. Also accepted as `blockedBy`.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "creator": {
           "description": "Who created the issue. The operator session fills this from the configured operator name when it is omitted on create.",
           "type": [
@@ -42075,8 +42094,15 @@
             "null"
           ]
         },
+        "dueDate": {
+          "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "due_date": {
-          "description": "The `due_date` value.",
+          "description": "Due date as `YYYY-MM-DD`; null clears it. Also accepted as `dueDate`.",
           "type": [
             "string",
             "null"
@@ -42084,6 +42110,13 @@
         },
         "duplicate_of": {
           "description": "The `duplicate_of` value.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Existing issue key (`CODE-123`) when updating. Also accepted as `id`.",
           "type": [
             "string",
             "null"
@@ -42116,10 +42149,19 @@
           "$ref": "#/definitions/MutationContext",
           "description": "The `mutation` value."
         },
+        "parentId": {
+          "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
+          "type": [
+            "string",
+            "integer",
+            "null"
+          ]
+        },
         "parent_id": {
           "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
           "type": [
             "string",
+            "integer",
             "null"
           ]
         },
@@ -42255,15 +42297,54 @@
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+              "type": "string"
+            },
+            "identifier": {
+              "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "identifier"
+          ],
+          "title": "IssueGetQuery",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+              "type": "string"
+            },
+            "identifier": {
+              "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "IssueGetQuery",
+          "type": "object"
+        }
+      ],
       "properties": {
+        "id": {
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
+          "type": "string"
+        },
         "identifier": {
-          "description": "The `identifier` value.",
+          "description": "Issue key (`CODE-123`). Also accepted as `id`.",
           "type": "string"
         }
       },
-      "required": [
-        "identifier"
-      ],
       "title": "IssueGetQuery",
       "type": "object"
     },
@@ -42638,6 +42719,14 @@
           "format": "uint64",
           "minimum": 0.0,
           "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "parentId": {
+          "description": "Parent issue by key (`CODE-123`) or numeric ticket id. JSON `null` clears the filter.",
+          "type": [
+            "string",
             "integer",
             "null"
           ]

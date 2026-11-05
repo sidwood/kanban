@@ -82,7 +82,17 @@
     "mutation": {
       "$ref": "#/definitions/MutationContext"
     },
+    "parentId": {
+      "description": "Parent comment id for a reply. Also accepted as `parentId`.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "parent_comment_id": {
+      "description": "Parent comment id for a reply. Also accepted as `parentId`.",
       "format": "uint64",
       "minimum": 0.0,
       "type": [

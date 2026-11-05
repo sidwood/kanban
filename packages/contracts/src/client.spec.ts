@@ -9,7 +9,7 @@ import {
   type KanbanOperationName,
   type KanbanTransport,
 } from './client.js'
-import type { CommentCreateRequest, EventEnvelope } from './types.js'
+import type { CommentCreateRequest, EventEnvelope, IssueGetQuery, IssueListQuery, IssueSaveRequest } from './types.js'
 
 describe('generated client', () => {
   it('maps every operation to its typed Tauri command', () => {
@@ -108,6 +108,23 @@ describe('generated client', () => {
     const authorIsRequired: AuthorIsRequired = true
 
     expect(authorIsRequired).toBe(true)
+  })
+
+  it('types issue aliases and alternative identifiers', () => {
+    const byId: IssueGetQuery = { id: 'CORE-2' }
+    const byIdentifier: IssueGetQuery = { identifier: 'CORE-2' }
+    type IdentifierIsRequired = {} extends IssueGetQuery ? false : true
+    const identifierIsRequired: IdentifierIsRequired = true
+    const mutation = { optimistic_version: 0, idempotency_key: 'typed-call' }
+    const save: IssueSaveRequest = {
+      mutation, id: 'CORE-2', parentId: 12, dueDate: null, blockedBy: ['CORE-1'],
+    }
+    const clear: IssueSaveRequest = { mutation, parentId: null }
+    const canonical: IssueSaveRequest = { mutation, parent_id: 12 }
+    const filters: IssueListQuery[] = [{ parentId: 12 }, { parentId: 'CORE-2' }, { parentId: null }]
+    const reply: CommentCreateRequest = { mutation, issue: 'CORE-2', body: 'Reply', author: 'Ada', parentId: 1 }
+    expect([byId, byIdentifier, identifierIsRequired, save.parentId, clear.parentId, canonical.parent_id, filters.length, reply.parentId])
+      .toStrictEqual([{ id: 'CORE-2' }, { identifier: 'CORE-2' }, true, 12, null, 12, 3, 1])
   })
 
   it('routes queries through the transport boundary', async () => {

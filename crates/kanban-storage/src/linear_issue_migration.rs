@@ -1271,7 +1271,6 @@ pub(crate) fn apply_issue_creator_column_in_span(span: &WriteSpan<'_>) -> rusqli
     apply_issue_creator_column(span)
 }
 
-
 /// Repairs the linear issue migration on databases that applied an
 /// earlier build of migrations 53 through 59.
 ///

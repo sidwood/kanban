@@ -268,9 +268,9 @@ fn resolve_comment_address(
         resolve_project(projects, project_id).map_err(|error| name_missing(error, "project_id"))?;
     }
     if let Some(issue) = request.issue.as_deref() {
-        let (key, ticket_id) = targets.resolve_issue_reference(issue)?.ok_or_else(|| {
-            ApiError::not_found_field("issue", &format!("issue {issue}"))
-        })?;
+        let (key, ticket_id) = targets
+            .resolve_issue_reference(issue)?
+            .ok_or_else(|| ApiError::not_found_field("issue", &format!("issue {issue}")))?;
         let owner = targets
             .issue_project(ticket_id)?
             .ok_or_else(|| ApiError::not_found_field("issue", &format!("issue {issue}")))?;

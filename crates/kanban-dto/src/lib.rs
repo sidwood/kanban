@@ -147,11 +147,10 @@ pub use initiative::{
 };
 pub use issue::{
     DescriptionEdit, IssueChildRecord, IssueCreateLabelRequest, IssueCreateMilestoneRequest,
-    IssueGetQuery,
-    IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery, IssueListResponse,
-    IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse, IssueProjectRecord,
-    IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse, IssueRecord,
-    IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
+    IssueGetQuery, IssueLabelRecord, IssueLabelsQuery, IssueLabelsResponse, IssueListQuery,
+    IssueListResponse, IssueMilestoneRecord, IssueMilestonesQuery, IssueMilestonesResponse,
+    IssueProjectRecord, IssueProjectSettingsResponse, IssueProjectsQuery, IssueProjectsResponse,
+    IssueRecord, IssueRelationRecord, IssueRetireLabelRequest, IssueSaveRequest, IssueSaveResponse,
     IssueStateHistoryRecord, IssueSubIssueProgress, IssueUpdateProjectSettingsRequest,
     IssueWorkflowStateRecord, IssueWorkflowStatesQuery, IssueWorkflowStatesResponse,
 };

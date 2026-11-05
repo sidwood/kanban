@@ -323,7 +323,6 @@ fn unique_anchor(text: &str, anchor: &str) -> Result<usize, ApiError> {
     Ok(text.find(anchor).expect("the anchor matched once"))
 }
 
-
 fn compact_list_rows(value: &mut Value, fields: Option<&[String]>) {
     let requested = fields.unwrap_or(&[]);
     let want_description = requested.iter().any(|field| field == "description");
@@ -348,7 +347,6 @@ fn compact_list_rows(value: &mut Value, fields: Option<&[String]>) {
         }
     }
 }
-
 
 struct ListWorkflowStates(IssueContext);
 
@@ -1549,13 +1547,16 @@ fn project_label_on_issue(
 ) -> Result<Option<String>, ApiError> {
     let stored = ctx.issues.list_project_labels(project_id as i64)?;
     Ok(labels.iter().find_map(|label| {
-        stored.iter().find(|row| {
-            row.name == *label
-                && row
-                    .group
-                    .as_deref()
-                    .is_some_and(|group| same_name(group, "Project"))
-        }).map(|row| row.name.clone())
+        stored
+            .iter()
+            .find(|row| {
+                row.name == *label
+                    && row
+                        .group
+                        .as_deref()
+                        .is_some_and(|group| same_name(group, "Project"))
+            })
+            .map(|row| row.name.clone())
     }))
 }
 

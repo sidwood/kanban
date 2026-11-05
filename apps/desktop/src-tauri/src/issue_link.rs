@@ -144,6 +144,20 @@ pub fn page_started<R: Runtime>(webview: &tauri::Webview<R>) {
     }
 }
 
+/// The scheme every link the shell claims starts with.
+const LINK_SCHEME: &str = "kanban:";
+
+/// Whether a launch argument is a `kanban:` link, which Linux hands
+/// the shell as its one argument. This only tells a link launch from
+/// a mistyped flag: the deep-link plugin reads the link itself, and
+/// the domain decides what it names.
+pub fn is_link_argument(argument: &std::ffi::OsStr) -> bool {
+    argument
+        .to_str()
+        .and_then(|text| text.get(..LINK_SCHEME.len()))
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(LINK_SCHEME))
+}
+
 /// Bring the main window forward.
 pub fn reveal<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
@@ -180,7 +194,42 @@ pub fn register_scheme<R: Runtime>(app: &AppHandle<R>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{IssueLinkOpened, IssueLinks, Received};
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    use super::{IssueLinkOpened, IssueLinks, Received, is_link_argument};
+
+    #[test]
+    fn a_launch_argument_with_the_kanban_scheme_is_a_link() {
+        for argument in [
+            "kanban://issue/CORE-12",
+            "kanban://issue/core-12",
+            "kanban://board",
+            "KANBAN://issue/CORE-12",
+        ] {
+            assert!(is_link_argument(OsStr::new(argument)), "{argument}");
+        }
+    }
+
+    #[test]
+    fn any_other_launch_argument_is_not_a_link() {
+        for argument in [
+            "",
+            "kanban",
+            "kanban-dev://issue/CORE-12",
+            "--version",
+            "--package-smoke",
+            "https://example.com/kanban://issue/CORE-12",
+            "/tmp/kanban://issue/CORE-12",
+            " kanban://issue/CORE-12",
+        ] {
+            assert!(!is_link_argument(OsStr::new(argument)), "{argument}");
+        }
+        assert!(
+            !is_link_argument(OsStr::from_bytes(b"kanban://issue/\xff")),
+            "an argument that is not text is no link"
+        );
+    }
 
     fn opened(identifier: &str) -> IssueLinkOpened {
         IssueLinkOpened {

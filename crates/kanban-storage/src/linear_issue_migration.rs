@@ -1351,16 +1351,20 @@ fn padded_calendar_date(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::num::NonZeroU32;
     use std::sync::Arc;
 
     use kanban_app::catalog::exposed_operations;
     use kanban_app::events::NoopEventSink;
     use kanban_app::{
-        CommentIssueTargets, CommentStore, Core, IssueStore, IssueStoreCommentTargets,
-        OperatorSession, ProjectStore,
+        CommentIssueTargets, CommentStore, Core, DependencyStore, IssueStore,
+        IssueStoreCommentTargets, OperatorSession, ProjectStore, TicketStore,
     };
-    use kanban_domain::{CommentId, ProjectRegistration};
+    use kanban_domain::{
+        CommentId, DependencyState, ProjectRegistration, ReadinessBlocker, ReadinessInputs,
+        TicketDependencyGraph, TicketId, compute_readiness,
+    };
     use kanban_dto::{
         ErrorCode, IssueGetQuery, IssueRecord, TimelineEntityKind, TimelineEntityRef,
         TimelineEventKind,
@@ -1370,6 +1374,7 @@ mod tests {
     use super::*;
     use crate::comments::SqliteCommentStore;
     use crate::db::Database;
+    use crate::dependencies::SqliteDependencyStore;
     use crate::evidence::SqliteEvidenceStore;
     use crate::idempotency::{RetentionPolicy, SqliteIdempotencyStore};
     use crate::issue_store::SqliteIssueStore as IssueStoreImpl;
@@ -2731,5 +2736,207 @@ mod tests {
             "appending must not rewrite the existing text: {appended:?}"
         );
         assert!(appended.contains(checklist));
+    }
+    #[test]
+    fn stray_block_edges_join_the_dependency_graph_and_related_links_stay() {
+        let dir = tempfile::TempDir::new().expect("a scratch directory is available");
+        let mut database = Database::open(&dir.path().join("kanban.sqlite")).unwrap();
+        migrations::apply_through(&database.connection(), 62).expect("the prior schema applies");
+        seed_project(&database);
+        {
+            let conn = database.connection();
+            let project_id: i64 = conn
+                .query_row("SELECT id FROM projects", [], |row| row.get(0))
+                .unwrap();
+            for (id, state, title) in [
+                (1i64, "draft", "Open blocker"),
+                (2, "draft", "Waiting work"),
+                (3, "done", "Landed blocker"),
+                (4, "draft", "Neighbour"),
+                (5, "draft", "Second open blocker"),
+            ] {
+                conn.execute(
+                    "INSERT INTO tickets (
+                         id, project_id, number, kind, priority, state, title, criteria,
+                         subtype, mode, completion, version
+                     ) VALUES (?1, ?2, ?1, 'task', 'normal', ?3, ?4, '[]',
+                               'operational', 'human', '[\"Tracked\"]', 1)",
+                    rusqlite::params![id, project_id, state, title],
+                )
+                .unwrap();
+            }
+            conn.execute_batch(
+                "INSERT INTO issue_relations (from_ticket_id, to_ticket_id, kind) VALUES
+                     (1, 2, 'blocks'),
+                     (5, 4, 'blocks'),
+                     (3, 2, 'blocks'),
+                     (2, 4, 'related');
+                 INSERT INTO ticket_dependencies (from_ticket, to_ticket) VALUES (3, 2);",
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            dependency_edges(&database),
+            BTreeSet::from([(3, 2)]),
+            "a block recorded only as a relation is not yet a dependency"
+        );
+        assert!(
+            blocking_ticket_ids(&database, 2).is_empty(),
+            "readiness ignores a block that has not joined the dependency graph"
+        );
+        assert!(blocking_ticket_ids(&database, 4).is_empty());
+        assert_eq!(
+            listed_relations(&database, 2),
+            vec![
+                ("blocked-by".to_owned(), "CORE-3".to_owned()),
+                ("related".to_owned(), "CORE-4".to_owned()),
+            ]
+        );
+        assert!(listed_relations(&database, 1).is_empty());
+        assert_eq!(
+            stored_relations(&database),
+            vec![
+                (1, 2, "blocks".to_owned()),
+                (3, 2, "blocks".to_owned()),
+                (5, 4, "blocks".to_owned()),
+                (2, 4, "related".to_owned()),
+            ]
+        );
+
+        let report = database
+            .migrate(&AllowAllMigrations)
+            .expect("pending migrations apply");
+        assert_eq!(
+            report.applied,
+            (63..=crate::migrations::LATEST_SCHEMA_VERSION).collect::<Vec<_>>()
+        );
+
+        let moved = BTreeSet::from([(1, 2), (3, 2), (5, 4)]);
+        assert_eq!(dependency_edges(&database), moved);
+        assert_eq!(
+            dependency_row_count(&database),
+            3,
+            "the repeated block is one edge"
+        );
+        assert_eq!(
+            blocking_ticket_ids(&database, 2),
+            vec![1],
+            "the moved open blocker holds the waiting issue; the landed one does not"
+        );
+        assert_eq!(blocking_ticket_ids(&database, 4), vec![5]);
+        assert_eq!(
+            listed_relations(&database, 1),
+            vec![("blocks".to_owned(), "CORE-2".to_owned())]
+        );
+        assert_eq!(
+            listed_relations(&database, 2),
+            vec![
+                ("blocked-by".to_owned(), "CORE-1".to_owned()),
+                ("blocked-by".to_owned(), "CORE-3".to_owned()),
+                ("related".to_owned(), "CORE-4".to_owned()),
+            ]
+        );
+        assert_eq!(
+            listed_relations(&database, 4),
+            vec![
+                ("blocked-by".to_owned(), "CORE-5".to_owned()),
+                ("related".to_owned(), "CORE-2".to_owned()),
+            ]
+        );
+        assert_eq!(
+            listed_relations(&database, 5),
+            vec![("blocks".to_owned(), "CORE-4".to_owned())]
+        );
+        assert_eq!(
+            stored_relations(&database),
+            vec![(2, 4, "related".to_owned())],
+            "block rows leave relations and the related link stays"
+        );
+
+        let again = database
+            .migrate(&AllowAllMigrations)
+            .expect("a repeated migration applies nothing");
+        assert!(again.applied.is_empty());
+        assert_eq!(dependency_edges(&database), moved);
+        assert_eq!(dependency_row_count(&database), 3);
+        assert_eq!(
+            stored_relations(&database),
+            vec![(2, 4, "related".to_owned())]
+        );
+        assert_eq!(blocking_ticket_ids(&database, 2), vec![1]);
+        assert_eq!(blocking_ticket_ids(&database, 4), vec![5]);
+    }
+
+    fn dependency_edges(database: &Database) -> BTreeSet<(u64, u64)> {
+        SqliteDependencyStore::new(database)
+            .list_dependencies()
+            .unwrap()
+            .into_iter()
+            .map(|edge| (edge.from().value(), edge.to().value()))
+            .collect()
+    }
+
+    fn dependency_row_count(database: &Database) -> i64 {
+        database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM ticket_dependencies", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    fn blocking_ticket_ids(database: &Database, waiting: u64) -> Vec<u64> {
+        let tickets = SqliteTicketStore::new(database);
+        let dependencies = SqliteDependencyStore::new(database);
+        let ticket = tickets.find(TicketId::new(waiting)).unwrap().unwrap();
+        let edges = dependencies.list_dependencies().unwrap();
+        let graph = TicketDependencyGraph::restore(edges);
+        let mut states = Vec::new();
+        for edge in graph.required_by(ticket.id()) {
+            let blocking = tickets.find(edge.from()).unwrap().unwrap();
+            states.push(DependencyState {
+                dependency: edge,
+                state: blocking.state(),
+            });
+        }
+        let external = dependencies.blockers_of(ticket.id()).unwrap();
+        let readiness = compute_readiness(ReadinessInputs {
+            dependencies: &states,
+            blockers: &external,
+        });
+        readiness
+            .blocked_by()
+            .iter()
+            .map(|blocker| match blocker {
+                ReadinessBlocker::Ticket { waiting } => waiting.dependency.from().value(),
+                ReadinessBlocker::External { .. } => panic!("no external blocker was stored"),
+            })
+            .collect()
+    }
+
+    fn listed_relations(database: &Database, ticket_id: i64) -> Vec<(String, String)> {
+        IssueStoreImpl::new(database)
+            .list_relations(ticket_id)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.kind, row.identifier))
+            .collect()
+    }
+
+    fn stored_relations(database: &Database) -> Vec<(i64, i64, String)> {
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare(
+                "SELECT from_ticket_id, to_ticket_id, kind
+                 FROM issue_relations
+                 ORDER BY kind, from_ticket_id, to_ticket_id",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 }

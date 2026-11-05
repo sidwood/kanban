@@ -143,6 +143,41 @@ async function type(testid: string, value: string): Promise<void> {
 const issued = (state: ReturnType<typeof harness>, name: string): unknown[] =>
   state.command.mock.calls.filter((call) => call[0] === name).map((call) => call[1])
 
+interface HeldRead {
+  answer: () => void
+  fail: () => void
+}
+
+function holdReads(state: ReturnType<typeof harness>, name: string, count = 1): HeldRead[] {
+  const core = state.query.getMockImplementation() as (
+    query: string,
+    request: unknown,
+  ) => Promise<unknown>
+  const held: HeldRead[] = []
+  state.query.mockImplementation((query: string, request: unknown) => {
+    if (query !== name || held.length >= count) return core(query, request)
+    const answer = core(query, request)
+    return new Promise((resolve, reject) => {
+      held.push({
+        answer: () => void answer.then(resolve, reject),
+        fail: () => reject({ code: 'unavailable', message: `the ${name} read failed` }),
+      })
+    })
+  })
+  return held
+}
+
+async function saveDescription(text: string): Promise<void> {
+  await click('issue-description-edit')
+  await type('issue-description-input', text)
+  await click('issue-description-save')
+}
+
+const versionsSent = (state: ReturnType<typeof harness>, name: string): number[] =>
+  issued(state, name).map(
+    (request) => (request as { mutation: { optimistic_version: number } }).mutation.optimistic_version,
+  )
+
 beforeEach(() => {
   localStorage.clear()
 })
@@ -287,6 +322,58 @@ describe('the drawer footer actions', () => {
         state: 'Active',
       },
     ])
+  })
+})
+
+describe('the drawer Ticket a description save reads again', () => {
+  it('keeps the newer Ticket when an earlier save reads its Ticket last', async () => {
+    const state = harness({ tickets: [implementation({ state: 'ready' })] })
+    await openDrawer(state)
+    const reads = holdReads(state, 'ticket.get')
+
+    await saveDescription('The commands are served over the socket.')
+    await saveDescription('The commands are served over the socket and the pipe.')
+    expect(reads).toHaveLength(1)
+    reads[0]!.answer()
+    await flushPromises()
+    await click('drawer-park')
+
+    expect(versionsSent(state, 'issue.save')).toEqual([5, 6])
+    expect(issued(state, 'ticket.park')).toEqual([
+      { mutation: { optimistic_version: 7, idempotency_key: expect.any(String) }, ticket_id: 8 },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Parked')
+  })
+
+  it('writes nothing from a late Ticket read over the Ticket the drawer moved to', async () => {
+    const state = harness({
+      tickets: [
+        implementation({ state: 'ready' }),
+        implementation({
+          id: 9,
+          number: 14,
+          state: 'ready',
+          title: 'Edge review',
+          slice: 'Guard the edge review',
+        }),
+      ],
+    })
+    await openDrawer(state)
+    const reads = holdReads(state, 'ticket.get')
+
+    await saveDescription('The commands are served over the socket.')
+    expect(reads).toHaveLength(1)
+    await click('open-ticket-9')
+    reads[0]!.answer()
+    await flushPromises()
+    await click('drawer-park')
+
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toContain('CORE-14')
+    expect(issued(state, 'ticket.park')).toEqual([
+      { mutation: { optimistic_version: 5, idempotency_key: expect.any(String) }, ticket_id: 9 },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
   })
 })
 

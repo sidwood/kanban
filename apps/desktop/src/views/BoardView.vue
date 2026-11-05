@@ -835,6 +835,12 @@ const drawerFacts = computed(() => {
   ]
 })
 
+function showDrawerTicket(record: TicketRecord): void {
+  const shown = drawerTicket.value
+  if (shown?.id === record.id && record.version < shown.version) return
+  drawerTicket.value = record
+}
+
 async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
   if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
   drawerIssue.value = issue
@@ -842,7 +848,7 @@ async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
   try {
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: issue.ticket_id })
     if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
-    drawerTicket.value = record
+    showDrawerTicket(record)
   } catch {
     return
   }

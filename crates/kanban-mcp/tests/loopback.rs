@@ -1351,6 +1351,109 @@ async fn operator_route_accepts_linear_shaped_calls() {
         json!(comment_id)
     );
 
+    let labels = client
+        .call_tool(call("list_issue_labels", json!({ "project_id": 1 })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(
+        labels["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"] == "Web"),
+        "{labels}"
+    );
+    let milestones = client
+        .call_tool(call("list_milestones", json!({ "project_id": 1 })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(
+        milestones["milestones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"] == "M1 Foundations"),
+        "{milestones}"
+    );
+
+    let blocker = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Blocker over HTTP" }),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let child = client
+        .call_tool(call(
+            "save_issue",
+            json!({
+                "title": "Child over HTTP",
+                "parentId": "CORE-1",
+                "dueDate": "2026-12-01",
+                "blockedBy": [blocker["identifier"]]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!child.is_error.unwrap_or(false), "{child:?}");
+    let child_key = child.structured_content.unwrap()["identifier"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let child_read = client
+        .call_tool(call("get_issue", json!({ "id": child_key })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(child_read["parent"], json!("CORE-1"));
+    assert_eq!(child_read["due_date"], json!("2026-12-01"));
+    assert!(
+        child_read["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| {
+                row["kind"] == "blocked-by" && row["identifier"] == blocker["identifier"]
+            }),
+        "{child_read}"
+    );
+    let renamed = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "id": child_key, "title": "Child renamed over HTTP" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!renamed.is_error.unwrap_or(false), "{renamed:?}");
+    let renamed = client
+        .call_tool(call("get_issue", json!({ "id": child_key })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(renamed["title"], json!("Child renamed over HTTP"));
+    let children = client
+        .call_tool(call("list_issues", json!({ "parentId": "CORE-1" })))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert!(
+        children["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["identifier"] == child_key),
+        "{children}"
+    );
+
     let refused = client
         .call_tool(call(
             "save_issue",

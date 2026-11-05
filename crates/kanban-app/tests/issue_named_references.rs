@@ -698,3 +698,114 @@ fn issue_description(session: &OperatorSession, identifier: &str) -> Value {
         .clone()
 }
 
+#[test]
+fn linear_aliases_create_labels_milestones_and_issue_links() {
+    let session = session();
+    let label = session
+        .call(
+            "create_issue_label",
+            &json!({
+                "project_id": 1,
+                "name": "Web",
+                "color": "#336699",
+                "group": "Project",
+                "group_single_select": true
+            }),
+        )
+        .expect("create_issue_label");
+    assert_eq!(label["name"], json!("Web"));
+    let labels = session
+        .call("issue.list_labels", &json!({ "project_id": 1 }))
+        .expect("issue.list_labels");
+    assert!(
+        labels["labels"]
+            .as_array()
+            .expect("labels")
+            .iter()
+            .any(|row| row["name"] == "Web"),
+        "the alias creates a listed label: {labels}"
+    );
+
+    let milestone = session
+        .call(
+            "save_milestone",
+            &json!({ "project_id": 1, "name": "M1 Foundations" }),
+        )
+        .expect("save_milestone");
+    assert_eq!(milestone["name"], json!("M1 Foundations"));
+    let milestones = session
+        .call("issue.list_milestones", &json!({ "project_id": 1 }))
+        .expect("issue.list_milestones");
+    assert!(
+        milestones["milestones"]
+            .as_array()
+            .expect("milestones")
+            .iter()
+            .any(|row| row["name"] == "M1 Foundations"),
+        "the alias creates a listed milestone: {milestones}"
+    );
+
+    let parent: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "alias-parent",
+        json!({ "project_id": 1, "title": "Parent" }),
+    ))
+    .expect("save shape");
+    let blocker: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "alias-blocker",
+        json!({ "project_id": 1, "title": "Blocker" }),
+    ))
+    .expect("save shape");
+    let child = session
+        .call(
+            "issue.save",
+            &json!({
+                "title": "Child",
+                "parentId": parent.identifier,
+                "dueDate": "2026-12-01",
+                "blockedBy": [blocker.identifier]
+            }),
+        )
+        .expect("field aliases");
+    let child_key = child["identifier"].as_str().expect("child key").to_owned();
+    let read = session
+        .call("issue.get", &json!({ "id": child_key }))
+        .expect("issue.get by id");
+    assert_eq!(read["parent"], json!(parent.identifier));
+    assert_eq!(read["due_date"], json!("2026-12-01"));
+    assert!(
+        read["relations"]
+            .as_array()
+            .expect("relations")
+            .iter()
+            .any(|row| row["kind"] == "blocked-by" && row["identifier"] == blocker.identifier),
+        "blockedBy adds a blocked-by link: {read}"
+    );
+
+    session
+        .call(
+            "issue.save",
+            &json!({ "id": child_key, "title": "Child renamed" }),
+        )
+        .expect("id updates the issue");
+    let renamed = session
+        .call("issue.get", &json!({ "id": child_key }))
+        .expect("issue.get by id");
+    assert_eq!(renamed["title"], json!("Child renamed"));
+
+    let children = session
+        .call("issue.list", &json!({ "parentId": parent.identifier }))
+        .expect("issue.list by parentId");
+    assert!(
+        children["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .any(|row| row["identifier"] == child_key),
+        "parentId lists the child: {children}"
+    );
+}
+

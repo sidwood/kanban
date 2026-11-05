@@ -134,11 +134,11 @@ impl RunAuthority {
                     target.kind == kanban_dto::TimelineEntityKind::Ticket
                         && target.id == ticket.id().to_string()
                 });
-                let issue_matches = request
-                    .issue
-                    .as_deref()
-                    .is_some_and(|issue| issue == ticket.id().to_string());
-                if !project_matches || !(target_matches || issue_matches) {
+                let address_matches = match request.issue.as_deref() {
+                    Some(issue) => issue == ticket.id().to_string(),
+                    None => target_matches,
+                };
+                if !project_matches || !address_matches {
                     return Err(denied());
                 }
             }

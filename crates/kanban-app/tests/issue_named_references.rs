@@ -165,37 +165,74 @@ fn assignee_me_stores_the_configured_operator_name() {
 }
 
 #[test]
-fn save_comment_accepts_an_issue_key_and_body() {
+fn save_comment_on_core_2_returns_the_key_url_and_author() {
     let mut h = harness();
     let attachments = h._dir.path().join("attachments");
     register_issue_stack(&mut h.core, &h.database, &attachments);
     let session = OperatorSession::with_operator_name(Arc::new(h.core), "Ada");
-    let saved: IssueSaveResponse = serde_json::from_value(call(
+    let first: IssueSaveResponse = serde_json::from_value(call(
         &session,
         "issue.save",
-        "comment-host",
-        json!({ "project_id": 1, "title": "Commented" }),
+        "comment-first",
+        json!({ "project_id": 1, "title": "First" }),
     ))
     .expect("save shape");
-    // The acceptance call names CORE-2. This host is the first issue, so
-    // address whichever key was minted and also prove CORE-2 when it is.
-    let key = saved.identifier;
+    let second: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "comment-second",
+        json!({ "project_id": 1, "title": "Second" }),
+    ))
+    .expect("save shape");
+    assert_eq!(first.identifier, "CORE-1");
+    assert_eq!(second.identifier, "CORE-2");
+
     let posted = session
         .call(
             "save_comment",
-            &json!({ "issue": key, "body": "Ship report" }),
+            &json!({ "issue": "CORE-2", "body": "Ship report" }),
         )
         .expect("save_comment");
     assert!(
         posted["id"].as_u64().is_some(),
         "the comment id is returned: {posted}"
     );
-    assert_eq!(posted["identifier"], json!(key));
-    let url = posted["url"].as_str().unwrap_or("");
-    assert!(
-        url.contains(&key),
-        "the result carries the issue URL: {posted}"
-    );
+    assert_eq!(posted["identifier"], json!("CORE-2"));
+    assert_eq!(posted["url"], json!("kanban://issue/CORE-2"));
+
+    let listed = list_comments(&session, "CORE-2");
+    assert_eq!(listed["comments"][0]["author"], json!("Ada"));
+    assert!(listed["comments"][0].get("parent_comment_id").is_none());
+
+    let parent_id = posted["id"].as_u64().expect("comment id");
+    let reply = session
+        .call(
+            "save_comment",
+            &json!({
+                "issue": "CORE-2",
+                "body": "Noted",
+                "author": "lin",
+                "parent_comment_id": parent_id
+            }),
+        )
+        .expect("reply");
+    assert_eq!(reply["identifier"], json!("CORE-2"));
+    assert_eq!(reply["url"], json!("kanban://issue/CORE-2"));
+    let listed = list_comments(&session, "CORE-2");
+    assert_eq!(listed["comments"][1]["author"], json!("lin"));
+    assert_eq!(listed["comments"][1]["parent_comment_id"], json!(parent_id));
+}
+
+fn list_comments(session: &OperatorSession, issue: &str) -> Value {
+    session
+        .call(
+            "comment.list",
+            &json!({
+                "target": {"kind": "ticket", "id": issue},
+                "limit": 10
+            }),
+        )
+        .expect("comment.list")
 }
 
 #[test]

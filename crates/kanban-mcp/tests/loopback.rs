@@ -1250,7 +1250,7 @@ async fn operator_route_accepts_linear_shaped_calls() {
     assert!(!created.is_error.unwrap_or(false), "{created:?}");
     let created = created.structured_content.unwrap();
     let key = created["identifier"].as_str().unwrap().to_owned();
-    assert!(key.starts_with("CORE-"), "{key}");
+    assert_eq!(key, "CORE-1", "{key}");
 
     let read = client
         .call_tool(call("get_issue", json!({ "id": key })))
@@ -1282,18 +1282,74 @@ async fn operator_route_accepts_linear_shaped_calls() {
         .unwrap();
     assert_eq!(detailed["issues"][0]["description"], json!("Full text"));
 
+    let second = client
+        .call_tool(call(
+            "save_issue",
+            json!({ "project_id": 1, "title": "Second over HTTP" }),
+        ))
+        .await
+        .unwrap();
+    assert!(!second.is_error.unwrap_or(false), "{second:?}");
+    assert_eq!(
+        second.structured_content.unwrap()["identifier"],
+        json!("CORE-2")
+    );
+
     let posted = client
         .call_tool(call(
             "save_comment",
-            json!({ "issue": key, "body": "Ship report" }),
+            json!({ "issue": "CORE-2", "body": "Ship report" }),
         ))
         .await
         .unwrap();
     assert!(!posted.is_error.unwrap_or(false), "{posted:?}");
     let posted = posted.structured_content.unwrap();
-    assert!(posted["id"].as_u64().is_some());
-    assert_eq!(posted["identifier"], json!(key));
-    assert!(posted["url"].as_str().unwrap_or("").contains(&key));
+    let comment_id = posted["id"].as_u64().expect("comment id");
+    assert_eq!(posted["identifier"], json!("CORE-2"));
+    assert_eq!(posted["url"], json!("kanban://issue/CORE-2"));
+
+    let comments = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target": {"kind": "ticket", "id": "CORE-2"}, "limit": 10}),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(comments["comments"][0]["author"], json!("Ada"));
+    assert!(comments["comments"][0].get("parent_comment_id").is_none());
+
+    let reply = client
+        .call_tool(call(
+            "save_comment",
+            json!({
+                "issue": "CORE-2",
+                "body": "Noted",
+                "author": "lin",
+                "parentId": comment_id
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(!reply.is_error.unwrap_or(false), "{reply:?}");
+    let reply = reply.structured_content.unwrap();
+    assert_eq!(reply["identifier"], json!("CORE-2"));
+    assert_eq!(reply["url"], json!("kanban://issue/CORE-2"));
+    let comments = client
+        .call_tool(call(
+            "list_comments",
+            json!({"target": {"kind": "ticket", "id": "CORE-2"}, "limit": 10}),
+        ))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(comments["comments"][1]["author"], json!("lin"));
+    assert_eq!(
+        comments["comments"][1]["parent_comment_id"],
+        json!(comment_id)
+    );
 
     let refused = client
         .call_tool(call(

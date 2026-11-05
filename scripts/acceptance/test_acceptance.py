@@ -1091,13 +1091,14 @@ class StateMoveTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 class SubIssueClosureTests(unittest.TestCase):
-    def context(self):
+    def context(self, corrupt_waiting_parent=False):
         class MemoryMcp:
             def __init__(self):
                 self.issues = {}
                 self.next_id = 1
                 self.states = []
                 self.auto_close = False
+                self.corrupt_waiting_parent = corrupt_waiting_parent
 
             def call(self, name, arguments):
                 if name == "save_issue":
@@ -1168,7 +1169,24 @@ class SubIssueClosureTests(unittest.TestCase):
                     record["parent"] = stored["parent"]
                 if stored.get("milestone_id") is not None:
                     record["milestone_id"] = stored["milestone_id"]
+                if self.corrupt_waiting_parent and self.waiting(key):
+                    record["version"] = 99
+                    record["updated_at"] = "2099-01-01T00:00:00.000Z"
+                    record["state_history"] = record["state_history"] + [{
+                        "state": "Done", "state_type": "completed",
+                        "started_at": "2099-01-01T00:00:00.000Z",
+                    }]
                 return record
+
+            def waiting(self, key):
+                stored = self.issues[key]
+                if "Mixed closed children" not in stored["title"]:
+                    return False
+                children = [item for item in self.issues.values() if item.get("parent") == key]
+                closed = [
+                    item for item in children if item["state"] in {"Cancelled", "Superseded"}
+                ]
+                return bool(children) and 0 < len(closed) < len(children)
 
         mcp = MemoryMcp()
         recorder = checks.Recorder(emit=lambda line: None)
@@ -1191,3 +1209,25 @@ class SubIssueClosureTests(unittest.TestCase):
                 if state in line and "version" in line and "timestamp" in line
             ]
             self.assertTrue(matched, state)
+
+    def clock_results(self, corrupt=False):
+        ctx = self.context(corrupt_waiting_parent=corrupt)
+        ctx.rec.begin(11, "Sub-issues")
+        scenarios.test_sub_issues(ctx)
+        return {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+
+    def test_a_waiting_parent_keeps_its_clock_while_a_child_remains(self):
+        results = self.clock_results()
+        for child in ("cancelled", "superseded"):
+            description = (
+                f"a {child} child leaves the parent version, timestamps and history unchanged"
+            )
+            self.assertEqual(results[description], checks.PASS)
+
+    def test_a_waiting_parent_rejects_a_changed_clock_while_a_child_remains(self):
+        results = self.clock_results(corrupt=True)
+        for child in ("cancelled", "superseded"):
+            description = (
+                f"a {child} child leaves the parent version, timestamps and history unchanged"
+            )
+            self.assertEqual(results[description], checks.FAIL)

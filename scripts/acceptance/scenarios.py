@@ -1328,6 +1328,15 @@ def child_keys(record):
     return [child["identifier"] for child in record.get("children", [])]
 
 
+def waiting_parent_kept(before, after):
+    """Version, timestamps and history an open parent must keep."""
+    fields = (
+        "version", "created_at", "updated_at", "started_at", "completed_at",
+        "canceled_at", "state", "state_history",
+    )
+    return tuple(before.get(name) for name in fields) == tuple(after.get(name) for name in fields)
+
+
 def test_sub_issues(ctx):
     rec = ctx.rec
     pl1, pl2 = ctx.milestones["M1"], ctx.milestones["M2"]
@@ -1438,12 +1447,27 @@ def test_sub_issues(ctx):
         cancelled_child = ctx.create("T11 Mixed cancelled child", parent_id=mixed, state="Active")
         superseded_child = ctx.create("T11 Mixed superseded child", parent_id=mixed, state="Active")
         duplicate_child = ctx.create("T11 Mixed duplicate child", parent_id=mixed, state="Active")
+        before_partial = ctx.get(mixed)
         ctx.save_must(cancelled_child, state="Cancelled")
+        after_cancelled = ctx.get(mixed)
         rec.equal("a cancelled child leaves the parent open while another child is open",
-                  ctx.get(mixed)["state"], "Active")
+                  after_cancelled["state"], "Active")
+        rec.check(
+            "a cancelled child leaves the parent version, timestamps and history unchanged",
+            waiting_parent_kept(before_partial, after_cancelled),
+            f"version {before_partial.get('version')} -> {after_cancelled.get('version')}, "
+            f"updated_at {before_partial.get('updated_at')} -> {after_cancelled.get('updated_at')}",
+        )
         ctx.save_must(superseded_child, state="Superseded")
+        after_superseded = ctx.get(mixed)
         rec.equal("a superseded child leaves the parent open while another child is open",
-                  ctx.get(mixed)["state"], "Active")
+                  after_superseded["state"], "Active")
+        rec.check(
+            "a superseded child leaves the parent version, timestamps and history unchanged",
+            waiting_parent_kept(before_partial, after_superseded),
+            f"version {before_partial.get('version')} -> {after_superseded.get('version')}, "
+            f"updated_at {before_partial.get('updated_at')} -> {after_superseded.get('updated_at')}",
+        )
         ctx.save_must(duplicate_child, state="Duplicate")
         closed = ctx.get(mixed)
         rec.equal("the last cancelled, superseded or duplicate child closes the parent",

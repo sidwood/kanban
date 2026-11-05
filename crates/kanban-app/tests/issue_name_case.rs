@@ -22,8 +22,9 @@ mod common;
 use common::{harness, mutation};
 
 /// The schema a database written before the name case rule carries:
-/// the last migration before the rule landed.
-const PREVIOUS_BUILD_SCHEMA: i64 = migrations::LATEST_SCHEMA_VERSION - 1;
+/// The last migration before the case rule landed. Later migrations
+/// must not become the schema the stored pair is planted into.
+const PREVIOUS_BUILD_SCHEMA: i64 = 65;
 
 fn register_issue_stack(core: &mut Core, database: &Database, attachments: &std::path::Path) {
     let projects = Arc::new(SqliteProjectStore::new(database));

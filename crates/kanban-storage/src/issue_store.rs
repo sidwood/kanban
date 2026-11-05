@@ -870,26 +870,8 @@ impl SqliteIssueStore {
             if exists.is_none() {
                 return Err(ApiError::not_found_field("parent_id", "parent issue"));
             }
-            let child_project: i64 = conn
-                .query_row(
-                    "SELECT project_id FROM tickets WHERE id = ?1",
-                    [ticket_id],
-                    |row| row.get(0),
-                )
-                .map_err(not_found_ticket)?;
-            let parent_project: i64 = conn
-                .query_row(
-                    "SELECT project_id FROM tickets WHERE id = ?1",
-                    [parent_id],
-                    |row| row.get(0),
-                )
-                .map_err(not_found_ticket)?;
-            if child_project != parent_project {
-                return Err(ApiError::invalid_request_field(
-                    "parent_id",
-                    "parent issue must belong to the same project",
-                ));
-            }
+            // As in Linear, the parent may sit in another project; the
+            // child keeps its own project and milestone.
             drop(conn);
         }
         let conn = self.lock();

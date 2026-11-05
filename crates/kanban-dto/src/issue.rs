@@ -10,7 +10,10 @@ use crate::mutation::MutationContext;
 #[serde(deny_unknown_fields)]
 pub struct IssueSaveRequest {
     pub mutation: MutationContext,
-    /// Target project when creating; required without `identifier`.
+    /// Target project when creating. Required without `identifier`
+    /// unless `parent_id` names a parent, whose project it then
+    /// defaults to; a sub-issue may name a project other than its
+    /// parent's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<u64>,
     /// Existing issue key (`CODE-123`) when updating.
@@ -43,6 +46,10 @@ pub struct IssueSaveRequest {
     pub add_labels: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remove_labels: Option<Vec<String>>,
+    /// Parent issue by key (`CODE-123`) or numeric ticket id; `null`
+    /// makes the issue top-level. The parent may be in another
+    /// project. A new sub-issue takes the parent's milestone only when
+    /// it stays in the parent's project.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

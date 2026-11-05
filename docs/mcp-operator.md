@@ -11,9 +11,9 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 
 | MCP name | Core operation | Purpose |
 | --- | --- | --- |
-| `save_issue` | `issue.save` | Create or update title, description, state, priority, due date, milestone, labels, parent, duplicate-of, relations, and blocked-by |
+| `save_issue` | `issue.save` | Create or update title, description, state, priority, due date, milestone, labels, parent (in any project), duplicate-of, relations, and blocked-by |
 | `get_issue` | `issue.get` | Read one issue by `TEAM-N` key with relations, sub-issue progress, state history, lifecycle timestamps, version, and timestamps |
-| `list_issues` | `issue.list` | Filter by project/team, state, label, milestone, text query, parent, and `updated_since`; paginate with `cursor` and `limit` (default 50) |
+| `list_issues` | `issue.list` | Filter by project/team, state, label, milestone, text query, parent (children in every project unless a project filter narrows them), and `updated_since`; paginate with `cursor` and `limit` (default 50) |
 | `list_issue_statuses` | `issue.list_workflow_states` | Workflow states with Linear types for a project |
 | `list_issue_labels` | `issue.list_labels` | Labels and groups (including single-select groups), including retired labels |
 | `list_milestones` | `issue.list_milestones` | Milestones for a project with issue progress counts |
@@ -27,6 +27,10 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | `comment_revisions` | `comment.revisions` | Read comment history |
 | `list_comments` | `comment.list` | List comments on an issue (oldest first, cursor paging), including resolve state |
 | `resolve_comment` | `comment.resolve` | Resolve or clear resolution on a comment thread |
+
+Sub-issues may sit in a different project from their parent; see
+[sub-issues.md](./sub-issues.md) for how the project and milestone default and
+how reads behave across projects.
 
 Agent-scoped MCP sessions keep the existing capability-bound tool set; operator
 tools are installation-authenticated only.

@@ -489,44 +489,38 @@ fn create_issue(
     request: &IssueSaveRequest,
     effects: &dyn CommandEffects,
 ) -> Result<Value, ApiError> {
-    let mut project_id = if let Some(id) = request.project_id {
-        id
-    } else if let Some(parent_ref) = request
+    let parent = match request
         .parent_id
         .as_ref()
         .and_then(|value| value.as_deref())
     {
-        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
-        ctx.tickets
-            .find(TicketId::new(parent_id))?
-            .ok_or_else(|| ApiError::not_found_field("parent_id", "parent issue"))?
-            .project()
-            .value()
-    } else {
-        return Err(ApiError::invalid_request_field(
-            "project_id",
-            "project_id is required when creating without parent_id",
-        ));
+        Some(reference) => {
+            let parent_id = resolve_parent_reference(ctx, reference)?;
+            let parent_project = ctx
+                .tickets
+                .find(TicketId::new(parent_id))?
+                .ok_or_else(|| ApiError::not_found_field("parent_id", "parent issue"))?
+                .project()
+                .value();
+            Some(NewSubIssueParent {
+                ticket_id: parent_id,
+                project_id: parent_project,
+            })
+        }
+        None => None,
     };
-    if let Some(parent_ref) = request
-        .parent_id
-        .as_ref()
-        .and_then(|value| value.as_deref())
-    {
-        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
-        let parent = ctx
-            .tickets
-            .find(TicketId::new(parent_id))?
-            .ok_or_else(|| ApiError::not_found_field("parent_id", "parent issue"))?;
-        let parent_project = parent.project().value();
-        if request.project_id.is_some() && project_id != parent_project {
+    // A sub-issue defaults to its parent's project, and an explicit
+    // project overrides it, as in Linear.
+    let project_id = match (request.project_id, parent.as_ref()) {
+        (Some(id), _) => id,
+        (None, Some(parent)) => parent.project_id,
+        (None, None) => {
             return Err(ApiError::invalid_request_field(
                 "project_id",
-                "sub-issues must belong to the parent's project",
+                "project_id is required when creating without parent_id",
             ));
         }
-        project_id = parent_project;
-    }
+    };
     let title = request.title.as_deref().ok_or_else(|| {
         ApiError::invalid_request_field("title", "title is required when creating")
     })?;
@@ -590,17 +584,11 @@ fn create_issue(
     if let Some(milestone) = request.milestone_id.as_ref() {
         ctx.issues
             .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
-    } else if let Some(parent_ref) = request
-        .parent_id
-        .as_ref()
-        .and_then(|value| value.as_deref())
+    } else if let Some(parent) = parent.as_ref()
+        && let Some(milestone_id) = inherited_milestone(ctx, parent, project_id)?
     {
-        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
-        let fields = ctx.issues.issue_fields(parent_id as i64)?;
-        if let Some(milestone_id) = fields.milestone_id {
-            ctx.issues
-                .set_milestone(ticket_id as i64, Some(milestone_id))?;
-        }
+        ctx.issues
+            .set_milestone(ticket_id as i64, Some(milestone_id))?;
     }
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
@@ -613,6 +601,29 @@ fn create_issue(
     finish_save_response(ctx, ticket_id)
 }
 
+/// The parent a new sub-issue is created under.
+struct NewSubIssueParent {
+    ticket_id: u64,
+    project_id: u64,
+}
+
+/// The milestone a new sub-issue takes from its parent when it names
+/// none. A milestone belongs to one project, so it follows the child
+/// only when the child stays in the parent's project; a child created
+/// in another project starts with no milestone.
+fn inherited_milestone(
+    ctx: &IssueContext,
+    parent: &NewSubIssueParent,
+    child_project_id: u64,
+) -> Result<Option<i64>, ApiError> {
+    if parent.project_id != child_project_id {
+        return Ok(None);
+    }
+    Ok(ctx
+        .issues
+        .issue_fields(parent.ticket_id as i64)?
+        .milestone_id)
+}
 fn update_issue(
     ctx: &IssueContext,
     request: &IssueSaveRequest,

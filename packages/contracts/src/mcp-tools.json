@@ -40652,6 +40652,7 @@
           "$ref": "#/definitions/MutationContext"
         },
         "parent_id": {
+          "description": "Parent issue by key (`CODE-123`) or numeric ticket id; `null` makes the issue top-level. The parent may be in another project. A new sub-issue takes the parent's milestone only when it stays in the parent's project.",
           "type": [
             "string",
             "null"
@@ -40666,7 +40667,7 @@
           ]
         },
         "project_id": {
-          "description": "Target project when creating; required without `identifier`.",
+          "description": "Target project when creating. Required without `identifier` unless `parent_id` names a parent, whose project it then defaults to; a sub-issue may name a project other than its parent's.",
           "format": "uint64",
           "minimum": 0.0,
           "type": [

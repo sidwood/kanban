@@ -182,12 +182,12 @@ impl CommandHandler for SaveIssue {
                 .0
                 .issues
                 .resolve_identifier(identifier)?
-                .ok_or_else(|| ApiError::not_found(identifier))?;
+                .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?;
             return Ok(self
                 .0
                 .tickets
                 .find(TicketId::new(ticket_id as u64))?
-                .ok_or_else(|| ApiError::not_found(identifier))?
+                .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?
                 .version());
         }
         Ok(0)
@@ -489,7 +489,7 @@ fn create_issue(
         let parent_id = resolve_parent_reference(ctx, parent_ref)?;
         ctx.tickets
             .find(TicketId::new(parent_id))?
-            .ok_or_else(|| ApiError::not_found("parent issue"))?
+            .ok_or_else(|| ApiError::not_found_field("parent_id", "parent issue"))?
             .project()
             .value()
     } else {
@@ -507,7 +507,7 @@ fn create_issue(
         let parent = ctx
             .tickets
             .find(TicketId::new(parent_id))?
-            .ok_or_else(|| ApiError::not_found("parent issue"))?;
+            .ok_or_else(|| ApiError::not_found_field("parent_id", "parent issue"))?;
         let parent_project = parent.project().value();
         if request.project_id.is_some() && project_id != parent_project {
             return Err(ApiError::invalid_request_field(
@@ -612,11 +612,11 @@ fn update_issue(
     let (_, ticket_id) = ctx
         .issues
         .resolve_identifier(identifier)?
-        .ok_or_else(|| ApiError::not_found(identifier))?;
+        .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?;
     let ticket = ctx
         .tickets
         .find(TicketId::new(ticket_id as u64))?
-        .ok_or_else(|| ApiError::not_found(identifier))?;
+        .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?;
     let project_id = ticket.project().value();
     if request.project_id.is_some() {
         return Err(ApiError::invalid_request_field(
@@ -730,6 +730,20 @@ fn announce_saved_issue(
     }
 }
 
+fn resolve_listed_project(
+    ctx: &IssueContext,
+    project_id: u64,
+    field: &str,
+) -> Result<(), ApiError> {
+    resolve_project(ctx.projects.as_ref(), project_id).map_err(|error| {
+        if error.code == kanban_dto::ErrorCode::NotFound {
+            ApiError::not_found_field(field, &format!("project {project_id}"))
+        } else {
+            error
+        }
+    })?;
+    Ok(())
+}
 fn apply_issue_extensions(
     ctx: &IssueContext,
     ticket_id: i64,
@@ -830,6 +844,9 @@ fn name_relation_refusal(
 
 fn resolve_parent_reference(ctx: &IssueContext, reference: &str) -> Result<u64, ApiError> {
     if let Ok(id) = reference.parse::<u64>() {
+        if ctx.tickets.find(TicketId::new(id))?.is_none() {
+            return Err(ApiError::not_found_field("parent_id", reference));
+        }
         return Ok(id);
     }
     let (_, ticket_id) = ctx
@@ -955,11 +972,11 @@ fn load_issue_record(ctx: &IssueContext, identifier: &str) -> Result<IssueRecord
     let (_, ticket_id) = ctx
         .issues
         .resolve_identifier(identifier)?
-        .ok_or_else(|| ApiError::not_found(identifier))?;
+        .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?;
     let ticket = ctx
         .tickets
         .find(TicketId::new(ticket_id as u64))?
-        .ok_or_else(|| ApiError::not_found(identifier))?;
+        .ok_or_else(|| ApiError::not_found_field("identifier", identifier))?;
     let key = ctx.issues.load_issue_key(ticket_id)?;
     let state = ctx
         .issues
@@ -1033,12 +1050,16 @@ fn list_issues(
         .as_deref()
         .map(start_of_window)
         .transpose()?;
-    let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
-        Some(project_id) => {
-            resolve_project(ctx.projects.as_ref(), project_id)?;
+    let project_ids: Vec<u64> = match (request.team_id, request.project_id) {
+        (Some(team_id), _) => {
+            resolve_listed_project(ctx, team_id, "team_id")?;
+            vec![team_id]
+        }
+        (None, Some(project_id)) => {
+            resolve_listed_project(ctx, project_id, "project_id")?;
             vec![project_id]
         }
-        None => ctx
+        (None, None) => ctx
             .projects
             .list()?
             .into_iter()
@@ -1272,7 +1293,7 @@ fn resolve_parent_filter(ctx: &IssueContext, raw: &str) -> Result<i64, ApiError>
         let (_, ticket_id) = ctx
             .issues
             .resolve_identifier(raw)?
-            .ok_or_else(|| ApiError::not_found(raw))?;
+            .ok_or_else(|| ApiError::not_found_field("parent_id", raw))?;
         return Ok(ticket_id);
     }
     raw.parse::<i64>().map_err(|_| {

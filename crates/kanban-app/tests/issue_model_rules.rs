@@ -4530,3 +4530,43 @@ fn a_legacy_dependency_write_stamps_both_endpoints() {
     assert!(after_remove.version > before_remove.version);
     assert_ne!(after_remove.updated_at, before_remove.updated_at);
 }
+
+#[test]
+fn a_missing_reference_names_the_supplied_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let cases = [
+        (
+            "issue.save",
+            json!({ "identifier": "CORE-999", "title": "Unknown" }),
+            "identifier",
+        ),
+        (
+            "issue.get",
+            json!({ "identifier": "CORE-999" }),
+            "identifier",
+        ),
+        (
+            "issue.list",
+            json!({ "parent_id": "CORE-999" }),
+            "parent_id",
+        ),
+        ("issue.list", json!({ "team_id": 999 }), "team_id"),
+        (
+            "issue.save",
+            json!({ "parent_id": "999", "title": "Child" }),
+            "parent_id",
+        ),
+    ];
+    for (name, body, field) in cases {
+        let error = session
+            .call(name, &body)
+            .expect_err("the missing reference is refused");
+        assert_eq!(error.code, ErrorCode::NotFound, "{name} {body:?}");
+        assert_eq!(
+            error.field.as_deref(),
+            Some(field),
+            "{name} {body:?} names {field}, got {error:?}"
+        );
+    }
+}

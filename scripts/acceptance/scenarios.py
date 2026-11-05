@@ -1328,13 +1328,21 @@ def child_keys(record):
     return [child["identifier"] for child in record.get("children", [])]
 
 
-def waiting_parent_kept(before, after):
-    """Version, timestamps and history an open parent must keep."""
+def parent_clock_kept(before, after):
+    """Version, timestamps and history a parent must keep when it should not move."""
     fields = (
         "version", "created_at", "updated_at", "started_at", "completed_at",
         "canceled_at", "state", "state_history",
     )
     return tuple(before.get(name) for name in fields) == tuple(after.get(name) for name in fields)
+
+
+def parent_clock_reason(before, after):
+    return (
+        f"version {before.get('version')} -> {after.get('version')}, "
+        f"created_at {before.get('created_at')} -> {after.get('created_at')}, "
+        f"updated_at {before.get('updated_at')} -> {after.get('updated_at')}"
+    )
 
 
 def test_sub_issues(ctx):
@@ -1397,12 +1405,8 @@ def test_sub_issues(ctx):
               record["state"] == "Active" and record.get("sub_issues") == {"done": 3, "total": 3},
               f"{record['state']}, {record.get('sub_issues')}")
     rec.check("with auto-close off, the parent keeps its version and timestamps",
-              (before_close["version"], before_close["updated_at"], before_close.get("started_at"),
-               before_close.get("completed_at"), before_close.get("canceled_at")) ==
-              (record["version"], record["updated_at"], record.get("started_at"),
-               record.get("completed_at"), record.get("canceled_at")),
-              f"version {before_close['version']} -> {record['version']}, "
-              f"updated_at {before_close['updated_at']} -> {record['updated_at']}")
+              parent_clock_kept(before_close, record),
+              parent_clock_reason(before_close, record))
     progress = ctx.create("Closed-child progress", "LIN", state="Active")
     ctx.create("Cancelled child", parent_id=progress, state="Cancelled")
     ctx.create("Superseded child", parent_id=progress, state="Superseded")
@@ -1428,9 +1432,17 @@ def test_sub_issues(ctx):
         closing = ctx.create("T11 Auto-close parent", "LIN", state="Active")
         first_child = ctx.create("T11 Auto-close child one", parent_id=closing, state="Active")
         second_child = ctx.create("T11 Auto-close child two", parent_id=closing, state="Active")
+        before_waiting = ctx.get(closing)
         ctx.save_must(first_child, state="Done")
-        rec.equal("auto-close waits while a sub-issue is open", ctx.get(closing)["state"], "Active")
-        before = ctx.get(closing)
+        waiting = ctx.get(closing)
+        rec.equal("auto-close waits while a sub-issue is open", waiting["state"], "Active")
+        rec.check(
+            "a done child leaves the parent version, timestamps and history unchanged "
+            "while a sibling is open",
+            parent_clock_kept(before_waiting, waiting),
+            parent_clock_reason(before_waiting, waiting),
+        )
+        before = waiting
         ctx.save_must(second_child, state="Done")
         after = ctx.get(closing)
         rec.equal("closing the last sub-issue closes the parent", (after["state"], after["state_type"]),
@@ -1441,8 +1453,9 @@ def test_sub_issues(ctx):
         ctx.save_must(second_child, state="Active")
         ctx.save_must(second_child, state="Done")
         again = ctx.get(closing)
-        rec.equal("an already closed parent is not closed again", len(again["state_history"]),
-                  len(after["state_history"]))
+        rec.check("an already closed parent is not closed again",
+                  parent_clock_kept(after, again),
+                  parent_clock_reason(after, again))
         mixed = ctx.create("Mixed closed children", "LIN", state="Active")
         cancelled_child = ctx.create("Mixed cancelled child", parent_id=mixed, state="Active")
         superseded_child = ctx.create("Mixed superseded child", parent_id=mixed, state="Active")
@@ -1454,9 +1467,8 @@ def test_sub_issues(ctx):
                   after_cancelled["state"], "Active")
         rec.check(
             "a cancelled child leaves the parent version, timestamps and history unchanged",
-            waiting_parent_kept(before_partial, after_cancelled),
-            f"version {before_partial.get('version')} -> {after_cancelled.get('version')}, "
-            f"updated_at {before_partial.get('updated_at')} -> {after_cancelled.get('updated_at')}",
+            parent_clock_kept(before_partial, after_cancelled),
+            parent_clock_reason(before_partial, after_cancelled),
         )
         ctx.save_must(superseded_child, state="Superseded")
         after_superseded = ctx.get(mixed)
@@ -1464,9 +1476,8 @@ def test_sub_issues(ctx):
                   after_superseded["state"], "Active")
         rec.check(
             "a superseded child leaves the parent version, timestamps and history unchanged",
-            waiting_parent_kept(before_partial, after_superseded),
-            f"version {before_partial.get('version')} -> {after_superseded.get('version')}, "
-            f"updated_at {before_partial.get('updated_at')} -> {after_superseded.get('updated_at')}",
+            parent_clock_kept(before_partial, after_superseded),
+            parent_clock_reason(before_partial, after_superseded),
         )
         ctx.save_must(duplicate_child, state="Duplicate")
         closed = ctx.get(mixed)
@@ -1480,20 +1491,10 @@ def test_sub_issues(ctx):
             before = ctx.get(terminal)
             ctx.save_must(child, state="Done")
             after_parent = ctx.get(terminal)
-            unchanged = (
-                before["version"], before["updated_at"], before.get("started_at"),
-                before.get("completed_at"), before.get("canceled_at"), before["state"],
-                before["state_history"],
-            ) == (
-                after_parent["version"], after_parent["updated_at"], after_parent.get("started_at"),
-                after_parent.get("completed_at"), after_parent.get("canceled_at"),
-                after_parent["state"], after_parent["state_history"],
-            )
             rec.check(
                 f"a {state['name']} parent keeps its version and timestamps when its last child closes",
-                unchanged,
-                f"version {before['version']} -> {after_parent['version']}, "
-                f"updated_at {before['updated_at']} -> {after_parent['updated_at']}",
+                parent_clock_kept(before, after_parent),
+                parent_clock_reason(before, after_parent),
             )
     finally:
         ctx.must("update_project_settings", {"mutation": ctx.mutation(0, "settings"),

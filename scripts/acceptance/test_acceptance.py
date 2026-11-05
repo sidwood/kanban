@@ -1164,7 +1164,15 @@ class StateMoveTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 class SubIssueClosureTests(unittest.TestCase):
-    def context(self, corrupt_waiting_parent=False):
+    def context(
+        self,
+        corrupt_waiting_parent=False,
+        corrupt_done_waiting=False,
+        corrupt_done_created=False,
+        corrupt_terminal_created=False,
+        corrupt_idle_created=False,
+        corrupt_closed_again=False,
+    ):
         class MemoryMcp:
             def __init__(self):
                 self.issues = {}
@@ -1172,6 +1180,12 @@ class SubIssueClosureTests(unittest.TestCase):
                 self.states = []
                 self.auto_close = False
                 self.corrupt_waiting_parent = corrupt_waiting_parent
+                self.corrupt_done_waiting = corrupt_done_waiting
+                self.corrupt_done_created = corrupt_done_created
+                self.corrupt_terminal_created = corrupt_terminal_created
+                self.corrupt_idle_created = corrupt_idle_created
+                self.corrupt_closed_again = corrupt_closed_again
+                self.closed_parent_reads = 0
 
             def call(self, name, arguments):
                 if name == "save_issue":
@@ -1249,17 +1263,69 @@ class SubIssueClosureTests(unittest.TestCase):
                         "state": "Done", "state_type": "completed",
                         "started_at": "2099-01-01T00:00:00.000Z",
                     }]
+                if self.corrupt_done_waiting and self.done_waiting(key):
+                    record["version"] = 99
+                    record["updated_at"] = "2099-01-01T00:00:00.000Z"
+                    record["state_history"] = record["state_history"] + [{
+                        "state": "Done", "state_type": "completed",
+                        "started_at": "2099-01-01T00:00:00.000Z",
+                    }]
+                if self.corrupt_done_created and self.done_waiting(key):
+                    record["created_at"] = "1999-01-01T00:00:00.000Z"
+                if self.corrupt_terminal_created and self.terminal_closed(key):
+                    record["created_at"] = "1999-01-01T00:00:00.000Z"
+                if self.corrupt_idle_created and self.idle_closed(key):
+                    record["created_at"] = "1999-01-01T00:00:00.000Z"
+                if self.corrupt_closed_again and self.closed_again(key):
+                    self.closed_parent_reads += 1
+                    if self.closed_parent_reads >= 2:
+                        record["created_at"] = "1999-01-01T00:00:00.000Z"
                 return record
+
+            def children_of(self, key):
+                return [item for item in self.issues.values() if item.get("parent") == key]
 
             def waiting(self, key):
                 stored = self.issues[key]
                 if "Mixed closed children" not in stored["title"]:
                     return False
-                children = [item for item in self.issues.values() if item.get("parent") == key]
+                children = self.children_of(key)
                 closed = [
                     item for item in children if item["state"] in {"Cancelled", "Superseded"}
                 ]
                 return bool(children) and 0 < len(closed) < len(children)
+
+            def done_waiting(self, key):
+                stored = self.issues[key]
+                if stored["title"] != "T11 Auto-close parent":
+                    return False
+                children = self.children_of(key)
+                done = [item for item in children if item["state"] == "Done"]
+                return bool(children) and 0 < len(done) < len(children)
+
+            def terminal_closed(self, key):
+                stored = self.issues[key]
+                if stored["title"] not in {
+                    "Done parent", "Cancelled parent", "Superseded parent", "Duplicate parent",
+                }:
+                    return False
+                children = self.children_of(key)
+                return bool(children) and all(item["state"] == "Done" for item in children)
+
+            def idle_closed(self, key):
+                stored = self.issues[key]
+                if stored["title"] != "T11 Parent":
+                    return False
+                children = self.children_of(key)
+                closed = {"Done", "Cancelled", "Superseded", "Duplicate"}
+                return bool(children) and all(item["state"] in closed for item in children)
+
+            def closed_again(self, key):
+                stored = self.issues[key]
+                if stored["title"] != "T11 Auto-close parent":
+                    return False
+                children = self.children_of(key)
+                return bool(children) and all(item["state"] == "Done" for item in children)
 
         mcp = MemoryMcp()
         recorder = checks.Recorder(emit=lambda line: None)
@@ -1304,6 +1370,55 @@ class SubIssueClosureTests(unittest.TestCase):
                 f"a {child} child leaves the parent version, timestamps and history unchanged"
             )
             self.assertEqual(results[description], checks.FAIL)
+
+    def closure_results(self, **flags):
+        ctx = self.context(**flags)
+        ctx.rec.begin(11, "Sub-issues")
+        scenarios.test_sub_issues(ctx)
+        return {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+
+    def test_a_done_child_keeps_the_parent_clock_while_a_sibling_is_open(self):
+        results = self.closure_results()
+        description = (
+            "a done child leaves the parent version, timestamps and history unchanged "
+            "while a sibling is open"
+        )
+        self.assertEqual(results[description], checks.PASS)
+
+    def test_a_done_child_rejects_a_moved_parent_clock_while_a_sibling_is_open(self):
+        results = self.closure_results(corrupt_done_waiting=True)
+        description = (
+            "a done child leaves the parent version, timestamps and history unchanged "
+            "while a sibling is open"
+        )
+        self.assertEqual(results[description], checks.FAIL)
+
+    def test_a_done_child_rejects_a_replaced_created_at_while_a_sibling_is_open(self):
+        results = self.closure_results(corrupt_done_created=True)
+        description = (
+            "a done child leaves the parent version, timestamps and history unchanged "
+            "while a sibling is open"
+        )
+        self.assertEqual(results[description], checks.FAIL)
+
+    def test_a_terminal_parent_rejects_a_replaced_created_at(self):
+        results = self.closure_results(corrupt_terminal_created=True)
+        for state in ("Done", "Cancelled", "Superseded", "Duplicate"):
+            description = (
+                f"a {state} parent keeps its version and timestamps when its last child closes"
+            )
+            self.assertEqual(results[description], checks.FAIL, state)
+
+    def test_an_idle_parent_rejects_a_replaced_created_at(self):
+        results = self.closure_results(corrupt_idle_created=True)
+        self.assertEqual(
+            results["with auto-close off, the parent keeps its version and timestamps"],
+            checks.FAIL,
+        )
+
+    def test_an_already_closed_parent_rejects_a_replaced_created_at(self):
+        results = self.closure_results(corrupt_closed_again=True)
+        self.assertEqual(results["an already closed parent is not closed again"], checks.FAIL)
 
 
 class FixtureNameTests(unittest.TestCase):

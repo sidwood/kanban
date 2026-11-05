@@ -3934,3 +3934,59 @@ fn a_scheduled_occurrence_opens_its_ready_state_row() {
         "no retry duplicates the occurrence's history"
     );
 }
+
+#[test]
+fn a_cycle_closing_block_is_refused_by_its_field() {
+    let h = rules_harness();
+    let session = &h.session;
+    let first = save_issue(
+        session,
+        0,
+        "cycle-first",
+        json!({ "project_id": 1, "title": "First" }),
+    );
+    let second = save_issue(
+        session,
+        0,
+        "cycle-second",
+        json!({ "project_id": 1, "title": "Second" }),
+    );
+    save_issue(
+        session,
+        read_issue(session, &first.identifier).version,
+        "cycle-forward",
+        json!({ "identifier": first.identifier, "add_blocks": [second.identifier.clone()] }),
+    );
+    let refusal = try_save(
+        session,
+        read_issue(session, &second.identifier).version,
+        "cycle-back",
+        json!({ "identifier": second.identifier, "add_blocks": [first.identifier.clone()] }),
+    )
+    .expect_err("a block that would close a cycle is refused");
+    assert_eq!(
+        (refusal.code, refusal.field.as_deref()),
+        (ErrorCode::InvalidRequest, Some("add_blocks"))
+    );
+    let blocked_by = try_save(
+        session,
+        read_issue(session, &first.identifier).version,
+        "cycle-blocked-by",
+        json!({ "identifier": first.identifier, "add_blocked_by": [second.identifier.clone()] }),
+    )
+    .expect_err("the reverse blocked-by add is the same cycle");
+    assert_eq!(
+        (blocked_by.code, blocked_by.field.as_deref()),
+        (ErrorCode::InvalidRequest, Some("add_blocked_by"))
+    );
+    assert_eq!(
+        read_issue(session, &first.identifier)
+            .relations
+            .iter()
+            .filter(|relation| relation.kind == "blocks" || relation.kind == "blocked-by")
+            .count(),
+        1,
+        "the refused cycle adds no edge"
+    );
+}
+

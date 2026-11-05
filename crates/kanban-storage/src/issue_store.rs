@@ -1959,23 +1959,26 @@ fn mentioned_issue_keys(description: &str) -> Vec<String> {
             push_issue_key(&mut mentioned, &key);
         }
     }
-    let mut index = 0;
-    while index < description.len() {
-        let Some(open) = description[index..].find('[') else {
-            break;
+    let mut search = 0;
+    while let Some(rel) = description[search..].find("](") {
+        let close = search + rel;
+        let Some(open_rel) = description[search..close]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| *ch == '[')
+            .map(|(index, _)| index)
+        else {
+            search = close + 2;
+            continue;
         };
-        let start = index + open;
-        let Some(close_rel) = description[start..].find("](") else {
-            break;
-        };
-        let label_end = start + close_rel;
-        let target_start = label_end + 2;
+        let start = search + open_rel;
+        push_issue_key(&mut mentioned, description[start + 1..close].trim());
+        let target_start = close + 2;
         let Some(end_rel) = description[target_start..].find(')') else {
-            index = target_start;
+            search = target_start;
             continue;
         };
         let target_end = target_start + end_rel;
-        push_issue_key(&mut mentioned, description[start + 1..label_end].trim());
         let target = &description[target_start..target_end];
         push_issue_key(&mut mentioned, target.trim());
         if let Some(rest) = target.split("kanban://issue/").nth(1) {
@@ -1985,7 +1988,7 @@ fn mentioned_issue_keys(description: &str) -> Vec<String> {
                 .collect();
             push_issue_key(&mut mentioned, &key);
         }
-        index = target_end + 1;
+        search = target_end + 1;
     }
     mentioned.sort();
     mentioned.dedup();

@@ -4444,3 +4444,35 @@ fn a_retained_reverse_related_row_lists_once() {
         .expect("either endpoint can remove the retained row");
     assert!(read_issue(session, &low.identifier).relations.is_empty());
 }
+
+#[test]
+fn a_checkbox_does_not_hide_a_following_link() {
+    let h = rules_harness();
+    let session = &h.session;
+    let host = save_issue(
+        session,
+        0,
+        "checkbox-host",
+        json!({ "project_id": 1, "title": "Host" }),
+    );
+    let mentioned = save_issue(
+        session,
+        0,
+        "checkbox-mentioned",
+        json!({ "project_id": 1, "title": "Mentioned" }),
+    );
+    let text = format!(
+        "- [ ] Follow [{}](https://example.test/issue)\n",
+        mentioned.identifier
+    );
+    session
+        .call(
+            "issue.save",
+            &json!({ "identifier": host.identifier, "description": text }),
+        )
+        .expect("the description saves");
+    let record = read_issue(session, &host.identifier);
+    assert_eq!(record.description, text);
+    assert_eq!(record.relations.len(), 1);
+    assert_eq!(record.relations[0].identifier, mentioned.identifier);
+}

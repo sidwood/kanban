@@ -4,6 +4,22 @@
 use crate::project::ProjectCode;
 use crate::ticket::TicketNumber;
 
+pub const DEFAULT_WORKFLOW: &[(&str, &str, &str, i64)] = &[
+    ("Draft", "backlog", "draft", 0),
+    ("Parked", "backlog", "parked", 1),
+    ("Blocked", "backlog", "blocked", 2),
+    ("Scheduled", "unstarted", "scheduled", 3),
+    ("Ready", "unstarted", "ready", 4),
+    ("Active", "started", "active", 5),
+    ("In Review", "started", "in_review", 6),
+    ("Approved", "started", "approved", 7),
+    ("Landing", "started", "landing", 8),
+    ("Done", "completed", "done", 9),
+    ("Cancelled", "canceled", "cancelled", 10),
+    ("Superseded", "canceled", "superseded", 11),
+    ("Duplicate", "duplicate", "duplicate", 12),
+];
+
 /// Linear workflow state type (fixed enum).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkflowStateType {

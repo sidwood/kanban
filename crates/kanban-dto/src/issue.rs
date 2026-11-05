@@ -293,6 +293,13 @@ pub struct IssueRecord {
 pub struct IssueListQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<u64>,
+    /// Filter by Kanban workflow state name: Draft, Parked, Blocked,
+    /// Scheduled, Ready, Active, In Review, Approved, Landing, Done,
+    /// Cancelled, Superseded, or Duplicate. Also accepts workflow types:
+    /// backlog, unstarted, started, completed, canceled, and duplicate;
+    /// a type matches every state of that type. Matching is case-insensitive
+    /// and input is not trimmed. Unknown values such as Todo are refused.
+    /// Omit or send null for all states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

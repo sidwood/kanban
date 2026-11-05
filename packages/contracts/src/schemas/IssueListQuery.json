@@ -83,6 +83,7 @@
       ]
     },
     "state": {
+      "description": "Filter by Kanban workflow state name: Draft, Parked, Blocked, Scheduled, Ready, Active, In Review, Approved, Landing, Done, Cancelled, Superseded, or Duplicate. Also accepts workflow types: backlog, unstarted, started, completed, canceled, and duplicate; a type matches every state of that type. Matching is case-insensitive and input is not trimmed. Unknown values such as Todo are refused. Omit or send null for all states.",
       "type": [
         "string",
         "null"

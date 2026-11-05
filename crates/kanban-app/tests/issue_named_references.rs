@@ -851,28 +851,50 @@ fn operator_tool_schemas_describe_every_field_and_the_kanban_states() {
         missing.is_empty(),
         "operator fields lack descriptions: {missing:?}"
     );
-    let described = tools
-        .iter()
-        .find(|tool| tool["name"] == "save_issue")
-        .expect("save_issue")["inputSchema"]["properties"]["state"]["description"]
-        .as_str()
-        .unwrap_or("");
-    for name in [
-        "Draft",
-        "Parked",
-        "Blocked",
-        "Scheduled",
-        "Ready",
-        "Active",
-        "In Review",
-        "Approved",
-        "Landing",
-        "Done",
-        "Cancelled",
-        "Superseded",
-        "Duplicate",
-    ] {
-        assert!(described.contains(name), "state lists {name}: {described}");
+    for tool_name in ["save_issue", "list_issues"] {
+        let described = tools
+            .iter()
+            .find(|tool| tool["name"] == tool_name)
+            .expect("issue tool")["inputSchema"]["properties"]["state"]["description"]
+            .as_str()
+            .unwrap_or("");
+        for name in [
+            "Draft",
+            "Parked",
+            "Blocked",
+            "Scheduled",
+            "Ready",
+            "Active",
+            "In Review",
+            "Approved",
+            "Landing",
+            "Done",
+            "Cancelled",
+            "Superseded",
+            "Duplicate",
+        ] {
+            assert!(
+                described.contains(name),
+                "{tool_name} state lists {name}: {described}"
+            );
+        }
+        if tool_name == "list_issues" {
+            for kind in [
+                "backlog",
+                "unstarted",
+                "started",
+                "completed",
+                "canceled",
+                "duplicate",
+            ] {
+                assert!(
+                    described.contains(kind),
+                    "list state lists type {kind}: {described}"
+                );
+            }
+            assert!(described.contains("case-insensitive"), "{described}");
+            assert!(described.contains("not trimmed"), "{described}");
+        }
     }
 }
 
@@ -1102,4 +1124,244 @@ fn project_filters_keep_the_label_group_across_teams() {
         vec![saved[1]["identifier"].clone()]
     );
     assert!(list(json!({"project":"Web","label":"Missing"})).is_empty());
+}
+
+#[test]
+fn list_states_refuse_unknown_values_without_writing() {
+    let mut h = harness();
+    register_issue_stack(&mut h.core, &h.database, &h._dir.path().join("attachments"));
+    let session = OperatorSession::new(Arc::new(h.core));
+    let saved = session
+        .call(
+            "issue.save",
+            &json!({"team":"CORE", "title":"State filters"}),
+        )
+        .unwrap();
+    let before = session
+        .call("issue.get", &json!({"id":saved["identifier"]}))
+        .unwrap();
+    let changes = h.database.connection().total_changes();
+    for state in [
+        "Todo",
+        &"Active".replace('i', ""),
+        &"In Review".replace('i', ""),
+        " Ready",
+        "Ready ",
+        "",
+        "in_review",
+        " started ",
+    ] {
+        for scope in [json!({"team":"CORE"}), json!({"project_id":1}), json!({})] {
+            let mut payload = scope;
+            payload["state"] = json!(state);
+            let error = session
+                .call("issue.list", &payload)
+                .expect_err("an unknown list state must be refused");
+            assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+            assert_eq!(error.field.as_deref(), Some("state"));
+            assert!(error.message.contains(state), "{error:?}");
+            for name in [
+                "Draft",
+                "Parked",
+                "Blocked",
+                "Scheduled",
+                "Ready",
+                "Active",
+                "In Review",
+                "Approved",
+                "Landing",
+                "Done",
+                "Cancelled",
+                "Superseded",
+                "Duplicate",
+            ] {
+                assert!(error.message.contains(name), "missing {name}: {error:?}");
+            }
+            assert_eq!(h.database.connection().total_changes(), changes);
+            assert_eq!(
+                session
+                    .call("issue.get", &json!({"id":saved["identifier"]}))
+                    .unwrap(),
+                before
+            );
+        }
+    }
+}
+
+#[test]
+fn list_states_keep_all_names_and_types_across_teams() {
+    use kanban_app::ProjectStore;
+    let mut h = harness();
+    let registration = kanban_domain::ProjectRegistration::new(
+        "CORE2",
+        "Another team",
+        "/repositories/CORE2",
+        "/workspaces/CORE2",
+        "main",
+        "CORE2",
+        None,
+        None,
+    )
+    .unwrap();
+    SqliteProjectStore::new(&h.database)
+        .create(&registration, &|id| {
+            kanban_app::TimelineEnvelope::project(
+                id.value(),
+                kanban_dto::TimelineEventKind::Transition,
+                None,
+                json!({"action":"registered"}),
+            )
+        })
+        .unwrap();
+    register_issue_stack(&mut h.core, &h.database, &h._dir.path().join("attachments"));
+    let session = OperatorSession::new(Arc::new(h.core));
+    let groups: [(&str, &[&str]); 6] = [
+        ("backlog", &["Draft", "Parked", "Blocked"]),
+        ("unstarted", &["Scheduled", "Ready"]),
+        ("started", &["Active", "In Review", "Approved", "Landing"]),
+        ("completed", &["Done"]),
+        ("canceled", &["Cancelled", "Superseded"]),
+        ("duplicate", &["Duplicate"]),
+    ];
+    let mut fixtures = Vec::new();
+    for team in ["CORE", "CORE2"] {
+        for (kind, names) in groups {
+            for name in names {
+                let saved = session
+                    .call(
+                        "issue.save",
+                        &json!({
+                            "team":team, "title":format!("{team} {name}"), "state":name
+                        }),
+                    )
+                    .unwrap();
+                fixtures.push((
+                    team,
+                    *name,
+                    kind,
+                    saved["identifier"].as_str().unwrap().to_owned(),
+                ));
+            }
+        }
+    }
+    let changes = h.database.connection().total_changes();
+    let list = |payload: &Value| {
+        let mut keys: Vec<String> = session.call("issue.list", payload).unwrap()["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["identifier"].as_str().unwrap().to_owned())
+            .collect();
+        keys.sort();
+        keys
+    };
+    for team in [None, Some("CORE"), Some("CORE2")] {
+        let mut scope = json!({});
+        if let Some(team) = team {
+            scope["team"] = json!(team);
+        }
+        let expected = |state: Option<&str>, kind: bool| {
+            let mut keys: Vec<String> = fixtures
+                .iter()
+                .filter(|(owner, name, state_type, _)| {
+                    team.is_none_or(|team| team == *owner)
+                        && state.is_none_or(|state| state == if kind { *state_type } else { *name })
+                })
+                .map(|(_, _, _, key)| key.clone())
+                .collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(list(&scope), expected(None, false));
+        let mut null_filter = scope.clone();
+        null_filter["state"] = Value::Null;
+        assert_eq!(list(&null_filter), expected(None, false));
+        for (kind, names) in groups {
+            for filter in [kind.to_owned(), kind.to_uppercase()] {
+                let mut payload = scope.clone();
+                payload["state"] = json!(filter);
+                assert_eq!(list(&payload), expected(Some(kind), true), "{payload}");
+            }
+            for name in names {
+                for filter in [(*name).to_owned(), name.to_lowercase(), name.to_uppercase()] {
+                    let mut payload = scope.clone();
+                    payload["state"] = json!(filter);
+                    assert_eq!(list(&payload), expected(Some(name), false), "{payload}");
+                }
+            }
+        }
+        let mut payload = scope.clone();
+        payload["state"] = json!("StArTeD");
+        assert_eq!(list(&payload), expected(Some("started"), true));
+        for state in ["Todo", &"Active".replace('i', ""), " Started", "Started "] {
+            payload["state"] = json!(state);
+            let error = session.call("issue.list", &payload).unwrap_err();
+            assert_eq!(error.field.as_deref(), Some("state"));
+            for (_, names) in groups {
+                for name in names {
+                    assert!(error.message.contains(name), "{payload}: {error:?}");
+                }
+            }
+        }
+    }
+    assert_eq!(h.database.connection().total_changes(), changes);
+}
+
+#[test]
+fn list_states_validate_without_any_registered_teams() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut database = Database::open(&dir.path().join("kanban.sqlite")).unwrap();
+    database
+        .migrate(&kanban_storage::AllowAllMigrations)
+        .unwrap();
+    let (mut core, _) = common::core_over(&database);
+    register_issue_stack(&mut core, &database, &dir.path().join("attachments"));
+    let session = OperatorSession::new(Arc::new(core));
+    let names = [
+        "Draft",
+        "Parked",
+        "Blocked",
+        "Scheduled",
+        "Ready",
+        "Active",
+        "In Review",
+        "Approved",
+        "Landing",
+        "Done",
+        "Cancelled",
+        "Superseded",
+        "Duplicate",
+    ];
+    let changes = database.connection().total_changes();
+    for payload in [json!({}), json!({"state":null})] {
+        assert_eq!(
+            session.call("issue.list", &payload).unwrap(),
+            json!({"issues":[]})
+        );
+    }
+    for state in names.into_iter().chain([
+        "backlog",
+        "unstarted",
+        "StArTeD",
+        "completed",
+        "canceled",
+        "duplicate",
+        "IN REVIEW",
+    ]) {
+        assert_eq!(
+            session.call("issue.list", &json!({"state":state})).unwrap(),
+            json!({"issues":[]})
+        );
+    }
+    for state in ["Todo", &"Active".replace('i', ""), " started "] {
+        let error = session
+            .call("issue.list", &json!({"state":state}))
+            .unwrap_err();
+        assert_eq!(error.code, kanban_dto::ErrorCode::InvalidRequest);
+        assert_eq!(error.field.as_deref(), Some("state"));
+        for name in names {
+            assert!(error.message.contains(name), "missing {name}: {error:?}");
+        }
+    }
+    assert_eq!(database.connection().total_changes(), changes);
 }

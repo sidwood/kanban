@@ -1202,19 +1202,53 @@ async fn operator_route_accepts_linear_shaped_calls() {
     .unwrap();
     let client = operator_client(&service, &secret).await;
     let tools = client.list_all_tools().await.unwrap();
-    let save_tool = tools
-        .iter()
-        .find(|tool| tool.name == "save_issue")
-        .expect("save_issue is listed");
-    let described = serde_json::to_value(&save_tool.input_schema).unwrap()["properties"]["state"]
-        ["description"]
-        .as_str()
-        .unwrap_or("")
-        .to_owned();
-    assert!(
-        described.contains("Draft") && described.contains("Duplicate"),
-        "tools/list describes state with the Kanban names: {described}"
-    );
+    for name in ["save_issue", "list_issues"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .expect("issue tool is listed");
+        let schema = serde_json::to_value(&tool.input_schema).unwrap();
+        let described = schema["properties"]["state"]["description"]
+            .as_str()
+            .unwrap_or("");
+        for state in [
+            "Draft",
+            "Parked",
+            "Blocked",
+            "Scheduled",
+            "Ready",
+            "Active",
+            "In Review",
+            "Approved",
+            "Landing",
+            "Done",
+            "Cancelled",
+            "Superseded",
+            "Duplicate",
+        ] {
+            assert!(
+                described.contains(state),
+                "tools/list {name} state omits {state}: {described}"
+            );
+        }
+        if name == "list_issues" {
+            for kind in [
+                "backlog",
+                "unstarted",
+                "started",
+                "completed",
+                "canceled",
+                "duplicate",
+            ] {
+                assert!(
+                    described.contains(kind),
+                    "list state omits type {kind}: {described}"
+                );
+            }
+            assert!(described.contains("case-insensitive"), "{described}");
+            assert!(described.contains("not trimmed"), "{described}");
+        }
+    }
     assert!(
         tools.iter().any(|tool| tool.name == "save_comment"),
         "save_comment is offered"
@@ -1480,6 +1514,91 @@ async fn operator_route_accepts_linear_shaped_calls() {
         message.contains("Draft") && message.contains("Todo"),
         "{message}"
     );
+
+    for state in ["Active", "In Review"] {
+        let saved = client
+            .call_tool(call(
+                "save_issue",
+                json!({
+                    "team":"CORE", "title":format!("{state} over HTTP"), "state":state
+                }),
+            ))
+            .await
+            .unwrap();
+        assert!(!saved.is_error.unwrap_or(false), "{saved:?}");
+    }
+    for (filter, expected) in [
+        ("StArTeD", vec!["Active", "In Review"]),
+        ("active", vec!["Active"]),
+        ("IN REVIEW", vec!["In Review"]),
+        ("completed", vec![]),
+    ] {
+        let result = client
+            .call_tool(call(
+                "list_issues",
+                json!({
+                    "team":"CORE", "state":filter
+                }),
+            ))
+            .await
+            .unwrap();
+        assert!(!result.is_error.unwrap_or(false), "{result:?}");
+        let listed = result.structured_content.unwrap();
+        let mut states: Vec<&str> = listed["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["state"].as_str().unwrap())
+            .collect();
+        states.sort();
+        assert_eq!(states, expected, "{filter}");
+    }
+    let payload = json!({"team":"CORE", "fields":["description", "history"]});
+    let before = client
+        .call_tool(call("list_issues", payload.clone()))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    for state in ["Todo", &"Active".replace('i', ""), " Started", "Started "] {
+        let refused = client
+            .call_tool(call(
+                "list_issues",
+                json!({
+                    "team":"CORE", "state":state
+                }),
+            ))
+            .await
+            .unwrap();
+        assert!(refused.is_error.unwrap_or(false), "{refused:?}");
+        let error = refused.structured_content.unwrap();
+        assert_eq!(error["field"], "state");
+        let message = error["message"].as_str().unwrap();
+        for name in [
+            "Draft",
+            "Parked",
+            "Blocked",
+            "Scheduled",
+            "Ready",
+            "Active",
+            "In Review",
+            "Approved",
+            "Landing",
+            "Done",
+            "Cancelled",
+            "Superseded",
+            "Duplicate",
+        ] {
+            assert!(message.contains(name), "{state} omits {name}: {message}");
+        }
+        let after = client
+            .call_tool(call("list_issues", payload.clone()))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after, before);
+    }
 
     client.cancel().await.unwrap();
     service.shutdown();

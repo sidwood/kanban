@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use kanban_domain::issue::DEFAULT_WORKFLOW;
 use kanban_domain::{ProjectId, Ticket, TicketId};
 use kanban_dto::LiveEventName;
 use kanban_dto::{
@@ -1642,6 +1643,27 @@ fn list_issues(
         }) => (Some(*ticket_id), Some(updated_at.as_str())),
         None => (None, None),
     };
+    if let Some(state) = request.state.as_deref() {
+        if project_ids.is_empty()
+            && !DEFAULT_WORKFLOW
+                .iter()
+                .any(|(name, kind, _, _)| same_name(name, state) || same_name(kind, state))
+        {
+            let names = DEFAULT_WORKFLOW
+                .iter()
+                .map(|(name, _, _, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ApiError::invalid_request_field(
+                "state",
+                &format!("unknown state `{state}`; valid states: {names}"),
+            ));
+        }
+        for project_id in &project_ids {
+            ctx.issues
+                .resolve_state_by_name(*project_id as i64, state)?;
+        }
+    }
     let page = ctx.issues.page_issue_ids(&IssuePageQuery {
         project_ids: &project_ids,
         state: request.state.as_deref(),

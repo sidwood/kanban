@@ -369,6 +369,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "block edges share dependencies",
         sql: include_str!("../migrations/0063_block_edges_share_dependencies.sql"),
     },
+    Migration {
+        version: 64,
+        name: "task checklist repair",
+        sql: include_str!("../migrations/0064_task_checklist_repair.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -570,6 +575,14 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
         )?;
     } else if migration.version == 62 {
         crate::linear_issue_migration::apply_canonical_comment_addresses_in_span(&span).map_err(
+            |source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            },
+        )?;
+    } else if migration.version == 64 {
+        crate::linear_issue_migration::apply_task_checklist_repair_in_span(&span).map_err(
             |source| StorageError::Migration {
                 version: migration.version,
                 name: migration.name,
@@ -2094,6 +2107,10 @@ mod tests {
                 PendingMigration {
                     version: 63,
                     name: "block edges share dependencies",
+                },
+                PendingMigration {
+                    version: 64,
+                    name: "task checklist repair",
                 },
             ]]
         );

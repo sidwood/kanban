@@ -950,7 +950,8 @@ pub(crate) fn backfill_issue_descriptions(conn: &Connection) -> rusqlite::Result
             actual_behaviour,
             reporter_evidence,
         ) = row?;
-        let description = build_issue_description(
+        let is_task = kind == "task";
+        let mut description = build_issue_description(
             conn,
             &TicketDescriptionSource {
                 kind,
@@ -962,6 +963,9 @@ pub(crate) fn backfill_issue_descriptions(conn: &Connection) -> rusqlite::Result
                 reporter_evidence,
             },
         )?;
+        if is_task && let Some(checklist) = task_checklist_markdown(conn, ticket_id)? {
+            description = append_checklist(&description, &checklist);
+        }
         if description.is_empty() {
             continue;
         }
@@ -971,6 +975,109 @@ pub(crate) fn backfill_issue_descriptions(conn: &Connection) -> rusqlite::Result
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn repair_task_checklists(conn: &Connection) -> rusqlite::Result<()> {
+    if !tickets_table_has_column(conn, "description")? {
+        return Ok(());
+    }
+    let mut statement =
+        conn.prepare("SELECT id, description FROM tickets WHERE kind = 'task' ORDER BY id")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (ticket_id, description) in rows {
+        let Some(repaired) = with_task_checklist(conn, ticket_id, "task", description)? else {
+            continue;
+        };
+        let current: String = conn.query_row(
+            "SELECT description FROM tickets WHERE id = ?1",
+            [ticket_id],
+            |row| row.get(0),
+        )?;
+        if repaired == current {
+            continue;
+        }
+        conn.execute(
+            "UPDATE tickets SET description = ?2 WHERE id = ?1",
+            params![ticket_id, repaired],
+        )?;
+    }
+    Ok(())
+}
+
+fn with_task_checklist(
+    conn: &Connection,
+    ticket_id: i64,
+    kind: &str,
+    description: String,
+) -> rusqlite::Result<Option<String>> {
+    if kind != "task" {
+        return Ok(Some(description));
+    }
+    let Some(checklist) = task_checklist_markdown(conn, ticket_id)? else {
+        return Ok(Some(description));
+    };
+    Ok(Some(append_checklist(&description, &checklist)))
+}
+
+fn task_checklist_markdown(conn: &Connection, ticket_id: i64) -> rusqlite::Result<Option<String>> {
+    let completion: String = conn.query_row(
+        "SELECT completion FROM tickets WHERE id = ?1",
+        [ticket_id],
+        |row| row.get(0),
+    )?;
+    let outcomes: Vec<String> = serde_json::from_str(&completion)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    if outcomes.is_empty() {
+        return Ok(None);
+    }
+    let mut met = std::collections::BTreeSet::new();
+    let mut bindings = conn.prepare(
+        "SELECT criterion_index FROM criterion_bindings
+         WHERE ticket_id = ?1 AND kind = 'task' AND satisfied = 1 AND void = 0",
+    )?;
+    let indexes = bindings.query_map([ticket_id], |row| row.get::<_, i64>(0))?;
+    for index in indexes {
+        met.insert(index?);
+    }
+    let mut checklist = String::new();
+    for (index, outcome) in outcomes.iter().enumerate() {
+        let mark = if met.contains(&(index as i64)) {
+            "x"
+        } else {
+            " "
+        };
+        checklist.push_str(&format!("- [{mark}] {outcome}\n"));
+    }
+    Ok(Some(checklist.trim_end().to_owned()))
+}
+
+fn append_checklist(description: &str, checklist: &str) -> String {
+    if description.contains(checklist) {
+        return description.to_owned();
+    }
+    let mut document = description.to_owned();
+    if document.is_empty() {
+        document.push_str(checklist);
+    } else {
+        if !document.ends_with('\n') {
+            document.push('\n');
+        }
+        document.push('\n');
+        document.push_str(checklist);
+    }
+    if !document.ends_with('\n') {
+        document.push('\n');
+    }
+    document
+}
+
+pub(crate) fn apply_task_checklist_repair_in_span(span: &WriteSpan<'_>) -> rusqlite::Result<()> {
+    repair_task_checklists(span)
 }
 
 /// Appends legacy external blocker prose to issue descriptions.
@@ -1606,7 +1713,7 @@ mod tests {
                  WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
-                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62);",
+                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62, 63, 64);",
             )
             .unwrap();
         (dir, database)
@@ -2431,5 +2538,114 @@ mod tests {
             ],
             "milestone target dates pad the same way, without a marker"
         );
+    }
+
+    #[test]
+    fn copied_fixture_tasks_gain_a_checklist_on_upgrade_and_repair() {
+        let Ok(source) = std::env::var("KANBAN_OLD_FIXTURE") else {
+            return;
+        };
+        let source = std::path::PathBuf::from(source);
+        assert!(source.is_file(), "the copied fixture is readable");
+        let fresh = tempfile::TempDir::new().unwrap();
+        let fresh_path = fresh.path().join("kanban.sqlite");
+        std::fs::copy(&source, &fresh_path).unwrap();
+        let fresh_path = fresh.path().join("kanban.sqlite");
+        std::fs::copy(&source, &fresh_path).unwrap();
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = std::path::PathBuf::from(format!("{}{suffix}", source.display()));
+            if sidecar.is_file() {
+                std::fs::copy(
+                    &sidecar,
+                    fresh.path().join(format!("kanban.sqlite{suffix}")),
+                )
+                .unwrap();
+            }
+        }
+        let mut database = Database::open(&fresh_path).unwrap();
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("a schema 52 copy upgrades");
+        let tasks = task_descriptions(&database);
+        assert!(!tasks.is_empty(), "the fixture holds tasks");
+        for (id, completion, description) in &tasks {
+            let outcomes: Vec<String> = serde_json::from_str(completion).unwrap();
+            for outcome in &outcomes {
+                assert!(
+                    description.contains(&format!("- [ ] {outcome}"))
+                        || description.contains(&format!("- [x] {outcome}")),
+                    "task {id} keeps criterion `{outcome}` in {description}"
+                );
+            }
+        }
+        let upgraded = tasks.clone();
+        eprintln!("upgraded fixture tasks: {upgraded:?}");
+        let conn = database.connection();
+        conn.execute("DELETE FROM schema_migrations WHERE version = 64", [])
+            .unwrap();
+        for (id, _, description) in &upgraded {
+            let stripped = description
+                .lines()
+                .filter(|line| !line.starts_with("- ["))
+                .collect::<Vec<_>>()
+                .join("\n");
+            conn.execute(
+                "UPDATE tickets SET description = ?2 WHERE id = ?1",
+                rusqlite::params![id, stripped],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        database.migrate(&AllowAllMigrations).expect(
+            "migration 0064 repairs checklists on a database already at the previous schema",
+        );
+        let repaired = task_descriptions(&database);
+        eprintln!("repaired by migration 0064: {repaired:?}");
+        for (id, completion, description) in &repaired {
+            let outcomes: Vec<String> = serde_json::from_str(completion).unwrap();
+            for outcome in &outcomes {
+                assert!(
+                    description.contains(&format!("- [ ] {outcome}"))
+                        || description.contains(&format!("- [x] {outcome}")),
+                    "repair restores criterion `{outcome}` on task {id}"
+                );
+            }
+        }
+        database
+            .migrate(&AllowAllMigrations)
+            .expect("a second migrate leaves the repaired checklist alone");
+        assert_eq!(
+            task_descriptions(&database),
+            repaired,
+            "a second repair does not append the checklist again"
+        );
+    }
+
+    fn task_descriptions(database: &Database) -> Vec<(i64, String, String)> {
+        let conn = database.connection();
+        let mut statement = conn
+            .prepare(
+                "SELECT id, completion, description FROM tickets WHERE kind = 'task' ORDER BY id",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_checklist_already_followed_by_prose_is_left_unchanged() {
+        let description = "## Title\n\nRotate local backups\n\n- [ ] Rotate local backups done\n\nLater note stays.\n";
+        let checklist = "- [ ] Rotate local backups done";
+        assert_eq!(append_checklist(description, checklist), description);
+        let spaced = "Keep the trailing spaces  ";
+        let appended = append_checklist(spaced, checklist);
+        assert!(
+            appended.starts_with(spaced),
+            "appending must not rewrite the existing text: {appended:?}"
+        );
+        assert!(appended.contains(checklist));
     }
 }

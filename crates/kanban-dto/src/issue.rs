@@ -16,6 +16,16 @@ pub struct IssueSaveRequest {
     /// parent's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<u64>,
+    /// Kanban project code, the Linear team. For example `CORE`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Label name in the single-select Project group. This is not the
+    /// Kanban project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Milestone name within the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone: Option<String>,
     /// Existing issue key (`CODE-123`) when updating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
@@ -253,6 +263,12 @@ pub struct IssueListQuery {
     pub team_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee: Option<String>,
+    /// Kanban project code, the Linear team. For example `CORE`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Project-group label name. This is not the Kanban project id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(default)]
     pub limit: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]

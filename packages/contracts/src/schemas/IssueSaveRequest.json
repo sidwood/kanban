@@ -98,6 +98,13 @@
         "null"
       ]
     },
+    "milestone": {
+      "description": "Milestone name within the team.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "milestone_id": {
       "format": "uint64",
       "minimum": 0.0,
@@ -121,6 +128,13 @@
       "minimum": 0.0,
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "project": {
+      "description": "Label name in the single-select Project group. This is not the Kanban project.",
+      "type": [
+        "string",
         "null"
       ]
     },
@@ -177,6 +191,13 @@
       ]
     },
     "state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "team": {
+      "description": "Kanban project code, the Linear team. For example `CORE`.",
       "type": [
         "string",
         "null"

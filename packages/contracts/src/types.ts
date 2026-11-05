@@ -624,9 +624,11 @@ export type IssueListQuery = {
   limit?: number;
   milestone_id?: number | null;
   parent_id?: string | number | null;
+  project?: string | null;
   project_id?: number | null;
   query?: string | null;
   state?: string | null;
+  team?: string | null;
   team_id?: number | null;
   updated_since?: string | null;
 };
@@ -711,10 +713,12 @@ export type IssueSaveRequest = {
   due_date?: string | null;
   duplicate_of?: string | null;
   identifier?: string | null;
+  milestone?: string | null;
   milestone_id?: number | null;
   mutation: MutationContext;
   parent_id?: string | null;
   priority?: number | null;
+  project?: string | null;
   project_id?: number | null;
   remove_blocked_by?: string[] | null;
   remove_blocks?: string[] | null;
@@ -722,6 +726,7 @@ export type IssueSaveRequest = {
   remove_related?: string[] | null;
   sort_order?: number | null;
   state?: string | null;
+  team?: string | null;
   title?: string | null;
 };
 export type IssueSaveResponse = {

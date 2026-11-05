@@ -20,7 +20,7 @@ use crate::comment::CommentStore;
 use crate::dispatch::{Core, QueryHandler, RegistrationError};
 use crate::events::emit_catalogued;
 use crate::issue::{IssuePageQuery, IssueStore, SecondaryEffect};
-use crate::issue_names::{NamedKind, refuse_taken_name, resolve_stored_name};
+use crate::issue_names::{NamedKind, refuse_taken_name, resolve_stored_name, same_name};
 use crate::mutation::{
     CommandEffects, CommandHandler, ParsedCommand, parse_issue_payload, parse_payload,
 };
@@ -546,6 +546,159 @@ impl CommandHandler for UpdateProjectSettings {
     }
 }
 
+fn resolve_team_code(ctx: &IssueContext, code: &str) -> Result<u64, ApiError> {
+    let matches: Vec<u64> = ctx
+        .projects
+        .list()?
+        .into_iter()
+        .filter(|project| project.code().as_str().eq_ignore_ascii_case(code))
+        .map(|project| project.id().value())
+        .collect();
+    match matches.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(ApiError::not_found_field(
+            "team",
+            &format!("unknown team `{code}`"),
+        )),
+        _ => Err(ApiError::invalid_request_field(
+            "team",
+            &format!("team `{code}` matches more than one project"),
+        )),
+    }
+}
+
+fn resolve_create_project(
+    ctx: &IssueContext,
+    request: &IssueSaveRequest,
+    parent_project: Option<u64>,
+) -> Result<u64, ApiError> {
+    let from_team = request
+        .team
+        .as_deref()
+        .map(|code| resolve_team_code(ctx, code))
+        .transpose()?;
+    match (request.project_id, from_team, parent_project) {
+        (Some(id), Some(team_id), _) if id != team_id => Err(ApiError::invalid_request_field(
+            "team",
+            "team does not match project_id",
+        )),
+        (Some(id), _, _) => Ok(id),
+        (None, Some(team_id), _) => Ok(team_id),
+        (None, None, Some(parent)) => Ok(parent),
+        (None, None, None) => Err(ApiError::invalid_request_field(
+            "project_id",
+            "project_id or team is required when creating without parent_id",
+        )),
+    }
+}
+
+fn project_group_labels<'a>(labels: &'a [crate::issue::IssueLabelRow]) -> Vec<&'a str> {
+    labels
+        .iter()
+        .filter(|row| {
+            row.group
+                .as_deref()
+                .is_some_and(|group| same_name(group, "Project"))
+        })
+        .map(|row| row.name.as_str())
+        .collect()
+}
+
+fn resolve_project_label(
+    ctx: &IssueContext,
+    project_id: i64,
+    name: &str,
+) -> Result<String, ApiError> {
+    let stored = ctx.issues.list_project_labels(project_id)?;
+    resolve_stored_name(
+        NamedKind::Label,
+        "project",
+        project_group_labels(&stored),
+        name,
+    )?
+    .map(str::to_owned)
+    .ok_or_else(|| ApiError::invalid_request_field("project", &format!("unknown project `{name}`")))
+}
+
+fn resolve_milestone_name(
+    ctx: &IssueContext,
+    project_id: i64,
+    name: &str,
+) -> Result<i64, ApiError> {
+    let stored = ctx.issues.list_project_milestones(project_id)?;
+    let canonical = resolve_stored_name(
+        NamedKind::Milestone,
+        "milestone",
+        stored.iter().map(|row| row.name.as_str()),
+        name,
+    )?
+    .ok_or_else(|| {
+        ApiError::invalid_request_field("milestone", &format!("unknown milestone `{name}`"))
+    })?;
+    stored
+        .iter()
+        .find(|row| row.name == canonical)
+        .map(|row| row.id as i64)
+        .ok_or_else(|| ApiError::internal("resolved milestone is missing"))
+}
+
+fn apply_named_milestone(
+    ctx: &IssueContext,
+    project_id: i64,
+    ticket_id: i64,
+    request: &IssueSaveRequest,
+) -> Result<(), ApiError> {
+    let named = request
+        .milestone
+        .as_deref()
+        .map(|name| resolve_milestone_name(ctx, project_id, name))
+        .transpose()?;
+    match (request.milestone_id.as_ref(), named) {
+        (Some(Some(id)), Some(named_id)) if *id as i64 != named_id => Err(
+            ApiError::invalid_request_field("milestone", "milestone does not match milestone_id"),
+        ),
+        (Some(clear), _) => ctx
+            .issues
+            .set_milestone(ticket_id, clear.map(|value| value as i64)),
+        (None, Some(named_id)) => ctx.issues.set_milestone(ticket_id, Some(named_id)),
+        (None, None) => Ok(()),
+    }
+}
+
+fn apply_project_label(
+    ctx: &IssueContext,
+    project_id: i64,
+    ticket_id: i64,
+    request: &IssueSaveRequest,
+) -> Result<(), ApiError> {
+    let Some(name) = request.project.as_deref() else {
+        return Ok(());
+    };
+    let canonical = resolve_project_label(ctx, project_id, name)?;
+    ctx.issues
+        .validate_label_adds(project_id, &[canonical.clone()])?;
+    ctx.issues.add_label(project_id, ticket_id, &canonical)
+}
+
+fn find_project_label_filter(
+    ctx: &IssueContext,
+    project_ids: &[u64],
+    name: &str,
+) -> Result<String, ApiError> {
+    for project_id in project_ids {
+        let stored = ctx.issues.list_project_labels(*project_id as i64)?;
+        if let Some(canonical) = resolve_stored_name(
+            NamedKind::Label,
+            "project",
+            project_group_labels(&stored),
+            name,
+        )? {
+            return Ok(canonical.to_owned());
+        }
+    }
+    Ok(name.to_owned())
+}
+
 fn create_issue(
     ctx: &IssueContext,
     request: &IssueSaveRequest,
@@ -572,17 +725,12 @@ fn create_issue(
         None => None,
     };
     // A sub-issue defaults to its parent's project, and an explicit
-    // project overrides it, as in Linear.
-    let project_id = match (request.project_id, parent.as_ref()) {
-        (Some(id), _) => id,
-        (None, Some(parent)) => parent.project_id,
-        (None, None) => {
-            return Err(ApiError::invalid_request_field(
-                "project_id",
-                "project_id is required when creating without parent_id",
-            ));
-        }
-    };
+    // project overrides it, as in Linear. `team` is that project's code.
+    let project_id = resolve_create_project(
+        ctx,
+        request,
+        parent.as_ref().map(|parent| parent.project_id),
+    )?;
     let title = request.title.as_deref().ok_or_else(|| {
         ApiError::invalid_request_field("title", "title is required when creating")
     })?;
@@ -643,16 +791,17 @@ fn create_issue(
     let initial_state = request.state.as_deref().unwrap_or("Draft");
     ctx.issues
         .record_initial_state(ticket_id as i64, initial_state)?;
-    if let Some(milestone) = request.milestone_id.as_ref() {
-        ctx.issues
-            .set_milestone(ticket_id as i64, milestone.map(|value| value as i64))?;
-    } else if let Some(parent) = parent.as_ref()
+    apply_named_milestone(ctx, project_id as i64, ticket_id as i64, request)?;
+    if request.milestone_id.is_none()
+        && request.milestone.is_none()
+        && let Some(parent) = parent.as_ref()
         && let Some(milestone_id) = inherited_milestone(ctx, parent, project_id)?
     {
         ctx.issues
             .set_milestone(ticket_id as i64, Some(milestone_id))?;
     }
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
+    apply_project_label(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues
@@ -735,10 +884,7 @@ fn update_issue(
     if let Some(due) = request.due_date.as_ref() {
         ctx.issues.set_due_date(ticket_id, due.as_deref())?;
     }
-    if let Some(milestone) = request.milestone_id.as_ref() {
-        ctx.issues
-            .set_milestone(ticket_id, milestone.map(|value| value as i64))?;
-    }
+    apply_named_milestone(ctx, project_id as i64, ticket_id, request)?;
     if let Some(state) = request.state.as_deref() {
         apply_named_state(ctx, ticket_id, project_id, state, effects)?;
     }
@@ -752,6 +898,7 @@ fn update_issue(
         ctx.issues.set_title(ticket_id, title)?;
     }
     apply_label_changes(ctx, project_id as i64, ticket_id, request)?;
+    apply_project_label(ctx, project_id as i64, ticket_id, request)?;
     apply_issue_extensions(ctx, ticket_id, request)?;
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues.set_assignee(ticket_id, assignee.as_deref())?;
@@ -803,6 +950,8 @@ fn announce_saved_issue(
         || request.priority.is_some()
         || request.due_date.is_some()
         || request.milestone_id.is_some()
+        || request.milestone.is_some()
+        || request.project.is_some()
         || request.add_labels.is_some()
         || request.remove_labels.is_some()
         || request.parent_id.is_some()
@@ -1259,22 +1408,37 @@ fn list_issues(
         .as_deref()
         .map(start_of_window)
         .transpose()?;
-    let project_ids: Vec<u64> = match (request.team_id, request.project_id) {
-        (Some(team_id), _) => {
+    let from_team = request
+        .team
+        .as_deref()
+        .map(|code| resolve_team_code(ctx, code))
+        .transpose()?;
+    let project_ids: Vec<u64> = match (request.team_id, request.project_id, from_team) {
+        (Some(team_id), _, _) => {
             resolve_listed_project(ctx, team_id, "team_id")?;
             vec![team_id]
         }
-        (None, Some(project_id)) => {
+        (None, Some(project_id), _) => {
             resolve_listed_project(ctx, project_id, "project_id")?;
             vec![project_id]
         }
-        (None, None) => ctx
+        (None, None, Some(team)) => {
+            resolve_listed_project(ctx, team, "team")?;
+            vec![team]
+        }
+        (None, None, None) => ctx
             .projects
             .list()?
             .into_iter()
             .map(|project| project.id().value())
             .collect(),
     };
+    let project_label = request
+        .project
+        .as_deref()
+        .map(|name| find_project_label_filter(ctx, &project_ids, name))
+        .transpose()?;
+    let label = request.label.clone().or(project_label);
     let parent_ticket_id = request
         .parent_id
         .as_deref()
@@ -1296,7 +1460,7 @@ fn list_issues(
     let page = ctx.issues.page_issue_ids(&IssuePageQuery {
         project_ids: &project_ids,
         state: request.state.as_deref(),
-        label: request.label.as_deref(),
+        label: label.as_deref(),
         parent_ticket_id,
         milestone_id: request.milestone_id.map(|value| value as i64),
         assignee: request.assignee.as_deref(),

@@ -7,8 +7,11 @@ written anywhere; every message this module produces is passed
 through `Redactor` first.
 """
 
+# cspell:words ELOOP ENOENT ENOTDIR
+
 import base64
 import ctypes
+import errno
 import hashlib
 import http.client
 import json
@@ -16,6 +19,7 @@ import os
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -552,8 +556,8 @@ def store_fingerprint(root):
     A symlink keeps its original text and also records the file it
     resolves to. A database file also records the three SQLite sidecar
     files beside that target, present or absent. A dangling or looping
-    link is recorded as such. Following stops after a fixed number of
-    hops and does not walk a directory.
+    link is recorded as such. Following includes parent components,
+    stops after a fixed number of hops, and does not walk a directory.
     """
     root = Path(root)
     found = {}
@@ -602,53 +606,77 @@ def _linked_identity(path):
 
 
 def _follow_link(start):
-    """Follow `start` until a non-link, a loop, or the hop limit."""
-    current = Path(start)
-    seen = set()
-    for _hop in range(_SYMLINK_HOP_LIMIT):
-        try:
-            if not current.is_symlink():
-                return _classify_target(current)
-            token = _link_token(current)
-        except OSError as error:
-            return "unreadable", type(error).__name__
-        if token in seen:
-            return "loop", None
-        seen.add(token)
-        try:
-            raw = os.readlink(current)
-        except OSError as error:
-            return "unreadable", type(error).__name__
-        nxt = Path(raw)
-        if not nxt.is_absolute():
-            nxt = current.parent / nxt
-        current = nxt
+    """Resolve every component with a bounded number of link hops."""
     try:
-        if not current.is_symlink():
-            return _classify_target(current)
+        directory, parts = _path_origin(start)
+        return _walk_components(directory, parts, _SYMLINK_HOP_LIMIT, set())
     except OSError as error:
         return "unreadable", type(error).__name__
-    return "loop", None
 
 
-def _link_token(path):
-    stat = path.lstat()
-    return stat.st_dev, stat.st_ino
+def _path_origin(path):
+    path = Path(path)
+    if path.is_absolute():
+        return Path(path.anchor), list(path.parts[1:])
+    return Path.cwd(), list(path.parts)
 
 
-def _classify_target(path):
+def _walk_components(directory, parts, hops, seen):
+    while parts:
+        part = parts.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            directory = directory.parent
+            continue
+        child = directory / part
+        try:
+            info = os.lstat(child)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                return "loop", None
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                return "dangling", None
+            raise
+        if stat.S_ISLNK(info.st_mode):
+            parent = os.lstat(directory)
+            token = (info.st_dev, info.st_ino, parent.st_dev, parent.st_ino, tuple(parts))
+            if token in seen or hops <= 0:
+                return "loop", None
+            seen.add(token)
+            hops -= 1
+            target = Path(os.readlink(child))
+            if target.is_absolute():
+                directory, followed = _path_origin(target)
+                parts = followed + parts
+            else:
+                parts = list(target.parts) + parts
+            continue
+        if parts:
+            if not stat.S_ISDIR(info.st_mode):
+                return "dangling", None
+            directory = child
+            continue
+        return _classify_node(child, info)
     try:
-        if path.is_symlink():
+        info = os.lstat(directory)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
             return "loop", None
-        if not path.exists():
+        if error.errno in (errno.ENOENT, errno.ENOTDIR):
             return "dangling", None
-        if path.is_dir():
-            return "dir", None
-        if path.is_file():
-            return "file", (path, _file_digest(path))
-        return "other", path.stat().st_mode
-    except OSError as error:
-        return "unreadable", type(error).__name__
+        raise
+    if stat.S_ISDIR(info.st_mode):
+        return "dir", None
+    return "dangling", None
+
+
+def _classify_node(path, info):
+    if stat.S_ISDIR(info.st_mode):
+        return "dir", None
+    if stat.S_ISREG(info.st_mode):
+        return "file", (path, _file_digest(path))
+    return "other", info.st_mode
 
 
 def _names_a_database(link, resolved):

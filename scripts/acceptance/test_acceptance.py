@@ -1710,6 +1710,89 @@ class LinkedStoreFingerprintTests(unittest.TestCase):
                 ["kanban.sqlite-wal", "nested/note.txt"],
             )
 
+    def test_hard_linked_relative_symlinks_resolve_from_their_own_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            store = root / "store"
+            outside = root / "outside"
+            nested = outside / "nested"
+            store.mkdir()
+            nested.mkdir(parents=True)
+            target = root / "database"
+            target.write_bytes(b"SQLite format 3\x00" + b"before")
+            first = nested / "database"
+            second = outside / "database"
+            first.symlink_to("../database")
+            os.link(first, second, follow_symlinks=False)
+            self.assertEqual(first.lstat().st_ino, second.lstat().st_ino)
+            link = store / "kanban.sqlite"
+            link.symlink_to(first)
+            before = harness.store_fingerprint(store)
+            self.assertEqual(before["kanban.sqlite"][1], os.readlink(link))
+            self.assertEqual(before["kanban.sqlite"][2], "file")
+            self.assertEqual(before["kanban.sqlite"][3], self.digest(target.read_bytes()))
+            self.assertEqual(before["kanban.sqlite-wal"], ("absent",))
+            self.assertEqual(before["kanban.sqlite-shm"], ("absent",))
+            self.assertEqual(before["kanban.sqlite-journal"], ("absent",))
+            target.write_bytes(b"SQLite format 3\x00" + b"after!")
+            Path(str(target) + "-wal").write_bytes(b"wal bytes")
+            after = harness.store_fingerprint(store)
+            changed = harness.store_changes(before, after)
+            self.assertEqual(changed, sorted(changed))
+            self.assertIn("kanban.sqlite", changed)
+            self.assertIn("kanban.sqlite-wal", changed)
+            self.assertEqual(after["kanban.sqlite"][2], "file")
+            self.assertEqual(after["kanban.sqlite"][3], self.digest(target.read_bytes()))
+            self.assertEqual(after["kanban.sqlite-wal"], ("file", self.digest(b"wal bytes")))
+            self.assertEqual(link.read_bytes(), target.read_bytes())
+
+    def test_a_loop_in_a_target_parent_is_not_a_dangling_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            store = root / "store"
+            outside = root / "outside"
+            store.mkdir()
+            outside.mkdir()
+            cycle = outside / "cycle"
+            cycle.symlink_to("cycle", target_is_directory=True)
+            link = store / "cycle-payload"
+            link.symlink_to("../outside/cycle/payload")
+            before = harness.store_fingerprint(store)
+            self.assertEqual(
+                before["cycle-payload"],
+                ("symlink", os.readlink(link), "loop"),
+            )
+            cycle.unlink()
+            cycle.mkdir()
+            after = harness.store_fingerprint(store)
+            self.assertEqual(
+                after["cycle-payload"],
+                ("symlink", "../outside/cycle/payload", "dangling"),
+            )
+            self.assertEqual(harness.store_changes(before, after), ["cycle-payload"])
+
+    def test_an_unreadable_target_is_not_a_dangling_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            store = root / "store"
+            store.mkdir()
+            target = root / "payload"
+            target.write_bytes(b"private")
+            (store / "link").symlink_to("../payload")
+            lstat = os.lstat
+
+            def inspect(path, *args, **kwargs):
+                if Path(path) == target:
+                    raise PermissionError("target is not accessible")
+                return lstat(path, *args, **kwargs)
+
+            with patch("scripts.acceptance.harness.os.lstat", side_effect=inspect):
+                fingerprint = harness.store_fingerprint(store)
+            self.assertEqual(
+                fingerprint["link"],
+                ("symlink", "../payload", "unreadable", "PermissionError"),
+            )
+
 
 class TextQueryTests(unittest.TestCase):
     def context(self, title_only):

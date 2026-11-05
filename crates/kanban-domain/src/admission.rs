@@ -199,9 +199,6 @@ pub fn admit_execution(inputs: AdmissionInputs<'_>) -> Result<(), AdmissionRefus
             state: ticket.state(),
         });
     }
-    if !ticket.is_qualified() {
-        return Err(AdmissionRefusal::UnqualifiedBug);
-    }
     if ticket.pinned_version().is_none() {
         // An Implementation exists only to deliver a Spec version
         // through a graph, so an unpinned one has passed no gate at
@@ -436,14 +433,26 @@ mod admission_rules {
     }
 
     #[test]
-    fn an_unqualified_bug_is_refused_and_a_qualified_ready_bug_admits() {
+    fn a_draft_bug_is_not_executable_and_a_qualified_ready_bug_admits() {
         assert_eq!(
             admit(&bug(false), AdmissionRole::Implementer, &ready()),
-            Err(AdmissionRefusal::UnqualifiedBug)
+            Err(AdmissionRefusal::NotExecutable {
+                state: TicketState::Draft,
+                role: AdmissionRole::Implementer,
+            })
         );
         let qualified = at(bug(true), TicketState::Ready);
         assert_eq!(
             admit(&qualified, AdmissionRole::Implementer, &ready()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_unqualified_bug_in_ready_is_admitted() {
+        let unqualified = at(bug(false), TicketState::Ready);
+        assert_eq!(
+            admit(&unqualified, AdmissionRole::Implementer, &ready()),
             Ok(())
         );
     }

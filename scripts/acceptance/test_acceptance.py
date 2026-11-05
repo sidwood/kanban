@@ -555,5 +555,62 @@ class SelectionTests(unittest.TestCase):
         core.assert_not_called()
 
 
+class StartupFailureTests(unittest.TestCase):
+    def test_a_core_that_never_opens_its_port_is_reaped(self):
+        import signal
+
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            script = root / "sleeping-core"
+            script.write_text("#!/bin/sh\nexec sleep 30\n")
+            script.chmod(0o755)
+            data = root / "Kanban"
+            with harness.socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            core = harness.CoreProcess(script, data, port, root / "core.log")
+
+            def kill():
+                process = core.process
+                if process is not None and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+
+            self.addCleanup(kill)
+            with self.assertRaises(harness.HarnessError):
+                core.start(wait_seconds=0.4)
+            self.assertIsNotNone(core.process)
+            self.assertIsNotNone(core.process.poll())
+
+    def test_a_startup_failure_reaps_the_spawned_child(self):
+        import signal
+        import subprocess
+        import sys
+
+        from scripts.acceptance import __main__ as cli
+
+        spawned = {}
+
+        def start(self, wait_seconds=60):
+            self.process = subprocess.Popen(["sleep", "30"], start_new_session=True)
+            spawned["process"] = self.process
+            raise harness.HarnessError("the core did not come up")
+
+        def kill():
+            process = spawned.get("process")
+            if process is not None and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+        self.addCleanup(kill)
+        with tempfile.TemporaryDirectory() as root, \
+                patch.object(harness.CoreProcess, "start", start), \
+                patch("scripts.acceptance.harness.keychain_secret",
+                      side_effect=AssertionError("keychain")):
+            status = cli.main(["--fresh", "--data-dir", root, "--binary", sys.executable, "--tests", "1"])
+        self.assertEqual(status, 2)
+        self.assertIsNotNone(spawned["process"].poll())
+
+
 if __name__ == "__main__":
     unittest.main()

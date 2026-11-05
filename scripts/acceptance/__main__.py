@@ -218,9 +218,13 @@ def main(argv=None):
             emit(line)
         return 2
     finally:
-        if started:
-            problem = core.stop()
-            emit(f"core stopped{': ' + problem if problem else ''}")
+        if core.process is not None:
+            if started:
+                problem = core.stop()
+                emit(f"core stopped{': ' + problem if problem else ''}")
+            else:
+                core.reap()
+                emit("core stopped")
 
 
 def secret_store(data_dir):

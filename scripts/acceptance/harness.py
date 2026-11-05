@@ -481,15 +481,43 @@ class CoreProcess:
             )
         finally:
             log.close()
-        deadline = time.monotonic() + wait_seconds
-        while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                raise HarnessError(f"the core exited with {self.process.returncode}: "
-                                   f"{self.last_log_line()} (log {self.log_path})")
-            if self.socket_path.exists() and port_in_use(self.host, self.port):
-                return
-            time.sleep(0.25)
-        raise HarnessError(f"the core did not come up within {wait_seconds}s; see {self.log_path}")
+        try:
+            deadline = time.monotonic() + wait_seconds
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise HarnessError(f"the core exited with {self.process.returncode}: "
+                                       f"{self.last_log_line()} (log {self.log_path})")
+                if self.socket_path.exists() and port_in_use(self.host, self.port):
+                    return
+                time.sleep(0.25)
+            raise HarnessError(f"the core did not come up within {wait_seconds}s; see {self.log_path}")
+        except Exception:
+            self.reap()
+            raise
+
+    def reap(self, wait_seconds=5):
+        """Terminate and collect a core this runner spawned."""
+        process = self.process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            process.wait(timeout=wait_seconds)
 
     def stop(self, wait_seconds=30):
         """Ask the core to stop through `service.stop`, then reap it."""

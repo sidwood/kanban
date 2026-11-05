@@ -2876,6 +2876,21 @@ fn updated_since_compares_instants_across_equivalent_forms() {
         1,
         "an explicit zero offset compares as the same instant"
     );
+    assert_eq!(
+        listed("2026-11-04T22:10:30.539456Z"),
+        0,
+        "a sub-millisecond later instant excludes the same-millisecond stamp"
+    );
+    assert_eq!(
+        listed("2026-11-04T22:10:30.539000Z"),
+        1,
+        "an exactly equal instant keeps the issue"
+    );
+    assert_eq!(
+        listed("2026-11-04T22:10:30.538999Z"),
+        1,
+        "a sub-millisecond earlier instant still includes the stamp"
+    );
 }
 
 #[test]

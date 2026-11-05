@@ -952,7 +952,6 @@ fn list_issues(
         .as_deref()
         .map(start_of_window)
         .transpose()?;
-    let updated_since = updated_since.as_deref();
     let project_ids: Vec<u64> = match request.team_id.or(request.project_id) {
         Some(project_id) => {
             resolve_project(ctx.projects.as_ref(), project_id)?;
@@ -1007,8 +1006,8 @@ fn list_issues(
             }
             let record =
                 load_issue_record(ctx, &ctx.issues.load_issue_key(ticket_id as i64)?.display())?;
-            if let Some(since) = updated_since
-                && record.updated_at.as_str() < since
+            if let Some(since) = updated_since.as_ref()
+                && !since.holds(record.updated_at.as_str())
             {
                 continue;
             }
@@ -1063,21 +1062,14 @@ fn list_issues(
     })
 }
 
-/// The comparison form of one `updated_since` window, in the UTC
-/// millisecond shape every update stamp carries: an RFC 3339
-/// timestamp normalises through its instant (so offsets and
-/// whole-second spellings compare as the moment they name), an
-/// ISO-8601 duration opens relative to now the way Linear's list
-/// call reads it, and a plain `YYYY-MM-DD` calendar date opens at
-/// the start of that day, UTC.
-fn start_of_window(raw: &str) -> Result<String, ApiError> {
+fn start_of_window(raw: &str) -> Result<WindowBound, ApiError> {
     if let Ok(instant) =
         time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
     {
-        return Ok(window_stamp(instant));
+        return Ok(WindowBound::at(instant));
     }
-    if let Some(window) = window_from_duration(raw) {
-        return Ok(window);
+    if let Some(instant) = window_from_duration(raw) {
+        return Ok(WindowBound::at(instant));
     }
     let bytes = raw.as_bytes();
     let padded_shape = bytes.len() == 10
@@ -1092,14 +1084,35 @@ fn start_of_window(raw: &str) -> Result<String, ApiError> {
             &time::macros::format_description!("[year]-[month]-[day]"),
         )
         .map_err(|_| window_refused())?;
-        return Ok(window_stamp(date.midnight().assume_utc()));
+        return Ok(WindowBound::at(date.midnight().assume_utc()));
     }
     Err(window_refused())
 }
 
-/// One instant in the fixed `…%fZ` UTC millisecond form the update
-/// stamps carry, floored to the whole millisecond so the stored
-/// three-digit stamps compare as instants.
+struct WindowBound {
+    floor: String,
+    holds_at_floor: bool,
+}
+
+impl WindowBound {
+    fn at(instant: time::OffsetDateTime) -> Self {
+        let nanoseconds = instant.time().nanosecond();
+        let holds_at_floor = nanoseconds % 1_000_000 == 0;
+        Self {
+            floor: window_stamp(instant),
+            holds_at_floor,
+        }
+    }
+
+    fn holds(&self, stored: &str) -> bool {
+        match stored.cmp(self.floor.as_str()) {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Equal => self.holds_at_floor,
+            std::cmp::Ordering::Less => false,
+        }
+    }
+}
+
 fn window_stamp(instant: time::OffsetDateTime) -> String {
     let shape = time::format_description::parse_borrowed::<2>(
         "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z",
@@ -1112,32 +1125,18 @@ fn window_stamp(instant: time::OffsetDateTime) -> String {
         .expect("an instant formats as a window stamp")
 }
 
-/// The window one ISO-8601 duration names, relative to now: the
-/// value shifts the present by the span it carries, so `-P1D`
-/// opens the window one day back. `None` when the text is not a
-/// well-formed duration.
-fn window_from_duration(raw: &str) -> Option<String> {
+fn window_from_duration(raw: &str) -> Option<time::OffsetDateTime> {
     let span = parse_iso_8601_duration(raw)?;
-    Some(window_stamp(shift_by_span(
-        time::OffsetDateTime::now_utc(),
-        &span,
-    )?))
+    shift_by_span(time::OffsetDateTime::now_utc(), &span)
 }
 
-/// One parsed ISO-8601 duration: a sign, calendar components, and
-/// an exact span of time.
 #[derive(Debug, Default, PartialEq)]
 struct IsoDuration {
     negative: bool,
-    years: i64,
-    months: i64,
+    months: i128,
     span: time::SignedDuration,
 }
 
-/// Parse `PnYnMnWnDTnHnMnS` with an optional leading sign: any
-/// subset of the components, each designator at most once per half,
-/// a number that may carry a decimal fraction, at least one
-/// component overall, and a `T` always followed by one.
 fn parse_iso_8601_duration(raw: &str) -> Option<IsoDuration> {
     let (negative, body) = match raw.as_bytes().first() {
         Some(b'-') => (true, &raw[1..]),
@@ -1149,8 +1148,7 @@ fn parse_iso_8601_duration(raw: &str) -> Option<IsoDuration> {
         Some((date, time)) => (date, Some(time)),
         None => (body, None),
     };
-    let mut years = 0i64;
-    let mut months = 0i64;
+    let mut months = 0i128;
     let mut seconds = 0f64;
     let mut components = 0usize;
     let halves = [(date_half, false), (time_half.unwrap_or(""), true)];
@@ -1158,8 +1156,10 @@ fn parse_iso_8601_duration(raw: &str) -> Option<IsoDuration> {
         let mut seen: Vec<char> = Vec::new();
         for (number, designator) in duration_components(half)? {
             match (designator, is_time) {
-                ('Y', false) => years += number as i64,
-                ('M', false) => months += number as i64,
+                ('Y', false) => {
+                    months = months.checked_add(i128::from(whole(number)?).checked_mul(12)?)?
+                }
+                ('M', false) => months = months.checked_add(i128::from(whole(number)?))?,
                 ('W', false) => seconds += number * 7.0 * 86_400.0,
                 ('D', false) => seconds += number * 86_400.0,
                 ('H', true) => seconds += number * 3_600.0,
@@ -1179,15 +1179,18 @@ fn parse_iso_8601_duration(raw: &str) -> Option<IsoDuration> {
     }
     Some(IsoDuration {
         negative,
-        years,
         months,
         span: time::SignedDuration::checked_seconds_f64(seconds)?,
     })
 }
 
-/// Every `number` and designator pair in one half of a duration.
-/// `None` when a component names no number or the half ends
-/// mid-number.
+fn whole(number: f64) -> Option<i64> {
+    if number.fract() != 0.0 || !number.is_finite() || number >= 9.007_199_254_740_992e15 {
+        return None;
+    }
+    Some(number as i64)
+}
+
 fn duration_components(half: &str) -> Option<Vec<(f64, char)>> {
     let mut components = Vec::new();
     let mut rest = half;
@@ -1204,24 +1207,18 @@ fn duration_components(half: &str) -> Option<Vec<(f64, char)>> {
     Some(components)
 }
 
-/// Move `instant` by a parsed duration: years and months shift the
-/// calendar (a day past a shorter month's end clamps to its last
-/// day), the rest is an exact span, and the sign applies to the
-/// whole.
 fn shift_by_span(
     instant: time::OffsetDateTime,
     span: &IsoDuration,
 ) -> Option<time::OffsetDateTime> {
     let mut date = instant.date();
-    let total_months = span.years * 12 + span.months;
-    if total_months != 0 {
-        let month_index = i64::from(date.year()) * 12 + i64::from(u8::from(date.month())) - 1;
-        let shifted = month_index
-            + if span.negative {
-                -total_months
-            } else {
-                total_months
-            };
+    if span.months != 0 {
+        let month_index = i128::from(date.year()) * 12 + i128::from(u8::from(date.month())) - 1;
+        let shifted = month_index.checked_add(if span.negative {
+            -span.months
+        } else {
+            span.months
+        })?;
         let year = i32::try_from(shifted.div_euclid(12)).ok()?;
         let month = u8::try_from(shifted.rem_euclid(12) + 1).ok()?;
         let month = time::Month::try_from(month).ok()?;
@@ -1237,8 +1234,9 @@ fn shift_by_span(
     } else {
         span.span
     };
-    Some(calendar + exact)
+    calendar.checked_add(exact)
 }
+
 fn window_refused() -> ApiError {
     ApiError::invalid_request_field(
         "updated_since",

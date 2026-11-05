@@ -399,6 +399,52 @@ describe('the drawer Ticket a description save reads again', () => {
     ])
     expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
   })
+
+  it('keeps the recovery confirmation being filled in through a save', async () => {
+    const state = harness({ tickets: [implementation({ state: 'active' })] })
+    await openDrawer(state)
+
+    await click('drawer-recover')
+    await type('recovery-to', 'ready')
+    await type('recovery-who', 'Sid')
+    await type('recovery-why', 'The run died holding the lane.')
+    await saveDescription('The commands are served over the socket.')
+    await click('recovery-submit')
+
+    expect(issued(state, 'ticket.emergency.override')).toEqual([
+      {
+        mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+        ticket_id: 8,
+        to: 'ready',
+        who: 'Sid',
+        why: 'The run died holding the lane.',
+      },
+    ])
+    expect(document.querySelector('[data-testid="drawer-state"]')?.textContent).toContain('Ready')
+  })
+
+  it('keeps the review decision being written through a save', async () => {
+    const state = harness({ tickets: [implementation()], reviews: [review] })
+    await openDrawer(state)
+
+    await click('drawer-review-decision')
+    await type('review-decision-summary', 'The slice holds; the gates are green.')
+    await saveDescription('The commands are served over the socket.')
+    await click('review-decision-submit')
+
+    expect(issued(state, 'review.human.submit')).toEqual([
+      {
+        mutation: { optimistic_version: 6, idempotency_key: expect.any(String) },
+        review_id: 55,
+        slot_id: 72,
+        tip: 'f00dcafe',
+        approve: true,
+        summary: 'The slice holds; the gates are green.',
+        findings: [],
+      },
+    ])
+    expect(document.querySelector('[data-testid="drawer-action-error"]')).toBeNull()
+  })
 })
 
 describe('the drawer issue a footer command reads again', () => {

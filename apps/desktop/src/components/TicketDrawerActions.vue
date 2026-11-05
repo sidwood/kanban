@@ -129,8 +129,9 @@ const recoveryTargets = computed(() =>
 // Every action guards on the record the drawer is showing.
 watch(
   () => ticket,
-  (record) => {
+  (record, previous) => {
     lifecycle.adopt(record)
+    if (record.id === previous?.id && record.state === previous.state) return
     actionError.value = null
     clearReview()
     recoveryOpen.value = false

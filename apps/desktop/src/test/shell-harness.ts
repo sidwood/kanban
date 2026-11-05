@@ -289,7 +289,9 @@ function admits(filter: BoardFilter, entry: TicketRecord, extras: Partial<BoardG
   return true
 }
 
-function issueOf(found: TicketRecord, identifier: string): IssueRecord {
+/** The issue record the fake core answers for one Ticket, its
+ * priority carried over from the legacy column. */
+export function issueOf(found: TicketRecord, identifier: string): IssueRecord {
   return {
     identifier,
     ticket_id: found.id,

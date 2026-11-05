@@ -364,6 +364,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "canonical comment addresses",
         sql: include_str!("../migrations/0062_canonical_comment_addresses.sql"),
     },
+    Migration {
+        version: 63,
+        name: "block edges share dependencies",
+        sql: include_str!("../migrations/0063_block_edges_share_dependencies.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -2085,6 +2090,10 @@ mod tests {
                 PendingMigration {
                     version: 62,
                     name: "canonical comment addresses",
+                },
+                PendingMigration {
+                    version: 63,
+                    name: "block edges share dependencies",
                 },
             ]]
         );

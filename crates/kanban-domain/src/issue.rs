@@ -65,6 +65,15 @@ impl LinearPriority {
     }
 }
 
+/// The scheme and host every issue deep link starts with.
+const DEEP_LINK_PREFIX: &str = "kanban://issue/";
+
+/// The longest link [`IssueKey::deep_link`] can mint: the prefix, an
+/// eight-character code (`[A-Z][A-Z0-9]{1,7}`), the hyphen, and the
+/// twenty digits of the largest number. Longer text is refused before
+/// it is read.
+const DEEP_LINK_MAX_LEN: usize = DEEP_LINK_PREFIX.len() + 8 + 1 + 20;
+
 /// Stable external key `PREFIX-123`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IssueKey {
@@ -90,7 +99,20 @@ impl IssueKey {
     }
 
     pub fn deep_link(&self) -> String {
-        format!("kanban://issue/{}", self.display())
+        format!("{DEEP_LINK_PREFIX}{}", self.display())
+    }
+
+    /// The key a deep link names, when the link is exactly one
+    /// [`Self::deep_link`] mints. Anything else names nothing: another
+    /// scheme or host, a key spelt otherwise (lowercase, zero-padded,
+    /// signed), a further path segment, a query, a fragment, or text
+    /// longer than any minted link.
+    pub fn from_deep_link(link: &str) -> Option<Self> {
+        if link.len() > DEEP_LINK_MAX_LEN {
+            return None;
+        }
+        let key = Self::parse(link.strip_prefix(DEEP_LINK_PREFIX)?)?;
+        (key.deep_link() == link).then_some(key)
     }
 
     pub fn parse(identifier: &str) -> Option<Self> {
@@ -198,5 +220,147 @@ mod tests {
         assert_eq!(key.display(), "CORE-17");
         assert_eq!(key.deep_link(), "kanban://issue/CORE-17");
         assert_eq!(IssueKey::parse("CORE-17"), Some(key));
+    }
+
+    fn key(code: &str, number: u64) -> IssueKey {
+        IssueKey::new(
+            ProjectCode::new(code).expect("the fixture code is well formed"),
+            TicketNumber::new(number).expect("the fixture number is positive"),
+        )
+    }
+
+    fn refused(links: &[&str]) {
+        for link in links {
+            assert_eq!(
+                IssueKey::from_deep_link(link),
+                None,
+                "`{link}` names no issue"
+            );
+        }
+    }
+
+    #[test]
+    fn a_minted_deep_link_names_its_issue() {
+        assert_eq!(
+            IssueKey::from_deep_link("kanban://issue/CORE-12"),
+            Some(key("CORE", 12))
+        );
+        for minted in [key("AB", 1), key("CORE", 17), key("A1B2C3D4", u64::MAX)] {
+            assert_eq!(
+                IssueKey::from_deep_link(&minted.deep_link()),
+                Some(minted.clone()),
+                "the link {} mints names it",
+                minted.display()
+            );
+        }
+    }
+
+    #[test]
+    fn a_deep_link_spells_its_key_exactly_as_minted() {
+        refused(&[
+            "kanban://issue/core-12",
+            "kanban://issue/Core-12",
+            "kanban://issue/CORE-012",
+            "kanban://issue/CORE-+12",
+            "kanban://issue/CORE-0",
+            "kanban://issue/CORE-1.5",
+            "kanban://issue/CORE_12",
+            "kanban://issue/CORE%2D12",
+            "kanban://issue/ CORE-12",
+            "kanban://issue/CORE-12 ",
+            "kanban://issue/CORE-18446744073709551616",
+        ]);
+    }
+
+    #[test]
+    fn a_deep_link_names_a_project_code_and_a_number() {
+        refused(&[
+            "kanban://issue/KAN-1",
+            "kanban://issue/C-1",
+            "kanban://issue/ABCDEFGHI-1",
+            "kanban://issue/1CORE-1",
+            "kanban://issue/CORE",
+            "kanban://issue/12",
+            "kanban://issue/CORE-12-3",
+        ]);
+    }
+
+    #[test]
+    fn a_deep_link_with_more_than_the_key_names_no_issue() {
+        refused(&[
+            "kanban://issue/CORE-12/",
+            "kanban://issue/CORE-12/comments",
+            "kanban://issue//CORE-12",
+            "kanban://issue/x/../CORE-12",
+            "kanban://issue/CORE-12?",
+            "kanban://issue/CORE-12?tab=history",
+            "kanban://issue/CORE-12?token=secret",
+            "kanban://issue/CORE-12#comments",
+        ]);
+    }
+
+    #[test]
+    fn a_link_of_another_scheme_names_no_issue() {
+        refused(&[
+            "https://issue/CORE-12",
+            "http://kanban/issue/CORE-12",
+            "file:///issue/CORE-12",
+            "javascript:alert(1)",
+            "KANBAN://issue/CORE-12",
+            "kanban-dev://issue/CORE-12",
+            "kanban:issue/CORE-12",
+            "kanban:/issue/CORE-12",
+        ]);
+    }
+
+    #[test]
+    fn a_deep_link_to_another_host_names_no_issue() {
+        refused(&[
+            "kanban://issues/CORE-12",
+            "kanban://ticket/CORE-12",
+            "kanban://Issue/CORE-12",
+            "kanban://ISSUE/CORE-12",
+            "kanban://issue.example/CORE-12",
+            "kanban://user@issue/CORE-12",
+            "kanban://issue:80/CORE-12",
+            "kanban:///issue/CORE-12",
+            "kanban:///CORE-12",
+        ]);
+    }
+
+    #[test]
+    fn a_deep_link_with_no_key_names_no_issue() {
+        refused(&[
+            "",
+            "kanban://",
+            "kanban://issue",
+            "kanban://issue/",
+            "kanban://issue/-",
+            "kanban://issue/-12",
+            "kanban://issue/CORE-",
+        ]);
+    }
+
+    #[test]
+    fn a_deep_link_longer_than_any_minted_one_is_refused() {
+        let longest = key("ABCDEFGH", u64::MAX);
+        assert_eq!(
+            IssueKey::from_deep_link(&longest.deep_link()),
+            Some(longest.clone()),
+            "the longest link the core can mint still names its issue"
+        );
+        for link in [
+            format!("{}0", longest.deep_link()),
+            format!("kanban://issue/CORE-{}", "1".repeat(10_000)),
+            format!("kanban://issue/{}-1", "A".repeat(1 << 20)),
+            format!("kanban://issue/CORE-12{}", "/".repeat(1 << 20)),
+        ] {
+            assert_eq!(
+                IssueKey::from_deep_link(&link),
+                None,
+                "a {}-byte link names no issue",
+                link.len()
+            );
+        }
     }
 }

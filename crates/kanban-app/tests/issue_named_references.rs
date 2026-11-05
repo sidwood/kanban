@@ -477,3 +477,224 @@ fn an_unknown_state_names_the_kanban_states() {
         "tools/list describes state with the Kanban names: {described}"
     );
 }
+
+fn issue_version(session: &OperatorSession, identifier: &str) -> u64 {
+    session
+        .call("issue.get", &json!({ "identifier": identifier }))
+        .expect("issue.get")["version"]
+        .as_u64()
+        .expect("version")
+}
+
+fn apply_edits(session: &OperatorSession, identifier: &str, key: &str, edits: Value) -> Value {
+    let version = issue_version(session, identifier);
+    session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(version, key),
+                "identifier": identifier,
+                "description_edits": edits
+            }),
+        )
+        .expect("the edits apply")
+}
+
+#[test]
+fn each_description_edit_applies_at_a_unique_anchor() {
+    let session = session();
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "each-edit-create",
+        json!({
+            "project_id": 1,
+            "title": "Edited",
+            "description": "HEAD middle TAIL"
+        }),
+    ))
+    .expect("save shape");
+    let identifier = saved.identifier;
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-replace",
+        json!([{"type": "replace", "find": "HEAD", "replace": "START"}]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("START middle TAIL")
+    );
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-insert-before",
+        json!([{"type": "insert_before", "anchor": "middle", "text": "BEFORE "}]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("START BEFORE middle TAIL")
+    );
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-insert-after",
+        json!([{"type": "insert_after", "anchor": "middle", "text": " AFTER"}]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("START BEFORE middle AFTER TAIL")
+    );
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-prepend",
+        json!([{"type": "prepend", "text": "PRE "}]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("PRE START BEFORE middle AFTER TAIL")
+    );
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-append",
+        json!([{"type": "append", "text": " APP"}]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("PRE START BEFORE middle AFTER TAIL APP")
+    );
+    apply_edits(
+        &session,
+        &identifier,
+        "edit-range",
+        json!([{
+            "type": "replace_range",
+            "start": "BEFORE",
+            "end": "AFTER",
+            "text": "SPAN"
+        }]),
+    );
+    assert_eq!(
+        issue_description(&session, &identifier),
+        json!("PRE START SPAN TAIL APP")
+    );
+}
+
+#[test]
+fn a_later_failing_description_edit_leaves_the_issue_unchanged() {
+    let session = session();
+    let mentioned: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "edit-mentioned",
+        json!({ "project_id": 1, "title": "Mentioned" }),
+    ))
+    .expect("save shape");
+    let extra: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "edit-extra",
+        json!({ "project_id": 1, "title": "Extra" }),
+    ))
+    .expect("save shape");
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "edit-host",
+        json!({
+            "project_id": 1,
+            "title": "Host",
+            "description": "alpha beta alpha"
+        }),
+    ))
+    .expect("save shape");
+    let version = issue_version(&session, &saved.identifier);
+    session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(version, "edit-relate"),
+                "identifier": saved.identifier,
+                "add_related": [mentioned.identifier]
+            }),
+        )
+        .expect("the existing relation lands");
+    let before = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get");
+    let before_version = before["version"].clone();
+    let before_relations = before["relations"].clone();
+    let refused = session.call(
+        "issue.save",
+        &json!({
+            "mutation": mutation(before_version.as_u64().expect("version"), "edit-partial"),
+            "identifier": saved.identifier,
+            "description_edits": [
+                {
+                    "type": "append",
+                    "text": format!(" <issue id=\"{}\">{}</issue>", extra.identifier, extra.identifier)
+                },
+                {"type": "replace", "find": "alpha", "replace": "ALPHA"}
+            ]
+        }),
+    );
+    assert!(
+        refused.is_err(),
+        "a later edit whose anchor matches twice is refused"
+    );
+    let after = session
+        .call("issue.get", &json!({ "identifier": saved.identifier }))
+        .expect("issue.get");
+    assert_eq!(after["description"], json!("alpha beta alpha"));
+    assert_eq!(after["version"], before_version);
+    assert_eq!(after["relations"], before_relations);
+    assert!(
+        !after["relations"]
+            .as_array()
+            .expect("relations")
+            .iter()
+            .any(|row| row["identifier"] == extra.identifier),
+        "the earlier edit must not add a relation: {after}"
+    );
+}
+
+#[test]
+fn description_patch_still_replaces_the_first_match() {
+    let session = session();
+    let saved: IssueSaveResponse = serde_json::from_value(call(
+        &session,
+        "issue.save",
+        "patch-create",
+        json!({
+            "project_id": 1,
+            "title": "Patched",
+            "description": "alpha beta alpha"
+        }),
+    ))
+    .expect("save shape");
+    let version = issue_version(&session, &saved.identifier);
+    session
+        .call(
+            "issue.save",
+            &json!({
+                "mutation": mutation(version, "patch-apply"),
+                "identifier": saved.identifier,
+                "description_patch": json!({"find": "alpha", "replace": "ALPHA"}).to_string()
+            }),
+        )
+        .expect("description_patch still applies");
+    assert_eq!(
+        issue_description(&session, &saved.identifier),
+        json!("ALPHA beta alpha")
+    );
+}
+
+fn issue_description(session: &OperatorSession, identifier: &str) -> Value {
+    session
+        .call("issue.get", &json!({ "identifier": identifier }))
+        .expect("issue.get")["description"]
+        .clone()
+}
+

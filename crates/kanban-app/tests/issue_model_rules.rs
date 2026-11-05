@@ -2279,13 +2279,47 @@ fn create_project_label(session: &OperatorSession, key: &str, name: &str) {
         .expect("the label is created");
 }
 fn plant_label_spelling(database: &Database, name: &str) {
-    database
-        .connection()
-        .execute(
-            "INSERT INTO issue_labels (project_id, name, color) VALUES (1, ?1, '#336699')",
-            [name],
-        )
-        .expect("the stored spelling lands");
+    let conn = database.connection();
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS issue_labels_name_case_insert;
+         DROP TRIGGER IF EXISTS issue_labels_name_case_update;",
+    )
+    .expect("the name-case triggers step aside for a historical row");
+    conn.execute(
+        "INSERT INTO issue_labels (project_id, name, color) VALUES (1, ?1, '#336699')",
+        [name],
+    )
+    .expect("the stored spelling lands");
+    conn.execute_batch(
+        "CREATE TRIGGER issue_labels_name_case_insert
+         BEFORE INSERT ON issue_labels
+         WHEN NOT EXISTS (
+             SELECT 1 FROM issue_labels
+             WHERE project_id = NEW.project_id AND name = NEW.name
+         ) AND EXISTS (
+             SELECT 1 FROM issue_labels
+             WHERE project_id = NEW.project_id AND name = NEW.name COLLATE NOCASE
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'label name differs only in letter case from a stored label');
+         END;
+         CREATE TRIGGER issue_labels_name_case_update
+         BEFORE UPDATE OF project_id, name ON issue_labels
+         WHEN (NEW.name IS NOT OLD.name OR NEW.project_id IS NOT OLD.project_id)
+         AND NOT EXISTS (
+             SELECT 1 FROM issue_labels
+             WHERE project_id = NEW.project_id AND name = NEW.name AND id <> NEW.id
+         ) AND EXISTS (
+             SELECT 1 FROM issue_labels
+             WHERE project_id = NEW.project_id
+               AND name = NEW.name COLLATE NOCASE
+               AND id <> NEW.id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'label name differs only in letter case from a stored label');
+         END;",
+    )
+    .expect("the name-case triggers return");
 }
 
 #[test]

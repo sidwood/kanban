@@ -743,5 +743,105 @@ class ReadOnlyStoreTests(unittest.TestCase):
 
 
 
+class TextQueryTests(unittest.TestCase):
+    def context(self, title_only):
+        class MemoryMcp:
+            def __init__(self):
+                self.issues = []
+                self.next_id = 1
+                self.queries = []
+
+            def call(self, name, arguments):
+                if name == "save_issue":
+                    return harness.ToolResult(True, self.save(arguments))
+                if name == "get_issue":
+                    return harness.ToolResult(True, self.by_key(arguments["identifier"]))
+                if name == "list_issues":
+                    return harness.ToolResult(True, {"issues": self.matching(arguments)})
+                if name == "list_issue_statuses":
+                    return harness.ToolResult(True, {"states": [
+                        {"name": "Draft", "state_type": "backlog"},
+                        {"name": "Done", "state_type": "completed"},
+                    ]})
+                return harness.ToolResult(True, {})
+
+            def save(self, arguments):
+                if arguments.get("identifier"):
+                    return {"identifier": arguments["identifier"]}
+                number = self.next_id
+                self.next_id += 1
+                key = f"LIN-{number}"
+                self.issues.append({
+                    "identifier": key,
+                    "title": arguments.get("title", ""),
+                    "description": arguments.get("description") or "",
+                    "project_id": arguments.get("project_id", 1),
+                    "updated_at": f"2026-11-05T00:00:{number:02d}.000Z",
+                    "created_at": "2026-11-05T00:00:00.000Z",
+                    "state": arguments.get("state", "Draft"),
+                    "state_type": "backlog",
+                    "labels": list(arguments.get("add_labels") or []),
+                    "relations": [],
+                    "version": 1,
+                    "ticket_id": number,
+                    "priority": 0,
+                    "url": f"kanban://issue/{key}",
+                    "state_history": [],
+                })
+                return {"identifier": key}
+
+            def by_key(self, key):
+                return next(issue for issue in self.issues if issue["identifier"] == key)
+
+            def matching(self, arguments):
+                query = arguments.get("query")
+                if query:
+                    self.queries.append(query)
+                    folded = query.casefold()
+                    if title_only:
+                        return [issue for issue in self.issues if folded in issue["title"].casefold()]
+                    return [
+                        issue for issue in self.issues
+                        if folded in issue["title"].casefold() or folded in issue["description"].casefold()
+                    ]
+                return list(self.issues)
+
+        mcp = MemoryMcp()
+        recorder = checks.Recorder(emit=lambda line: None)
+        ctx = context.Context(mcp, None, recorder, "run", read_only=False, pause=0)
+        ctx.projects = {"LIN": 1, "LTB": 2}
+        ctx.project_code = "LIN"
+        ctx.other_code = "LTB"
+        ctx.milestones = {"M1": 1, "M2": 2}
+        ctx.mcp = mcp
+        return ctx
+
+    def test_a_title_only_listing_fails_description_search(self):
+        ctx = self.context(title_only=True)
+        ctx.rec.begin(2, "Read")
+        scenarios.test_read(ctx)
+        absent_from_titles = [
+            query for query in ctx.mcp.queries
+            if all(query.casefold() not in issue["title"].casefold() for issue in ctx.mcp.issues)
+        ]
+        self.assertTrue(absent_from_titles)
+        failed = [
+            result for result in ctx.rec.tests[-1].results
+            if result[1] == checks.FAIL and "description token" in result[2]
+        ]
+        self.assertTrue(failed)
+
+    def test_title_and_description_tokens_match_only_their_issue(self):
+        ctx = self.context(title_only=False)
+        ctx.rec.begin(2, "Read")
+        scenarios.test_read(ctx)
+        results = {result[2]: result[1] for result in ctx.rec.tests[-1].results}
+        self.assertEqual(results["a title token matches only the issue whose title holds it"], checks.PASS)
+        self.assertEqual(
+            results["a description token matches only the issue whose description holds it"],
+            checks.PASS,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

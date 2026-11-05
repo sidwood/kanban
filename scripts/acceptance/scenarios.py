@@ -355,6 +355,12 @@ def seed_read_corpus(ctx):
     ctx.save_must(r1, priority=1)
     ctx.create("T2 other team issue", "LTB")
     ctx.save_must(ctx.create("T2 zephyr duplicate", "LIN"), duplicate_of=r2)
+    title_only = ctx.create("T2 marigold beacon", "LIN",
+                            description="A note that does not repeat the title token.")
+    description_only = ctx.create("T2 plain heading", "LIN",
+                                  description="The body alone holds periwinkle.")
+    ctx.create("T2 control heading", "LIN", description="A control body with neither token.")
+    ctx.query_examples = {"title": (title_only, "marigold"), "description": (description_only, "periwinkle")}
 
 
 def choose(values, total):
@@ -542,6 +548,19 @@ def test_read(ctx):
                  {"project_id": project, "query": word.upper() if word else None},
                  {issue["identifier"] for issue in issues if word and
                   (word in issue["title"].lower() or word in issue["description"].lower())}, word)
+    examples = getattr(ctx, "query_examples", None)
+    if examples:
+        title_key, title_token = examples["title"]
+        description_key, description_token = examples["description"]
+        check_filter(ctx, "a title token matches only the issue whose title holds it",
+                     {"project_id": project, "query": title_token.upper()}, {title_key}, title_token.upper())
+        check_filter(ctx, "a description token matches only the issue whose description holds it",
+                     {"project_id": project, "query": description_token.upper()},
+                     {description_key}, description_token.upper())
+    else:
+        rec.skip("a title token matches only the issue whose title holds it", "no seeded query examples")
+        rec.skip("a description token matches only the issue whose description holds it",
+                 "no seeded query examples")
     stamps = sorted(issue["updated_at"] for issue in issues)
     since = stamps[len(stamps) // 2]
     boundary = parse_timestamp(since)

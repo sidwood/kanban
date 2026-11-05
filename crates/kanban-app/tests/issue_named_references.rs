@@ -1027,3 +1027,79 @@ fn overlapping_description_anchors_leave_the_issue_unchanged() {
         );
     }
 }
+
+#[test]
+fn project_filters_keep_the_label_group_across_teams() {
+    use kanban_app::ProjectStore;
+    let mut h = harness();
+    let projects = SqliteProjectStore::new(&h.database);
+    let mut teams = vec![1];
+    for code in ["CORE2", "CORE3"] {
+        let registration = kanban_domain::ProjectRegistration::new(
+            code,
+            "Another team",
+            &format!("/repositories/{code}"),
+            &format!("/workspaces/{code}"),
+            "main",
+            code,
+            None,
+            None,
+        )
+        .unwrap();
+        let project = projects
+            .create(&registration, &|id| {
+                kanban_app::TimelineEnvelope::project(
+                    id.value(),
+                    kanban_dto::TimelineEventKind::Transition,
+                    None,
+                    json!({"action":"registered"}),
+                )
+            })
+            .unwrap();
+        teams.push(project.id().value());
+    }
+    register_issue_stack(&mut h.core, &h.database, &h._dir.path().join("attachments"));
+    let session = OperatorSession::new(Arc::new(h.core));
+    let mut saved = Vec::new();
+    for (project_id, group) in teams.iter().zip([Some("Area"), Some("Project"), None]) {
+        let mut label = json!({"project_id":project_id,"name":"Web","color":"#336699"});
+        if let Some(group) = group {
+            label["group"] = json!(group);
+            label["group_single_select"] = json!(true);
+        }
+        session.call("create_issue_label", &label).unwrap();
+        saved.push(
+            session
+                .call(
+                    "issue.save",
+                    &json!({
+                        "project_id":project_id,"title":"Web work","add_labels":["Web"]
+                    }),
+                )
+                .unwrap(),
+        );
+    }
+    let list = |filter: Value| {
+        session.call("issue.list", &filter).unwrap()["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["identifier"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        list(json!({"project":"Web"})),
+        vec![saved[1]["identifier"].clone()]
+    );
+    assert!(list(json!({"team":"CORE","project":"Web"})).is_empty());
+    assert_eq!(
+        list(json!({"team":"CORE2","project":"Web"})),
+        vec![saved[1]["identifier"].clone()]
+    );
+    assert_eq!(list(json!({"label":"Web"})).len(), 3);
+    assert_eq!(
+        list(json!({"project":"Web","label":"Web"})),
+        vec![saved[1]["identifier"].clone()]
+    );
+    assert!(list(json!({"project":"Web","label":"Missing"})).is_empty());
+}

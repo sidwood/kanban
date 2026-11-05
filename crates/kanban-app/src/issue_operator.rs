@@ -1624,7 +1624,6 @@ fn list_issues(
         .as_deref()
         .map(|name| find_project_label_filter(ctx, &project_ids, name))
         .transpose()?;
-    let label = request.label.clone().or(project_label);
     let parent_ticket_id = request
         .parent_id
         .as_deref()
@@ -1646,7 +1645,8 @@ fn list_issues(
     let page = ctx.issues.page_issue_ids(&IssuePageQuery {
         project_ids: &project_ids,
         state: request.state.as_deref(),
-        label: label.as_deref(),
+        label: request.label.as_deref(),
+        project_label: project_label.as_deref(),
         parent_ticket_id,
         milestone_id: request.milestone_id.map(|value| value as i64),
         assignee: request.assignee.as_deref(),

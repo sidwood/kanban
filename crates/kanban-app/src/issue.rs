@@ -198,6 +198,8 @@ pub struct IssuePageQuery<'a> {
     pub project_ids: &'a [u64],
     pub state: Option<&'a str>,
     pub label: Option<&'a str>,
+    /// Label name restricted to the Project group, separate from an ordinary label filter.
+    pub project_label: Option<&'a str>,
     pub parent_ticket_id: Option<i64>,
     pub milestone_id: Option<i64>,
     pub assignee: Option<&'a str>,

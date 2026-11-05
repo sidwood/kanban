@@ -2815,6 +2815,20 @@ fn page_issue_ids(
         ));
         params.push(Box::new(label.to_owned()));
     }
+    if let Some(label) = query.project_label {
+        let n = params.len() + 1;
+        sql.push_str(&format!(
+            " AND EXISTS (
+                   SELECT 1 FROM issue_ticket_labels AS tl
+                   JOIN issue_labels AS l ON l.id = tl.label_id
+                   JOIN issue_label_groups AS g ON g.id = l.group_id
+                   WHERE tl.ticket_id = t.id AND l.project_id = t.project_id
+                     AND g.project_id = t.project_id
+                     AND fold_eq(g.name, 'Project') AND fold_eq(l.name, ?{n})
+               )"
+        ));
+        params.push(Box::new(label.to_owned()));
+    }
     if let Some(parent) = query.parent_ticket_id {
         sql.push_str(&format!(" AND t.parent_ticket_id = ?{}", params.len() + 1));
         params.push(Box::new(parent));

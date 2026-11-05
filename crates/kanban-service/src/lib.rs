@@ -887,8 +887,8 @@ fn configured_operator_name(data_dir: &Path) -> Option<String> {
     let configuration = crate::redaction::read_managed_config(data_dir)
         .ok()
         .flatten()?;
-    let name = configuration.get("operator_name")?.as_str()?.trim();
-    (!name.is_empty()).then(|| name.to_owned())
+    let name = configuration.get("operator_name")?.as_str()?;
+    (!name.trim().is_empty()).then(|| name.to_owned())
 }
 
 #[cfg(target_os = "macos")]

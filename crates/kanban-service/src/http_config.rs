@@ -145,3 +145,104 @@ fn loopback_default_off_cli_requires_explicit_numeric_loopback_enablement() {
         assert!(!error.to_string().contains("planted-secret"));
     }
 }
+
+#[test]
+fn configured_operator_identity_is_preserved_over_http() {
+    use kanban_app::secrets::InstallationSecret;
+    use serde_json::{Value, json};
+    use std::io::{Read, Write};
+
+    let h = common::harness();
+    let configured = "  Ada  ";
+    std::fs::write(
+        h._dir.path().join("config.json"),
+        json!({"operator_name": configured}).to_string(),
+    )
+    .unwrap();
+    let secret = Arc::new(InstallationSecret::from_key(&[61; 32]));
+    let service = serve_with_http(
+        h._dir.path(),
+        ServiceRuntime {
+            mcp_executable: h._dir.path().join("unused"),
+            herdr_socket_root: h._dir.path().join("herdr"),
+            installation_secret: Some(secret.clone()),
+        },
+        LoopbackHttpConfig {
+            bind: Some("127.0.0.1:0".parse().unwrap()),
+        },
+    )
+    .unwrap();
+    let address = service.http_address().unwrap();
+    let call = |name: &str, arguments: Value| {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        })
+        .to_string();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(
+            client,
+            "POST /mcp/operator HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\n\r\n{body}",
+            secret.expose(),
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.starts_with("HTTP/1.1 200"), "{response}");
+        let response: Value = serde_json::from_str(body).unwrap();
+        assert!(response.get("error").is_none(), "{response}");
+        assert_ne!(response["result"]["isError"], json!(true), "{response}");
+        response["result"]["structuredContent"].clone()
+    };
+    let saved = call(
+        "save_issue",
+        json!({"team": "CORE", "title": "Configured identity", "assignee": "me"}),
+    );
+    let issue = call("get_issue", json!({"id": saved["identifier"]}));
+    call(
+        "save_comment",
+        json!({"issue": saved["identifier"], "body": "Exact author"}),
+    );
+    let comments = call(
+        "list_comments",
+        json!({"target": {"kind": "ticket", "id": saved["identifier"]}}),
+    );
+    let explicit = call(
+        "save_issue",
+        json!({"team": "CORE", "title": "Explicit identity", "assignee": configured}),
+    );
+    let mine = call("list_issues", json!({"assignee": "me"}));
+    service.shutdown();
+
+    assert_eq!(issue["assignee"], json!("  Ada  "));
+    assert_eq!(issue["creator"], json!("  Ada  "));
+    assert_eq!(comments["comments"][0]["author"], json!("  Ada  "));
+    let issues = mine["issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 2);
+    for identifier in [&saved["identifier"], &explicit["identifier"]] {
+        assert!(
+            issues
+                .iter()
+                .any(|issue| &issue["identifier"] == identifier)
+        );
+    }
+}
+
+#[test]
+fn blank_configured_operator_names_are_unset() {
+    let dir = tempfile::TempDir::new().unwrap();
+    assert_eq!(configured_operator_name(dir.path()), None);
+    for name in ["", " ", "\t\r\n", "\u{2003}"] {
+        std::fs::write(
+            dir.path().join("config.json"),
+            serde_json::json!({"operator_name": name}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(configured_operator_name(dir.path()), None);
+    }
+}

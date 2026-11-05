@@ -1185,7 +1185,7 @@ define_exposed_catalogue! {
         request: "IssueUpdateProjectSettingsRequest",
         response: "IssueProjectSettingsResponse",
         mcp: "update_project_settings",
-        description: "Update per-project Linear settings such as auto-close sub-issues.",
+        description: "Update per-project sub-issue settings: close a parent once its sub-issues close (auto_close_sub_issues), and close open sub-issues when their parent closes (close_sub_issues_with_parent). Both default off; the response reads both back.",
     },
 }
 

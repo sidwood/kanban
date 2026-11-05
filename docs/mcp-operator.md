@@ -21,7 +21,7 @@ The table lists the **MCP name** (what clients call) and the **Core operation**.
 | `create_milestone` | `issue.create_milestone` | Create a milestone on a project |
 | `create_label` | `issue.create_label` | Create a label (and optional group) on a project |
 | `retire_label` | `issue.retire_label` | Retire (archive) a label on a project |
-| `update_project_settings` | `issue.update_project_settings` | Per-project settings such as `auto_close_sub_issues` (default off) |
+| `update_project_settings` | `issue.update_project_settings` | Per-project sub-issue settings, both default off: `auto_close_sub_issues` closes a parent once its sub-issues close; `close_sub_issues_with_parent` closes open sub-issues when their parent closes. Returns both |
 | `comment_create` | `comment.create` | Post a comment (optional thread parent); body stored without trimming trailing newlines |
 | `comment_edit` | `comment.edit` | Append a revision to an existing comment |
 | `comment_revisions` | `comment.revisions` | Read comment history |

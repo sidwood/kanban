@@ -5,6 +5,9 @@
     "auto_close_sub_issues": {
       "type": "boolean"
     },
+    "close_sub_issues_with_parent": {
+      "type": "boolean"
+    },
     "project_id": {
       "format": "uint64",
       "minimum": 0.0,
@@ -13,6 +16,7 @@
   },
   "required": [
     "auto_close_sub_issues",
+    "close_sub_issues_with_parent",
     "project_id"
   ],
   "title": "IssueProjectSettingsResponse",

@@ -1228,6 +1228,22 @@ pub(crate) fn apply_project_auto_close_setting_in_span(
 ) -> rusqlite::Result<()> {
     apply_project_auto_close_setting(span)
 }
+/// Adds the per-project setting that closes a parent's open sub-issues
+/// when the parent closes. Every existing project starts with it off.
+pub(crate) fn apply_project_close_sub_issues_setting(conn: &Connection) -> rusqlite::Result<()> {
+    add_column(
+        conn,
+        "projects",
+        "close_sub_issues_with_parent",
+        "close_sub_issues_with_parent INTEGER NOT NULL DEFAULT 0",
+    )
+}
+
+pub(crate) fn apply_project_close_sub_issues_setting_in_span(
+    span: &WriteSpan<'_>,
+) -> rusqlite::Result<()> {
+    apply_project_close_sub_issues_setting(span)
+}
 
 pub(crate) fn apply_issue_assignee_column(conn: &Connection) -> rusqlite::Result<()> {
     add_column(
@@ -1455,6 +1471,29 @@ mod tests {
                 )
             })
             .unwrap();
+    }
+    #[test]
+    fn an_existing_project_starts_with_sub_issues_left_open() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("kanban.sqlite");
+        let mut database = Database::open(&path).unwrap();
+        migrations::apply_through(&database.connection(), 64).unwrap();
+        seed_project(&database);
+
+        database.migrate(&AllowAllMigrations).unwrap();
+
+        let stored: i64 = database
+            .connection()
+            .query_row(
+                "SELECT close_sub_issues_with_parent FROM projects WHERE code = 'CORE'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, 0,
+            "a project registered before the setting leaves sub-issues open"
+        );
     }
 
     fn seed_schema_52_fixture(conn: &Connection) {
@@ -1758,7 +1797,7 @@ mod tests {
                  WHERE ticket_id = 10 AND ended_at IS NULL;
                  UPDATE issue_label_groups SET single_select = 0
                  WHERE name IN ('Severity', 'Mode');
-                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62, 63, 64);",
+                 DELETE FROM schema_migrations WHERE version IN (60, 61, 62, 63, 64, 65);",
             )
             .unwrap();
         (dir, database)

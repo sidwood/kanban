@@ -556,6 +556,7 @@ fn sync_issue_state_after_legacy_move(
         state.state_type,
         WorkflowStateType::Completed | WorkflowStateType::Canceled | WorkflowStateType::Duplicate
     ) {
+        super::issue_store::close_open_sub_issues_with_parent(span, ticket_id, state.state_type)?;
         let parent_id: Option<i64> = span
             .query_row(
                 "SELECT parent_ticket_id FROM tickets WHERE id = ?1",

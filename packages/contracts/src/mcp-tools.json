@@ -41910,7 +41910,7 @@
     }
   },
   {
-    "description": "Update per-project Linear settings such as auto-close sub-issues. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
+    "description": "Update per-project sub-issue settings: close a parent once its sub-issues close (auto_close_sub_issues), and close open sub-issues when their parent closes (close_sub_issues_with_parent). Both default off; the response reads both back. On the operator session, mutation may be omitted and the latest write applies. A sent version is still checked.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false,
@@ -41937,6 +41937,14 @@
       },
       "properties": {
         "auto_close_sub_issues": {
+          "description": "Close an open parent automatically once every sub-issue is closed (Linear's \"auto-close parent issues\").",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "close_sub_issues_with_parent": {
+          "description": "Close a parent's open sub-issues when the parent closes (Linear's \"auto-close sub-issues\"): a completed parent completes them, and a canceled or duplicate parent cancels them.",
           "type": [
             "boolean",
             "null"
@@ -41965,6 +41973,9 @@
         "auto_close_sub_issues": {
           "type": "boolean"
         },
+        "close_sub_issues_with_parent": {
+          "type": "boolean"
+        },
         "project_id": {
           "format": "uint64",
           "minimum": 0.0,
@@ -41973,6 +41984,7 @@
       },
       "required": [
         "auto_close_sub_issues",
+        "close_sub_issues_with_parent",
         "project_id"
       ],
       "title": "IssueProjectSettingsResponse",

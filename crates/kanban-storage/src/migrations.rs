@@ -374,6 +374,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "task checklist repair",
         sql: include_str!("../migrations/0064_task_checklist_repair.sql"),
     },
+    Migration {
+        version: 65,
+        name: "project close sub-issues setting",
+        sql: include_str!("../migrations/0065_project_close_sub_issues_setting.sql"),
+    },
 ];
 
 /// The version a fully migrated database reports: the last entry in
@@ -589,6 +594,13 @@ fn apply_inside_span(conn: &Connection, migration: &Migration) -> Result<(), Sto
                 source,
             },
         )?;
+    } else if migration.version == 65 {
+        crate::linear_issue_migration::apply_project_close_sub_issues_setting_in_span(&span)
+            .map_err(|source| StorageError::Migration {
+                version: migration.version,
+                name: migration.name,
+                source,
+            })?;
     } else {
         span.execute_batch(migration.sql)
             .map_err(|source| StorageError::Migration {
@@ -2111,6 +2123,10 @@ mod tests {
                 PendingMigration {
                     version: 64,
                     name: "task checklist repair",
+                },
+                PendingMigration {
+                    version: 65,
+                    name: "project close sub-issues setting",
                 },
             ]]
         );

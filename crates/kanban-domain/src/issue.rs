@@ -38,6 +38,26 @@ impl WorkflowStateType {
             _ => return None,
         })
     }
+
+    /// Whether an issue in this state is closed: finished work
+    /// (completed) or dropped work (canceled, and duplicate, which
+    /// Linear counts as canceled).
+    pub fn is_closed(self) -> bool {
+        matches!(self, Self::Completed | Self::Canceled | Self::Duplicate)
+    }
+
+    /// The state type an open sub-issue moves to when its parent
+    /// enters this one and sub-issues close with their parent, as
+    /// Linear's "auto-close sub-issues" does: a completed parent
+    /// completes them, and a canceled or duplicate parent cancels them
+    /// (a sub-issue duplicates nothing). An open state closes nothing.
+    pub fn sub_issue_closure(self) -> Option<Self> {
+        match self {
+            Self::Completed => Some(Self::Completed),
+            Self::Canceled | Self::Duplicate => Some(Self::Canceled),
+            Self::Backlog | Self::Unstarted | Self::Started => None,
+        }
+    }
 }
 
 /// Linear priority: 0 None through 4 Low.
@@ -209,6 +229,55 @@ mod tests {
             stamps.completed_at, None,
             "a direct completed to duplicate move drops the completed stamp"
         );
+    }
+
+    #[test]
+    fn completed_canceled_and_duplicate_states_are_closed() {
+        let closed: Vec<WorkflowStateType> = [
+            WorkflowStateType::Backlog,
+            WorkflowStateType::Unstarted,
+            WorkflowStateType::Started,
+            WorkflowStateType::Completed,
+            WorkflowStateType::Canceled,
+            WorkflowStateType::Duplicate,
+        ]
+        .into_iter()
+        .filter(|state| state.is_closed())
+        .collect();
+        assert_eq!(
+            closed,
+            vec![
+                WorkflowStateType::Completed,
+                WorkflowStateType::Canceled,
+                WorkflowStateType::Duplicate,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_closing_parent_closes_its_sub_issues_the_same_way() {
+        assert_eq!(
+            WorkflowStateType::Completed.sub_issue_closure(),
+            Some(WorkflowStateType::Completed),
+            "a completed parent completes its open sub-issues"
+        );
+        assert_eq!(
+            WorkflowStateType::Canceled.sub_issue_closure(),
+            Some(WorkflowStateType::Canceled),
+            "a canceled parent cancels them"
+        );
+        assert_eq!(
+            WorkflowStateType::Duplicate.sub_issue_closure(),
+            Some(WorkflowStateType::Canceled),
+            "a duplicate parent cancels them; they duplicate nothing"
+        );
+        for open in [
+            WorkflowStateType::Backlog,
+            WorkflowStateType::Unstarted,
+            WorkflowStateType::Started,
+        ] {
+            assert_eq!(open.sub_issue_closure(), None, "{open:?} closes nothing");
+        }
     }
 
     #[test]

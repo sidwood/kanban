@@ -1,0 +1,5 @@
+-- 0065 project close sub-issues setting
+--
+-- Applied idempotently from `src/linear_issue_migration.rs` so recovery
+-- tests can re-run migrations 47+ without failing on existing columns.
+-- Adds `projects.close_sub_issues_with_parent`, off for every project.

@@ -467,18 +467,24 @@ impl CommandHandler for UpdateProjectSettings {
     ) -> Result<Value, ApiError> {
         let request: IssueUpdateProjectSettingsRequest = parse_payload(&command.payload)?;
         resolve_issue_project(self.0.projects.as_ref(), request.project_id)?;
+        let project_id = request.project_id as i64;
         if let Some(enabled) = request.auto_close_sub_issues {
             self.0
                 .issues
-                .set_auto_close_sub_issues(request.project_id as i64, enabled)?;
+                .set_auto_close_sub_issues(project_id, enabled)?;
         }
-        let enabled = self
-            .0
-            .issues
-            .auto_close_sub_issues_enabled(request.project_id as i64)?;
+        if let Some(enabled) = request.close_sub_issues_with_parent {
+            self.0
+                .issues
+                .set_close_sub_issues_with_parent(project_id, enabled)?;
+        }
         let response = IssueProjectSettingsResponse {
             project_id: request.project_id,
-            auto_close_sub_issues: enabled,
+            auto_close_sub_issues: self.0.issues.auto_close_sub_issues_enabled(project_id)?,
+            close_sub_issues_with_parent: self
+                .0
+                .issues
+                .close_sub_issues_with_parent_enabled(project_id)?,
         };
         serde_json::to_value(response).map_err(|_| ApiError::internal("settings response invalid"))
     }

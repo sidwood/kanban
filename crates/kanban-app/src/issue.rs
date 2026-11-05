@@ -126,6 +126,13 @@ pub trait IssueStore: Send + Sync {
     fn sync_description_mentions(&self, ticket_id: i64, description: &str) -> Result<(), ApiError>;
     fn set_auto_close_sub_issues(&self, project_id: i64, enabled: bool) -> Result<(), ApiError>;
     fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError>;
+    /// Whether a parent's open sub-issues close when the parent closes.
+    fn set_close_sub_issues_with_parent(
+        &self,
+        project_id: i64,
+        enabled: bool,
+    ) -> Result<(), ApiError>;
+    fn close_sub_issues_with_parent_enabled(&self, project_id: i64) -> Result<bool, ApiError>;
     fn create_milestone(
         &self,
         project_id: i64,

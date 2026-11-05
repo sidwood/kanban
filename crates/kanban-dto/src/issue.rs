@@ -353,8 +353,15 @@ pub struct IssueRetireLabelRequest {
 pub struct IssueUpdateProjectSettingsRequest {
     pub mutation: MutationContext,
     pub project_id: u64,
+    /// Close an open parent automatically once every sub-issue is
+    /// closed (Linear's "auto-close parent issues").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_close_sub_issues: Option<bool>,
+    /// Close a parent's open sub-issues when the parent closes
+    /// (Linear's "auto-close sub-issues"): a completed parent completes
+    /// them, and a canceled or duplicate parent cancels them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_sub_issues_with_parent: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -362,6 +369,7 @@ pub struct IssueUpdateProjectSettingsRequest {
 pub struct IssueProjectSettingsResponse {
     pub project_id: u64,
     pub auto_close_sub_issues: bool,
+    pub close_sub_issues_with_parent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

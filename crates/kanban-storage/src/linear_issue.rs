@@ -181,6 +181,30 @@ pub fn workflow_state_by_name(
         .optional()
         .map_err(StorageError::from)
 }
+/// The first state of one type in a project's workflow, by position:
+/// the state an automatic move of that type lands on.
+pub fn first_workflow_state_of_type(
+    conn: &Connection,
+    project_id: i64,
+    state_type: WorkflowStateType,
+) -> Result<Option<WorkflowStateRecord>, StorageError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, project_id, name, type, legacy_state, position
+             FROM issue_workflow_states
+             WHERE project_id = ?1 AND type = ?2
+             ORDER BY position, id
+             LIMIT 1",
+        )
+        .map_err(StorageError::from)?;
+    statement
+        .query_row(
+            rusqlite::params![project_id, state_type.wire_name()],
+            WorkflowStateRecord::map_row,
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
 
 pub fn workflow_state_by_legacy(
     conn: &Connection,

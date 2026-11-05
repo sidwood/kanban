@@ -45,6 +45,30 @@ setting is read from the **parent's** project, so children in other projects
 count, and their own projects' settings do not close the parent. Terminal
 parents are not updated again.
 
+The opposite direction is Linear's "auto-close sub-issues": when
+**`close_sub_issues_with_parent`** is enabled for the parent's project
+(`update_project_settings`; **default off**), a parent entering a closed state
+closes its **open** sub-issues:
+
+| Parent enters | Open sub-issues move to |
+| --- | --- |
+| Done (completed) | Done (the first completed state of the sub-issue's project) |
+| Cancelled or Superseded (canceled) | Cancelled (the first canceled state) |
+| Duplicate | Cancelled; a sub-issue duplicates nothing |
+
+- Sub-issues that are already closed keep their state, so finished work stays
+  Done under a cancelled parent.
+- Each move is an ordinary state move: it ends the sub-issue's current history
+  row, appends a new one, stamps `completed_at` or `canceled_at`, bumps the
+  version, and records a timeline event naming the parent.
+- The rule cascades: a closed sub-issue closes its own open sub-issues when its
+  project has the setting on.
+- It runs whichever way the parent closes: `save_issue` state moves,
+  `duplicate_of`, parent auto-close, and legacy ticket moves such as cancel.
+- Reopening the parent leaves its sub-issues closed.
+- With both settings on, every issue enters its closed state once: this rule
+  only closes open sub-issues and parent auto-close only closes open parents.
+
 ## UI
 
 From the issue drawer, use **Add sub-issue** to create a child under the open

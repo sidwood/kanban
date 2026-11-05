@@ -14,7 +14,10 @@ use crate::db::{ConnectionHandle, Database, WriteSpan};
 use crate::error::StorageError;
 use crate::timeline::insert_event;
 
-use super::linear_issue::{WorkflowStateRecord, workflow_state_by_legacy, workflow_state_by_name};
+use super::linear_issue::{
+    WorkflowStateRecord, first_workflow_state_of_type, workflow_state_by_legacy,
+    workflow_state_by_name,
+};
 thread_local! {
     static SECONDARY_EFFECTS: RefCell<Option<Vec<kanban_app::SecondaryEffect>>> =
         const { RefCell::new(None) };
@@ -1631,6 +1634,35 @@ impl SqliteIssueStore {
             .map_err(|_| ApiError::not_found("project"))?;
         Ok(enabled != 0)
     }
+    pub fn set_close_sub_issues_with_parent(
+        &self,
+        project_id: i64,
+        enabled: bool,
+    ) -> Result<(), ApiError> {
+        let conn = self.lock();
+        let changed = conn
+            .execute(
+                "UPDATE projects SET close_sub_issues_with_parent = ?2 WHERE id = ?1",
+                params![project_id, i64::from(enabled)],
+            )
+            .map_err(internal)?;
+        if changed == 0 {
+            return Err(ApiError::not_found("project"));
+        }
+        Ok(())
+    }
+
+    pub fn close_sub_issues_with_parent_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
+        let conn = self.lock();
+        let enabled: i64 = conn
+            .query_row(
+                "SELECT close_sub_issues_with_parent FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| ApiError::not_found("project"))?;
+        Ok(enabled != 0)
+    }
 
     /// The project that owns one issue, or `None` when no such issue
     /// exists. Comment streams live under the owning project.
@@ -2259,6 +2291,17 @@ impl kanban_app::IssueStore for SqliteIssueStore {
     fn auto_close_sub_issues_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
         SqliteIssueStore::auto_close_sub_issues_enabled(self, project_id)
     }
+    fn set_close_sub_issues_with_parent(
+        &self,
+        project_id: i64,
+        enabled: bool,
+    ) -> Result<(), ApiError> {
+        SqliteIssueStore::set_close_sub_issues_with_parent(self, project_id, enabled)
+    }
+
+    fn close_sub_issues_with_parent_enabled(&self, project_id: i64) -> Result<bool, ApiError> {
+        SqliteIssueStore::close_sub_issues_with_parent_enabled(self, project_id)
+    }
 
     fn issue_project(&self, ticket_id: i64) -> Result<Option<u64>, ApiError> {
         SqliteIssueStore::issue_project(self, ticket_id)
@@ -2455,16 +2498,98 @@ pub(crate) fn apply_free_state_on(
         .flatten();
     let _ = project_id;
     span.commit().map_err(internal)?;
-    if (to_state.state_type == WorkflowStateType::Completed
-        || to_state.state_type == WorkflowStateType::Canceled
-        || to_state.state_type == WorkflowStateType::Duplicate)
-        && let Some(parent_id) = parent_id
-    {
-        auto_close_parent_if_children_done(conn, parent_id)?;
+    if to_state.state_type.is_closed() {
+        close_open_sub_issues_with_parent(conn, ticket_id, to_state.state_type)?;
+        if let Some(parent_id) = parent_id {
+            auto_close_parent_if_children_done(conn, parent_id)?;
+        }
     }
     Ok(())
 }
 
+/// Close the open sub-issues of a parent that has just entered
+/// `parent_state`, when the parent's project closes sub-issues with
+/// their parent (Linear's "auto-close sub-issues"). The domain picks the
+/// state type; each sub-issue lands on the first state of that type in
+/// its own project's workflow through the same free move as any other,
+/// so it gets its history row, stamps, timeline event, and version
+/// bump, and closes its own open sub-issues in turn. Sub-issues already
+/// closed keep their state.
+///
+/// The rule only closes open issues and parent auto-close only closes
+/// open parents, so the two never undo or re-enter each other.
+pub(crate) fn close_open_sub_issues_with_parent(
+    conn: &rusqlite::Connection,
+    parent_id: i64,
+    parent_state: WorkflowStateType,
+) -> Result<(), ApiError> {
+    let Some(closure) = parent_state.sub_issue_closure() else {
+        return Ok(());
+    };
+    let enabled: i64 = conn
+        .query_row(
+            "SELECT p.close_sub_issues_with_parent
+             FROM tickets AS t
+             JOIN projects AS p ON p.id = t.project_id
+             WHERE t.id = ?1",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .map_err(not_found_ticket)?;
+    if enabled == 0 {
+        return Ok(());
+    }
+    let children: Vec<(i64, i64, Option<String>)> = {
+        let mut statement = conn
+            .prepare(
+                "SELECT t.id, t.project_id, s.type
+                 FROM tickets AS t
+                 LEFT JOIN issue_workflow_states AS s ON s.id = t.workflow_state_id
+                 WHERE t.parent_ticket_id = ?1
+                 ORDER BY t.sub_issue_sort, t.number",
+            )
+            .map_err(internal)?;
+        statement
+            .query_map([parent_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(internal)?
+            .collect::<Result<_, _>>()
+            .map_err(internal)?
+    };
+    for (child_id, child_project, child_type) in children {
+        let open = child_type
+            .as_deref()
+            .and_then(WorkflowStateType::parse)
+            .is_none_or(|state| !state.is_closed());
+        if !open {
+            continue;
+        }
+        let target = first_workflow_state_of_type(conn, child_project, closure)
+            .map_err(internal_storage)?
+            .ok_or_else(|| {
+                ApiError::internal(&format!(
+                    "no {} workflow state to close a sub-issue into",
+                    closure.wire_name()
+                ))
+            })?;
+        let envelope = TimelineEnvelope::project(
+            child_project as u64,
+            TimelineEventKind::Transition,
+            Some(TimelineEntityRef {
+                kind: TimelineEntityKind::Ticket,
+                id: child_id.to_string(),
+            }),
+            serde_json::json!({
+                "action": "close_sub_issues_with_parent",
+                "state": target.name,
+                "parent_ticket_id": parent_id,
+            }),
+        );
+        apply_free_state_on(conn, child_id, child_project, &target, envelope)?;
+    }
+    Ok(())
+}
 /// The parent auto-close rule over one connection, so every write
 /// boundary (issue tools and legacy ticket moves alike) runs the same
 /// rule inside its own transaction.

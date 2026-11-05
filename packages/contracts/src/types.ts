@@ -654,6 +654,7 @@ export type IssueProjectRecord = {
 };
 export type IssueProjectSettingsResponse = {
   auto_close_sub_issues: boolean;
+  close_sub_issues_with_parent: boolean;
   project_id: number;
 };
 export type IssueProjectsQuery = Record<string, never>;
@@ -738,6 +739,7 @@ export type IssueSubIssueProgress = {
 };
 export type IssueUpdateProjectSettingsRequest = {
   auto_close_sub_issues?: boolean | null;
+  close_sub_issues_with_parent?: boolean | null;
   mutation: MutationContext;
   project_id: number;
 };

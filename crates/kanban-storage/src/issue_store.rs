@@ -2335,6 +2335,16 @@ pub(crate) fn auto_close_parent_if_children_done(
     if open > 0 {
         return Ok(());
     }
+    let executing: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM runs WHERE ticket_id = ?1 AND status = 'executing'",
+            [parent_id],
+            |row| row.get(0),
+        )
+        .map_err(internal)?;
+    if executing > 0 {
+        return Ok(());
+    }
     let done = workflow_state_by_name(conn, project_id, "Done")
         .map_err(internal_storage)?
         .ok_or_else(|| ApiError::internal("Done workflow state missing"))?;

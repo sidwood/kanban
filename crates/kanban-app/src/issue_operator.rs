@@ -591,16 +591,6 @@ fn create_issue(
     }
     apply_label_changes(ctx, project_id as i64, ticket_id as i64, request)?;
     apply_issue_extensions(ctx, ticket_id as i64, request)?;
-    if request.sort_order.is_none()
-        && let Some(parent_ref) = request
-            .parent_id
-            .as_ref()
-            .and_then(|value| value.as_deref())
-    {
-        let parent_id = resolve_parent_reference(ctx, parent_ref)?;
-        ctx.issues
-            .append_sub_issue_sort(ticket_id as i64, parent_id as i64)?;
-    }
     if let Some(assignee) = request.assignee.as_ref() {
         ctx.issues
             .set_assignee(ticket_id as i64, assignee.as_deref())?;
@@ -687,7 +677,13 @@ fn apply_issue_extensions(
             None => None,
             Some(reference) => Some(resolve_parent_reference(ctx, reference)? as i64),
         };
+        let before = ctx.issues.issue_fields(ticket_id)?.parent_ticket_id;
         ctx.issues.set_parent(ticket_id, parent_id)?;
+        if request.sort_order.is_none() && before != parent_id {
+            if let Some(parent_id) = parent_id {
+                ctx.issues.append_sub_issue_sort(ticket_id, parent_id)?;
+            }
+        }
     }
     if let Some(duplicate) = request.duplicate_of.as_ref() {
         ctx.issues
@@ -758,6 +754,11 @@ fn name_relation_refusal(
     match outcome {
         Err(error) if error.code == kanban_dto::ErrorCode::NotFound => {
             Err(ApiError::not_found_field(field, &error.message))
+        }
+        Err(error)
+            if error.code == kanban_dto::ErrorCode::InvalidRequest && error.field.is_none() =>
+        {
+            Err(ApiError::invalid_request_field(field, &error.message))
         }
         other => other,
     }

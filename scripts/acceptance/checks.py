@@ -20,6 +20,22 @@ SKIP = "SKIP"
 OUTCOMES = (PASS, FAIL, XFAIL, XPASS, SKIP)
 
 
+def redact_nested(value, redact):
+    """Replace complete secrets in strings before a value is rendered."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {
+            redact_nested(key, redact): redact_nested(item, redact)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_nested(item, redact) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_nested(item, redact) for item in value)
+    return value
+
+
 def short(value, limit=160):
     """A one-line, bounded rendering of a value for a reason string."""
     if isinstance(value, (set, frozenset)):
@@ -79,8 +95,9 @@ class Recorder:
         self._emit(self._redact(f"== Test {number}: {title}"))
 
     def _shown(self, value):
-        """Redact a value before it is shortened or compared for display."""
-        text = value if isinstance(value, str) else repr(value)
+        """Redact raw strings before escaping, shortening, or a difference."""
+        cleaned = redact_nested(value, self._redact)
+        text = cleaned if isinstance(cleaned, str) else repr(cleaned)
         return self._redact(text)
 
     def _record(self, outcome, description, reason):

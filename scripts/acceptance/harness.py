@@ -168,9 +168,9 @@ def bearer_candidates(data_dir, environ=None, platform=None, keychain=None, reda
 class Redactor:
     """Strip known secrets from any text before it leaves the process.
 
-    Complete values are removed, including the raw text and the Python
-    bytes rendering of an installation secret, so a later shortening
-    cannot leave a fragment.
+    Complete values are removed, including decoded text that contains a
+    newline and the Python bytes rendering of an installation secret, so
+    a later shortening cannot leave a fragment.
     """
 
     def __init__(self):
@@ -198,10 +198,10 @@ class Redactor:
 def secret_renderings(secret):
     """Forms of an installation secret that must never appear.
 
-    Encodings, the raw text when those bytes are printable, and every
-    Python bytes rendering, including a secret spliced into a longer
-    value. Removing each complete form first keeps a later shortening
-    from leaving a fragment.
+    Encodings, the decoded text, and every Python bytes rendering,
+    including a secret spliced into a longer value. Decoded text is
+    registered even when it contains a newline, so shortening cannot
+    leave a fragment of it.
     """
     standard = base64.b64encode(secret).decode("ascii")
     url = base64.urlsafe_b64encode(secret).decode("ascii")
@@ -213,7 +213,7 @@ def secret_renderings(secret):
         text = secret.decode("utf-8")
     except UnicodeDecodeError:
         text = ""
-    if text.isprintable():
+    if text:
         renderings.append(text)
     return [rendering for rendering in renderings if len(rendering) >= 8]
 

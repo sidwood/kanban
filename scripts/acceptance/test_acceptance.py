@@ -307,6 +307,35 @@ class BearerTests(unittest.TestCase):
         self.assertNotIn("\\'", rendered)
         self.assertNotIn(quoted.decode("ascii"), rendered)
 
+    def assert_decoded_secret_is_hidden(self, secret):
+        """The exact recorder paths must hide a complete decoded secret."""
+        self.assertEqual(len(secret), 32)
+        text = secret.decode("utf-8")
+        redact = harness.Redactor()
+        redact.add(secret)
+        self.assertNotIn(text, redact(text))
+        bearer = harness.derive_bearer(secret)
+        self.assertNotIn(bearer, redact(bearer))
+        lines = []
+        recorder = checks.Recorder(emit=lines.append, redact=redact)
+        recorder.begin(1, "Secrets")
+        matched = recorder.equal("boundary", "x" * 140 + text, "x" * 140 + text)
+        recorder.abort("a" * 280 + text)
+        differed = recorder.equal("nested", {"value": "x" * 128 + text}, {"value": "other"})
+        rendered = "\n".join(lines + recorder.summary_lines())
+        self.assertTrue(matched)
+        self.assertFalse(differed)
+        self.assertNotIn(text[:12], rendered)
+        self.assertNotIn(bearer, rendered)
+
+    def test_a_decoded_secret_containing_a_newline_is_removed_before_clipping(self):
+        secret = b"0123456789" + b"abcde" + b"\n" + bytes(range(ord("g"), ord("v") + 1))
+        self.assertEqual(secret.decode("utf-8")[15], "\n")
+        self.assert_decoded_secret_is_hidden(secret)
+
+    def test_a_unicode_secret_containing_a_backslash_is_removed_before_repr(self):
+        self.assert_decoded_secret_is_hidden(("abcdefghijklmno\\" + "é" * 8).encode())
+
 class CoreProcessTests(unittest.TestCase):
     def test_a_socket_path_too_long_is_refused_before_the_core_starts(self):
         import sys

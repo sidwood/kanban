@@ -79,11 +79,11 @@ expected text. There are no open waivers.
 ## Secrets
 
 The bearer is derived in memory from the core's 32-byte installation secret.
-Neither the bearer nor any printable form of that secret is printed, logged
-or written. The raw text and the Python bytes rendering are included,
-including a secret spliced into a longer bytes value. Those complete values
-are removed before a line is shortened or a difference is shown, so a
-fragment cannot survive the rendering.
+Neither the bearer nor the decoded text of that secret is printed, logged
+or written, including text that contains a newline. A secret nested in a
+value is removed before that value is escaped, shortened, or shown in a
+difference. The Python bytes rendering is included too, including a secret
+spliced into a longer bytes value, so a fragment cannot survive rendering.
 
 The core files the secret under an account: `installation` for its default
 data directory, or `data-` plus the SHA-256 of the canonical path for any

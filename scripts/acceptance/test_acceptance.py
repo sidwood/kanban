@@ -10,6 +10,8 @@ import json
 import os
 import tempfile
 import unittest
+from io import StringIO
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.acceptance import checks, context, harness, scenarios
@@ -500,6 +502,57 @@ class FieldDiffTests(unittest.TestCase):
         before = {"title": "a", "version": 1, "labels": ["x"]}
         after = {"title": "b", "version": 2, "labels": ["x"], "due_date": "2030-01-01"}
         self.assertEqual(context.changed_fields(before, after, ("version",)), ["due_date", "title"])
+
+
+class SelectionTests(unittest.TestCase):
+    """An unknown or empty selection must not start a core."""
+
+    def run_main(self, argv):
+        from scripts.acceptance import __main__ as cli
+
+        stderr = StringIO()
+        with patch("scripts.acceptance.__main__.CoreProcess") as core, \
+                patch("scripts.acceptance.__main__.connect",
+                      side_effect=harness.HarnessError("should not connect")), \
+                patch("scripts.acceptance.harness.keychain_secret",
+                      side_effect=AssertionError("keychain")), \
+                patch("sys.stderr", stderr):
+            try:
+                status = cli.main(argv)
+            except SystemExit as exited:
+                status = exited.code
+        return status, core, stderr.getvalue()
+
+    def test_an_unknown_test_number_is_rejected_before_a_core_starts(self):
+        status, core, errors = self.run_main(["--fresh", "--tests", "99", "--binary", "/nonexistent"])
+        self.assertEqual(status, 2)
+        self.assertIn("unknown", errors)
+        core.assert_not_called()
+
+    def test_an_unknown_number_among_real_ones_is_rejected_before_a_core_starts(self):
+        status, core, errors = self.run_main(["--fresh", "--tests", "2,99", "--binary", "/nonexistent"])
+        self.assertEqual(status, 2)
+        self.assertIn("unknown", errors)
+        core.assert_not_called()
+
+    def test_an_empty_selection_is_rejected_before_a_core_starts(self):
+        status, core, errors = self.run_main(["--fresh", "--tests", ",", "--binary", "/nonexistent"])
+        self.assertEqual(status, 2)
+        self.assertIn("no selected", errors)
+        core.assert_not_called()
+
+    def test_a_read_only_selection_with_no_readable_test_is_rejected_before_a_core_starts(self):
+        with tempfile.TemporaryDirectory() as root:
+            data = Path(root) / "Kanban"
+            data.mkdir()
+            (data / "kanban.sqlite").write_bytes(b"")
+            status, core, errors = self.run_main([
+                "--read-only", "--project", "LIN", "--data-dir", root,
+                "--tests", "1", "--binary", "/nonexistent",
+            ])
+        self.assertEqual(status, 2)
+        self.assertIn("no selected", errors)
+        core.assert_not_called()
 
 
 if __name__ == "__main__":

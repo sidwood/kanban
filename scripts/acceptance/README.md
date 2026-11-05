@@ -36,7 +36,8 @@ Options:
   one, which it keeps and names at the end so it can be re-read.
 - `--port N`: the loopback HTTP port (default 9891).
 - `--tests 3,5`: run only those tests. Each fresh test creates its own issues,
-  so any subset works after setup.
+  so any subset works after setup. An unknown number, or a selection that
+  matches nothing, is refused before a core starts.
 
 A fresh run takes a few seconds. It starts the core with
 `--loopback-http 127.0.0.1:PORT`, registers the LIN and LTB projects over the

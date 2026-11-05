@@ -36,6 +36,7 @@ from .harness import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BINARY = ROOT / "target" / "debug" / "kanban-service"
 READ_ONLY_TESTS = (2, 9, 10)
+VALID_TESTS = {number for number, *_rest in scenarios.TESTS}
 
 
 def parse_arguments(argv):
@@ -62,11 +63,22 @@ def parse_arguments(argv):
         parser.error("--read-only needs --project CODE")
     if arguments.read_only and not arguments.data_dir:
         parser.error("--read-only needs --data-dir pointing at the existing database")
-    if arguments.tests:
+    if arguments.tests is not None:
         try:
-            arguments.tests = {int(part) for part in arguments.tests.split(",") if part.strip()}
+            parsed = {int(part) for part in arguments.tests.split(",") if part.strip()}
         except ValueError:
             parser.error("--tests takes comma-separated numbers")
+        if not parsed:
+            parser.error("no selected test can run")
+        unknown = sorted(parsed - VALID_TESTS)
+        if unknown:
+            parser.error("unknown test number: " + ", ".join(str(number) for number in unknown))
+        arguments.tests = parsed
+    allowed = set(READ_ONLY_TESTS) if arguments.read_only else set(VALID_TESTS)
+    selected = allowed if arguments.tests is None else arguments.tests & allowed
+    if not selected:
+        parser.error("no selected test can run")
+    arguments.selected = selected
     return arguments
 
 
@@ -189,10 +201,8 @@ def main(argv=None):
             ctx.project_code = arguments.project
             ctx.projects = {entry["code"]: entry["id"] for entry in projects}
             before = snapshot(ctx)
-        for number, title, function, read_only_capable in scenarios.TESTS:
-            if arguments.tests and number not in arguments.tests:
-                continue
-            if arguments.read_only and number not in READ_ONLY_TESTS:
+        for number, title, function, _read_only_capable in scenarios.TESTS:
+            if number not in arguments.selected:
                 continue
             run_test(recorder, ctx, number, title, function)
         if arguments.read_only:

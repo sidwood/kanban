@@ -790,7 +790,7 @@ async function rereadDrawerIssue(record: TicketRecord): Promise<void> {
     const issue = await issueOverlay.readIssue(transport, issueDisplayKey(code, record.number))
     if (attempt !== drawerRequest || drawerTicket.value?.id !== record.id) return
     issueOverlay.put(issue)
-    drawerIssue.value = issueOverlay.issueFor(record.id) ?? issue
+    showDrawerIssue(issueOverlay.issueFor(record.id) ?? issue)
   } catch {
     return
   }
@@ -798,7 +798,7 @@ async function rereadDrawerIssue(record: TicketRecord): Promise<void> {
 
 async function drawerActed(record: TicketRecord): Promise<void> {
   if (drawerTicket.value?.id !== record.id) return
-  drawerTicket.value = record
+  showDrawerTicket(record)
   void load()
   await rereadDrawerIssue(record)
 }
@@ -839,11 +839,25 @@ function showDrawerTicket(record: TicketRecord): void {
   const shown = drawerTicket.value
   if (shown?.id === record.id && record.version < shown.version) return
   drawerTicket.value = record
+  const issue = drawerIssue.value
+  if (issue?.ticket_id === record.id && issue.version < record.version) {
+    drawerIssue.value = { ...issue, version: record.version }
+  }
+}
+
+function showDrawerIssue(issue: IssueRecord): void {
+  const shown = drawerIssue.value
+  if (shown?.ticket_id === issue.ticket_id && issue.version < shown.version) return
+  drawerIssue.value = issue
+  const ticket = drawerTicket.value
+  if (ticket?.id === issue.ticket_id && ticket.version < issue.version) {
+    drawerTicket.value = { ...ticket, version: issue.version }
+  }
 }
 
 async function onDrawerIssueRefreshed(issue: IssueRecord): Promise<void> {
   if (!transport || drawerTicket.value?.id !== issue.ticket_id) return
-  drawerIssue.value = issue
+  showDrawerIssue(issue)
   const attempt = drawerRequest
   try {
     const record = await new KanbanClient(transport).queryTicketGet({ ticket_id: issue.ticket_id })
